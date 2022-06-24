@@ -22,6 +22,7 @@ Checks: "*,\
   -llvmlibc-*,\
   -llvmlibc-callee-namespace,\
   -readability-function-cognitive-complexity,\
+  -readability-identifier-length,\
   -readability-magic-numbers,\
   "
 ...

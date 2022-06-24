@@ -61,8 +61,9 @@ public:
     using const_iterator = typename std::vector<value_type>::const_iterator;
 
 private:
+    static constexpr uint32_t BUCKET_DIST_INC = 256;
+
     struct Bucket {
-        static constexpr uint32_t DIST_INC = 256;
 
         /**
          * Upper 3 byte encode the distance to the original bucket. 0 means empty, 1 means here, ...
@@ -81,11 +82,12 @@ private:
      */
     std::vector<value_type> m_values{};
 
-    Bucket* m_buckets_start{};
-    Bucket* m_buckets_end{};
+    Bucket* m_buckets_start = nullptr;
+    Bucket* m_buckets_end = nullptr;
+    uint32_t m_max_bucket_capacity = 0;
     Hash m_hash{};
     Pred m_equals{};
-    uint8_t m_shifts{};
+    uint8_t m_shifts{61};
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
         if (++bucket == m_buckets_end) {
@@ -110,12 +112,12 @@ private:
         auto mixed_hash = static_cast<uint64_t>(hash) * UINT64_C(0x9E3779B97F4A7C15);
 
         // use lowest 8 bit for the info hash
-        auto dist_and_fingerprint = static_cast<uint32_t>(Bucket::DIST_INC | (mixed_hash & UINT64_C(0xFF)));
+        auto dist_and_fingerprint = static_cast<uint32_t>(BUCKET_DIST_INC | (mixed_hash & UINT64_C(0xFF)));
 
         // use upper bits for the bucket index
         auto const* bucket = m_buckets_start + (mixed_hash >> m_shifts);
         while (dist_and_fingerprint < bucket->dist_and_fingerprint) {
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
         return {dist_and_fingerprint, bucket};
@@ -132,11 +134,7 @@ private:
     }
 
 public:
-    unordered_dense_map() {
-        m_buckets_start = new Bucket[1024];
-        m_buckets_end = m_buckets_start + 1024;
-        m_shifts = 64 - 10;
-    }
+    unordered_dense_map() = default;
 
     template <typename K>
     auto find(K const& key) const -> std::pair<Key, T> const* {
@@ -160,8 +158,21 @@ public:
         return try_emplace(value.first, value.second);
     }
 
+    void place_and_shift_up(Bucket bucket, Bucket* place) {
+        while (0 != place->dist_and_fingerprint) {
+            bucket = std::exchange(*place, bucket);
+            bucket.dist_and_fingerprint += BUCKET_DIST_INC;
+            place = next(place);
+        }
+        *place = bucket;
+    }
+
     template <typename K, typename... Args>
     auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+        if (is_full()) {
+            increase_size();
+        }
+
         auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
 
         while (dist_and_fingerprint == bucket->dist_and_fingerprint) {
@@ -170,13 +181,9 @@ public:
                 return std::make_pair(m_values.begin() + bucket->value_idx, false);
             }
 
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
-
-        // key not found, so we are now exactly where we want to insert it
-        auto* const insertion_bucket = bucket;
-        (void)insertion_bucket;
 
         // emplace the new value. If that throws an exception, no harm done; index is still in a
         // valid state
@@ -185,15 +192,37 @@ public:
                               std::forward_as_tuple(std::forward<Args>(args)...));
 
         // place element and shift up until we find an empty spot
-        auto tmp = Bucket{dist_and_fingerprint, static_cast<uint32_t>(m_values.size()) - 1};
-        while (0 != bucket->dist_and_fingerprint) {
-            tmp = std::exchange(*bucket, tmp);
-            tmp.dist_and_fingerprint += Bucket::DIST_INC;
-            bucket = next(bucket);
-        }
-        *bucket = tmp;
+        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
+        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
 
-        return std::make_pair(m_values.begin() + bucket->value_idx, true);
+        return std::make_pair(m_values.begin() + value_idx, true);
+    }
+
+    /**
+     * True when no element can be added any more without increasing the size
+     */
+    [[nodiscard]] auto is_full() const -> bool {
+        return size() == m_max_bucket_capacity;
+    }
+
+    void increase_size() {
+        // just discard the whole bucket array and create a new one
+        delete[] m_buckets_start;
+
+        // increase size 2x
+        --m_shifts;
+        uint64_t num_buckets = UINT64_C(1) << (64U - m_shifts);
+        m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
+        m_buckets_start = new Bucket[num_buckets];
+        m_buckets_end = m_buckets_start + num_buckets;
+
+        for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
+            auto const& key = m_values[value_idx].first;
+            auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
+
+            // we know for certain that key has not yet been inserted, so no need to check it.
+            place_and_shift_up(Bucket{dist_and_fingerprint, value_idx}, bucket);
+        }
     }
 
     auto erase(Key const& key) -> size_t {
@@ -214,6 +243,11 @@ public:
 
     [[nodiscard]] auto size() const -> size_t {
         return m_values.size();
+    }
+
+    // TODO don't hardcode
+    [[nodiscard]] auto max_load_factor() const -> float {
+        return 0.8;
     }
 };
 
