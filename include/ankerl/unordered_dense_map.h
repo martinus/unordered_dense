@@ -42,27 +42,50 @@
 
 namespace ankerl {
 
+/**
+ * @brief
+ *
+ * @tparam Key
+ * @tparam T
+ * @tparam Hash
+ * @tparam Pred
+ */
 template <class Key, class T, class Hash = std::hash<Key>, class Pred = std::equal_to<Key>>
 class unordered_dense_map {
 public:
     using value_type = std::pair<Key, T>;
     using size_type = size_t;
+
+    // TODO we'll need our own iterator that points to the map as well
     using iterator = typename std::vector<value_type>::iterator;
     using const_iterator = typename std::vector<value_type>::const_iterator;
 
 private:
     struct Bucket {
-        static constexpr uint32_t Inc = 256;
-        uint32_t info{}; // lower 8 bits are hash, upper 24 bits are offset to original bucket
-        uint32_t idx{};  // index into m_values
+        static constexpr uint32_t DIST_INC = 256;
+
+        /**
+         * Upper 3 byte encode the distance to the original bucket. 0 means empty, 1 means here, ...
+         * Lower 1 byte encodes a fingerprint; 8 bits from the hash.
+         */
+        uint32_t dist_and_fingerprint{};
+
+        /**
+         * Index into the m_values vector.
+         */
+        uint32_t value_idx{};
     };
 
+    /**
+     * Contains all the key-value pairs in one densely stored container. No holes.
+     */
     std::vector<value_type> m_values{};
+
     Bucket* m_buckets_start{};
     Bucket* m_buckets_end{};
-    uint32_t m_shifts{};
     Hash m_hash{};
     Pred m_equals{};
+    uint8_t m_shifts{};
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
         if (++bucket == m_buckets_end) {
@@ -71,7 +94,7 @@ private:
         return bucket;
     }
 
-    [[nodiscard]] auto next(Bucket* bucket) const -> Bucket* {
+    [[nodiscard]] auto next(Bucket* bucket) -> Bucket* {
         if (++bucket == m_buckets_end) {
             return m_buckets_start;
         }
@@ -80,22 +103,22 @@ private:
 
     auto next_while_less(size_t hash) -> std::pair<uint32_t, Bucket*> {
         auto const& pair = std::as_const(*this).next_while_less(hash);
-        return {pair.first, const_cast<Bucket*>(pair.second)};
+        return {pair.first, const_cast<Bucket*>(pair.second)}; // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     auto next_while_less(size_t hash) const -> std::pair<uint32_t, Bucket const*> {
-        uint64_t h = static_cast<uint64_t>(hash) * UINT64_C(0x9E3779B97F4A7C15);
+        auto mixed_hash = static_cast<uint64_t>(hash) * UINT64_C(0x9E3779B97F4A7C15);
 
         // use lowest 8 bit for the info hash
-        auto info = Bucket::Inc | (h & UINT64_C(0xFF));
+        auto dist_and_fingerprint = static_cast<uint32_t>(Bucket::DIST_INC | (mixed_hash & UINT64_C(0xFF)));
 
         // use upper bits for the bucket index
-        auto const* bucket = m_buckets_start + (h >> m_shifts);
-        while (info < bucket->info) {
-            ++info;
+        auto const* bucket = m_buckets_start + (mixed_hash >> m_shifts);
+        while (dist_and_fingerprint < bucket->dist_and_fingerprint) {
+            dist_and_fingerprint += Bucket::DIST_INC;
             bucket = next(bucket);
         }
-        return {info, bucket};
+        return {dist_and_fingerprint, bucket};
     }
 
     void shift_up(Bucket* start, Bucket* end) {
@@ -117,7 +140,7 @@ public:
 
     template <typename K>
     auto find(K const& key) const -> std::pair<Key, T> const* {
-        auto [info, bucket] = nextWhileLess(m_hash(key));
+        auto [info, bucket] = next_while_less(m_hash(key));
 
         while (info == bucket->info) {
             if (m_equals(key, m_values[bucket->idx].first)) {
@@ -139,15 +162,15 @@ public:
 
     template <typename K, typename... Args>
     auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
-        auto [info, bucket] = next_while_less(m_hash(key));
+        auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
 
-        while (info == bucket->info) {
-            if (m_equals(key, m_values[bucket->idx].first)) {
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint) {
+            if (m_equals(key, m_values[bucket->value_idx].first)) {
                 // key found!
-                return std::make_pair(m_values.begin() + bucket->idx, false);
+                return std::make_pair(m_values.begin() + bucket->value_idx, false);
             }
 
-            ++info;
+            dist_and_fingerprint += Bucket::DIST_INC;
             bucket = next(bucket);
         }
 
@@ -162,19 +185,19 @@ public:
                               std::forward_as_tuple(std::forward<Args>(args)...));
 
         // place element and shift up until we find an empty spot
-        auto tmp = Bucket{info, static_cast<uint32_t>(m_values.size()) - 1};
-        while (0 != bucket->info) {
+        auto tmp = Bucket{dist_and_fingerprint, static_cast<uint32_t>(m_values.size()) - 1};
+        while (0 != bucket->dist_and_fingerprint) {
             tmp = std::exchange(*bucket, tmp);
-            tmp.info += Bucket::Inc;
+            tmp.dist_and_fingerprint += Bucket::DIST_INC;
             bucket = next(bucket);
         }
         *bucket = tmp;
 
-        return std::make_pair(m_values.begin() + bucket->idx, true);
+        return std::make_pair(m_values.begin() + bucket->value_idx, true);
     }
 
-    size_t erase(Key const& key) {
-        auto [info, bucket] = nextWhileLess(m_hash(key));
+    auto erase(Key const& key) -> size_t {
+        auto [info, bucket] = next_while_less(m_hash(key));
 
         while (info == bucket->info && !m_equals(key, m_values[bucket->idx].first)) {
             ++info;

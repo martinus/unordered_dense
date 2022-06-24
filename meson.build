@@ -3,12 +3,12 @@
 # # Setup ###################
 #
 # release & debug setup
-#      CXX="ccache clang++" meson setup --buildtype release build/clang_release
+#      CXX="ccache clang++" meson setup --buildtype release builddir/clang_release
 #      CXX="ccache clang++" meson setup build/clang_debug
 # c++20 build
-#     CXX="ccache clang++" meson setup -Dcpp_std=c++20 build/clang_cpp20
+#     CXX="ccache clang++" meson setup -Dcpp_std=c++20 builddir/clang_cpp20
 # lcov coverage:
-#     CXX="ccache clang++" meson setup -Db_coverage=true build/coverage
+#     CXX="ccache clang++" meson setup -Db_coverage=true builddir/coverage
 #     ninja clean && ninja test && ninja coverage
 #
 # # Testing ################
