@@ -1,6 +1,6 @@
 # ankerl::unordered_dense_map
 
-A fast &amp; densly stored hashmap based on robin-hood backward shift deletion.
+A fast &amp; densely stored hashmap based on robin-hood backward shift deletion.
 
 This is a newly implemented hashmap based on lessons learned from [robin-hood-hashing](https://github.com/martinus/robin-hood-hashing)
 

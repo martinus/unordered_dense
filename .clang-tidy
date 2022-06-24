@@ -1,0 +1,28 @@
+---
+Checks: "*,\
+  -altera*,\
+  -bugprone-easily-swappable-parameters,\
+  -cert-dcl21-cpp,\
+  -cert-err58-cpp,\
+  -cppcoreguidelines-avoid-magic-numbers,\
+  -cppcoreguidelines-macro-usage,\
+  -cppcoreguidelines-owning-memory,\
+  -cppcoreguidelines-pro-bounds-constant-array-index,\
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,\
+  -cppcoreguidelines-pro-type-reinterpret-cast,\
+  -fuchsia-default-arguments-calls,\
+  -fuchsia-overloaded-operator,\
+  -fuchsia-statically-constructed-objects,\
+  -fuchsia-trailing-return,\
+  -google-build-using-namespace,\
+  -google-readability-todo,\
+  -google-runtime-int,\
+  -google-runtime-references,\
+  -llvm-header-guard,\
+  -llvmlibc-*,\
+  -llvmlibc-callee-namespace,\
+  -readability-function-cognitive-complexity,\
+  -readability-magic-numbers,\
+  "
+...
+

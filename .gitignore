@@ -1,0 +1,7 @@
+build
+builddir
+.cache
+
+# ignore all in subprojects except the .wrap files
+/subprojects/*
+!/subprojects/*.wrap
