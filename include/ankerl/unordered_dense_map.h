@@ -136,6 +136,10 @@ private:
 public:
     unordered_dense_map() = default;
 
+    ~unordered_dense_map() {
+        delete[] m_buckets_start;
+    }
+
     template <typename K>
     auto find(K const& key) const -> std::pair<Key, T> const* {
         auto [info, bucket] = next_while_less(m_hash(key));
