@@ -553,7 +553,7 @@ public:
             bucket = next(bucket);
         }
 
-        do_remove(bucket);
+        do_erase(bucket);
         return it;
     }
 
