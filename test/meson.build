@@ -3,6 +3,7 @@ test_sources = [
     'app/doctest.cpp',
     'app/nanobench.cpp',
     'bench/find_random.cpp',
+    'bench/quick_overall_map.cpp',
     'unit/include_only.cpp',
     'unit/insert.cpp',
 ]

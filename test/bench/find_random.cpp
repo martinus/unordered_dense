@@ -15,6 +15,7 @@ void bench() {
     static constexpr size_t numTotal = 4;
 
     auto requiredChecksum = std::array{200000, 25198620, 50197240, 75195862, 100194482};
+    auto total = std::chrono::steady_clock::duration();
 
     for (size_t numFound = 0; numFound < 5; ++numFound) {
         auto title = fmt::format("random find {}% success {}", numFound * 100 / numTotal, name_of_type<Map>());
@@ -41,7 +42,6 @@ void bench() {
             Map map;
             size_t i = 0;
             size_t findCount = 0;
-
             auto before = std::chrono::steady_clock::now();
             do {
                 // insert numTotal entries: some random, some sequential.
@@ -70,20 +70,26 @@ void bench() {
             } while (i < numInserts);
             checksum += map.size();
             auto after = std::chrono::steady_clock::now();
+            total += after - before;
             fmt::print("{}s {}\n", std::chrono::duration<double>(after - before).count(), title);
         }
         REQUIRE(checksum == requiredChecksum[numFound]);
     }
+    fmt::print("{}s total\n", std::chrono::duration<double>(total).count());
 }
 
+
+// 26.81
 TEST_CASE("bench_find_random_uo" * doctest::test_suite("bench") * doctest::skip()) {
     bench<std::unordered_map<size_t, size_t>>();
 }
 
+// 10.55
 TEST_CASE("bench_find_random_rh" * doctest::test_suite("bench") * doctest::skip()) {
     bench<robin_hood::unordered_flat_map<size_t, size_t>>();
 }
 
+// 8.87
 TEST_CASE("bench_find_random_udm" * doctest::test_suite("bench") * doctest::skip()) {
     bench<ankerl::unordered_dense_map<size_t, size_t>>();
 }

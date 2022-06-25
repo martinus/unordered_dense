@@ -54,6 +54,7 @@ template <class Key, class T, class Hash = std::hash<Key>, class Pred = std::equ
 class unordered_dense_map {
 public:
     using value_type = std::pair<Key, T>;
+    using key_type = Key;
     using size_type = size_t;
 
     // TODO we'll need our own iterator that points to the map as well
