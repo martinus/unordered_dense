@@ -512,18 +512,7 @@ public:
         fill_bucket_array_from_values();
     }
 
-    auto erase(Key const& key) -> size_t {
-        auto [dist_and_fingerprint, bucket] = next_while_less(key);
-
-        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equals(key, m_values[bucket->value_idx].first)) {
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-        }
-
-        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
-            // not found, nothing is deleted
-            return 0;
-        }
+    void do_erase(Bucket* bucket) {
         auto const value_idx_to_remove = bucket->value_idx;
 
         // shift down until either empty or an element with correct spot is found
@@ -552,6 +541,39 @@ public:
             bucket->value_idx = value_idx_to_remove;
         }
         m_values.pop_back();
+    }
+
+    auto erase(const_iterator it) -> iterator {
+        auto hash = mixed_hash(it->first);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+        auto const* bucket = bucket_from_hash(hash);
+
+        auto const value_idx_to_remove = static_cast<uint32_t>(it - cbegin());
+        while (bucket->value_idx != value_idx_to_remove) {
+            bucket = next(bucket);
+        }
+
+        do_remove(bucket);
+        return it;
+    }
+
+    auto erase(iterator it) -> iterator {
+        return erase(const_iterator{it});
+    }
+
+    auto erase(Key const& key) -> size_t {
+        auto [dist_and_fingerprint, bucket] = next_while_less(key);
+
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equals(key, m_values[bucket->value_idx].first)) {
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        }
+
+        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
+            // not found, nothing is deleted
+            return 0;
+        }
+        do_erase(bucket);
         return 1;
     }
 
