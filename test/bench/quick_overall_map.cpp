@@ -1,12 +1,12 @@
 #include <ankerl/unordered_dense_map.h>
 #include <app/geomean.h>
-#include <app/name_of_type.h>
 #include <app/nanobench.h>
 #include <app/robin_hood.h>
 
 #include <doctest.h>
 #include <fmt/format.h>
 
+#include <string_view>
 #include <unordered_map>
 
 namespace {
@@ -38,8 +38,8 @@ inline void randomizeKey(ankerl::nanobench::Rng* rng, int n, std::string* key) {
 
 // Random insert & erase
 template <typename Map>
-void benchRandomInsertErase(ankerl::nanobench::Bench* bench) {
-    bench->run(fmt::format("{} random insert erase", name_of_type<Map>()), [&] {
+void benchRandomInsertErase(ankerl::nanobench::Bench* bench, std::string_view name) {
+    bench->run(fmt::format("{} random insert erase", name), [&] {
         ankerl::nanobench::Rng rng(123);
         size_t verifier{};
         Map map;
@@ -59,13 +59,13 @@ void benchRandomInsertErase(ankerl::nanobench::Bench* bench) {
 
 // iterate
 template <typename Map>
-void benchIterate(ankerl::nanobench::Bench* bench) {
+void benchIterate(ankerl::nanobench::Bench* bench, std::string_view name) {
     size_t numElements = 5000;
 
     auto key = initKey<typename Map::key_type>();
 
     // insert
-    bench->run(fmt::format("{} iterate while adding then removing", name_of_type<Map>()), [&] {
+    bench->run(fmt::format("{} iterate while adding then removing", name), [&] {
         ankerl::nanobench::Rng rng(555);
         Map map;
         size_t result = 0;
@@ -93,9 +93,9 @@ void benchIterate(ankerl::nanobench::Bench* bench) {
 // 111.903 222
 // 112.023 123123
 template <typename Map>
-void benchRandomFind(ankerl::nanobench::Bench* bench) {
+void benchRandomFind(ankerl::nanobench::Bench* bench, std::string_view name) {
 
-    bench->run(fmt::format("{} 50% probability to find", name_of_type<Map>()), [&] {
+    bench->run(fmt::format("{} 50% probability to find", name), [&] {
         uint64_t const seed = 123123;
         ankerl::nanobench::Rng numbersInsertRng(seed);
         size_t numbersInsertRngCalls = 0;
@@ -144,11 +144,11 @@ void benchRandomFind(ankerl::nanobench::Bench* bench) {
 }
 
 template <typename Map>
-void benchAll(ankerl::nanobench::Bench* bench) {
+void benchAll(ankerl::nanobench::Bench* bench, std::string_view name) {
     bench->title("benchmarking");
-    benchIterate<Map>(bench);
-    benchRandomInsertErase<Map>(bench);
-    benchRandomFind<Map>(bench);
+    benchIterate<Map>(bench, name);
+    benchRandomInsertErase<Map>(bench, name);
+    benchRandomFind<Map>(bench, name);
 }
 
 [[nodiscard]] auto geomean1(ankerl::nanobench::Bench const& bench) -> double {
@@ -163,9 +163,10 @@ void benchAll(ankerl::nanobench::Bench* bench) {
 // is. It calculates geometric mean of several benchmarks.
 TEST_CASE("bench_quick_overall_rhf" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
-    benchAll<robin_hood::unordered_flat_map<uint64_t, size_t>>(&bench);
-    benchAll<robin_hood::unordered_flat_map<std::string, size_t>>(&bench);
-    fmt::print("{} bench_quick_overall_map_flat\n", geomean1(bench));
+    benchAll<robin_hood::unordered_flat_map<uint64_t, size_t>>(&bench, "robin_hood::unordered_flat_map<uint64_t, size_t>");
+    benchAll<robin_hood::unordered_flat_map<std::string, size_t>>(&bench,
+                                                                  "robin_hood::unordered_flat_map<std::string, size_t>");
+    fmt::print("{} bench_quick_overall_rhf\n", geomean1(bench));
 
 #ifdef ROBIN_HOOD_COUNT_ENABLED
     std::cout << robin_hood::counts() << std::endl;
@@ -174,30 +175,29 @@ TEST_CASE("bench_quick_overall_rhf" * doctest::test_suite("bench") * doctest::sk
 
 TEST_CASE("bench_quick_overall_rhn" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
-    benchAll<robin_hood::unordered_node_map<uint64_t, size_t>>(&bench);
-    benchAll<robin_hood::unordered_node_map<std::string, size_t>>(&bench);
-    fmt::print("{} bench_quick_overall_map_node\n", geomean1(bench));
+    benchAll<robin_hood::unordered_node_map<uint64_t, size_t>>(&bench, "robin_hood::unordered_node_map<uint64_t, size_t>");
+    benchAll<robin_hood::unordered_node_map<std::string, size_t>>(&bench,
+                                                                  "robin_hood::unordered_node_map<std::string, size_t>");
+    fmt::print("{} bench_quick_overall_rhn\n", geomean1(bench));
 
 #ifdef ROBIN_HOOD_COUNT_ENABLED
     std::cout << robin_hood::counts() << std::endl;
 #endif
 }
 
-TEST_CASE("bench_quick_overall_map_std" * doctest::test_suite("bench") * doctest::skip()) {
+TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
-    benchAll<std::unordered_map<uint64_t, size_t>>(&bench);
-    benchAll<std::unordered_map<std::string, size_t>>(&bench);
+    benchAll<std::unordered_map<uint64_t, size_t>>(&bench, "std::unordered_map<uint64_t, size_t>");
+    benchAll<std::unordered_map<std::string, size_t>>(&bench, "std::unordered_map<std::string, size_t>");
     fmt::print("{} bench_quick_overall_map_std\n", geomean1(bench));
 }
 
-
-TEST_CASE("bench_quick_overall_map_udm" * doctest::test_suite("bench") * doctest::skip()) {
+TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
-    benchAll<ankerl::unordered_dense_map<uint64_t, size_t>>(&bench);
-    benchAll<ankerl::unordered_dense_map<std::string, size_t>>(&bench);
-    fmt::print("{} bench_quick_overall_map_std\n", geomean1(bench));
+    benchAll<ankerl::unordered_dense_map<uint64_t, size_t>>(&bench, "ankerl::unordered_dense_map<uint64_t, size_t>");
+    benchAll<ankerl::unordered_dense_map<std::string, size_t>>(&bench, "ankerl::unordered_dense_map<std::string, size_t>");
+    fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
-
 
 template <typename Map>
 void testBig() {
@@ -227,7 +227,7 @@ TEST_CASE("memory_map_huge_uo" * doctest::test_suite("bench") * doctest::skip())
     testBig<std::unordered_map<uint64_t, size_t>>();
 }
 
-// 3149884 max RSS, 0:13.08
+// 3149724 max RSS, 0:10.58
 TEST_CASE("memory_map_huge_udm" * doctest::test_suite("bench") * doctest::skip()) {
     testBig<ankerl::unordered_dense_map<uint64_t, size_t>>();
 }
