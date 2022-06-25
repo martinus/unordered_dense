@@ -2,6 +2,7 @@
 
 #include <app/nanobench.h>
 #include <app/robin_hood.h>
+#include <app/name_of_type.h>
 
 #include <doctest.h>
 #include <fmt/format.h>

@@ -103,34 +103,28 @@ private:
         return bucket;
     }
 
-    auto next_while_less(size_t hash) -> std::pair<uint32_t, Bucket*> {
-        auto const& pair = std::as_const(*this).next_while_less(hash);
+    [[nodiscard]] auto mixed_hash(Key const& key) const -> uint64_t {
+        return static_cast<uint64_t>(m_hash(key)) * UINT64_C(0x9E3779B97F4A7C15);
+    }
+
+    auto next_while_less(Key const& key) -> std::pair<uint32_t, Bucket*> {
+        auto const& pair = std::as_const(*this).next_while_less(key);
         return {pair.first, const_cast<Bucket*>(pair.second)}; // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
-    auto next_while_less(size_t hash) const -> std::pair<uint32_t, Bucket const*> {
-        auto mixed_hash = static_cast<uint64_t>(hash) * UINT64_C(0x9E3779B97F4A7C15);
+    auto next_while_less(Key const& key) const -> std::pair<uint32_t, Bucket const*> {
+        auto mh = mixed_hash(key);
 
         // use lowest 8 bit for the info hash
-        auto dist_and_fingerprint = static_cast<uint32_t>(BUCKET_DIST_INC | (mixed_hash & UINT64_C(0xFF)));
+        auto dist_and_fingerprint = static_cast<uint32_t>(BUCKET_DIST_INC | (mh & UINT64_C(0xFF)));
 
         // use upper bits for the bucket index
-        auto const* bucket = m_buckets_start + (mixed_hash >> m_shifts);
+        auto const* bucket = m_buckets_start + (mh >> m_shifts);
         while (dist_and_fingerprint < bucket->dist_and_fingerprint) {
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
         return {dist_and_fingerprint, bucket};
-    }
-
-    void shift_up(Bucket* start, Bucket* end) {
-        if (end < start) {
-            std::move_backward(m_buckets_start, end - 1, end);
-            *m_buckets_start = *(m_buckets_end - 1);
-            std::move_backward(start, m_buckets_end - 1, m_buckets_end);
-        } else {
-            std::move_backward(start, end - 1, end);
-        }
     }
 
 public:
@@ -142,15 +136,22 @@ public:
 
     template <typename K>
     auto find(K const& key) const -> std::pair<Key, T> const* {
-        auto [info, bucket] = next_while_less(m_hash(key));
+        auto mh = mixed_hash(key);
+        auto dist_and_fingerprint = static_cast<uint32_t>(BUCKET_DIST_INC | (mh & UINT64_C(0xFF)));
+        auto const* bucket = m_buckets_start + (mh >> m_shifts);
 
-        while (info == bucket->info) {
-            if (m_equals(key, m_values[bucket->idx].first)) {
-                return &m_values[bucket->idx];
+        do {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
+                return m_values.data() + bucket->value_idx;
             }
-            ++info;
+            dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
-        }
+        } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
+        return nullptr;
+    }
+
+    // TODO
+    auto end() const -> std::pair<Key, T> const* {
         return nullptr;
     }
 
@@ -177,7 +178,7 @@ public:
             increase_size();
         }
 
-        auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
+        auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
         while (dist_and_fingerprint == bucket->dist_and_fingerprint) {
             if (m_equals(key, m_values[bucket->value_idx].first)) {
@@ -222,15 +223,15 @@ public:
 
         for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
             auto const& key = m_values[value_idx].first;
-            auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
+            auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
             // we know for certain that key has not yet been inserted, so no need to check it.
-            place_and_shift_up(Bucket{dist_and_fingerprint, value_idx}, bucket);
+            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
         }
     }
 
     auto erase(Key const& key) -> size_t {
-        auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
+        auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
         while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equals(key, m_values[bucket->value_idx].first)) {
             dist_and_fingerprint += BUCKET_DIST_INC;
@@ -253,13 +254,14 @@ public:
 
         // update m_values
         if (value_idx_to_remove != m_values.size() - 1) {
+            // no luck, we'll have to replace the value with the last one and update the index accordingly
             auto& val = m_values[value_idx_to_remove];
             val = std::move(m_values.back());
 
             // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
             // TODO don't duplicate code
-            auto mixed_hash = static_cast<uint64_t>(m_hash(val.first)) * UINT64_C(0x9E3779B97F4A7C15);
-            bucket = m_buckets_start + (mixed_hash >> m_shifts);
+            auto mh = mixed_hash(val.first);
+            bucket = m_buckets_start + (mh >> m_shifts);
 
             auto const values_idx_back = static_cast<uint32_t>(m_values.size() - 1);
             while (values_idx_back != bucket->value_idx) {
