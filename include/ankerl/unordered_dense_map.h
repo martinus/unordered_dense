@@ -546,7 +546,7 @@ public:
     auto erase(const_iterator it) -> iterator {
         auto hash = mixed_hash(it->first);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
-        auto const* bucket = bucket_from_hash(hash);
+        auto* bucket = bucket_from_hash(hash);
 
         auto const value_idx_to_remove = static_cast<uint32_t>(it - cbegin());
         while (bucket->value_idx != value_idx_to_remove) {
@@ -554,7 +554,7 @@ public:
         }
 
         do_erase(bucket);
-        return it;
+        return begin() + (it - cbegin());
     }
 
     auto erase(iterator it) -> iterator {
