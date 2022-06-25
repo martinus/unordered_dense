@@ -37,18 +37,26 @@ TEST_CASE("erase") {
 
 template <typename Map>
 void bench() {
+    auto const repeats = size_t{1000};
+    auto const iterations = uint32_t{300000};
+    auto const bounded = iterations / 3;
 
-    auto rng = ankerl::nanobench::Rng();
+    auto rng = ankerl::nanobench::Rng(123);
+    auto check = size_t{};
     auto before = std::chrono::steady_clock::now();
-    for (size_t t = 0; t < 1000; ++t) {
+    for (size_t r = 0; r < repeats; ++r) {
         auto map = Map();
-        for (size_t i = 0; i < 100000; ++i) {
-            auto idx = rng.bounded(100000);
+        for (size_t i = 0; i < iterations; ++i) {
+            auto idx = rng.bounded(bounded);
             map[idx] = idx;
+
+            idx = rng.bounded(bounded);
+            check += map.erase(idx);
         }
+        check += map.size();
     }
     auto after = std::chrono::steady_clock::now();
-    fmt::print("{}s\n", std::chrono::duration<double>(after - before).count());
+    fmt::print("{}s {}\n", std::chrono::duration<double>(after - before).count(), check);
 }
 
 TEST_CASE("bench_uo") {
@@ -77,5 +85,29 @@ TEST_CASE("random_insert") {
             uo[idx] = std::to_string(i);
             REQUIRE(dm.size() == uo.size());
         }
+    }
+}
+
+TEST_CASE("random_insert_erase") {
+    auto dm = ankerl::unordered_dense_map<uint64_t, std::string>();
+    auto uo = std::unordered_map<uint64_t, std::string>();
+
+    auto iterations = size_t{1000000};
+    auto bounded = size_t{100000};
+
+    auto rng = ankerl::nanobench::Rng();
+    for (size_t i = 0; i < iterations; ++i) {
+        // insert
+        REQUIRE(dm.size() == uo.size());
+        auto key = rng.bounded(bounded);
+        REQUIRE(dm[key] == uo[key]);
+        dm[key] = std::to_string(i);
+        uo[key] = std::to_string(i);
+
+        // erase
+        REQUIRE(dm.size() == uo.size());
+        key = rng.bounded(bounded);
+        REQUIRE(dm.erase(key) == uo.erase(key));
+        REQUIRE(dm.size() == uo.size());
     }
 }
