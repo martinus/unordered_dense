@@ -195,7 +195,7 @@ TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::sk
 TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
     benchAll<ankerl::unordered_dense_map<uint64_t, size_t>>(&bench, "ankerl::unordered_dense_map<uint64_t, size_t>");
-    benchAll<ankerl::unordered_dense_map<std::string, size_t>>(&bench, "ankerl::unordered_dense_map<std::string, size_t>");
+    benchAll<ankerl::unordered_dense_map<std::string, size_t, ankerl::hash<std::string>>>(&bench, "ankerl::unordered_dense_map<std::string, size_t>");
     fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
 
