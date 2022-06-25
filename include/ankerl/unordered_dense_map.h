@@ -103,8 +103,20 @@ private:
         return bucket;
     }
 
-    [[nodiscard]] auto mixed_hash(Key const& key) const -> uint64_t {
+    [[nodiscard]] constexpr auto mixed_hash(Key const& key) const -> uint64_t {
         return static_cast<uint64_t>(m_hash(key)) * UINT64_C(0x9E3779B97F4A7C15);
+    }
+
+    [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
+        return BUCKET_DIST_INC | (static_cast<uint32_t>(hash) & UINT64_C(0xFF));
+    }
+
+    [[nodiscard]] constexpr auto bucket_from_hash(uint64_t hash) const -> Bucket const* {
+        return m_buckets_start + (hash >> m_shifts);
+    }
+
+    [[nodiscard]] constexpr auto bucket_from_hash(uint64_t hash) -> Bucket* {
+        return m_buckets_start + (hash >> m_shifts);
     }
 
     auto next_while_less(Key const& key) -> std::pair<uint32_t, Bucket*> {
@@ -113,13 +125,10 @@ private:
     }
 
     auto next_while_less(Key const& key) const -> std::pair<uint32_t, Bucket const*> {
-        auto mh = mixed_hash(key);
+        auto hash = mixed_hash(key);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+        auto const* bucket = bucket_from_hash(hash);
 
-        // use lowest 8 bit for the info hash
-        auto dist_and_fingerprint = static_cast<uint32_t>(BUCKET_DIST_INC | (mh & UINT64_C(0xFF)));
-
-        // use upper bits for the bucket index
-        auto const* bucket = m_buckets_start + (mh >> m_shifts);
         while (dist_and_fingerprint < bucket->dist_and_fingerprint) {
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
@@ -137,8 +146,8 @@ public:
     template <typename K>
     auto find(K const& key) const -> std::pair<Key, T> const* {
         auto mh = mixed_hash(key);
-        auto dist_and_fingerprint = static_cast<uint32_t>(BUCKET_DIST_INC | (mh & UINT64_C(0xFF)));
-        auto const* bucket = m_buckets_start + (mh >> m_shifts);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
+        auto const* bucket = bucket_from_hash(mh);
 
         do {
             if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
@@ -261,7 +270,7 @@ public:
             // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
             // TODO don't duplicate code
             auto mh = mixed_hash(val.first);
-            bucket = m_buckets_start + (mh >> m_shifts);
+            bucket = bucket_from_hash(mh);
 
             auto const values_idx_back = static_cast<uint32_t>(m_values.size() - 1);
             while (values_idx_back != bucket->value_idx) {
