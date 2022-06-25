@@ -2,6 +2,7 @@
 Checks: "*,\
   -altera*,\
   -bugprone-easily-swappable-parameters,\
+  -bugprone-infinite-loop,\
   -cert-dcl21-cpp,\
   -cert-err58-cpp,\
   -cppcoreguidelines-avoid-magic-numbers,\

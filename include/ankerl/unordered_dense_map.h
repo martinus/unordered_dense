@@ -230,19 +230,45 @@ public:
     }
 
     auto erase(Key const& key) -> size_t {
-        auto [info, bucket] = next_while_less(m_hash(key));
+        auto [dist_and_fingerprint, bucket] = next_while_less(m_hash(key));
 
-        while (info == bucket->info && !m_equals(key, m_values[bucket->idx].first)) {
-            ++info;
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equals(key, m_values[bucket->value_idx].first)) {
+            dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
 
-        if (info != bucket->info) {
-            // not found
+        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
+            // not found, nothing is deleted
             return 0;
         }
+        auto const value_idx_to_remove = bucket->value_idx;
 
-        // found it!
+        // shift down until either empty or an element with correct spot is found
+        auto* next_bucket = next(bucket);
+        while (next_bucket->dist_and_fingerprint >= BUCKET_DIST_INC * 2) {
+            *bucket = {next_bucket->dist_and_fingerprint - BUCKET_DIST_INC, next_bucket->value_idx};
+            bucket = std::exchange(next_bucket, next(next_bucket));
+        }
+        *bucket = {};
+
+        // update m_values
+        if (value_idx_to_remove != m_values.size() - 1) {
+            auto& val = m_values[value_idx_to_remove];
+            val = std::move(m_values.back());
+
+            // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
+            // TODO don't duplicate code
+            auto mixed_hash = static_cast<uint64_t>(m_hash(val.first)) * UINT64_C(0x9E3779B97F4A7C15);
+            bucket = m_buckets_start + (mixed_hash >> m_shifts);
+
+            auto const values_idx_back = static_cast<uint32_t>(m_values.size() - 1);
+            while (values_idx_back != bucket->value_idx) {
+                bucket = next(bucket);
+            }
+            bucket->value_idx = value_idx_to_remove;
+        }
+        m_values.pop_back();
+        return 1;
     }
 
     [[nodiscard]] auto size() const -> size_t {

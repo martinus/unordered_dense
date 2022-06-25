@@ -19,6 +19,22 @@ TEST_CASE("insert") {
     REQUIRE(map[123U] == 321);
 }
 
+TEST_CASE("erase") {
+    using Map = ankerl::unordered_dense_map<unsigned int, int>;
+    auto map = Map();
+    REQUIRE(map.size() == 0);
+    map.try_emplace(11, 1234);
+    REQUIRE(map.size() == 1);
+    REQUIRE(map[11] == 1234);
+
+    REQUIRE(0 == map.erase(123));
+    REQUIRE(map.size() == 1);
+    REQUIRE(0 == map.erase(1234));
+    REQUIRE(map.size() == 1);
+    REQUIRE(1 == map.erase(11));
+    REQUIRE(map.size() == 0);
+}
+
 template <typename Map>
 void bench() {
 
@@ -52,7 +68,6 @@ TEST_CASE("random_insert") {
     auto uo = std::unordered_map<uint64_t, std::string>();
 
     auto rng = ankerl::nanobench::Rng();
-    auto before = std::chrono::steady_clock::now();
     for (size_t t = 0; t < 1000; ++t) {
         for (size_t i = 0; i < 10000; ++i) {
             REQUIRE(dm.size() == uo.size());
@@ -63,6 +78,4 @@ TEST_CASE("random_insert") {
             REQUIRE(dm.size() == uo.size());
         }
     }
-    auto after = std::chrono::steady_clock::now();
-    fmt::print("{}s\n", std::chrono::duration<double>(after - before).count());
 }
