@@ -409,6 +409,38 @@ public:
         return try_emplace(value.first, value.second);
     }
 
+    template <class... Args>
+    auto emplace(Args&&... args) -> std::pair<iterator, bool> {
+        if (is_full()) {
+            increase_size();
+        }
+
+        // first emplace the object back. If the key is already there, pop it.
+        m_values.emplace_back(std::forward<Args>(args)...);
+
+        auto& val = m_values.back();
+        auto hash = mixed_hash(val.first);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+        auto* bucket = bucket_from_hash(hash);
+
+        while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint &&
+                m_equals(val.first, m_values[bucket->value_idx].first)) {
+                // value was already there, so get rid of it.
+                m_values.pop_back();
+                return {begin() + bucket->value_idx, false};
+            }
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        }
+
+        // value is new, place the bucket and shift up until we find an empty spot
+        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
+        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
+
+        return {begin() + value_idx, true};
+    }
+
     void place_and_shift_up(Bucket bucket, Bucket* place) {
         while (0 != place->dist_and_fingerprint) {
             bucket = std::exchange(*place, bucket);
