@@ -30,6 +30,7 @@
 #define ANKERL_UNORDERED_DENSE_MAP_H
 
 // see https://semver.org/spec/v2.0.0.html
+#include <type_traits>
 #define ANKERL_UNORDERED_DENSE_MAP_VERSION_MAJOR 0 // incompatible API changes
 #define ANKERL_UNORDERED_DENSE_MAP_VERSION_MINOR 0 // add functionality in a backwards compatible manner
 #define ANKERL_UNORDERED_DENSE_MAP_VERSION_PATCH 1 // backwards compatible bug fixes
@@ -52,16 +53,19 @@ namespace ankerl {
  */
 template <class Key, class T, class Hash = std::hash<Key>, class Pred = std::equal_to<Key>>
 class unordered_dense_map {
+    template <bool IsConst>
+    class Iter;
+
 public:
     using value_type = std::pair<Key, T>;
     using key_type = Key;
     using size_type = size_t;
-
-    // TODO we'll need our own iterator that points to the map as well
-    using iterator = typename std::vector<value_type>::iterator;
-    using const_iterator = typename std::vector<value_type>::const_iterator;
+    using const_iterator = Iter<true>;
+    using iterator = Iter<false>;
 
 private:
+    using ValueContainer = std::vector<value_type>;
+
     static constexpr uint32_t BUCKET_DIST_INC = 256;
 
     struct Bucket {
@@ -81,7 +85,7 @@ private:
     /**
      * Contains all the key-value pairs in one densely stored container. No holes.
      */
-    std::vector<value_type> m_values{};
+    ValueContainer m_values{};
 
     Bucket* m_buckets_start = nullptr;
     Bucket* m_buckets_end = nullptr;
@@ -89,6 +93,67 @@ private:
     Hash m_hash{};
     Pred m_equals{};
     uint8_t m_shifts{61};
+
+    template <bool IsConst>
+    class Iter {
+        using Map = typename std::conditional_t<IsConst, unordered_dense_map const, unordered_dense_map>;
+        using ValuesIterator =
+            typename std::conditional_t<IsConst, typename ValueContainer::const_iterator, typename ValueContainer::iterator>;
+        Map* const m_map{};
+        ValuesIterator m_it{};
+
+    public:
+        using difference_type = std::ptrdiff_t;
+        using value_type = typename unordered_dense_map::value_type;
+        using reference = typename std::conditional<IsConst, value_type const&, value_type&>::type;
+        using pointer = typename std::conditional<IsConst, value_type const*, value_type*>::type;
+        using iterator_category = std::forward_iterator_tag;
+
+        Iter() = default;
+
+        /**
+         * Conversion constructor from iterator to const_iterator
+         *
+         * @tparam OtherIsConst
+         * @tparam std::enable_if_t<IsConst && !OtherIsConst>
+         * @param other
+         */
+        template <bool OtherIsConst, typename = typename std::enable_if_t<IsConst && !OtherIsConst>>
+        Iter(Iter<OtherIsConst> const& other) // NOLINT(google-explicit-constructor,hicpp-explicit-conversions)
+            : m_map(other.m_map)
+            , m_it(other.m_it) {}
+
+        Iter(Map* map, ValuesIterator const& it)
+            : m_map(map)
+            , m_it(it) {}
+
+        auto operator++() -> Iter& {
+            ++m_it;
+            return *this;
+        }
+
+        auto operator++(int) -> Iter {
+            return {m_map, m_it++};
+        }
+
+        auto operator*() const -> reference {
+            return *m_it;
+        }
+
+        auto operator->() const -> pointer {
+            return &*m_it;
+        }
+
+        template <bool O>
+        auto operator==(Iter<O> const& other) const -> bool {
+            return m_it == other.m_it;
+        }
+
+        template <bool O>
+        auto operator!=(Iter<O> const& other) const -> bool {
+            return m_it != other.m_it;
+        }
+    };
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
         if (++bucket == m_buckets_end) {
@@ -145,24 +210,26 @@ public:
     }
 
     template <typename K>
-    auto find(K const& key) const -> std::pair<Key, T> const* {
+    auto find(K const& key) const -> const_iterator {
         auto mh = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto const* bucket = bucket_from_hash(mh);
 
         do {
             if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
-                return m_values.data() + bucket->value_idx;
+                return {this, m_values.begin() + bucket->value_idx};
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
-        return nullptr;
+        return {this, m_values.end()};
     }
 
-    // TODO
-    auto end() const -> std::pair<Key, T> const* {
-        return nullptr;
+    auto cend() const -> const_iterator {
+        return {}
+    }
+    auto end() const -> const_iterator {
+        return cend();
     }
 
     auto operator[](Key const& key) -> T& {
@@ -192,16 +259,14 @@ public:
 
         while (dist_and_fingerprint == bucket->dist_and_fingerprint) {
             if (m_equals(key, m_values[bucket->value_idx].first)) {
-                // key found!
-                return std::make_pair(m_values.begin() + bucket->value_idx, false);
+                return {iterator{this, m_values.begin() + bucket->value_idx}, false};
             }
 
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
 
-        // emplace the new value. If that throws an exception, no harm done; index is still in a
-        // valid state
+        // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::piecewise_construct,
                               std::forward_as_tuple(std::forward<K>(key)),
                               std::forward_as_tuple(std::forward<Args>(args)...));
@@ -210,7 +275,7 @@ public:
         uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
         place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
 
-        return std::make_pair(m_values.begin() + value_idx, true);
+        return {iterator{this, m_values.begin() + value_idx}, true};
     }
 
     /**
