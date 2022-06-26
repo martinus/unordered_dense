@@ -223,7 +223,11 @@ struct hash<std::basic_string_view<CharT>> {
  * @tparam Hash
  * @tparam Pred
  */
-template <class Key, class T, class Hash = hash<Key>, class Pred = std::equal_to<Key>>
+template <class Key,
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Allocator = std::allocator<std::pair<const Key, T>>>
 class unordered_dense_map {
     using ValueContainer = std::vector<std::pair<Key, T>>;
 
@@ -254,12 +258,12 @@ private:
      * Contains all the key-value pairs in one densely stored container. No holes.
      */
     ValueContainer m_values{};
-
     Bucket* m_buckets_start = nullptr;
     Bucket* m_buckets_end = nullptr;
     uint32_t m_max_bucket_capacity = 0;
+    Allocator m_allocator{};
     Hash m_hash{};
-    Pred m_equals{};
+    KeyEqual m_equals{};
     uint8_t m_shifts{61};
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
@@ -330,6 +334,7 @@ public:
         , m_buckets_end(other.m_buckets_end)
         , m_max_bucket_capacity(other.m_max_bucket_capacity)
         , m_hash(std::move(other.m_hash))
+        , m_allocator(std::move(other.m_allocator))
         , m_equals(std::move(other.m_equals))
         , m_shifts(other.m_shifts) {
         other.m_buckets_start = nullptr;
@@ -344,6 +349,7 @@ public:
             m_hash = std::move(other.m_hash);
             m_equals = std::move(other.m_equals);
             m_shifts = other.m_shifts;
+            other.m_buckets_start = nullptr;
         }
         return *this;
     }
@@ -580,8 +586,11 @@ public:
     }
 
     auto erase(const_iterator it) -> iterator {
+        return erase(begin() + (it - cbegin()));
+    }
+
+    auto erase(iterator it) -> iterator {
         auto hash = mixed_hash(it->first);
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto* bucket = bucket_from_hash(hash);
 
         auto const value_idx_to_remove = static_cast<uint32_t>(it - cbegin());
@@ -590,11 +599,7 @@ public:
         }
 
         do_erase(bucket);
-        return begin() + (it - cbegin());
-    }
-
-    auto erase(iterator it) -> iterator {
-        return erase(const_iterator{it});
+        return it;
     }
 
     auto erase(Key const& key) -> size_t {

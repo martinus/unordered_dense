@@ -112,3 +112,9 @@ TEST_CASE("random_insert_erase") {
         REQUIRE(dm.size() == uo.size());
     }
 }
+
+TEST_CASE("sizeof") {
+    using Map = ankerl::unordered_dense_map<uint64_t, uint64_t>;
+    REQUIRE(sizeof(std::vector<std::pair<uint64_t, uint64_t>>) == 24);
+    REQUIRE(sizeof(Map) == 48);
+}
