@@ -164,6 +164,30 @@ static inline auto wyhash(const void* key, size_t len) -> uint64_t {
 
 } // namespace detail::wyhash
 
+namespace detail {
+
+struct nonesuch {};
+
+template <class Default, class AlwaysVoid, template <class...> class Op, class... Args>
+struct detector {
+    using value_t = std::false_type;
+    using type = Default;
+};
+
+template <class Default, template <class...> class Op, class... Args>
+struct detector<Default, std::void_t<Op<Args...>>, Op, Args...> {
+    using value_t = std::true_type;
+    using type = Op<Args...>;
+};
+
+} // namespace detail
+
+template <template <class...> class Op, class... Args>
+using is_detected = typename detail::detector<detail::nonesuch, void, Op, Args...>::value_t;
+
+template <template <class...> class Op, class... Args>
+constexpr bool is_detected_v = is_detected<Op, Args...>::value;
+
 template <typename T, typename Enable = void>
 struct hash : public std::hash<T> {
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
@@ -172,8 +196,12 @@ struct hash : public std::hash<T> {
     }
 };
 
+template <typename T>
+using detect_avalanching = typename T::is_avalanching;
+
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
+    using is_avalanching = void;
     auto operator()(std::basic_string<CharT> const& str) const noexcept -> size_t {
         return detail::wyhash::wyhash(str.data(), sizeof(CharT) * str.size());
     }
@@ -181,6 +209,7 @@ struct hash<std::basic_string<CharT>> {
 
 template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
+    using is_avalanching = void;
     auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> size_t {
         return detail::wyhash::wyhash(sv.data(), sizeof(CharT) * sv.size());
     }
@@ -248,7 +277,10 @@ private:
     }
 
     [[nodiscard]] constexpr auto mixed_hash(Key const& key) const -> uint64_t {
-        return static_cast<uint64_t>(m_hash(key)) * UINT64_C(0x9E3779B97F4A7C15);
+        if constexpr (is_detected_v<detect_avalanching, Hash>) {
+            return m_hash(key);
+        }
+        return detail::wyhash::wymix(m_hash(key), 0xe7037ed1a0b428dbULL);
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
