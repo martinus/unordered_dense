@@ -65,7 +65,7 @@ namespace ankerl {
 // hardcodes seed and the secret, reformattes the code, and clang-tidy fixes.
 namespace detail::wyhash {
 
-static inline void wymum(uint64_t* a, uint64_t* b) {
+static inline void mum(uint64_t* a, uint64_t* b) {
 #if defined(__SIZEOF_INT128__)
     __uint128_t r = *a;
     r *= *b;
@@ -95,42 +95,42 @@ static inline void wymum(uint64_t* a, uint64_t* b) {
 }
 
 // multiply and xor mix function, aka MUM
-static inline auto wymix(uint64_t a, uint64_t b) -> uint64_t {
-    wymum(&a, &b);
+static inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
+    mum(&a, &b);
     return a ^ b;
 }
 
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
-static inline auto wyr8(const uint8_t* p) -> uint64_t {
+static inline auto r8(const uint8_t* p) -> uint64_t {
     uint64_t v{};
     std::memcpy(&v, p, 8);
     return v;
 }
-static inline auto wyr4(const uint8_t* p) -> uint64_t {
+static inline auto r4(const uint8_t* p) -> uint64_t {
     uint32_t v{};
     std::memcpy(&v, p, 4);
     return v;
 }
 
-static inline auto wyr3(const uint8_t* p, size_t k) -> uint64_t {
-    return ((static_cast<uint64_t>(p[0])) << 16U) | ((static_cast<uint64_t>(p[k >> 1U])) << 8U) | p[k - 1];
+// reads 1, 2, or 3 bytes
+static inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
+    return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-static inline auto wyhash(const void* key, size_t len) -> uint64_t {
-    uint64_t seed = 0;
+static inline auto hash(const void* key, size_t len) -> uint64_t {
     constexpr auto secret =
         std::array{0xa0761d6478bd642fULL, 0xe7037ed1a0b428dbULL, 0x8ebc6af09c88c6e3ULL, 0x589965cc75374cc3ULL};
 
     auto const* p = static_cast<const uint8_t*>(key);
-    seed ^= secret[0];
+    uint64_t seed = secret[0];
     uint64_t a{};
     uint64_t b{};
     if (ANKERL_UNORDERED_DENSE_MAP_LIKELY(len <= 16)) {
         if (ANKERL_UNORDERED_DENSE_MAP_LIKELY(len >= 4)) {
-            a = (wyr4(p) << 32U) | wyr4(p + ((len >> 3U) << 2U));
-            b = (wyr4(p + len - 4) << 32U) | wyr4(p + len - 4 - ((len >> 3U) << 2U));
+            a = (r4(p) << 32U) | r4(p + ((len >> 3U) << 2U));
+            b = (r4(p + len - 4) << 32U) | r4(p + len - 4 - ((len >> 3U) << 2U));
         } else if (ANKERL_UNORDERED_DENSE_MAP_LIKELY(len > 0)) {
-            a = wyr3(p, len);
+            a = r3(p, len);
             b = 0;
         } else {
             a = 0;
@@ -142,24 +142,24 @@ static inline auto wyhash(const void* key, size_t len) -> uint64_t {
             uint64_t see1 = seed;
             uint64_t see2 = seed;
             do {
-                seed = wymix(wyr8(p) ^ secret[1], wyr8(p + 8) ^ seed);
-                see1 = wymix(wyr8(p + 16) ^ secret[2], wyr8(p + 24) ^ see1);
-                see2 = wymix(wyr8(p + 32) ^ secret[3], wyr8(p + 40) ^ see2);
+                seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+                see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
+                see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
                 p += 48;
                 i -= 48;
             } while (ANKERL_UNORDERED_DENSE_MAP_LIKELY(i > 48));
             seed ^= see1 ^ see2;
         }
         while (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(i > 16)) {
-            seed = wymix(wyr8(p) ^ secret[1], wyr8(p + 8) ^ seed);
+            seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
             i -= 16;
             p += 16;
         }
-        a = wyr8(p + i - 16);
-        b = wyr8(p + i - 8);
+        a = r8(p + i - 16);
+        b = r8(p + i - 8);
     }
 
-    return wymix(secret[1] ^ len, wymix(a ^ secret[1], b ^ seed));
+    return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
 } // namespace detail::wyhash
@@ -203,7 +203,7 @@ template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string<CharT> const& str) const noexcept -> size_t {
-        return detail::wyhash::wyhash(str.data(), sizeof(CharT) * str.size());
+        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
     }
 };
 
@@ -211,7 +211,7 @@ template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> size_t {
-        return detail::wyhash::wyhash(sv.data(), sizeof(CharT) * sv.size());
+        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
     }
 };
 
@@ -280,7 +280,7 @@ private:
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             return m_hash(key);
         }
-        return detail::wyhash::wymix(m_hash(key), 0xe7037ed1a0b428dbULL);
+        return detail::wyhash::mix(m_hash(key), 0xe7037ed1a0b428dbULL);
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
