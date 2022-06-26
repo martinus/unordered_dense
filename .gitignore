@@ -2,6 +2,7 @@ build
 builddir
 .cache
 .vscode
+compile_commands.json
 
 # ignore all in subprojects except the .wrap files
 /subprojects/*
