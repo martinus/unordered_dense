@@ -263,14 +263,14 @@ private:
     uint8_t m_shifts{61};
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
-        if (++bucket == m_buckets_end) {
+        if (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(++bucket == m_buckets_end)) {
             return m_buckets_start;
         }
         return bucket;
     }
 
     [[nodiscard]] auto next(Bucket* bucket) -> Bucket* {
-        if (++bucket == m_buckets_end) {
+        if (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(++bucket == m_buckets_end)) {
             return m_buckets_start;
         }
         return bucket;
@@ -310,6 +310,15 @@ private:
             bucket = next(bucket);
         }
         return {dist_and_fingerprint, bucket};
+    }
+
+    void place_and_shift_up(Bucket bucket, Bucket* place) {
+        while (0 != place->dist_and_fingerprint) {
+            bucket = std::exchange(*place, bucket);
+            bucket.dist_and_fingerprint += BUCKET_DIST_INC;
+            place = next(place);
+        }
+        *place = bucket;
     }
 
 public:
@@ -433,6 +442,10 @@ public:
         return end();
     }
 
+    auto operator[](Key&& key) -> T& {
+        return try_emplace(std::move(key)).first->second;
+    }
+
     auto operator[](Key const& key) -> T& {
         return try_emplace(key).first->second;
     }
@@ -471,15 +484,6 @@ public:
         place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
 
         return {begin() + value_idx, true};
-    }
-
-    void place_and_shift_up(Bucket bucket, Bucket* place) {
-        while (0 != place->dist_and_fingerprint) {
-            bucket = std::exchange(*place, bucket);
-            bucket.dist_and_fingerprint += BUCKET_DIST_INC;
-            place = next(place);
-        }
-        *place = bucket;
     }
 
     template <typename K, typename... Args>
