@@ -338,12 +338,18 @@ class unordered_dense_map {
         return UINT64_C(1) << (64U - shifts);
     }
 
+    [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
+        auto shifts = INITIAL_SHIFTS;
+        while (static_cast<uint64_t>(calc_num_buckets(shifts) * max_load_factor()) < s) {
+            --shifts;
+        }
+        return shifts;
+    }
+
     // assumes m_values has data, m_buckets_start=m_buckets_end=nullptr, m_shifts is INITIAL_SHIFTS
     void init_from_values() {
         if (!empty()) {
-            while (static_cast<uint64_t>(calc_num_buckets(m_shifts) * max_load_factor()) < size()) {
-                --m_shifts;
-            }
+            m_shifts = calc_shifts_for_size(size());
             allocate_and_clear_buckets();
             fill_buckets_from_values();
         }
@@ -794,7 +800,7 @@ public:
             return false;
         }
         for (auto const& b_entry : b) {
-            if (auto it = a.find(b_entry.first); a.end() == it || b_entry.second != it->second) {
+            if (auto it = a.find(b_entry.first); a.end() == it || !(b_entry.second == it->second)) {
                 return false;
             }
         }
@@ -803,6 +809,18 @@ public:
 
     friend auto operator!=(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
         return !(a == b);
+    }
+
+    void reserve(size_t capa) {
+        m_values.reserve(capa);
+        auto shifts = calc_shifts_for_size(capa);
+        if (shifts < m_shifts) { 
+            // size increases when shifts is bigger
+            m_shifts = shifts;
+            deallocate_buckets();
+            allocate_and_clear_buckets();
+            fill_buckets_from_values();
+        }
     }
 };
 
