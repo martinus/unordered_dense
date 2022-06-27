@@ -447,6 +447,60 @@ public:
         , m_hash(hash)
         , m_equal(equal) {}
 
+    unordered_dense_map(size_t bucket_count, Allocator const& alloc)
+        : unordered_dense_map(bucket_count, Hash(), KeyEqual(), alloc) {}
+
+    unordered_dense_map(size_t bucket_count, Hash const& hash, Allocator const& alloc)
+        : unordered_dense_map(bucket_count, hash, KeyEqual(), alloc) {}
+
+    explicit unordered_dense_map(Allocator const& alloc)
+        : unordered_dense_map(0, Hash(), KeyEqual(), alloc) {}
+
+    template <class InputIt>
+    unordered_dense_map(InputIt first,
+                        InputIt last,
+                        size_type bucket_count = 0,
+                        Hash const& hash = Hash(),
+                        KeyEqual const& equal = KeyEqual(),
+                        Allocator const& alloc = Allocator())
+        : unordered_dense_map(bucket_count, hash, equal, alloc) {
+        insert(first, last);
+    }
+
+    template <class InputIt>
+    unordered_dense_map(InputIt first, InputIt last, size_type bucket_count, Allocator const& alloc)
+        : unordered_dense_map(first, last, bucket_count, Hash(), KeyEqual(), alloc) {}
+
+    template <class InputIt>
+    unordered_dense_map(InputIt first, InputIt last, size_type bucket_count, Hash const& hash, Allocator const& alloc)
+        : unordered_dense_map(first, last, bucket_count, hash, KeyEqual(), alloc) {}
+
+    unordered_dense_map(unordered_dense_map const& other)
+        : unordered_dense_map(other, other.m_values.get_allocator()) {}
+
+    unordered_dense_map(unordered_dense_map const& other, Allocator const& alloc)
+        : m_values(other.m_values, alloc)
+        , m_max_load_factor(other.m_max_load_factor)
+        , m_hash(other.m_hash)
+        , m_equal(other.m_equal) {
+        init_from_values();
+    }
+
+    unordered_dense_map(unordered_dense_map&& other) noexcept
+        : unordered_dense_map(std::move(other), other.m_values.get_allocator()) {}
+
+    unordered_dense_map(unordered_dense_map&& other, Allocator const& alloc) noexcept
+        : m_values(std::move(other.m_values), alloc)
+        , m_buckets_start(other.m_buckets_start)
+        , m_buckets_end(other.m_buckets_end)
+        , m_max_bucket_capacity(other.m_max_bucket_capacity)
+        , m_max_load_factor(other.m_max_load_factor)
+        , m_hash(std::move(other.m_hash))
+        , m_equal(std::move(other.m_equal))
+        , m_shifts(other.m_shifts) {
+        other.m_buckets_start = nullptr;
+    }
+
     unordered_dense_map(std::initializer_list<value_type> ilist,
                         size_t bucket_count = 0,
                         Hash const& hash = Hash(),
@@ -465,21 +519,6 @@ public:
                         Allocator const& alloc)
         : unordered_dense_map(init, bucket_count, hash, KeyEqual(), alloc) {}
 
-    unordered_dense_map(unordered_dense_map&& other, Allocator const& alloc) noexcept
-        : m_values(std::move(other.m_values), alloc)
-        , m_buckets_start(other.m_buckets_start)
-        , m_buckets_end(other.m_buckets_end)
-        , m_max_bucket_capacity(other.m_max_bucket_capacity)
-        , m_max_load_factor(other.m_max_load_factor)
-        , m_hash(std::move(other.m_hash))
-        , m_equal(std::move(other.m_equal))
-        , m_shifts(other.m_shifts) {
-        other.m_buckets_start = nullptr;
-    }
-
-    unordered_dense_map(unordered_dense_map&& other) noexcept
-        : unordered_dense_map(std::move(other), other.m_values.get_allocator()) {}
-
     auto operator=(unordered_dense_map&& other) noexcept -> unordered_dense_map& {
         if (&other != this) {
             m_values = std::move(other.m_values);
@@ -494,17 +533,6 @@ public:
         }
         return *this;
     }
-
-    unordered_dense_map(unordered_dense_map const& other, Allocator const& alloc)
-        : m_values(other.m_values, alloc)
-        , m_max_load_factor(other.m_max_load_factor)
-        , m_hash(other.m_hash)
-        , m_equal(other.m_equal) {
-        init_from_values();
-    }
-
-    unordered_dense_map(unordered_dense_map const& other)
-        : unordered_dense_map(other, other.m_values.get_allocator()) {}
 
     auto operator=(unordered_dense_map const& other) -> unordered_dense_map& {
         if (&other != this) {
