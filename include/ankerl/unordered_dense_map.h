@@ -593,24 +593,26 @@ public:
         if (empty()) {
             return end();
         }
+
         auto mh = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto const* bucket = bucket_from_hash(mh);
 
-        // do-while is faster than while. The inner loop is unrolled 4 times, which in my benchmark produced the fastest code
+        // unrolled loop. *Always* check a few directly, then enter the loop. This is faster.
+
+        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+            return begin() + bucket->value_idx;
+        }
+        dist_and_fingerprint += BUCKET_DIST_INC;
+        bucket = next(bucket);
+
+        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+            return begin() + bucket->value_idx;
+        }
+        dist_and_fingerprint += BUCKET_DIST_INC;
+        bucket = next(bucket);
+
         do {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-                return begin() + bucket->value_idx;
-            }
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-                return begin() + bucket->value_idx;
-            }
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-
             if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
                 return begin() + bucket->value_idx;
             }
@@ -814,7 +816,7 @@ public:
     void reserve(size_t capa) {
         m_values.reserve(capa);
         auto shifts = calc_shifts_for_size(capa);
-        if (shifts < m_shifts) { 
+        if (shifts < m_shifts) {
             // size increases when shifts is bigger
             m_shifts = shifts;
             deallocate_buckets();
