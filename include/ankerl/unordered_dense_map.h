@@ -628,7 +628,7 @@ public:
 
     // TODO don't hardcode
     [[nodiscard]] auto max_load_factor() const -> float {
-        return 0.8;
+        return 0.7;
     }
 };
 
