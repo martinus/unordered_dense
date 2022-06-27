@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -95,30 +96,31 @@ static inline void mum(uint64_t* a, uint64_t* b) {
 }
 
 // multiply and xor mix function, aka MUM
-static inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
+[[nodiscard]] static inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
     mum(&a, &b);
     return a ^ b;
 }
 
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
-static inline auto r8(const uint8_t* p) -> uint64_t {
+[[nodiscard]] static inline auto r8(const uint8_t* p) -> uint64_t {
     uint64_t v{};
     std::memcpy(&v, p, 8);
     return v;
 }
-static inline auto r4(const uint8_t* p) -> uint64_t {
+
+[[nodiscard]] static inline auto r4(const uint8_t* p) -> uint64_t {
     uint32_t v{};
     std::memcpy(&v, p, 4);
     return v;
 }
 
 // reads 1, 2, or 3 bytes
-static inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
+[[nodiscard]] static inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-static inline auto hash(const void* key, size_t len) -> uint64_t {
-    constexpr auto secret =
+[[nodiscard]] static inline auto hash(const void* key, size_t len) -> uint64_t {
+    static constexpr auto secret =
         std::array{0xa0761d6478bd642fULL, 0xe7037ed1a0b428dbULL, 0x8ebc6af09c88c6e3ULL, 0x589965cc75374cc3ULL};
 
     auto const* p = static_cast<const uint8_t*>(key);
@@ -227,9 +229,12 @@ template <class Key,
           class T,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
-          class Allocator = std::allocator<std::pair<const Key, T>>>
+          class Allocator = std::allocator<std::pair<Key, T>>>
 class unordered_dense_map {
-    using ValueContainer = std::vector<std::pair<Key, T>>;
+    struct Bucket;
+    using ValueContainer = std::vector<std::pair<Key, T>, Allocator>;
+    using BucketAlloc = typename std::allocator_traits<Allocator>::template rebind_alloc<Bucket>;
+    using BucketAllocTraits = std::allocator_traits<BucketAlloc>;
 
 public:
     using value_type = std::pair<Key, T>;
@@ -239,7 +244,9 @@ public:
     using iterator = typename ValueContainer::iterator;
 
 private:
-    static constexpr uint32_t BUCKET_DIST_INC = 256;
+    // 1 byte of fingerprint
+    static constexpr uint32_t BUCKET_DIST_INC = 1U << 8U;
+    static constexpr uint32_t BUCKET_FINGERPRINT_MASK = BUCKET_DIST_INC - 1;
 
     struct Bucket {
         /**
@@ -253,6 +260,8 @@ private:
          */
         uint32_t value_idx{};
     };
+    static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
+    static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
     /**
      * Contains all the key-value pairs in one densely stored container. No holes.
@@ -261,9 +270,8 @@ private:
     Bucket* m_buckets_start = nullptr;
     Bucket* m_buckets_end = nullptr;
     uint32_t m_max_bucket_capacity = 0;
-    Allocator m_allocator{};
     Hash m_hash{};
-    KeyEqual m_equals{};
+    KeyEqual m_equal{};
     uint8_t m_shifts{61};
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
@@ -288,7 +296,7 @@ private:
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
-        return BUCKET_DIST_INC | (static_cast<uint32_t>(hash) & UINT64_C(0xFF));
+        return BUCKET_DIST_INC | (hash & BUCKET_FINGERPRINT_MASK);
     }
 
     [[nodiscard]] constexpr auto bucket_from_hash(uint64_t hash) const -> Bucket const* {
@@ -326,7 +334,16 @@ private:
     }
 
 public:
-    unordered_dense_map() = default;
+    unordered_dense_map()
+        : unordered_dense_map(0) {}
+
+    explicit unordered_dense_map(size_t /*bucket_count*/,
+                                 Hash const& hash = Hash{},
+                                 KeyEqual const& equal = KeyEqual{},
+                                 Allocator const& alloc = Allocator{})
+        : m_values(alloc)
+        , m_hash(hash)
+        , m_equal(equal) {}
 
     unordered_dense_map(unordered_dense_map&& other) noexcept
         : m_values(std::move(other.m_values))
@@ -334,8 +351,7 @@ public:
         , m_buckets_end(other.m_buckets_end)
         , m_max_bucket_capacity(other.m_max_bucket_capacity)
         , m_hash(std::move(other.m_hash))
-        , m_allocator(std::move(other.m_allocator))
-        , m_equals(std::move(other.m_equals))
+        , m_equal(std::move(other.m_equal))
         , m_shifts(other.m_shifts) {
         other.m_buckets_start = nullptr;
     }
@@ -347,7 +363,7 @@ public:
             m_buckets_end = other.m_buckets_end;
             m_max_bucket_capacity = other.m_max_bucket_capacity;
             m_hash = std::move(other.m_hash);
-            m_equals = std::move(other.m_equals);
+            m_equal = std::move(other.m_equal);
             m_shifts = other.m_shifts;
             other.m_buckets_start = nullptr;
         }
@@ -390,7 +406,8 @@ public:
     }
 
     ~unordered_dense_map() {
-        delete[] m_buckets_start;
+        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
+        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
     }
 
     void clear() {
@@ -427,19 +444,19 @@ public:
 
         // do-while is faster than while. The inner loop is unrolled 4 times, which in my benchmark produced the fastest code
         do {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
                 return begin() + bucket->value_idx;
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
 
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
                 return begin() + bucket->value_idx;
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
 
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
                 return begin() + bucket->value_idx;
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
@@ -476,7 +493,7 @@ public:
 
         while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
             if (dist_and_fingerprint == bucket->dist_and_fingerprint &&
-                m_equals(val.first, m_values[bucket->value_idx].first)) {
+                m_equal(val.first, m_values[bucket->value_idx].first)) {
                 // value was already there, so get rid of it.
                 m_values.pop_back();
                 return {begin() + bucket->value_idx, false};
@@ -503,7 +520,7 @@ public:
         auto* bucket = bucket_from_hash(hash);
 
         while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equals(key, m_values[bucket->value_idx].first)) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
                 return {begin() + bucket->value_idx, false};
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
@@ -530,12 +547,21 @@ public:
     }
 
     void allocate_new_bucket_array() {
-        delete[] m_buckets_start;
+        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
+        std::destroy(m_buckets_start, m_buckets_end); // this is a noop
+        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
 
         auto num_buckets = UINT64_C(1) << (64U - m_shifts);
-        m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
-        m_buckets_start = new Bucket[num_buckets];
+        m_buckets_start = BucketAllocTraits::allocate(bucket_alloc, num_buckets);
         m_buckets_end = m_buckets_start + num_buckets;
+
+        // TODO is there a better way to construct all objects?
+        std::memset(m_buckets_start, 0, sizeof(Bucket) * num_buckets);
+        // for (auto* bucket = m_buckets_start; bucket != m_buckets_end; ++bucket) {
+        //     BucketAllocTraits::construct(bucket_alloc, bucket);
+        // }
+
+        m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
     }
 
     void fill_bucket_array_from_values() {
@@ -605,7 +631,7 @@ public:
     auto erase(Key const& key) -> size_t {
         auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
-        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equals(key, m_values[bucket->value_idx].first)) {
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, m_values[bucket->value_idx].first)) {
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
@@ -628,7 +654,7 @@ public:
 
     // TODO don't hardcode
     [[nodiscard]] auto max_load_factor() const -> float {
-        return 0.7;
+        return 0.8;
     }
 };
 
