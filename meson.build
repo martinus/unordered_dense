@@ -4,7 +4,7 @@
 #
 # release & debug setup
 #      CXX="ccache clang++" meson setup --buildtype release builddir/clang_release
-#      CXX="ccache clang++" meson setup build/clang_debug
+#      CXX="ccache clang++" meson setup builddir/clang_debug
 # c++20 build
 #     CXX="ccache clang++" meson setup -Dcpp_std=c++20 builddir/clang_cpp20
 # lcov coverage:
