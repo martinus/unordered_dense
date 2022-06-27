@@ -17,6 +17,8 @@ test_sources = [
     'unit/hash_smart_ptr.cpp',
     'unit/hash_string_view.cpp',
     'unit/include_only.cpp',
+    'unit/initializer_list_insert.cpp',
+    'unit/initializerlist.cpp',
     'unit/insert.cpp',
     'unit/move_to_moved.cpp',
     'unit/swap.cpp',
