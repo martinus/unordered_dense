@@ -270,6 +270,7 @@ private:
     Bucket* m_buckets_start = nullptr;
     Bucket* m_buckets_end = nullptr;
     uint32_t m_max_bucket_capacity = 0;
+    float m_max_load_factor = 0.8;
     Hash m_hash{};
     KeyEqual m_equal{};
     uint8_t m_shifts{61};
@@ -350,6 +351,7 @@ public:
         , m_buckets_start(other.m_buckets_start)
         , m_buckets_end(other.m_buckets_end)
         , m_max_bucket_capacity(other.m_max_bucket_capacity)
+        , m_max_load_factor(other.m_max_load_factor)
         , m_hash(std::move(other.m_hash))
         , m_equal(std::move(other.m_equal))
         , m_shifts(other.m_shifts) {
@@ -362,6 +364,7 @@ public:
             m_buckets_start = std::exchange(other.m_buckets_start, nullptr);
             m_buckets_end = other.m_buckets_end;
             m_max_bucket_capacity = other.m_max_bucket_capacity;
+            m_max_load_factor = other.m_max_load_factor;
             m_hash = std::move(other.m_hash);
             m_equal = std::move(other.m_equal);
             m_shifts = other.m_shifts;
@@ -543,24 +546,20 @@ public:
      * True when no element can be added any more without increasing the size
      */
     [[nodiscard]] auto is_full() const -> bool {
-        return size() == m_max_bucket_capacity;
+        return size() >= m_max_bucket_capacity;
     }
 
     void allocate_new_bucket_array() {
         auto bucket_alloc = BucketAlloc(m_values.get_allocator());
-        std::destroy(m_buckets_start, m_buckets_end); // this is a noop
+
+        // we can first deallocate the bucket array and then allocate the larger one. This is really nice
+        // because it means there's no memory spike. (Note there is still a spike when the std::vector resizes)
         BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
 
         auto num_buckets = UINT64_C(1) << (64U - m_shifts);
         m_buckets_start = BucketAllocTraits::allocate(bucket_alloc, num_buckets);
         m_buckets_end = m_buckets_start + num_buckets;
-
-        // TODO is there a better way to construct all objects?
         std::memset(m_buckets_start, 0, sizeof(Bucket) * num_buckets);
-        // for (auto* bucket = m_buckets_start; bucket != m_buckets_end; ++bucket) {
-        //     BucketAllocTraits::construct(bucket_alloc, bucket);
-        // }
-
         m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
     }
 
@@ -652,9 +651,13 @@ public:
         return m_values.size();
     }
 
-    // TODO don't hardcode
     [[nodiscard]] auto max_load_factor() const -> float {
-        return 0.8;
+        return m_max_load_factor;
+    }
+
+    void max_load_factor(float ml) {
+        m_max_load_factor = ml;
+        m_max_bucket_capacity = static_cast<uint64_t>((m_buckets_end - m_buckets_start) * max_load_factor());
     }
 };
 
