@@ -293,7 +293,13 @@ private:
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             return m_hash(key);
         }
-        return detail::wyhash::mix(m_hash(key), 0xe7037ed1a0b428dbULL);
+        // See https://godbolt.org/z/Pvo5Kf4Gx, mix() compiles to
+        //   movabs  rcx, -7046029254386353131
+        //   mov     rax, rcx
+        //   mul     rdi
+        //   xor     rax, rdx
+        //   ret
+        return detail::wyhash::mix(m_hash(key), UINT64_C(0x9E3779B97F4A7C15));
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
