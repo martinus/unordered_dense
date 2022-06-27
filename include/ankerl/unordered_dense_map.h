@@ -39,6 +39,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -530,7 +531,7 @@ public:
     }
 
     template <typename K>
-    auto find(K const& key) const -> const_iterator {
+    auto find(K const& key) -> iterator {
         if (empty()) {
             return end();
         }
@@ -559,6 +560,27 @@ public:
             bucket = next(bucket);
         } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
         return end();
+    }
+
+    template <typename K>
+    auto find(K const& key) const -> const_iterator {
+        return const_cast<unordered_dense_map*>(this)->find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    }
+
+    template <typename K>
+    auto count(K const& key) const -> size_t {
+        return find(key) == end() ? 0 : 1;
+    }
+
+    auto at(key_type const& key) -> T& {
+        if (auto it = find(key); end() != it) {
+            return it->second;
+        }
+        throw std::out_of_range("ankerl::unordered_dense_map::at(): key not found");
+    }
+
+    auto at(key_type const& key) const -> T const& {
+        return const_cast<unordered_dense_map*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     auto operator[](Key&& key) -> T& {
@@ -661,7 +683,6 @@ public:
         }
 
         if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
-            // not found, nothing is deleted
             return 0;
         }
         do_erase(bucket);
