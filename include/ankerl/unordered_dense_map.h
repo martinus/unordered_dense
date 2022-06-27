@@ -619,6 +619,20 @@ public:
         return try_emplace(value.first, value.second);
     }
 
+    template <class K, class M>
+    auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
+        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
+        if (!it_isinserted.second) {
+            it_isinserted.first->second = std::forward<M>(mapped);
+        }
+        return it_isinserted;
+    }
+
+    template <class K, class M>
+    auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
+        return insert_or_assign(std::forward<K>(key), std::forward<M>(mapped)).first;
+    }
+
     template <class... Args>
     auto emplace(Args&&... args) -> std::pair<iterator, bool> {
         if (is_full()) {

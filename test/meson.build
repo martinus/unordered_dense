@@ -19,7 +19,10 @@ test_sources = [
     'unit/include_only.cpp',
     'unit/initializer_list_insert.cpp',
     'unit/initializerlist.cpp',
+    'unit/insert_or_assign.cpp',
     'unit/insert.cpp',
+    'unit/iterators_empty.cpp',
+    'unit/iterators_erase.cpp',
     'unit/move_to_moved.cpp',
     'unit/swap.cpp',
 ]
