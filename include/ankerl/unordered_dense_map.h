@@ -247,12 +247,12 @@ class unordered_dense_map {
          * Upper 3 byte encode the distance to the original bucket. 0 means empty, 1 means here, ...
          * Lower 1 byte encodes a fingerprint; 8 bits from the hash.
          */
-        uint32_t dist_and_fingerprint{};
+        uint32_t dist_and_fingerprint;
 
         /**
          * Index into the m_values vector.
          */
-        uint32_t value_idx{};
+        uint32_t value_idx;
     };
     static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");

@@ -30,7 +30,7 @@ namespace checksum {
     return val;
 }
 
-[[nodiscard]] constexpr auto mix(Counter::Obj const& cdv) -> uint64_t {
+[[nodiscard]] auto mix(Counter::Obj const& cdv) -> uint64_t {
     return mix(cdv.get());
 }
 
