@@ -1,14 +1,15 @@
-#include <ankerl/unordered_dense_map.h>
+#if 0
+#    include <ankerl/unordered_dense_map.h>
 
-#include <app/nanobench.h>
-#include <app/robin_hood.h>
-#include <app/name_of_type.h>
+#    include <app/name_of_type.h>
+#    include <app/nanobench.h>
+#    include <app/robin_hood.h>
 
-#include <doctest.h>
-#include <fmt/format.h>
+#    include <doctest.h>
+#    include <fmt/format.h>
 
-#include <chrono>
-#include <unordered_map>
+#    include <chrono>
+#    include <unordered_map>
 
 TEST_CASE("insert") {
     using Map = ankerl::unordered_dense_map<unsigned int, int>;
@@ -118,3 +119,5 @@ TEST_CASE("sizeof") {
     REQUIRE(sizeof(std::vector<std::pair<uint64_t, uint64_t>>) == 24);
     REQUIRE(sizeof(Map) == 48);
 }
+
+#endif

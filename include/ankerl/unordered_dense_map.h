@@ -236,17 +236,10 @@ class unordered_dense_map {
     using BucketAlloc = typename std::allocator_traits<Allocator>::template rebind_alloc<Bucket>;
     using BucketAllocTraits = std::allocator_traits<BucketAlloc>;
 
-public:
-    using value_type = std::pair<Key, T>;
-    using key_type = Key;
-    using size_type = size_t;
-    using const_iterator = typename ValueContainer::const_iterator;
-    using iterator = typename ValueContainer::iterator;
-
-private:
     // 1 byte of fingerprint
     static constexpr uint32_t BUCKET_DIST_INC = 1U << 8U;
     static constexpr uint32_t BUCKET_FINGERPRINT_MASK = BUCKET_DIST_INC - 1;
+    static constexpr uint8_t INITIAL_SHIFTS = 64 - 3;
 
     struct Bucket {
         /**
@@ -273,7 +266,7 @@ private:
     float m_max_load_factor = 0.8;
     Hash m_hash{};
     KeyEqual m_equal{};
-    uint8_t m_shifts{61};
+    uint8_t m_shifts = INITIAL_SHIFTS;
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
         if (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(++bucket == m_buckets_end)) {
@@ -340,7 +333,108 @@ private:
         *place = bucket;
     }
 
+    [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> uint64_t {
+        return UINT64_C(1) << (64U - shifts);
+    }
+
+    // assumes m_values has data, m_buckets_start=m_buckets_end=nullptr, m_shifts is INITIAL_SHIFTS
+    void init_from_values() {
+        if (!empty()) {
+            while (static_cast<uint64_t>(calc_num_buckets(m_shifts) * max_load_factor()) < size()) {
+                --m_shifts;
+            }
+            allocate_and_clear_buckets();
+            fill_buckets_from_values();
+        }
+    }
+
+    /**
+     * True when no element can be added any more without increasing the size
+     */
+    [[nodiscard]] auto is_full() const -> bool {
+        return size() >= m_max_bucket_capacity;
+    }
+
+    void deallocate_buckets() {
+        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
+
+        // we can first deallocate the bucket array and then allocate the larger one. This is really nice
+        // because it means there's no memory spike. (Note there is still a spike when the std::vector resizes)
+        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
+        m_buckets_start = nullptr;
+        m_buckets_end = nullptr;
+        m_max_bucket_capacity = 0;
+    }
+
+    void allocate_and_clear_buckets() {
+        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
+        auto num_buckets = UINT64_C(1) << (64U - m_shifts);
+        m_buckets_start = BucketAllocTraits::allocate(bucket_alloc, num_buckets);
+        m_buckets_end = m_buckets_start + num_buckets;
+        m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
+        clear_buckets();
+    }
+
+    void clear_buckets() {
+        std::memset(m_buckets_start, 0, sizeof(Bucket) * (m_buckets_end - m_buckets_start));
+    }
+
+    void fill_buckets_from_values() {
+        for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
+            auto const& key = m_values[value_idx].first;
+            auto [dist_and_fingerprint, bucket] = next_while_less(key);
+
+            // we know for certain that key has not yet been inserted, so no need to check it.
+            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
+        }
+    }
+
+    void increase_size() {
+        --m_shifts;
+        deallocate_buckets();
+        allocate_and_clear_buckets();
+        fill_buckets_from_values();
+    }
+
+    void do_erase(Bucket* bucket) {
+        auto const value_idx_to_remove = bucket->value_idx;
+
+        // shift down until either empty or an element with correct spot is found
+        auto* next_bucket = next(bucket);
+        while (next_bucket->dist_and_fingerprint >= BUCKET_DIST_INC * 2) {
+            *bucket = {next_bucket->dist_and_fingerprint - BUCKET_DIST_INC, next_bucket->value_idx};
+            bucket = std::exchange(next_bucket, next(next_bucket));
+        }
+        *bucket = {};
+
+        // update m_values
+        if (value_idx_to_remove != m_values.size() - 1) {
+            // no luck, we'll have to replace the value with the last one and update the index accordingly
+            auto& val = m_values[value_idx_to_remove];
+            val = std::move(m_values.back());
+
+            // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
+            // TODO don't duplicate code
+            auto mh = mixed_hash(val.first);
+            bucket = bucket_from_hash(mh);
+
+            auto const values_idx_back = static_cast<uint32_t>(m_values.size() - 1);
+            while (values_idx_back != bucket->value_idx) {
+                bucket = next(bucket);
+            }
+            bucket->value_idx = value_idx_to_remove;
+        }
+        m_values.pop_back();
+    }
+
 public:
+    using value_type = std::pair<Key, T>;
+    using key_type = Key;
+    using mapped_type = T;
+    using size_type = size_t;
+    using const_iterator = typename ValueContainer::const_iterator;
+    using iterator = typename ValueContainer::iterator;
+
     unordered_dense_map()
         : unordered_dense_map(0) {}
 
@@ -379,37 +473,23 @@ public:
         return *this;
     }
 
-    [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> uint64_t {
-        return UINT64_C(1) << (64U - shifts);
-    }
-
     unordered_dense_map(unordered_dense_map const& other)
-        : m_values(other.m_values) {
-
-        if (!other.empty()) {
-            while (static_cast<uint64_t>(calc_num_buckets(m_shifts) * max_load_factor()) < other.size()) {
-                --m_shifts;
-            }
-
-            allocate_new_bucket_array();
-            fill_bucket_array_from_values();
-        }
+        : m_values(other.m_values)
+        , m_max_load_factor(other.m_max_load_factor)
+        , m_hash(other.m_hash)
+        , m_equal(other.m_equal) {
+        init_from_values();
     }
 
     auto operator=(unordered_dense_map const& other) -> unordered_dense_map& {
         if (&other != this) {
-            auto shifts = m_shifts;
-            while (static_cast<uint64_t>(calc_num_buckets(shifts) * max_load_factor()) < other.size()) {
-                --shifts;
-            }
-
-            if (shifts != m_shifts) {
-                m_shifts = shifts;
-                allocate_new_bucket_array();
-            } else {
-                std::memset(m_buckets_start, 0, sizeof(Bucket) * calc_num_buckets(m_shifts));
-            }
-            fill_bucket_array_from_values();
+            deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
+            m_values = other.m_values;
+            m_max_load_factor = other.m_max_load_factor;
+            m_hash = other.m_hash;
+            m_equal = other.m_equal;
+            m_shifts = INITIAL_SHIFTS;
+            init_from_values();
         }
         return *this;
     }
@@ -419,10 +499,14 @@ public:
         BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
     }
 
+    void swap(unordered_dense_map& other) {
+        using std::swap;
+        swap(other, *this);
+    }
+
     void clear() {
         m_values.clear();
-        auto num_buckets = UINT64_C(1) << (64U - m_shifts);
-        std::memset(m_buckets_start, 0, sizeof(Bucket) * num_buckets);
+        clear_buckets();
     }
 
     auto cend() const -> const_iterator {
@@ -447,6 +531,9 @@ public:
 
     template <typename K>
     auto find(K const& key) const -> const_iterator {
+        if (empty()) {
+            return end();
+        }
         auto mh = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto const* bucket = bucket_from_hash(mh);
@@ -548,74 +635,6 @@ public:
         return {begin() + value_idx, true};
     }
 
-    /**
-     * True when no element can be added any more without increasing the size
-     */
-    [[nodiscard]] auto is_full() const -> bool {
-        return size() >= m_max_bucket_capacity;
-    }
-
-    void allocate_new_bucket_array() {
-        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
-
-        // we can first deallocate the bucket array and then allocate the larger one. This is really nice
-        // because it means there's no memory spike. (Note there is still a spike when the std::vector resizes)
-        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
-
-        auto num_buckets = UINT64_C(1) << (64U - m_shifts);
-        m_buckets_start = BucketAllocTraits::allocate(bucket_alloc, num_buckets);
-        m_buckets_end = m_buckets_start + num_buckets;
-        std::memset(m_buckets_start, 0, sizeof(Bucket) * num_buckets);
-        m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
-    }
-
-    void fill_bucket_array_from_values() {
-        for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
-            auto const& key = m_values[value_idx].first;
-            auto [dist_and_fingerprint, bucket] = next_while_less(key);
-
-            // we know for certain that key has not yet been inserted, so no need to check it.
-            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
-        }
-    }
-
-    void increase_size() {
-        --m_shifts;
-        allocate_new_bucket_array();
-        fill_bucket_array_from_values();
-    }
-
-    void do_erase(Bucket* bucket) {
-        auto const value_idx_to_remove = bucket->value_idx;
-
-        // shift down until either empty or an element with correct spot is found
-        auto* next_bucket = next(bucket);
-        while (next_bucket->dist_and_fingerprint >= BUCKET_DIST_INC * 2) {
-            *bucket = {next_bucket->dist_and_fingerprint - BUCKET_DIST_INC, next_bucket->value_idx};
-            bucket = std::exchange(next_bucket, next(next_bucket));
-        }
-        *bucket = {};
-
-        // update m_values
-        if (value_idx_to_remove != m_values.size() - 1) {
-            // no luck, we'll have to replace the value with the last one and update the index accordingly
-            auto& val = m_values[value_idx_to_remove];
-            val = std::move(m_values.back());
-
-            // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
-            // TODO don't duplicate code
-            auto mh = mixed_hash(val.first);
-            bucket = bucket_from_hash(mh);
-
-            auto const values_idx_back = static_cast<uint32_t>(m_values.size() - 1);
-            while (values_idx_back != bucket->value_idx) {
-                bucket = next(bucket);
-            }
-            bucket->value_idx = value_idx_to_remove;
-        }
-        m_values.pop_back();
-    }
-
     auto erase(const_iterator it) -> iterator {
         return erase(begin() + (it - cbegin()));
     }
@@ -664,6 +683,25 @@ public:
     void max_load_factor(float ml) {
         m_max_load_factor = ml;
         m_max_bucket_capacity = static_cast<uint64_t>((m_buckets_end - m_buckets_start) * max_load_factor());
+    }
+
+    friend auto operator==(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
+        if (&a == &b) {
+            return true;
+        }
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (auto const& b_entry : b) {
+            if (auto it = a.find(b_entry.first); a.end() == it || b_entry.second != it->second) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    friend auto operator!=(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
+        return !(a == b);
     }
 };
 

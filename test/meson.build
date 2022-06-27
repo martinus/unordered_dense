@@ -4,8 +4,13 @@ test_sources = [
     'app/nanobench.cpp',
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',
+    'unit/assign_to_move.cpp',
+    'unit/assignment_combinations.cpp',
+    'unit/copy_and_assign_maps.cpp',
     'unit/include_only.cpp',
     'unit/insert.cpp',
+    'unit/move_to_moved.cpp',
+    'unit/swap.cpp',
 ]
 
 # additional compile options
