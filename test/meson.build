@@ -26,6 +26,7 @@ test_sources = [
     'unit/iterators_insert.cpp',
     'unit/maps_of_maps.cpp',
     'unit/move_to_moved.cpp',
+    'unit/multiple_apis.cpp',
     'unit/swap.cpp',
 ]
 

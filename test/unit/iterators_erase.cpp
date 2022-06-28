@@ -1,4 +1,3 @@
-#include "app/Counter.h"
 #include <ankerl/unordered_dense_map.h>
 
 #include <app/Counter.h>
