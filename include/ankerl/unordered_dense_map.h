@@ -527,6 +527,7 @@ public:
 
     auto operator=(unordered_dense_map&& other) noexcept -> unordered_dense_map& {
         if (&other != this) {
+            deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
             m_buckets_start = std::exchange(other.m_buckets_start, nullptr);
             m_buckets_end = other.m_buckets_end;
