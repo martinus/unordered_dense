@@ -78,7 +78,6 @@ void bench() {
     fmt::print("{}s total\n", std::chrono::duration<double>(total).count());
 }
 
-
 // 26.81
 TEST_CASE("bench_find_random_uo" * doctest::test_suite("bench") * doctest::skip()) {
     bench<std::unordered_map<size_t, size_t>>();
