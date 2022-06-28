@@ -27,5 +27,5 @@ CXX="ccache clang++" meson setup -Db_coverage=true                    builddir/c
 # can't use ccache, it doesn't work with the ignorelist.txt
 CXX="ccache clang++" meson setup -Db_sanitize=address                 builddir/clang_sanitize_address
 CXX="ccache clang++" meson setup -Db_sanitize=thread                  builddir/clang_sanitize_thread
-CXX="ccache clang++" meson setup -Db_sanitize=memory                  builddir/clang_sanitize_memory # doesn't work due to STL, and ignore doesn't work either :-(
+# CXX="ccache clang++" meson setup -Db_sanitize=memory                  builddir/clang_sanitize_memory # doesn't work due to STL, and ignore doesn't work either :-(
 CXX="ccache clang++" meson setup -Db_sanitize=undefined               builddir/clang_sanitize_undefined
