@@ -53,7 +53,6 @@ test_exe = executable(
         dependency('threads'), # add dependency for threads (-lpthread, see https://mesonbuild.com/howtox.html),
 
         # see what's in the [provide] sections for the dependency names
-        dependency('boost'),
         dependency('doctest'),
         dependency('fmt', method: fmt_method),
     ],

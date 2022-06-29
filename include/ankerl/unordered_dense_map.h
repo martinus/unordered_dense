@@ -38,6 +38,8 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <initializer_list>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -435,12 +437,20 @@ class unordered_dense_map {
     }
 
 public:
-    using value_type = std::pair<Key, T>;
     using key_type = Key;
     using mapped_type = T;
-    using size_type = size_t;
-    using const_iterator = typename ValueContainer::const_iterator;
+    using value_type = std::pair<Key, T>; // note: no `const Key`
+    using size_type = typename ValueContainer::size_type;
+    using difference_type = typename ValueContainer::difference_type;
+    using hasher = Hash;
+    using key_equal = KeyEqual;
+    using allocator_type = typename ValueContainer::allocator_type;
+    using reference = typename ValueContainer::reference;
+    using const_reference = typename ValueContainer::const_reference;
+    using pointer = typename ValueContainer::pointer;
+    using const_pointer = typename ValueContainer::const_pointer;
     using iterator = typename ValueContainer::iterator;
+    using const_iterator = typename ValueContainer::const_iterator;
 
     unordered_dense_map()
         : unordered_dense_map(0) {}
@@ -525,20 +535,9 @@ public:
                         Allocator const& alloc)
         : unordered_dense_map(init, bucket_count, hash, KeyEqual(), alloc) {}
 
-    auto operator=(unordered_dense_map&& other) noexcept -> unordered_dense_map& {
-        if (&other != this) {
-            deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
-            m_values = std::move(other.m_values);
-            m_buckets_start = std::exchange(other.m_buckets_start, nullptr);
-            m_buckets_end = other.m_buckets_end;
-            m_max_bucket_capacity = other.m_max_bucket_capacity;
-            m_max_load_factor = other.m_max_load_factor;
-            m_hash = std::move(other.m_hash);
-            m_equal = std::move(other.m_equal);
-            m_shifts = other.m_shifts;
-            other.m_buckets_start = nullptr;
-        }
-        return *this;
+    ~unordered_dense_map() {
+        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
+        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
     }
 
     auto operator=(unordered_dense_map const& other) -> unordered_dense_map& {
@@ -554,39 +553,139 @@ public:
         return *this;
     }
 
-    ~unordered_dense_map() {
-        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
-        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
+    auto operator=(unordered_dense_map&& other) noexcept(
+        std::is_nothrow_move_assignable_v<ValueContainer>&& std::is_nothrow_move_assignable_v<Hash>&&
+            std::is_nothrow_move_assignable_v<KeyEqual>) -> unordered_dense_map& {
+        if (&other != this) {
+            deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
+            m_values = std::move(other.m_values);
+            m_buckets_start = std::exchange(other.m_buckets_start, nullptr);
+            m_buckets_end = other.m_buckets_end;
+            m_max_bucket_capacity = other.m_max_bucket_capacity;
+            m_max_load_factor = other.m_max_load_factor;
+            m_hash = std::move(other.m_hash);
+            m_equal = std::move(other.m_equal);
+            m_shifts = other.m_shifts;
+            other.m_buckets_start = nullptr;
+        }
+        return *this;
     }
 
-    void swap(unordered_dense_map& other) {
-        using std::swap;
-        swap(other, *this);
+    auto operator=(std::initializer_list<value_type> ilist) -> unordered_dense_map& {
+        clear();
+        insert(ilist);
+        return *this;
     }
+
+    auto get_allocator() const noexcept {
+        return m_values.get_allocator();
+    }
+
+    // iterators //////////////////////////////////////////////////////////////
+
+    auto begin() noexcept -> iterator {
+        return m_values.begin();
+    }
+
+    auto begin() const noexcept -> const_iterator {
+        return m_values.begin();
+    }
+
+    auto cbegin() const noexcept -> const_iterator {
+        return m_values.cbegin();
+    }
+
+    auto end() noexcept -> iterator {
+        return m_values.end();
+    }
+
+    auto cend() const noexcept -> const_iterator {
+        return m_values.cend();
+    }
+
+    auto end() const noexcept -> const_iterator {
+        return m_values.end();
+    }
+
+    // capacity ///////////////////////////////////////////////////////////////
+
+    [[nodiscard]] auto empty() const noexcept -> bool {
+        return m_values.empty();
+    }
+
+    [[nodiscard]] auto size() const noexcept -> size_t {
+        return m_values.size();
+    }
+
+    [[nodiscard]] auto max_size() const noexcept -> size_t {
+        // No more than 4'294'967'296 elements.
+        return std::numeric_limits<uint32_t>::max();
+    }
+
+    // modifiers //////////////////////////////////////////////////////////////
 
     void clear() {
         m_values.clear();
         clear_buckets();
     }
 
-    auto cend() const -> const_iterator {
-        return m_values.cend();
-    }
-    auto end() const -> const_iterator {
-        return m_values.end();
-    }
-    auto end() -> iterator {
-        return m_values.end();
+    auto insert(value_type const& value) -> std::pair<iterator, bool> {
+        return emplace(value);
     }
 
-    auto cbegin() const -> const_iterator {
-        return m_values.cbegin();
+    auto insert(value_type&& value) -> std::pair<iterator, bool> {
+        return emplace(std::move(value));
     }
-    auto begin() const -> const_iterator {
-        return m_values.begin();
+
+    template <class P, std::enable_if_t<std::is_constructible_v<value_type, P&&>, bool> = true>
+    auto insert(P&& value) -> std::pair<iterator, bool> {
+        return emplace(std::forward<P>(value));
     }
-    auto begin() -> iterator {
-        return m_values.begin();
+
+    auto insert(const_iterator /*hint*/, value_type const& value) -> iterator {
+        return insert(value).first;
+    }
+
+    auto insert(const_iterator /*hint*/, value_type&& value) -> iterator {
+        return insert(std::move(value)).first;
+    }
+
+    template <class P, std::enable_if_t<std::is_constructible_v<value_type, P&&>, bool> = true>
+    auto insert(const_iterator /*hint*/, P&& value) -> iterator {
+        return insert(std::forward<P>(value)).first;
+    }
+
+    template <class InputIt>
+    void insert(InputIt first, InputIt last) {
+        while (first != last) {
+            insert(*first);
+            ++first;
+        }
+    }
+
+    void insert(std::initializer_list<value_type> ilist) {
+        insert(ilist.begin(), ilist.end());
+    }
+
+    // TODO continue here: https://en.cppreference.com/w/cpp/container/unordered_map/insert_or_assign
+
+    template <class K, class M>
+    auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
+        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
+        if (!it_isinserted.second) {
+            it_isinserted.first->second = std::forward<M>(mapped);
+        }
+        return it_isinserted;
+    }
+
+    template <class K, class M>
+    auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
+        return insert_or_assign(std::forward<K>(key), std::forward<M>(mapped)).first;
+    }
+
+    void swap(unordered_dense_map& other) {
+        using std::swap;
+        swap(other, *this);
     }
 
     template <typename K>
@@ -652,24 +751,6 @@ public:
         return try_emplace(key).first->second;
     }
 
-    auto insert(value_type const& value) -> std::pair<iterator, bool> {
-        return try_emplace(value.first, value.second);
-    }
-
-    template <class K, class M>
-    auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
-        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
-        if (!it_isinserted.second) {
-            it_isinserted.first->second = std::forward<M>(mapped);
-        }
-        return it_isinserted;
-    }
-
-    template <class K, class M>
-    auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
-        return insert_or_assign(std::forward<K>(key), std::forward<M>(mapped)).first;
-    }
-
     template <class... Args>
     auto emplace(Args&&... args) -> std::pair<iterator, bool> {
         if (is_full()) {
@@ -732,20 +813,6 @@ public:
         return {begin() + value_idx, true};
     }
 
-    template <typename InputIt>
-    void insert(InputIt first, InputIt last) {
-        while (first != last) {
-            emplace(*first);
-            ++first;
-        }
-    }
-
-    void insert(std::initializer_list<value_type> ilist) {
-        for (auto&& vt : ilist) {
-            emplace(std::move(vt));
-        }
-    }
-
     auto erase(const_iterator it) -> iterator {
         return erase(begin() + (it - cbegin()));
     }
@@ -776,14 +843,6 @@ public:
         }
         do_erase(bucket);
         return 1;
-    }
-
-    [[nodiscard]] auto empty() const -> bool {
-        return m_values.empty();
-    }
-
-    [[nodiscard]] auto size() const -> size_t {
-        return m_values.size();
     }
 
     [[nodiscard]] auto max_load_factor() const -> float {
