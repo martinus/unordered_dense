@@ -244,6 +244,23 @@ class unordered_dense_map {
     static constexpr uint32_t BUCKET_FINGERPRINT_MASK = BUCKET_DIST_INC - 1;
     static constexpr uint8_t INITIAL_SHIFTS = 64 - 3;
 
+public:
+    using key_type = Key;
+    using mapped_type = T;
+    using value_type = std::pair<Key, T>; // note: no `const Key`
+    using size_type = typename ValueContainer::size_type;
+    using difference_type = typename ValueContainer::difference_type;
+    using hasher = Hash;
+    using key_equal = KeyEqual;
+    using allocator_type = typename ValueContainer::allocator_type;
+    using reference = typename ValueContainer::reference;
+    using const_reference = typename ValueContainer::const_reference;
+    using pointer = typename ValueContainer::pointer;
+    using const_pointer = typename ValueContainer::const_pointer;
+    using iterator = typename ValueContainer::iterator;
+    using const_iterator = typename ValueContainer::const_iterator;
+
+private:
     struct Bucket {
         /**
          * Upper 3 byte encode the distance to the original bucket. 0 means empty, 1 means here, ...
@@ -436,22 +453,46 @@ class unordered_dense_map {
         m_values.pop_back();
     }
 
-public:
-    using key_type = Key;
-    using mapped_type = T;
-    using value_type = std::pair<Key, T>; // note: no `const Key`
-    using size_type = typename ValueContainer::size_type;
-    using difference_type = typename ValueContainer::difference_type;
-    using hasher = Hash;
-    using key_equal = KeyEqual;
-    using allocator_type = typename ValueContainer::allocator_type;
-    using reference = typename ValueContainer::reference;
-    using const_reference = typename ValueContainer::const_reference;
-    using pointer = typename ValueContainer::pointer;
-    using const_pointer = typename ValueContainer::const_pointer;
-    using iterator = typename ValueContainer::iterator;
-    using const_iterator = typename ValueContainer::const_iterator;
+    template <class K, class M>
+    auto do_insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
+        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
+        if (!it_isinserted.second) {
+            it_isinserted.first->second = std::forward<M>(mapped);
+        }
+        return it_isinserted;
+    }
 
+    template <typename K, typename... Args>
+    auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+        if (is_full()) {
+            increase_size();
+        }
+
+        auto hash = mixed_hash(key);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+        auto* bucket = bucket_from_hash(hash);
+
+        while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+                return {begin() + bucket->value_idx, false};
+            }
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        }
+
+        // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
+        m_values.emplace_back(std::piecewise_construct,
+                              std::forward_as_tuple(std::forward<K>(key)),
+                              std::forward_as_tuple(std::forward<Args>(args)...));
+
+        // place element and shift up until we find an empty spot
+        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
+        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
+
+        return {begin() + value_idx, true};
+    }
+
+public:
     unordered_dense_map()
         : unordered_dense_map(0) {}
 
@@ -667,21 +708,122 @@ public:
         insert(ilist.begin(), ilist.end());
     }
 
-    // TODO continue here: https://en.cppreference.com/w/cpp/container/unordered_map/insert_or_assign
+    template <class M>
+    auto insert_or_assign(Key const& key, M&& mapped) -> std::pair<iterator, bool> {
+        return do_insert_or_assign(key, std::forward<M>(mapped));
+    }
 
-    template <class K, class M>
-    auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
-        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
-        if (!it_isinserted.second) {
-            it_isinserted.first->second = std::forward<M>(mapped);
+    template <class M>
+    auto insert_or_assign(Key&& key, M&& mapped) -> std::pair<iterator, bool> {
+        return do_insert_or_assign(std::move(key), std::forward<M>(mapped));
+    }
+
+    template <class M>
+    auto insert_or_assign(const_iterator /*hint*/, Key const& key, M&& mapped) -> iterator {
+        return do_insert_or_assign(key, std::forward<M>(mapped)).first;
+    }
+
+    template <class M>
+    auto insert_or_assign(const_iterator /*hint*/, Key&& key, M&& mapped) -> iterator {
+        return do_insert_or_assign(std::move(key), std::forward<M>(mapped)).first;
+    }
+
+    template <class... Args>
+    auto emplace(Args&&... args) -> std::pair<iterator, bool> {
+        if (is_full()) {
+            increase_size();
         }
-        return it_isinserted;
+
+        // first emplace the object back. If the key is already there, pop it.
+        m_values.emplace_back(std::forward<Args>(args)...);
+
+        auto& val = m_values.back();
+        auto hash = mixed_hash(val.first);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+        auto* bucket = bucket_from_hash(hash);
+
+        while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint &&
+                m_equal(val.first, m_values[bucket->value_idx].first)) {
+                // value was already there, so get rid of it.
+                m_values.pop_back();
+                return {begin() + bucket->value_idx, false};
+            }
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        }
+
+        // value is new, place the bucket and shift up until we find an empty spot
+        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
+        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
+
+        return {begin() + value_idx, true};
     }
 
-    template <class K, class M>
-    auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
-        return insert_or_assign(std::forward<K>(key), std::forward<M>(mapped)).first;
+    template <class... Args>
+    auto emplace(const_iterator /*hint*/, Args&&... args) -> iterator {
+        return emplace(std::forward<Args>(args)...).first;
     }
+
+    template <class... Args>
+    auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
+        return do_try_emplace(key, std::forward<Args>(args)...);
+    }
+
+    template <class... Args>
+    auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
+        return do_try_emplace(std::move(key), std::forward<Args>(args)...);
+    }
+
+    template <class... Args>
+    auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> std::pair<iterator, bool> {
+        return do_try_emplace(key, std::forward<Args>(args)...).first;
+    }
+
+    template <class... Args>
+    auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> std::pair<iterator, bool> {
+        return do_try_emplace(std::move(key), std::forward<Args>(args)...).first;
+    }
+
+    auto erase(iterator it) -> iterator {
+        auto hash = mixed_hash(it->first);
+        auto* bucket = bucket_from_hash(hash);
+
+        auto const value_idx_to_remove = static_cast<uint32_t>(it - cbegin());
+        while (bucket->value_idx != value_idx_to_remove) {
+            bucket = next(bucket);
+        }
+
+        do_erase(bucket);
+        return it;
+    }
+
+    auto erase(const_iterator it) -> iterator {
+        return erase(begin() + (it - cbegin()));
+    }
+
+#if 0
+    auto erase(const_iterator /*first*/, const_iterator /*last*/) -> iterator {
+        throw std::runtime_error("TODO not implemented yet. This doesn't seem very straightforward ")
+    }
+#endif
+
+    auto erase(Key const& key) -> size_t {
+        auto [dist_and_fingerprint, bucket] = next_while_less(key);
+
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, m_values[bucket->value_idx].first)) {
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        }
+
+        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
+            return 0;
+        }
+        do_erase(bucket);
+        return 1;
+    }
+
+    // TODO continue here: https://en.cppreference.com/w/cpp/container/unordered_map/insert_or_assign
 
     void swap(unordered_dense_map& other) {
         using std::swap;
@@ -749,100 +891,6 @@ public:
 
     auto operator[](Key const& key) -> T& {
         return try_emplace(key).first->second;
-    }
-
-    template <class... Args>
-    auto emplace(Args&&... args) -> std::pair<iterator, bool> {
-        if (is_full()) {
-            increase_size();
-        }
-
-        // first emplace the object back. If the key is already there, pop it.
-        m_values.emplace_back(std::forward<Args>(args)...);
-
-        auto& val = m_values.back();
-        auto hash = mixed_hash(val.first);
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
-        auto* bucket = bucket_from_hash(hash);
-
-        while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint &&
-                m_equal(val.first, m_values[bucket->value_idx].first)) {
-                // value was already there, so get rid of it.
-                m_values.pop_back();
-                return {begin() + bucket->value_idx, false};
-            }
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-        }
-
-        // value is new, place the bucket and shift up until we find an empty spot
-        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
-        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
-
-        return {begin() + value_idx, true};
-    }
-
-    template <typename K, typename... Args>
-    auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
-        if (is_full()) {
-            increase_size();
-        }
-
-        auto hash = mixed_hash(key);
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
-        auto* bucket = bucket_from_hash(hash);
-
-        while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-                return {begin() + bucket->value_idx, false};
-            }
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-        }
-
-        // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
-        m_values.emplace_back(std::piecewise_construct,
-                              std::forward_as_tuple(std::forward<K>(key)),
-                              std::forward_as_tuple(std::forward<Args>(args)...));
-
-        // place element and shift up until we find an empty spot
-        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
-        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
-
-        return {begin() + value_idx, true};
-    }
-
-    auto erase(const_iterator it) -> iterator {
-        return erase(begin() + (it - cbegin()));
-    }
-
-    auto erase(iterator it) -> iterator {
-        auto hash = mixed_hash(it->first);
-        auto* bucket = bucket_from_hash(hash);
-
-        auto const value_idx_to_remove = static_cast<uint32_t>(it - cbegin());
-        while (bucket->value_idx != value_idx_to_remove) {
-            bucket = next(bucket);
-        }
-
-        do_erase(bucket);
-        return it;
-    }
-
-    auto erase(Key const& key) -> size_t {
-        auto [dist_and_fingerprint, bucket] = next_while_less(key);
-
-        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, m_values[bucket->value_idx].first)) {
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-        }
-
-        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
-            return 0;
-        }
-        do_erase(bucket);
-        return 1;
     }
 
     [[nodiscard]] auto max_load_factor() const -> float {
