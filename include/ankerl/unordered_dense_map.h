@@ -204,6 +204,9 @@ struct hash : public std::hash<T> {
 template <typename T>
 using detect_avalanching = typename T::is_avalanching;
 
+template <typename T>
+using detect_is_transparent = typename T::is_transparent;
+
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
@@ -302,7 +305,8 @@ private:
         return bucket;
     }
 
-    [[nodiscard]] constexpr auto mixed_hash(Key const& key) const -> uint64_t {
+    template <typename K>
+    [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             return m_hash(key);
         }
@@ -327,12 +331,14 @@ private:
         return m_buckets_start + (hash >> m_shifts);
     }
 
-    auto next_while_less(Key const& key) -> std::pair<uint32_t, Bucket*> {
+    template <typename K>
+    auto next_while_less(K const& key) -> std::pair<uint32_t, Bucket*> {
         auto const& pair = std::as_const(*this).next_while_less(key);
         return {pair.first, const_cast<Bucket*>(pair.second)}; // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
-    auto next_while_less(Key const& key) const -> std::pair<uint32_t, Bucket const*> {
+    template <typename K>
+    auto next_while_less(K const& key) const -> std::pair<uint32_t, Bucket const*> {
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto const* bucket = bucket_from_hash(hash);
@@ -453,6 +459,22 @@ private:
         m_values.pop_back();
     }
 
+    template <typename K>
+    auto do_erase_key(K&& key) -> size_t {
+        auto [dist_and_fingerprint, bucket] = next_while_less(key);
+
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, m_values[bucket->value_idx].first)) {
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        }
+
+        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
+            return 0;
+        }
+        do_erase(bucket);
+        return 1;
+    }
+
     template <class K, class M>
     auto do_insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
         auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
@@ -490,6 +512,40 @@ private:
         place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
 
         return {begin() + value_idx, true};
+    }
+
+    template <typename K>
+    auto do_find(K const& key) -> iterator {
+        if (empty()) {
+            return end();
+        }
+
+        auto mh = mixed_hash(key);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
+        auto const* bucket = bucket_from_hash(mh);
+
+        // unrolled loop. *Always* check a few directly, then enter the loop. This is faster.
+
+        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+            return begin() + bucket->value_idx;
+        }
+        dist_and_fingerprint += BUCKET_DIST_INC;
+        bucket = next(bucket);
+
+        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+            return begin() + bucket->value_idx;
+        }
+        dist_and_fingerprint += BUCKET_DIST_INC;
+        bucket = next(bucket);
+
+        do {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+                return begin() + bucket->value_idx;
+            }
+            dist_and_fingerprint += BUCKET_DIST_INC;
+            bucket = next(bucket);
+        } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
+        return end();
     }
 
 public:
@@ -595,8 +651,8 @@ public:
     }
 
     auto operator=(unordered_dense_map&& other) noexcept(
-        std::is_nothrow_move_assignable_v<ValueContainer>&& std::is_nothrow_move_assignable_v<Hash>&&
-            std::is_nothrow_move_assignable_v<KeyEqual>) -> unordered_dense_map& {
+        noexcept(std::is_nothrow_move_assignable_v<ValueContainer>&& std::is_nothrow_move_assignable_v<Hash>&&
+                     std::is_nothrow_move_assignable_v<KeyEqual>)) -> unordered_dense_map& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
@@ -803,76 +859,33 @@ public:
     }
 
 #if 0
-    auto erase(const_iterator /*first*/, const_iterator /*last*/) -> iterator {
+    auto erase(const_iterator first, const_iterator last) -> iterator {
         throw std::runtime_error("TODO not implemented yet. This doesn't seem very straightforward ")
     }
 #endif
 
     auto erase(Key const& key) -> size_t {
-        auto [dist_and_fingerprint, bucket] = next_while_less(key);
-
-        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, m_values[bucket->value_idx].first)) {
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-        }
-
-        if (dist_and_fingerprint != bucket->dist_and_fingerprint) {
-            return 0;
-        }
-        do_erase(bucket);
-        return 1;
+        return do_erase_key(key);
     }
 
-    // TODO continue here: https://en.cppreference.com/w/cpp/container/unordered_map/insert_or_assign
+    template <class K,
+              class H = Hash,
+              class KE = KeyEqual,
+              std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE> &&
+                                   !std::is_convertible_v<K, const_iterator> && !std::is_convertible_v<K, iterator>,
+                               bool> = true>
+    auto erase(K&& key) -> size_t {
+        return do_erase_key(std::forward<K>(key));
+    }
 
-    void swap(unordered_dense_map& other) {
+    void swap(unordered_dense_map& other) noexcept(
+        noexcept(std::is_nothrow_swappable_v<ValueContainer>&& std::is_nothrow_swappable_v<Hash>&&
+                     std::is_nothrow_swappable_v<KeyEqual>)) {
         using std::swap;
         swap(other, *this);
     }
 
-    template <typename K>
-    auto find(K const& key) -> iterator {
-        if (empty()) {
-            return end();
-        }
-
-        auto mh = mixed_hash(key);
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
-        auto const* bucket = bucket_from_hash(mh);
-
-        // unrolled loop. *Always* check a few directly, then enter the loop. This is faster.
-
-        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-            return begin() + bucket->value_idx;
-        }
-        dist_and_fingerprint += BUCKET_DIST_INC;
-        bucket = next(bucket);
-
-        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-            return begin() + bucket->value_idx;
-        }
-        dist_and_fingerprint += BUCKET_DIST_INC;
-        bucket = next(bucket);
-
-        do {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-                return begin() + bucket->value_idx;
-            }
-            dist_and_fingerprint += BUCKET_DIST_INC;
-            bucket = next(bucket);
-        } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
-        return end();
-    }
-
-    template <typename K>
-    auto find(K const& key) const -> const_iterator {
-        return const_cast<unordered_dense_map*>(this)->find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
-    }
-
-    template <typename K>
-    auto count(K const& key) const -> size_t {
-        return find(key) == end() ? 0 : 1;
-    }
+    // lookup /////////////////////////////////////////////////////////////////
 
     auto at(key_type const& key) -> T& {
         if (auto it = find(key); end() != it) {
@@ -885,13 +898,67 @@ public:
         return const_cast<unordered_dense_map*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
+    auto operator[](Key const& key) -> T& {
+        return try_emplace(key).first->second;
+    }
+
     auto operator[](Key&& key) -> T& {
         return try_emplace(std::move(key)).first->second;
     }
 
-    auto operator[](Key const& key) -> T& {
-        return try_emplace(key).first->second;
+    auto count(Key const& key) const -> size_t {
+        return find(key) == end() ? 0 : 1;
     }
+
+    template <
+        class K,
+        class H = Hash,
+        class KE = KeyEqual,
+        std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
+    auto count(K const& key) const -> size_t {
+        return find(key) == end() ? 0 : 1;
+    }
+
+    auto find(Key const& key) -> iterator {
+        return do_find(key);
+    }
+
+    auto find(Key const& key) const -> const_iterator {
+        return const_cast<unordered_dense_map*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    }
+
+    template <
+        class K,
+        class H = Hash,
+        class KE = KeyEqual,
+        std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
+    auto find(K const& key) -> iterator {
+        return do_find(key);
+    }
+
+    template <
+        class K,
+        class H = Hash,
+        class KE = KeyEqual,
+        std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
+    auto find(K const& key) -> const_iterator {
+        return const_cast<unordered_dense_map*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    }
+
+    auto contains(Key const& key) const -> size_t {
+        return find(key) != end();
+    }
+
+    template <
+        class K,
+        class H = Hash,
+        class KE = KeyEqual,
+        std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
+    auto contains(K const& key) const -> size_t {
+        return find(key) != end();
+    }
+
+    // TODO continue here https://en.cppreference.com/w/cpp/container/unordered_map/equal_range
 
     [[nodiscard]] auto max_load_factor() const -> float {
         return m_max_load_factor;
