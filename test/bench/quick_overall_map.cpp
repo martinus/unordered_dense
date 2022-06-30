@@ -9,10 +9,12 @@
 #include <string_view>
 #include <unordered_map>
 
+using namespace std::literals;
+
 namespace {
 
 template <typename K>
-inline K initKey() {
+inline auto initKey() -> K {
     return {};
 }
 
@@ -194,6 +196,7 @@ TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::sk
 
 TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
+    // bench.minEpochTime(1s);
     benchAll<ankerl::unordered_dense::map<uint64_t, size_t>>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
     benchAll<ankerl::unordered_dense::map<std::string, size_t, ankerl::unordered_dense::hash<std::string>>>(
         &bench, "ankerl::unordered_dense::map<std::string, size_t>");
