@@ -235,15 +235,14 @@ namespace detail {
  * @tparam Pred
  */
 template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class Allocator = std::allocator<std::pair<Key, T>>>
+          class T, // when void, treat it as a set.
+          class Hash,
+          class KeyEqual,
+          class Allocator>
 class table {
-    static constexpr bool is_set = std::is_void_v<T>;
-
     struct Bucket;
-    using ValueContainer = std::vector<std::pair<Key, T>, Allocator>;
+    using ValueContainer =
+        typename std::vector<typename std::conditional_t<std::is_void_v<T>, Key, std::pair<Key, T>>, Allocator>;
     using BucketAlloc = typename std::allocator_traits<Allocator>::template rebind_alloc<Bucket>;
     using BucketAllocTraits = std::allocator_traits<BucketAlloc>;
 
@@ -255,7 +254,7 @@ class table {
 public:
     using key_type = Key;
     using mapped_type = T;
-    using value_type = typename std::conditional_t<is_set, Key, std::pair<Key, T>>; // note: no `const Key`
+    using value_type = typename ValueContainer::value_type;
     using size_type = typename ValueContainer::size_type;
     using difference_type = typename ValueContainer::difference_type;
     using hasher = Hash;
@@ -334,6 +333,14 @@ private:
 
     [[nodiscard]] constexpr auto bucket_from_hash(uint64_t hash) -> Bucket* {
         return m_buckets_start + (hash >> m_shifts);
+    }
+
+    auto get_key(value_type const& vt) -> key_type const& {
+        if constexpr (std::is_void_v<T>) {
+            return vt;
+        } else {
+            return vt.first;
+        }
     }
 
     template <typename K>
@@ -418,7 +425,7 @@ private:
 
     void fill_buckets_from_values() {
         for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
-            auto const& key = m_values[value_idx].first;
+            auto const& key = get_key(m_values[value_idx]);
             auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
             // we know for certain that key has not yet been inserted, so no need to check it.
@@ -452,7 +459,7 @@ private:
 
             // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
             // TODO don't duplicate code
-            auto mh = mixed_hash(val.first);
+            auto mh = mixed_hash(get_key(val));
             bucket = bucket_from_hash(mh);
 
             auto const values_idx_back = static_cast<uint32_t>(m_values.size() - 1);
@@ -468,7 +475,7 @@ private:
     auto do_erase_key(K&& key) -> size_t {
         auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
-        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, m_values[bucket->value_idx].first)) {
+        while (dist_and_fingerprint == bucket->dist_and_fingerprint && !m_equal(key, get_key(m_values[bucket->value_idx]))) {
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
@@ -531,20 +538,20 @@ private:
 
         // unrolled loop. *Always* check a few directly, then enter the loop. This is faster.
 
-        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
             return begin() + bucket->value_idx;
         }
         dist_and_fingerprint += BUCKET_DIST_INC;
         bucket = next(bucket);
 
-        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+        if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
             return begin() + bucket->value_idx;
         }
         dist_and_fingerprint += BUCKET_DIST_INC;
         bucket = next(bucket);
 
         do {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
                 return begin() + bucket->value_idx;
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
@@ -796,13 +803,13 @@ public:
         m_values.emplace_back(std::forward<Args>(args)...);
 
         auto& val = m_values.back();
-        auto hash = mixed_hash(val.first);
+        auto hash = mixed_hash(get_key(val));
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto* bucket = bucket_from_hash(hash);
 
         while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
             if (dist_and_fingerprint == bucket->dist_and_fingerprint &&
-                m_equal(val.first, m_values[bucket->value_idx].first)) {
+                m_equal(get_key(val), get_key(m_values[bucket->value_idx]))) {
                 // value was already there, so get rid of it.
                 m_values.pop_back();
                 return {begin() + bucket->value_idx, false};
@@ -900,22 +907,26 @@ public:
 
     // lookup /////////////////////////////////////////////////////////////////
 
-    auto at(key_type const& key) -> T& {
+    template <typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
+    auto at(key_type const& key) -> Q& {
         if (auto it = find(key); end() != it) {
             return it->second;
         }
         throw std::out_of_range("ankerl::unordered_dense::map::at(): key not found");
     }
 
-    auto at(key_type const& key) const -> T const& {
+    template <typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
+    auto at(key_type const& key) const -> Q const& {
         return const_cast<table*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
-    auto operator[](Key const& key) -> T& {
+    template <typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
+    auto operator[](Key const& key) -> Q& {
         return try_emplace(key).first->second;
     }
 
-    auto operator[](Key&& key) -> T& {
+    template <typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
+    auto operator[](Key&& key) -> Q& {
         return try_emplace(std::move(key)).first->second;
     }
 

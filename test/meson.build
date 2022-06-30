@@ -27,6 +27,7 @@ test_sources = [
     'unit/maps_of_maps.cpp',
     'unit/move_to_moved.cpp',
     'unit/multiple_apis.cpp',
+    'unit/set.cpp',
     'unit/swap.cpp',
 ]
 
@@ -65,7 +66,6 @@ benchmark(
     verbose: true)
 
 test(
-    'unordered_dense test',
+    'unordered_dense_map test',
     test_exe,
     verbose: true)
-
