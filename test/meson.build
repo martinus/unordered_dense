@@ -24,11 +24,20 @@ test_sources = [
     'unit/iterators_empty.cpp',
     'unit/iterators_erase.cpp',
     'unit/iterators_insert.cpp',
+    'unit/load_factor.cpp',
     'unit/maps_of_maps.cpp',
     'unit/move_to_moved.cpp',
     'unit/multiple_apis.cpp',
+    'unit/not_copyable.cpp',
+    'unit/not_moveable.cpp',
+    'unit/reserve_and_assign.cpp',
     'unit/set.cpp',
     'unit/swap.cpp',
+    'unit/try_emplace.cpp',
+    'unit/unique_ptr.cpp',
+    'unit/unordered_set.cpp',
+    'unit/vectorofmaps.cpp',
+    'unit/xy.cpp',
 ]
 
 # additional compile options

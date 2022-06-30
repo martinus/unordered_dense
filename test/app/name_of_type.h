@@ -7,9 +7,9 @@ namespace detail {
 template <typename T>
 [[nodiscard]] constexpr auto name_of_type_raw() -> std::string_view {
 #if defined(_MSC_VER)
-    return __FUNCSIG__;
+    return __FUNCSIG__; // NOLINT
 #else
-    return __PRETTY_FUNCTION__;
+    return __PRETTY_FUNCTION__; // NOLINT
 #endif
 }
 

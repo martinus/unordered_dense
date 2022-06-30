@@ -313,14 +313,15 @@ private:
     [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             return m_hash(key);
+        } else {
+            // See https://godbolt.org/z/Pvo5Kf4Gx, mix() compiles to
+            //   movabs  rcx, -7046029254386353131
+            //   mov     rax, rcx
+            //   mul     rdi
+            //   xor     rax, rdx
+            //   ret
+            return wyhash::mix(m_hash(key), UINT64_C(0x9E3779B97F4A7C15));
         }
-        // See https://godbolt.org/z/Pvo5Kf4Gx, mix() compiles to
-        //   movabs  rcx, -7046029254386353131
-        //   mov     rax, rcx
-        //   mul     rdi
-        //   xor     rax, rdx
-        //   ret
-        return wyhash::mix(m_hash(key), UINT64_C(0x9E3779B97F4A7C15));
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
@@ -335,7 +336,7 @@ private:
         return m_buckets_start + (hash >> m_shifts);
     }
 
-    auto get_key(value_type const& vt) -> key_type const& {
+    [[nodiscard]] static constexpr auto get_key(value_type const& vt) -> key_type const& {
         if constexpr (std::is_void_v<T>) {
             return vt;
         } else {
@@ -344,13 +345,13 @@ private:
     }
 
     template <typename K>
-    auto next_while_less(K const& key) -> std::pair<uint32_t, Bucket*> {
+    [[nodiscard]] auto next_while_less(K const& key) -> std::pair<uint32_t, Bucket*> {
         auto const& pair = std::as_const(*this).next_while_less(key);
         return {pair.first, const_cast<Bucket*>(pair.second)}; // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     template <typename K>
-    auto next_while_less(K const& key) const -> std::pair<uint32_t, Bucket const*> {
+    [[nodiscard]] auto next_while_less(K const& key) const -> std::pair<uint32_t, Bucket const*> {
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto const* bucket = bucket_from_hash(hash);
@@ -841,12 +842,12 @@ public:
     }
 
     template <class... Args>
-    auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> std::pair<iterator, bool> {
+    auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
         return do_try_emplace(key, std::forward<Args>(args)...).first;
     }
 
     template <class... Args>
-    auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> std::pair<iterator, bool> {
+    auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...).first;
     }
 
@@ -1014,17 +1015,20 @@ public:
 
     // bucket interface ///////////////////////////////////////////////////////
 
-    auto bucket_count() const -> size_t {
+    auto bucket_count() const -> size_t { // NOLINT(modernize-use-nodiscard)
         return m_buckets_end - m_buckets_start;
     }
 
-    auto max_bucket_count() const -> size_t {
+    auto max_bucket_count() const -> size_t { // NOLINT(modernize-use-nodiscard)
         return std::numeric_limits<uint32_t>::max();
     }
 
     // hash policy ////////////////////////////////////////////////////////////
 
     [[nodiscard]] auto load_factor() const -> float {
+        if (0 == size()) {
+            return 0.0;
+        }
         return static_cast<float>(size()) / bucket_count();
     }
 
@@ -1079,8 +1083,17 @@ public:
             return false;
         }
         for (auto const& b_entry : b) {
-            if (auto it = a.find(b_entry.first); a.end() == it || !(b_entry.second == it->second)) {
-                return false;
+            auto it = a.find(get_key(b_entry));
+            if constexpr (std::is_void_v<T>) {
+                // set: only check that the key is here
+                if (a.end() == it) {
+                    return false;
+                }
+            } else {
+                // map: check that key is here, then also check that value is the same
+                if (a.end() == it || !(b_entry.second == it->second)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -1111,6 +1124,7 @@ using set = detail::table<Key, void, Hash, KeyEqual, Allocator>;
 
 // std extensions /////////////////////////////////////////////////////////////
 
+// NOLINTNEXTLINE(cert-dcl58-cpp)
 namespace std {
 
 template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Pred>

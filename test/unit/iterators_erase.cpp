@@ -35,5 +35,5 @@ TEST_CASE("iterators_erase") {
         counts("done");
     }
     counts("destructed");
-    REQUIRE(counts.dtor == counts.ctor + counts.staticDefaultCtor + counts.defaultCtor + counts.moveCtor);
+    REQUIRE(counts.dtor == counts.ctor + counts.staticDefaultCtor + counts.copyCtor + counts.defaultCtor + counts.moveCtor);
 }

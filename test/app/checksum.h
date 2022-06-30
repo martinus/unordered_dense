@@ -9,7 +9,7 @@
 namespace checksum {
 
 // final step from MurmurHash3
-[[nodiscard]] constexpr auto mix(uint64_t k) -> uint64_t {
+[[nodiscard]] static inline auto mix(uint64_t k) -> uint64_t {
     k ^= k >> 33;
     k *= 0xff51afd7ed558ccdULL;
     k ^= k >> 33;
@@ -18,7 +18,7 @@ namespace checksum {
     return k;
 }
 
-[[nodiscard]] constexpr auto mix(std::string_view data) -> uint64_t {
+[[nodiscard]] static inline auto mix(std::string_view data) -> uint64_t {
     constexpr uint64_t FNV_offset_basis = UINT64_C(14695981039346656037);
     constexpr uint64_t FNV_prime = UINT64_C(1099511628211);
 
@@ -30,19 +30,19 @@ namespace checksum {
     return val;
 }
 
-[[nodiscard]] auto mix(Counter::Obj const& cdv) -> uint64_t {
+[[nodiscard]] static inline auto mix(Counter::Obj const& cdv) -> uint64_t {
     return mix(cdv.get());
 }
 
 // from boost::hash_combine, with additional fmix64 of value
-[[nodiscard]] constexpr auto combine(uint64_t seed, uint64_t value) -> uint64_t {
+[[nodiscard]] static inline auto combine(uint64_t seed, uint64_t value) -> uint64_t {
     return seed ^ (value + 0x9e3779b9 + (seed << 6U) + (seed >> 2U));
 }
 
 // calculates a hash of any iterable map. Order is irrelevant for the hash's result, as it simply
 // xors the elements together.
 template <typename M>
-[[nodiscard]] constexpr auto map(const M& map) -> uint64_t {
+[[nodiscard]] auto map(const M& map) -> uint64_t {
     uint64_t combined_hash = 1;
 
     uint64_t numElements = 0;
@@ -58,7 +58,7 @@ template <typename M>
 
 // map of maps
 template <typename MM>
-[[nodiscard]] constexpr auto mapmap(const MM& mapmap) -> uint64_t {
+[[nodiscard]] auto mapmap(const MM& mapmap) -> uint64_t {
     uint64_t combined_hash = 1;
 
     uint64_t numElements = 0;

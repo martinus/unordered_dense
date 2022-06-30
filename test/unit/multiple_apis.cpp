@@ -58,7 +58,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
     INFO("seed=" << rng.state());
 
     for (uint64_t i = 0; i < times; ++i) {
-        auto r = rng.bounded(times / 4);
+        auto r = static_cast<size_t>(rng.bounded(times / 4));
         auto rhh_it = map.insert(typename Map::value_type({r, counts}, {r * 2, counts}));
         auto uo_it = uo.insert(std::make_pair(r, r * 2));
         REQUIRE(rhh_it.second == uo_it.second);
@@ -79,7 +79,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
     uo.clear();
     map.clear();
     for (size_t i = 0; i < times; ++i) {
-        const auto r = rng.bounded(times / 4);
+        const auto r = static_cast<size_t>(rng.bounded(times / 4));
         map[{r, counts}] = {r * 2, counts};
         uo[r] = r * 2;
         REQUIRE(map.find(Counter::Obj{r, counts})->second.get() == uo.find(r)->second);
