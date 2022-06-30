@@ -1,11 +1,11 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
 
 #include <string>
 
 TEST_CASE("insert_or_assign") {
-    auto map = ankerl::unordered_dense_map<std::string, std::string>();
+    auto map = ankerl::unordered_dense::map<std::string, std::string>();
 
     auto ret = map.insert_or_assign("a", "b");
     REQUIRE(ret.second);

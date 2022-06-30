@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 #include <app/geomean.h>
 #include <app/nanobench.h>
 #include <app/robin_hood.h>
@@ -194,8 +194,8 @@ TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::sk
 
 TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
-    benchAll<ankerl::unordered_dense_map<uint64_t, size_t>>(&bench, "ankerl::unordered_dense_map<uint64_t, size_t>");
-    benchAll<ankerl::unordered_dense_map<std::string, size_t, ankerl::hash<std::string>>>(
+    benchAll<ankerl::unordered_dense::map<uint64_t, size_t>>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
+    benchAll<ankerl::unordered_dense::map<std::string, size_t, ankerl::unordered_dense::hash<std::string>>>(
         &bench, "ankerl::unordered_dense_map<std::string, size_t>");
     fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
@@ -230,7 +230,7 @@ TEST_CASE("memory_map_huge_uo" * doctest::test_suite("bench") * doctest::skip())
 
 // 3149724 max RSS, 0:10.58
 TEST_CASE("memory_map_huge_udm" * doctest::test_suite("bench") * doctest::skip()) {
-    testBig<ankerl::unordered_dense_map<uint64_t, size_t>>();
+    testBig<ankerl::unordered_dense::map<uint64_t, size_t>>();
 }
 
 template <typename Set>

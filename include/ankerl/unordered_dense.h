@@ -1,4 +1,4 @@
-///////////////////////// ankerl::unordered_dense_map /////////////////////////
+///////////////////////// ankerl::unordered_dense /////////////////////////
 
 // A fast & densely stored hashmap based on robin-hood backward shift deletion.
 // Version 0.0.1
@@ -62,7 +62,7 @@
 #    define ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(x) (x)
 #endif
 
-namespace ankerl {
+namespace ankerl::unordered_dense {
 
 // This is a stripped-down implementation of wyhash: https://github.com/wangyi-fudan/wyhash
 // Notably this removes big-endian support (because different values on different machines don't matter),
@@ -236,7 +236,9 @@ template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class Allocator = std::allocator<std::pair<Key, T>>>
-class unordered_dense_map {
+class table {
+    static constexpr bool is_set = std::is_void_v<T>;
+
     struct Bucket;
     using ValueContainer = std::vector<std::pair<Key, T>, Allocator>;
     using BucketAlloc = typename std::allocator_traits<Allocator>::template rebind_alloc<Bucket>;
@@ -250,7 +252,7 @@ class unordered_dense_map {
 public:
     using key_type = Key;
     using mapped_type = T;
-    using value_type = std::pair<Key, T>; // note: no `const Key`
+    using value_type = typename std::conditional_t<is_set, Key, std::pair<Key, T>>; // note: no `const Key`
     using size_type = typename ValueContainer::size_type;
     using difference_type = typename ValueContainer::difference_type;
     using hasher = Hash;
@@ -549,49 +551,49 @@ private:
     }
 
 public:
-    unordered_dense_map()
-        : unordered_dense_map(0) {}
+    table()
+        : table(0) {}
 
-    explicit unordered_dense_map(size_t /*bucket_count*/,
-                                 Hash const& hash = Hash(),
-                                 KeyEqual const& equal = KeyEqual(),
-                                 Allocator const& alloc = Allocator())
+    explicit table(size_t /*bucket_count*/,
+                   Hash const& hash = Hash(),
+                   KeyEqual const& equal = KeyEqual(),
+                   Allocator const& alloc = Allocator())
         : m_values(alloc)
         , m_hash(hash)
         , m_equal(equal) {}
 
-    unordered_dense_map(size_t bucket_count, Allocator const& alloc)
-        : unordered_dense_map(bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(size_t bucket_count, Allocator const& alloc)
+        : table(bucket_count, Hash(), KeyEqual(), alloc) {}
 
-    unordered_dense_map(size_t bucket_count, Hash const& hash, Allocator const& alloc)
-        : unordered_dense_map(bucket_count, hash, KeyEqual(), alloc) {}
+    table(size_t bucket_count, Hash const& hash, Allocator const& alloc)
+        : table(bucket_count, hash, KeyEqual(), alloc) {}
 
-    explicit unordered_dense_map(Allocator const& alloc)
-        : unordered_dense_map(0, Hash(), KeyEqual(), alloc) {}
+    explicit table(Allocator const& alloc)
+        : table(0, Hash(), KeyEqual(), alloc) {}
 
     template <class InputIt>
-    unordered_dense_map(InputIt first,
-                        InputIt last,
-                        size_type bucket_count = 0,
-                        Hash const& hash = Hash(),
-                        KeyEqual const& equal = KeyEqual(),
-                        Allocator const& alloc = Allocator())
-        : unordered_dense_map(bucket_count, hash, equal, alloc) {
+    table(InputIt first,
+          InputIt last,
+          size_type bucket_count = 0,
+          Hash const& hash = Hash(),
+          KeyEqual const& equal = KeyEqual(),
+          Allocator const& alloc = Allocator())
+        : table(bucket_count, hash, equal, alloc) {
         insert(first, last);
     }
 
     template <class InputIt>
-    unordered_dense_map(InputIt first, InputIt last, size_type bucket_count, Allocator const& alloc)
-        : unordered_dense_map(first, last, bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(InputIt first, InputIt last, size_type bucket_count, Allocator const& alloc)
+        : table(first, last, bucket_count, Hash(), KeyEqual(), alloc) {}
 
     template <class InputIt>
-    unordered_dense_map(InputIt first, InputIt last, size_type bucket_count, Hash const& hash, Allocator const& alloc)
-        : unordered_dense_map(first, last, bucket_count, hash, KeyEqual(), alloc) {}
+    table(InputIt first, InputIt last, size_type bucket_count, Hash const& hash, Allocator const& alloc)
+        : table(first, last, bucket_count, hash, KeyEqual(), alloc) {}
 
-    unordered_dense_map(unordered_dense_map const& other)
-        : unordered_dense_map(other, other.m_values.get_allocator()) {}
+    table(table const& other)
+        : table(other, other.m_values.get_allocator()) {}
 
-    unordered_dense_map(unordered_dense_map const& other, Allocator const& alloc)
+    table(table const& other, Allocator const& alloc)
         : m_values(other.m_values, alloc)
         , m_max_load_factor(other.m_max_load_factor)
         , m_hash(other.m_hash)
@@ -599,10 +601,10 @@ public:
         init_from_values();
     }
 
-    unordered_dense_map(unordered_dense_map&& other) noexcept
-        : unordered_dense_map(std::move(other), other.m_values.get_allocator()) {}
+    table(table&& other) noexcept
+        : table(std::move(other), other.m_values.get_allocator()) {}
 
-    unordered_dense_map(unordered_dense_map&& other, Allocator const& alloc) noexcept
+    table(table&& other, Allocator const& alloc) noexcept
         : m_values(std::move(other.m_values), alloc)
         , m_buckets_start(other.m_buckets_start)
         , m_buckets_end(other.m_buckets_end)
@@ -614,30 +616,27 @@ public:
         other.m_buckets_start = nullptr;
     }
 
-    unordered_dense_map(std::initializer_list<value_type> ilist,
-                        size_t bucket_count = 0,
-                        Hash const& hash = Hash(),
-                        KeyEqual const& equal = KeyEqual(),
-                        Allocator const& alloc = Allocator())
-        : unordered_dense_map(bucket_count, hash, equal, alloc) {
+    table(std::initializer_list<value_type> ilist,
+          size_t bucket_count = 0,
+          Hash const& hash = Hash(),
+          KeyEqual const& equal = KeyEqual(),
+          Allocator const& alloc = Allocator())
+        : table(bucket_count, hash, equal, alloc) {
         insert(ilist);
     }
 
-    unordered_dense_map(std::initializer_list<value_type> ilist, size_type bucket_count, const Allocator& alloc)
-        : unordered_dense_map(ilist, bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(std::initializer_list<value_type> ilist, size_type bucket_count, const Allocator& alloc)
+        : table(ilist, bucket_count, Hash(), KeyEqual(), alloc) {}
 
-    unordered_dense_map(std::initializer_list<value_type> init,
-                        size_type bucket_count,
-                        Hash const& hash,
-                        Allocator const& alloc)
-        : unordered_dense_map(init, bucket_count, hash, KeyEqual(), alloc) {}
+    table(std::initializer_list<value_type> init, size_type bucket_count, Hash const& hash, Allocator const& alloc)
+        : table(init, bucket_count, hash, KeyEqual(), alloc) {}
 
-    ~unordered_dense_map() {
+    ~table() {
         auto bucket_alloc = BucketAlloc(m_values.get_allocator());
         BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, m_buckets_end - m_buckets_start);
     }
 
-    auto operator=(unordered_dense_map const& other) -> unordered_dense_map& {
+    auto operator=(table const& other) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = other.m_values;
@@ -650,9 +649,9 @@ public:
         return *this;
     }
 
-    auto operator=(unordered_dense_map&& other) noexcept(
+    auto operator=(table&& other) noexcept(
         noexcept(std::is_nothrow_move_assignable_v<ValueContainer>&& std::is_nothrow_move_assignable_v<Hash>&&
-                     std::is_nothrow_move_assignable_v<KeyEqual>)) -> unordered_dense_map& {
+                     std::is_nothrow_move_assignable_v<KeyEqual>)) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
@@ -668,7 +667,7 @@ public:
         return *this;
     }
 
-    auto operator=(std::initializer_list<value_type> ilist) -> unordered_dense_map& {
+    auto operator=(std::initializer_list<value_type> ilist) -> table& {
         clear();
         insert(ilist);
         return *this;
@@ -890,9 +889,8 @@ public:
         return do_erase_key(std::forward<K>(key));
     }
 
-    void swap(unordered_dense_map& other) noexcept(
-        noexcept(std::is_nothrow_swappable_v<ValueContainer>&& std::is_nothrow_swappable_v<Hash>&&
-                     std::is_nothrow_swappable_v<KeyEqual>)) {
+    void swap(table& other) noexcept(noexcept(std::is_nothrow_swappable_v<ValueContainer>&& std::is_nothrow_swappable_v<Hash>&&
+                                                  std::is_nothrow_swappable_v<KeyEqual>)) {
         using std::swap;
         swap(other, *this);
     }
@@ -903,11 +901,11 @@ public:
         if (auto it = find(key); end() != it) {
             return it->second;
         }
-        throw std::out_of_range("ankerl::unordered_dense_map::at(): key not found");
+        throw std::out_of_range("ankerl::unordered_dense::map::at(): key not found");
     }
 
     auto at(key_type const& key) const -> T const& {
-        return const_cast<unordered_dense_map*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+        return const_cast<table*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     auto operator[](Key const& key) -> T& {
@@ -936,7 +934,7 @@ public:
     }
 
     auto find(Key const& key) const -> const_iterator {
-        return const_cast<unordered_dense_map*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+        return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     template <
@@ -954,7 +952,7 @@ public:
         class KE = KeyEqual,
         std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
     auto find(K const& key) -> const_iterator {
-        return const_cast<unordered_dense_map*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+        return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     auto contains(Key const& key) const -> size_t {
@@ -1059,7 +1057,7 @@ public:
 
     // non-member functions ///////////////////////////////////////////////////
 
-    friend auto operator==(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
+    friend auto operator==(table const& a, table const& b) -> bool {
         if (&a == &b) {
             return true;
         }
@@ -1074,23 +1072,35 @@ public:
         return true;
     }
 
-    friend auto operator!=(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
+    friend auto operator!=(table const& a, table const& b) -> bool {
         return !(a == b);
     }
 };
 
 // deduction guides ///////////////////////////////////////////////////////////
 
-// TODO
+// TODO not yet implemented
 
-} // namespace ankerl
+// names
+
+template <class Key,
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Allocator = std::allocator<std::pair<Key, T>>>
+using map = table<Key, T, Hash, KeyEqual, Allocator>;
+
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
+using set = table<Key, void, Hash, KeyEqual, Allocator>;
+
+} // namespace ankerl::unordered_dense
 
 // std extensions /////////////////////////////////////////////////////////////
 
 namespace std {
 
 template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Pred>
-auto erase_if(ankerl::unordered_dense_map<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
+auto erase_if(ankerl::unordered_dense::map<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
     // going back to front because erase() invalidates the end iterator
     auto old_size = map.size();
 

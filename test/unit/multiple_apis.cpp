@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <app/Counter.h>
 #include <app/nanobench.h>
@@ -9,7 +9,7 @@
 #include <utility>
 
 TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
-    using Map = ankerl::unordered_dense_map<Counter::Obj, Counter::Obj>;
+    using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
     Counter counts;
     INFO(counts);
 

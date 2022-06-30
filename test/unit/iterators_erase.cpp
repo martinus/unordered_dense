@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <app/Counter.h>
 #include <doctest.h>
@@ -10,7 +10,7 @@ TEST_CASE("iterators_erase") {
     INFO(counts);
     {
         counts("begin");
-        auto map = ankerl::unordered_dense_map<Counter::Obj, Counter::Obj>();
+        auto map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>();
         for (uint64_t i = 0; i < 100; ++i) {
             map[Counter::Obj(i * 101, counts)] = Counter::Obj(i * 101, counts);
         }

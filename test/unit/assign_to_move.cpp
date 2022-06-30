@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #define ENABLE_LOG_LINE
 #include <app/print.h>
@@ -6,12 +6,12 @@
 #include <doctest.h>
 
 TEST_CASE("assign_to_moved") {
-    auto a = ankerl::unordered_dense_map<int, int>();
+    auto a = ankerl::unordered_dense::map<int, int>();
     a[1] = 2;
     auto moved = std::move(a);
     REQUIRE(moved.size() == 1U);
 
-    auto c = ankerl::unordered_dense_map<int, int>();
+    auto c = ankerl::unordered_dense::map<int, int>();
     c[3] = 4;
 
     // assign to a moved map
@@ -19,11 +19,11 @@ TEST_CASE("assign_to_moved") {
 }
 
 TEST_CASE("move_to_moved") {
-    auto a = ankerl::unordered_dense_map<int, int>();
+    auto a = ankerl::unordered_dense::map<int, int>();
     a[1] = 2;
     auto moved = std::move(a);
 
-    auto c = ankerl::unordered_dense_map<int, int>();
+    auto c = ankerl::unordered_dense::map<int, int>();
     c[3] = 4;
 
     // assign to a moved map
@@ -36,9 +36,9 @@ TEST_CASE("move_to_moved") {
 
 TEST_CASE("swap") {
     {
-        auto b = ankerl::unordered_dense_map<int, int>();
+        auto b = ankerl::unordered_dense::map<int, int>();
         {
-            auto a = ankerl::unordered_dense_map<int, int>();
+            auto a = ankerl::unordered_dense::map<int, int>();
             b[1] = 2;
 
             a.swap(b);
@@ -52,9 +52,9 @@ TEST_CASE("swap") {
     }
 
     {
-        auto a = ankerl::unordered_dense_map<int, int>();
+        auto a = ankerl::unordered_dense::map<int, int>();
         {
-            auto b = ankerl::unordered_dense_map<int, int>();
+            auto b = ankerl::unordered_dense::map<int, int>();
             b[1] = 2;
 
             a.swap(b);
@@ -68,9 +68,9 @@ TEST_CASE("swap") {
     }
 
     {
-        auto a = ankerl::unordered_dense_map<int, int>();
+        auto a = ankerl::unordered_dense::map<int, int>();
         {
-            auto b = ankerl::unordered_dense_map<int, int>();
+            auto b = ankerl::unordered_dense::map<int, int>();
             a.swap(b);
             REQUIRE(a.end() == a.find(1));
             REQUIRE(b.end() == b.find(1));

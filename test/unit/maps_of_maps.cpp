@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <app/Counter.h>
 #include <app/checksum.h>
@@ -10,7 +10,7 @@ TEST_CASE("mapmap") {
     Counter counts;
     INFO(counts);
 
-    using M = ankerl::unordered_dense_map<Counter::Obj, ankerl::unordered_dense_map<Counter::Obj, Counter::Obj>>;
+    using M = ankerl::unordered_dense::map<Counter::Obj, ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>>;
 
     auto rng = ankerl::nanobench::Rng();
     for (size_t trial = 0; trial < 4; ++trial) {

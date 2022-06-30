@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 #include <app/name_of_type.h>
 #include <app/nanobench.h>
 #include <app/robin_hood.h>
@@ -90,5 +90,5 @@ TEST_CASE("bench_find_random_rh" * doctest::test_suite("bench") * doctest::skip(
 
 // 8.87
 TEST_CASE("bench_find_random_udm" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<ankerl::unordered_dense_map<size_t, size_t>>();
+    bench<ankerl::unordered_dense::map<size_t, size_t>>();
 }

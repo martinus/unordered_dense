@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
 
@@ -6,7 +6,8 @@
 
 template <typename Ptr>
 void check(Ptr const& ptr) {
-    REQUIRE(ankerl::hash<Ptr>{}(ptr) == ankerl::hash<decltype(std::declval<Ptr>().get())>{}(ptr.get()));
+    REQUIRE(ankerl::unordered_dense::hash<Ptr>{}(ptr) ==
+            ankerl::unordered_dense::hash<decltype(std::declval<Ptr>().get())>{}(ptr.get()));
 }
 
 TEST_CASE("hash_smart_ptr") {

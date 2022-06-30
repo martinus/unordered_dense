@@ -1,11 +1,11 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #define ENABLE_LOG_LINE
 #include <app/print.h>
 
 #include <doctest.h>
 
-using Map = ankerl::unordered_dense_map<uint64_t, uint64_t>;
+using Map = ankerl::unordered_dense::map<uint64_t, uint64_t>;
 
 TEST_CASE("assignment_combinations_1") {
     Map a;

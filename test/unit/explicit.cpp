@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
 
@@ -18,7 +18,7 @@ struct PerImage {
 
 struct Scene {
     std::vector<PerImage> perImage;
-    ankerl::unordered_dense_map<void*, Texture*> texturesPerKey;
+    ankerl::unordered_dense::map<void*, Texture*> texturesPerKey;
 };
 
 struct AppState {

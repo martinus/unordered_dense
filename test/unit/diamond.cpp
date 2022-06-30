@@ -1,4 +1,4 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
 
@@ -15,7 +15,7 @@ struct HashWithEqual {
 
 // make sure the map works with the same type (check that it handles the diamond problem)
 TEST_CASE("diamond_problem") {
-    ankerl::unordered_dense_map<int, int, HashWithEqual, HashWithEqual> map;
+    ankerl::unordered_dense::map<int, int, HashWithEqual, HashWithEqual> map;
     map[1] = 2;
     REQUIRE(map.size() == 1);
     REQUIRE(map.find(1) != map.end());

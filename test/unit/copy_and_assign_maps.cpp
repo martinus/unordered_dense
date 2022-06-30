@@ -1,11 +1,11 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #define ENABLE_LOG_LINE
 #include <app/print.h>
 
 #include <doctest.h>
 
-using Map = ankerl::unordered_dense_map<int, int>;
+using Map = ankerl::unordered_dense::map<int, int>;
 
 // creates a map with some data in it
 template <class M>

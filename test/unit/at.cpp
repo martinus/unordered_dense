@@ -1,8 +1,8 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
 
-using Map = ankerl::unordered_dense_map<int, int>;
+using Map = ankerl::unordered_dense::map<int, int>;
 
 TEST_CASE("at") {
     Map map;

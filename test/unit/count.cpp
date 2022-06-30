@@ -1,9 +1,9 @@
-#include <ankerl/unordered_dense_map.h>
+#include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
 
 TEST_CASE("count") {
-    auto map = ankerl::unordered_dense_map<int, int>();
+    auto map = ankerl::unordered_dense::map<int, int>();
     REQUIRE(map.count(123) == 0);
     REQUIRE(map.count(0) == 0);
     map[123];

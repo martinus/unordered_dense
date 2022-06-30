@@ -12,6 +12,7 @@ Checks: "*,\
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,\
   -cppcoreguidelines-pro-type-reinterpret-cast,\
   -fuchsia-default-arguments-calls,\
+  -fuchsia-default-arguments-declarations,\
   -fuchsia-overloaded-operator,\
   -fuchsia-statically-constructed-objects,\
   -fuchsia-trailing-return,\
