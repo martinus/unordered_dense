@@ -29,7 +29,7 @@ minor = "??"
 patch = "??"
 with open(f"{root}/include/ankerl/unordered_dense.h", "r") as f:
     for line in f:
-        r = re.search(r"#define ANKERL_UNORDERED_DENSE_MAP_VERSION_([A-Z]+) (\d+)", line)
+        r = re.search(r"#define ANKERL_UNORDERED_DENSE_VERSION_([A-Z]+) (\d+)", line)
         if not r:
             continue
 

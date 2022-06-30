@@ -65,7 +65,7 @@ benchmark(
     verbose: true)
 
 test(
-    'unordered_dense_map test',
+    'unordered_dense test',
     test_exe,
     verbose: true)
 

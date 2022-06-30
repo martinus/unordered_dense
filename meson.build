@@ -17,7 +17,7 @@
 #     meson test --wrap='valgrind --leak-check=full --error-exitcode=1'
 #
 
-project('unordered_dense_map', 'cpp',
+project('unordered_dense', 'cpp',
     version: '0.0.1',
     license: 'MIT',
     default_options : ['cpp_std=c++17', 'warning_level=3', 'werror=true'])

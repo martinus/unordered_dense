@@ -2,7 +2,7 @@
 
 // A fast & densely stored hashmap based on robin-hood backward shift deletion.
 // Version 0.0.1
-// https://github.com/martinus/unordered_dense_map
+// https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
 // SPDX-License-Identifier: MIT
@@ -26,13 +26,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#ifndef ANKERL_UNORDERED_DENSE_MAP_H
-#define ANKERL_UNORDERED_DENSE_MAP_H
+#ifndef ANKERL_UNORDERED_DENSE_H
+#define ANKERL_UNORDERED_DENSE_H
 
 // see https://semver.org/spec/v2.0.0.html
-#define ANKERL_UNORDERED_DENSE_MAP_VERSION_MAJOR 0 // incompatible API changes
-#define ANKERL_UNORDERED_DENSE_MAP_VERSION_MINOR 0 // add functionality in a backwards compatible manner
-#define ANKERL_UNORDERED_DENSE_MAP_VERSION_PATCH 1 // backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 0 // incompatible API changes
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // add functionality in a backwards compatible manner
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 1 // backwards compatible bug fixes
 
 #include <algorithm>
 #include <cstdint>
@@ -55,11 +55,11 @@
 
 // likely and unlikely macros
 #if defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(__clang__)
-#    define ANKERL_UNORDERED_DENSE_MAP_LIKELY(x) __builtin_expect(x, 1)
-#    define ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(x) __builtin_expect(x, 0)
+#    define ANKERL_UNORDERED_DENSE_LIKELY(x) __builtin_expect(x, 1)
+#    define ANKERL_UNORDERED_DENSE_UNLIKELY(x) __builtin_expect(x, 0)
 #else
-#    define ANKERL_UNORDERED_DENSE_MAP_LIKELY(x) (x)
-#    define ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(x) (x)
+#    define ANKERL_UNORDERED_DENSE_LIKELY(x) (x)
+#    define ANKERL_UNORDERED_DENSE_UNLIKELY(x) (x)
 #endif
 
 namespace ankerl::unordered_dense {
@@ -131,11 +131,11 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     uint64_t seed = secret[0];
     uint64_t a{};
     uint64_t b{};
-    if (ANKERL_UNORDERED_DENSE_MAP_LIKELY(len <= 16)) {
-        if (ANKERL_UNORDERED_DENSE_MAP_LIKELY(len >= 4)) {
+    if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 16)) {
+        if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 4)) {
             a = (r4(p) << 32U) | r4(p + ((len >> 3U) << 2U));
             b = (r4(p + len - 4) << 32U) | r4(p + len - 4 - ((len >> 3U) << 2U));
-        } else if (ANKERL_UNORDERED_DENSE_MAP_LIKELY(len > 0)) {
+        } else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0)) {
             a = r3(p, len);
             b = 0;
         } else {
@@ -144,7 +144,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
         }
     } else {
         size_t i = len;
-        if (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(i > 48)) {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 48)) {
             uint64_t see1 = seed;
             uint64_t see2 = seed;
             do {
@@ -153,10 +153,10 @@ static inline void mum(uint64_t* a, uint64_t* b) {
                 see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
                 p += 48;
                 i -= 48;
-            } while (ANKERL_UNORDERED_DENSE_MAP_LIKELY(i > 48));
+            } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 48));
             seed ^= see1 ^ see2;
         }
-        while (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(i > 16)) {
+        while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16)) {
             seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
             i -= 16;
             p += 16;
@@ -297,14 +297,14 @@ private:
     uint8_t m_shifts = INITIAL_SHIFTS;
 
     [[nodiscard]] auto next(Bucket const* bucket) const -> Bucket const* {
-        if (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(++bucket == m_buckets_end)) {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(++bucket == m_buckets_end)) {
             return m_buckets_start;
         }
         return bucket;
     }
 
     [[nodiscard]] auto next(Bucket* bucket) -> Bucket* {
-        if (ANKERL_UNORDERED_DENSE_MAP_UNLIKELY(++bucket == m_buckets_end)) {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(++bucket == m_buckets_end)) {
             return m_buckets_start;
         }
         return bucket;
