@@ -78,7 +78,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
 
     uo.clear();
     map.clear();
-    for (uint64_t i = 0; i < times; ++i) {
+    for (size_t i = 0; i < times; ++i) {
         const auto r = rng.bounded(times / 4);
         map[{r, counts}] = {r * 2, counts};
         uo[r] = r * 2;

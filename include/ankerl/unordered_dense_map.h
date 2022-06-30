@@ -858,11 +858,23 @@ public:
         return erase(begin() + (it - cbegin()));
     }
 
-#if 0
     auto erase(const_iterator first, const_iterator last) -> iterator {
-        throw std::runtime_error("TODO not implemented yet. This doesn't seem very straightforward ")
+        auto first_to_last = std::distance(first, last);
+        auto last_to_end = std::distance(last, cend());
+
+        // remove elements from left to right which moves elements from the end back
+        auto const mid = first + std::min(first_to_last, last_to_end);
+        while (first != mid) {
+            erase(first);
+            ++first;
+        }
+
+        // all elements from the right are moved, now remove the last element until all done
+        auto back = cend();
+        while (last != mid) {
+            erase(--last);
+        }
     }
-#endif
 
     auto erase(Key const& key) -> size_t {
         return do_erase_key(key);
@@ -958,7 +970,51 @@ public:
         return find(key) != end();
     }
 
-    // TODO continue here https://en.cppreference.com/w/cpp/container/unordered_map/equal_range
+    auto equal_range(Key const& key) -> std::pair<iterator, iterator> {
+        auto it = do_find(key);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    auto equal_range(const Key& key) const -> std::pair<const_iterator, const_iterator> {
+        auto it = do_find(key);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    template <
+        class K,
+        class H = Hash,
+        class KE = KeyEqual,
+        std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
+    auto equal_range(K const& key) -> std::pair<iterator, iterator> {
+        auto it = do_find(key);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    template <
+        class K,
+        class H = Hash,
+        class KE = KeyEqual,
+        std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
+    auto equal_range(K const& key) const -> std::pair<const_iterator, const_iterator> {
+        auto it = do_find(key);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    // bucket interface ///////////////////////////////////////////////////////
+
+    auto bucket_count() const -> size_t {
+        return m_buckets_end - m_buckets_start;
+    }
+
+    auto max_bucket_count() const -> size_t {
+        return std::numeric_limits<uint32_t>::max();
+    }
+
+    // hash policy ////////////////////////////////////////////////////////////
+
+    [[nodiscard]] auto load_factor() const -> float {
+        return static_cast<float>(size()) / bucket_count();
+    }
 
     [[nodiscard]] auto max_load_factor() const -> float {
         return m_max_load_factor;
@@ -966,8 +1022,42 @@ public:
 
     void max_load_factor(float ml) {
         m_max_load_factor = ml;
-        m_max_bucket_capacity = static_cast<uint64_t>((m_buckets_end - m_buckets_start) * max_load_factor());
+        m_max_bucket_capacity = static_cast<uint32_t>(bucket_count() * max_load_factor());
     }
+
+    void rehash(size_t count) {
+        auto shifts = calc_shifts_for_size(count);
+        if (shifts != m_shifts) {
+            m_shifts = shifts;
+            deallocate_buckets();
+            m_values.shrink_to_fit();
+            allocate_and_clear_buckets();
+            fill_buckets_from_values();
+        }
+    }
+
+    void reserve(size_t capa) {
+        auto shifts = calc_shifts_for_size(capa);
+        if (shifts < m_shifts) {
+            // size increases when shifts is bigger
+            m_shifts = shifts;
+            deallocate_buckets();
+            allocate_and_clear_buckets();
+            fill_buckets_from_values();
+        }
+    }
+
+    // observers //////////////////////////////////////////////////////////////
+
+    auto hash_function() const -> hasher {
+        return m_hash;
+    }
+
+    auto key_eq() const -> key_equal {
+        return m_equal;
+    }
+
+    // non-member functions ///////////////////////////////////////////////////
 
     friend auto operator==(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
         if (&a == &b) {
@@ -987,20 +1077,34 @@ public:
     friend auto operator!=(unordered_dense_map const& a, unordered_dense_map const& b) -> bool {
         return !(a == b);
     }
-
-    void reserve(size_t capa) {
-        m_values.reserve(capa);
-        auto shifts = calc_shifts_for_size(capa);
-        if (shifts < m_shifts) {
-            // size increases when shifts is bigger
-            m_shifts = shifts;
-            deallocate_buckets();
-            allocate_and_clear_buckets();
-            fill_buckets_from_values();
-        }
-    }
 };
 
+// deduction guides ///////////////////////////////////////////////////////////
+
+// TODO
+
 } // namespace ankerl
+
+// std extensions /////////////////////////////////////////////////////////////
+
+namespace std {
+
+template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Pred>
+auto erase_if(ankerl::unordered_dense_map<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
+    // going back to front because erase() invalidates the end iterator
+    auto old_size = map.size();
+
+    auto back_it = map.end();
+    while (map.begin() != back_it) {
+        --back_it;
+        if (pred(*back_it)) {
+            map.erase(back_it);
+        }
+    }
+
+    return map.size() - old_size;
+}
+
+} // namespace std
 
 #endif
