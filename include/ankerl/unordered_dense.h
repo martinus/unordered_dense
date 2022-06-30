@@ -67,7 +67,8 @@ namespace ankerl::unordered_dense {
 // This is a stripped-down implementation of wyhash: https://github.com/wangyi-fudan/wyhash
 // Notably this removes big-endian support (because different values on different machines don't matter),
 // hardcodes seed and the secret, reformattes the code, and clang-tidy fixes.
-namespace detail::wyhash {
+namespace detail {
+namespace wyhash {
 
 static inline void mum(uint64_t* a, uint64_t* b) {
 #if defined(__SIZEOF_INT128__)
@@ -167,9 +168,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
-} // namespace detail::wyhash
-
-namespace detail {
+} // namespace wyhash
 
 struct nonesuch {};
 
@@ -185,13 +184,21 @@ struct detector<Default, std::void_t<Op<Args...>>, Op, Args...> {
     using type = Op<Args...>;
 };
 
-} // namespace detail
-
 template <template <class...> class Op, class... Args>
 using is_detected = typename detail::detector<detail::nonesuch, void, Op, Args...>::value_t;
 
 template <template <class...> class Op, class... Args>
 constexpr bool is_detected_v = is_detected<Op, Args...>::value;
+
+template <typename T>
+using detect_avalanching = typename T::is_avalanching;
+
+template <typename T>
+using detect_is_transparent = typename T::is_transparent;
+
+} // namespace detail
+
+// hash ///////////////////////////////////////////////////////////////////////
 
 template <typename T, typename Enable = void>
 struct hash : public std::hash<T> {
@@ -200,12 +207,6 @@ struct hash : public std::hash<T> {
         return std::hash<T>::operator()(obj);
     }
 };
-
-template <typename T>
-using detect_avalanching = typename T::is_avalanching;
-
-template <typename T>
-using detect_is_transparent = typename T::is_transparent;
 
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
@@ -222,6 +223,8 @@ struct hash<std::basic_string_view<CharT>> {
         return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
     }
 };
+
+namespace detail {
 
 /**
  * @brief
@@ -318,7 +321,7 @@ private:
         //   mul     rdi
         //   xor     rax, rdx
         //   ret
-        return detail::wyhash::mix(m_hash(key), UINT64_C(0x9E3779B97F4A7C15));
+        return wyhash::mix(m_hash(key), UINT64_C(0x9E3779B97F4A7C15));
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> uint32_t {
@@ -1077,21 +1080,21 @@ public:
     }
 };
 
-// deduction guides ///////////////////////////////////////////////////////////
-
-// TODO not yet implemented
-
-// names
+} // namespace detail
 
 template <class Key,
           class T,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class Allocator = std::allocator<std::pair<Key, T>>>
-using map = table<Key, T, Hash, KeyEqual, Allocator>;
+using map = detail::table<Key, T, Hash, KeyEqual, Allocator>;
 
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
-using set = table<Key, void, Hash, KeyEqual, Allocator>;
+using set = detail::table<Key, void, Hash, KeyEqual, Allocator>;
+
+// deduction guides ///////////////////////////////////////////////////////////
+
+// TODO not yet implemented
 
 } // namespace ankerl::unordered_dense
 
