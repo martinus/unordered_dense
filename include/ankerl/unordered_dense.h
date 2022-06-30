@@ -41,6 +41,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <memory_resource>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -123,7 +124,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[nodiscard]] static inline auto hash(const void* key, size_t len) -> uint64_t {
+[[nodiscard]] inline auto hash(const void* key, size_t len) -> uint64_t {
     static constexpr auto secret =
         std::array{0xa0761d6478bd642fULL, 0xe7037ed1a0b428dbULL, 0x8ebc6af09c88c6e3ULL, 0x589965cc75374cc3ULL};
 
@@ -459,7 +460,6 @@ private:
             val = std::move(m_values.back());
 
             // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
-            // TODO don't duplicate code
             auto mh = mixed_hash(get_key(val));
             bucket = bucket_from_hash(mh);
 
@@ -1115,6 +1115,16 @@ using map = detail::table<Key, T, Hash, KeyEqual, Allocator>;
 
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
 using set = detail::table<Key, void, Hash, KeyEqual, Allocator>;
+
+namespace pmr {
+
+template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>>
+using map = detail::table<Key, T, Hash, KeyEqual, std::pmr::polymorphic_allocator<std::pair<Key, T>>>;
+
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>>
+using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_allocator<Key>>;
+
+} // namespace pmr
 
 // deduction guides ///////////////////////////////////////////////////////////
 
