@@ -234,14 +234,7 @@ using detect_avalanching = typename T::is_avalanching;
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
 
-/**
- * @brief
- *
- * @tparam Key
- * @tparam T
- * @tparam Hash
- * @tparam Pred
- */
+// This is it, the table. Doubles as map and set, and uses `void` for T when its used as a set.
 template <class Key,
           class T, // when void, treat it as a set.
           class Hash,
@@ -1158,7 +1151,7 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 namespace std {
 
 template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Pred>
-auto erase_if(ankerl::unordered_dense::map<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
+auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
     // going back to front because erase() invalidates the end iterator
     auto old_size = map.size();
 
