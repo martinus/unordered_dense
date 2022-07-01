@@ -1,6 +1,15 @@
-# ankerl::unordered_dense
+<a id="top"></a>
 
-A fast &amp; densely stored hashmap and hashset based on robin-hood backward shift deletion.
+[![meson_build_test](https://github.com/martinus/unordered_dense/actions/workflows/main.yml/badge.svg)](https://github.com/martinus/unordered_dense/actions)
+[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/martinus/unordered_dense/main/LICENSE)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/6091/badge)](https://bestpractices.coreinfrastructure.org/projects/6091)
+
+# 🚀 ankerl::unordered_dense::{map, set}
+
+A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
+
+
+
 
 This is a newly implemented hashmap based on lessons learned from [robin-hood-hashing](https://github.com/martinus/robin-hood-hashing)
 

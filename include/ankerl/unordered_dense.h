@@ -1,7 +1,7 @@
-///////////////////////// ankerl::unordered_dense /////////////////////////
+///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
-// A fast & densely stored hashmap based on robin-hood backward shift deletion.
-// Version 0.0.1
+// A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
+// Version 1.0.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -30,9 +30,9 @@
 #define ANKERL_UNORDERED_DENSE_H
 
 // see https://semver.org/spec/v2.0.0.html
-#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 0 // incompatible API changes
+#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // add functionality in a backwards compatible manner
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 1 // backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
 
 #include <algorithm>
 #include <cstdint>
@@ -65,11 +65,12 @@
 
 namespace ankerl::unordered_dense {
 
+// hash ///////////////////////////////////////////////////////////////////////
+
 // This is a stripped-down implementation of wyhash: https://github.com/wangyi-fudan/wyhash
 // Notably this removes big-endian support (because different values on different machines don't matter),
 // hardcodes seed and the secret, reformattes the code, and clang-tidy fixes.
-namespace detail {
-namespace wyhash {
+namespace detail::wyhash {
 
 static inline void mum(uint64_t* a, uint64_t* b) {
 #if defined(__SIZEOF_INT128__)
@@ -169,7 +170,34 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
-} // namespace wyhash
+} // namespace detail::wyhash
+
+template <typename T, typename Enable = void>
+struct hash : public std::hash<T> {
+    using is_avalanching = void;
+    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
+        -> size_t {
+        return detail::wyhash::mix(std::hash<T>::operator()(obj), UINT64_C(0x9E3779B97F4A7C15));
+    }
+};
+
+template <typename CharT>
+struct hash<std::basic_string<CharT>> {
+    using is_avalanching = void;
+    auto operator()(std::basic_string<CharT> const& str) const noexcept -> size_t {
+        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
+    }
+};
+
+template <typename CharT>
+struct hash<std::basic_string_view<CharT>> {
+    using is_avalanching = void;
+    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> size_t {
+        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
+    }
+};
+
+namespace detail {
 
 struct nonesuch {};
 
@@ -196,36 +224,6 @@ using detect_avalanching = typename T::is_avalanching;
 
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
-
-} // namespace detail
-
-// hash ///////////////////////////////////////////////////////////////////////
-
-template <typename T, typename Enable = void>
-struct hash : public std::hash<T> {
-    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> size_t {
-        return std::hash<T>::operator()(obj);
-    }
-};
-
-template <typename CharT>
-struct hash<std::basic_string<CharT>> {
-    using is_avalanching = void;
-    auto operator()(std::basic_string<CharT> const& str) const noexcept -> size_t {
-        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
-    }
-};
-
-template <typename CharT>
-struct hash<std::basic_string_view<CharT>> {
-    using is_avalanching = void;
-    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> size_t {
-        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
-    }
-};
-
-namespace detail {
 
 /**
  * @brief
