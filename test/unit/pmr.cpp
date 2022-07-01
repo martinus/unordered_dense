@@ -3,7 +3,9 @@
 #include <doctest.h>
 #include <fmt/format.h>
 
-#include <memory_resource>
+#if ANKERL_UNORDERED_DENSE_PMR
+
+#    include <memory_resource>
 
 class logging_memory_resource : public std::pmr::memory_resource {
     auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
@@ -169,3 +171,5 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(mr1.num_deallocs() == 2);
     REQUIRE(mr1.num_is_equals() == 0);
 }
+
+#endif

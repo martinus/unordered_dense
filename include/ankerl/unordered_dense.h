@@ -41,13 +41,21 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
-#include <memory_resource>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#define ANKERL_UNORDERED_DENSE_PMR 0
+#if defined __has_include
+#    if __has_include(<memory_resource>)
+#        undef ANKERL_UNORDERED_DENSE_PMR
+#        define ANKERL_UNORDERED_DENSE_PMR 1
+#        include <memory_resource>
+#    endif
+#endif
 
 #if defined(_MSC_VER) && defined(_M_X64)
 #    include <intrin.h>
@@ -1123,6 +1131,8 @@ using map = detail::table<Key, T, Hash, KeyEqual, Allocator>;
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
 using set = detail::table<Key, void, Hash, KeyEqual, Allocator>;
 
+#if ANKERL_UNORDERED_DENSE_PMR
+
 namespace pmr {
 
 template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>>
@@ -1132,6 +1142,8 @@ template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>
 using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_allocator<Key>>;
 
 } // namespace pmr
+
+#endif
 
 // deduction guides ///////////////////////////////////////////////////////////
 
