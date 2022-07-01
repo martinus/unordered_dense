@@ -21,7 +21,7 @@ template <typename A, typename B>
 TEST_CASE("insert_erase_random") {
     auto uds = ankerl::unordered_dense::set<uint32_t>();
     auto us = std::unordered_set<uint32_t>();
-    auto rng = ankerl::nanobench::Rng();
+    auto rng = ankerl::nanobench::Rng(123);
     for (size_t i = 0; i < 10000; ++i) {
         auto key = rng.bounded(1000);
         uds.insert(key);
@@ -32,5 +32,10 @@ TEST_CASE("insert_erase_random") {
         REQUIRE(uds.erase(key) == us.erase(key));
         REQUIRE(uds.size() == us.size());
     }
+    REQUIRE(is_eq(uds, us));
+    auto k = *uds.begin();
+    uds.erase(k);
+    REQUIRE(!is_eq(uds, us));
+    us.erase(k);
     REQUIRE(is_eq(uds, us));
 }

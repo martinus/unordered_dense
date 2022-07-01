@@ -26,4 +26,8 @@ TEST_CASE("insert_hint") {
     map.insert(it, vt2);
     REQUIRE(map.size() == 3);
     REQUIRE(map[10] == 11);
+
+    it = map.emplace_hint(it, std::piecewise_construct, std::forward_as_tuple(123), std::forward_as_tuple(321));
+    REQUIRE(map.size() == 4);
+    REQUIRE(map[123] == 321);
 }

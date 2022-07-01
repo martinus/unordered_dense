@@ -379,7 +379,7 @@ private:
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
         auto shifts = INITIAL_SHIFTS;
-        while (static_cast<uint64_t>(calc_num_buckets(shifts) * max_load_factor()) < s) {
+        while (shifts > 0 && static_cast<uint64_t>(calc_num_buckets(shifts) * max_load_factor()) < s) {
             --shifts;
         }
         return shifts;
@@ -559,6 +559,11 @@ private:
             bucket = next(bucket);
         } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
         return end();
+    }
+
+    template <typename K>
+    auto do_find(K const& key) const -> const_iterator {
+        return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
 public:
@@ -775,22 +780,22 @@ public:
         insert(ilist.begin(), ilist.end());
     }
 
-    template <class M>
+    template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto insert_or_assign(Key const& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(key, std::forward<M>(mapped));
     }
 
-    template <class M>
+    template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto insert_or_assign(Key&& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(std::move(key), std::forward<M>(mapped));
     }
 
-    template <class M>
+    template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto insert_or_assign(const_iterator /*hint*/, Key const& key, M&& mapped) -> iterator {
         return do_insert_or_assign(key, std::forward<M>(mapped)).first;
     }
 
-    template <class M>
+    template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto insert_or_assign(const_iterator /*hint*/, Key&& key, M&& mapped) -> iterator {
         return do_insert_or_assign(std::move(key), std::forward<M>(mapped)).first;
     }
@@ -828,32 +833,32 @@ public:
     }
 
     template <class... Args>
-    auto emplace(const_iterator /*hint*/, Args&&... args) -> iterator {
+    auto emplace_hint(const_iterator /*hint*/, Args&&... args) -> iterator {
         return emplace(std::forward<Args>(args)...).first;
     }
 
-    template <class... Args>
+    template <class... Args, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(key, std::forward<Args>(args)...);
     }
 
-    template <class... Args>
+    template <class... Args, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...);
     }
 
-    template <class... Args>
+    template <class... Args, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
         return do_try_emplace(key, std::forward<Args>(args)...).first;
     }
 
-    template <class... Args>
+    template <class... Args, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...).first;
     }
 
     auto erase(iterator it) -> iterator {
-        auto hash = mixed_hash(it->first);
+        auto hash = mixed_hash(get_key(*it));
         auto* bucket = bucket_from_hash(hash);
 
         auto const value_idx_to_remove = static_cast<uint32_t>(it - cbegin());
@@ -918,7 +923,7 @@ public:
             return it->second;
         }
         throw std::out_of_range("ankerl::unordered_dense::map::at(): key not found");
-    }
+    } // LCOV_EXCL_LINE is this a gcov/lcov bug? this method is fully tested.
 
     template <typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto at(key_type const& key) const -> Q const& {
@@ -953,7 +958,7 @@ public:
     }
 
     auto find(Key const& key) const -> const_iterator {
-        return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+        return do_find(key);
     }
 
     template <
@@ -971,7 +976,7 @@ public:
         class KE = KeyEqual,
         std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
     auto find(K const& key) const -> const_iterator {
-        return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+        return do_find(key);
     }
 
     auto contains(Key const& key) const -> size_t {
@@ -1046,7 +1051,7 @@ public:
     }
 
     void rehash(size_t count) {
-        auto shifts = calc_shifts_for_size(count);
+        auto shifts = calc_shifts_for_size(std::max(count, size()));
         if (shifts != m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
@@ -1057,7 +1062,7 @@ public:
     }
 
     void reserve(size_t capa) {
-        auto shifts = calc_shifts_for_size(capa);
+        auto shifts = calc_shifts_for_size(std::max(capa, size()));
         if (shifts < m_shifts) {
             // size increases when shifts is bigger
             m_shifts = shifts;

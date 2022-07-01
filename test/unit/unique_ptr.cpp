@@ -14,6 +14,12 @@ TEST_CASE("unique_ptr") {
     REQUIRE(m.end() == m.find(123));
     REQUIRE(m.end() != m.find(32));
 
+    for (auto const& kv : m) {
+        REQUIRE(kv.first == 32);
+        REQUIRE(kv.second != nullptr);
+        REQUIRE(*kv.second == 123);
+    }
+
     m = Map();
     REQUIRE(m.end() == m.begin());
     REQUIRE(m.end() == m.find(123));
@@ -35,12 +41,6 @@ TEST_CASE("unique_ptr") {
     REQUIRE(m4.end() == m4.begin());
     REQUIRE(m4.end() == m4.find(123));
     REQUIRE(m4.end() == m4.find(32));
-
-    for (auto const& kv : m) {
-        REQUIRE(kv.first == 32);
-        REQUIRE(kv.second != nullptr);
-        REQUIRE(*kv.second == 123);
-    }
 }
 
 TEST_CASE("unique_ptr_fill") {

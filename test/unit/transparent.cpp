@@ -144,3 +144,21 @@ TEST_CASE("transparent_erase") {
     REQUIRE(1 == map.erase("hello"s));
     check(map.hash_function(), 2, 2, 5);
 }
+
+TEST_CASE("transparent_equal_range") {
+    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+    map.try_emplace("hello", 1);
+    check(map.hash_function(), 0, 0, 1);
+
+    auto range = map.equal_range("hello");
+    check(map.hash_function(), 1, 0, 1);
+    REQUIRE(range.first != range.second);
+    REQUIRE(range.first->first == "hello");
+    REQUIRE(range.second == map.end());
+
+    auto crange = std::as_const(map).equal_range("hello"sv);
+    check(map.hash_function(), 1, 1, 1);
+    REQUIRE(crange.first != range.second);
+    REQUIRE(crange.first->first == "hello");
+    REQUIRE(crange.second == map.end());
+}

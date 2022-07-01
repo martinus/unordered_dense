@@ -14,6 +14,8 @@ test_sources = [
     'unit/ctors.cpp',
     'unit/diamond.cpp',
     'unit/empty.cpp',
+    'unit/equal_range.cpp',
+    'unit/erase_if.cpp',
     'unit/erase_range.cpp',
     'unit/erase.cpp',
     'unit/explicit.cpp',
@@ -30,12 +32,13 @@ test_sources = [
     'unit/iterators_insert.cpp',
     'unit/load_factor.cpp',
     'unit/maps_of_maps.cpp',
-    'unit/max_size.cpp',
+    'unit/max.cpp',
     'unit/move_to_moved.cpp',
     'unit/multiple_apis.cpp',
     'unit/not_copyable.cpp',
     'unit/not_moveable.cpp',
     'unit/pmr.cpp',
+    'unit/rehash.cpp',
     'unit/reserve_and_assign.cpp',
     'unit/set.cpp',
     'unit/swap.cpp',
@@ -44,7 +47,6 @@ test_sources = [
     'unit/unique_ptr.cpp',
     'unit/unordered_set.cpp',
     'unit/vectorofmaps.cpp',
-    'unit/xy.cpp',
 ]
 
 # additional compile options
