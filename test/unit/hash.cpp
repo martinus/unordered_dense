@@ -9,7 +9,7 @@ TEST_CASE("hash_string") {
 
     auto set = std::unordered_set<uint64_t>();
     auto str = std::string();
-    for (size_t l=0; l<100; ++l) {
+    for (size_t l = 0; l < 100; ++l) {
         set.insert(h(str));
         str.push_back('x');
     }

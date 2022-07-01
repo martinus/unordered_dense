@@ -34,4 +34,3 @@ TEST_CASE("insert_erase_random") {
     }
     REQUIRE(is_eq(uds, us));
 }
-

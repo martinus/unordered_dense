@@ -38,7 +38,6 @@ TEST_CASE("initializerlist_string") {
     REQUIRE(m2["lion"] == n2);
 }
 
-
 TEST_CASE("insert_initializer_list_string") {
     auto m = ankerl::unordered_dense::map<int, std::string>();
     m.insert({{1, "a"}, {3, "b"}, {5, "c"}});

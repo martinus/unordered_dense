@@ -870,7 +870,7 @@ public:
 
     auto erase(const_iterator first, const_iterator last) -> iterator {
         auto const it_ret = begin() + (first - cbegin());
-        
+
         auto first_to_last = std::distance(first, last);
         auto last_to_end = std::distance(last, cend());
 
