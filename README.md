@@ -26,21 +26,41 @@ While they don't have as strong iterator / reference stability guaranties, they 
 
 ## Design
 
-This is a newly implemented hashmap based on lessons learned from [robin-hood-hashing](https://github.com/martinus/robin-hood-hashing)
+The map/set has two data structures:
+* `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
+* An indexing structure (bucket array), which is a flat array with 8-byte buckets.
 
-* Perfect iteration speed. Use an `std::vector<std::pair<Key, Value>>` (maybe customizable container) for the content that is always 100% compact.
-* Use an indexing data of 8 byte where overflow is no issue:
-   ```
-    0 1 2 3 4 5 6 7 8
-   +-+-+-+-+-+-+-+-+-+
-   |dist |h|   idx   |
-   +-+-+-+-+-+-+-+-+-+
-   ```
-    * `dist`: 3 byte offset from original bucket. 0 means empty, 1 means here, ... => 2^24-2 = 16777214 collisions possible, should be plenty
-    * `h`: 1 byte hash. That's enough with high probability find the correct element without having to check the key. Very useful for e.g. large strings.
-    * `dist` and `h` are treated together as a single 32bit `uint32_t`.
-    * `4` byte index into the `std::vector<std::pair<Key, Value>>` dense storage. That's enough for 4294 million entries.
-* with a reasonable mixer of the hash. E.g. [mumx](https://github.com/martinus/map_benchmark/blob/master/src/app/mixer.h#L43-L47)? Or just multiply with a random odd 64bit number and take the upper bits? Or both.
-* C++17
+### Inserts
 
-# Expected Advantages / Disadvantages
+Whenever an element is added it is `emplace_back` to the vector. The key is hashed, and an entry (bucket) is added at the
+corresponding location in the bucket array. The bucket has this structure:
+
+```cpp
+struct Bucket {
+    uint32_t dist_and_fingerprint;
+    uint32_t value_idx;
+};
+```
+
+Each bucket stores 3 things:
+* The distance of that value from the original hashed location (3 most significant bytes in `dist_and_fingerprint`)
+* A fingerprint; 1 byte of the hash (lowest significant byte in `dist_and_fingerprint`)
+* An index where in the vector the actual data is stored.
+
+This structure is especially designed for the collision resolution strategy robin-hood hashing with backward shift
+deletion.
+
+### Lookups
+
+The key is hashed and the bucket array is searched if it has an entry at that location with that fingerprint. When found,
+the key in the data vector is compared, and when equal the value is returned.
+
+## Removals
+
+Since all data is stored in a vector, removals are a bit more complicated:
+
+1. First, lookup the element to delete in the index array.
+2. When found, replace that element in the vector with the last element in the vector. 
+3. Update *two* locations in the bucket array: First remove the bucket for the removed element
+4. Then, update the `value_idx` of the moved element. This requires another lookup.
+
