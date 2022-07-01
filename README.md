@@ -16,7 +16,7 @@ While they don't have as strong iterator / reference stability guaranties, they 
 * Perfect iteration speed - Data is stored in a `std::vector`, all data is contiguous!
 * Very fast insertion & lookup speed, in the same ballpark as [`absl::flat_hash_map`](https://abseil.io/docs/cpp/guides/container`)
 * Low memory usage
-* Full support for `std::allocators`, and [polymmorphic allocators](https://en.cppreference.com/w/cpp/memory/polymorphic_allocator). There are `ankerl::unordered_dense::pmr` typedefs available
+* Full support for `std::allocators`, and [polymorphic allocators](https://en.cppreference.com/w/cpp/memory/polymorphic_allocator). There are `ankerl::unordered_dense::pmr` typedefs available
 * Simple: single header with just a bit over 1000 lines of code, this is less than half of [robin-hood-hashing](https://github.com/martinus/robin-hood-hashing)
 
 ## Disadvantages
