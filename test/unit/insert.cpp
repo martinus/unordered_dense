@@ -11,3 +11,19 @@ TEST_CASE("insert") {
 
     REQUIRE(map[123U] == 321);
 }
+
+TEST_CASE("insert_hint") {
+    auto map = ankerl::unordered_dense::map<unsigned int, int>();
+    auto it = map.insert(map.begin(), {1, 2});
+
+    auto vt = std::pair<unsigned int, float>{3, 4.2};
+    map.insert(it, vt);
+    REQUIRE(map.size() == 2);
+    REQUIRE(map[1] == 2);
+    REQUIRE(map[3] == 4);
+
+    auto const vt2 = decltype(map)::value_type{10, 11};
+    map.insert(it, vt2);
+    REQUIRE(map.size() == 3);
+    REQUIRE(map[10] == 11);
+}

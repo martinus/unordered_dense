@@ -667,13 +667,14 @@ public:
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
             m_buckets_start = std::exchange(other.m_buckets_start, nullptr);
-            m_buckets_end = other.m_buckets_end;
-            m_max_bucket_capacity = other.m_max_bucket_capacity;
+            m_buckets_end = std::exchange(other.m_buckets_end, nullptr);
+            m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
             m_max_load_factor = other.m_max_load_factor;
             m_hash = std::move(other.m_hash);
             m_equal = std::move(other.m_equal);
-            m_shifts = other.m_shifts;
-            other.m_buckets_start = nullptr;
+            m_shifts = std::exchange(other.m_shifts, INITIAL_SHIFTS);
+
+            other.m_values.clear();
         }
         return *this;
     }
@@ -684,7 +685,7 @@ public:
         return *this;
     }
 
-    auto get_allocator() const noexcept {
+    auto get_allocator() const noexcept -> allocator_type {
         return m_values.get_allocator();
     }
 

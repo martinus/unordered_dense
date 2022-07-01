@@ -63,6 +63,10 @@ TEST_CASE("pmr") {
             map[i] = i;
         }
         REQUIRE(mr.current() != 0);
+
+        // gets a copy, but it has the same memory resource
+        auto alloc = map.get_allocator();
+        REQUIRE(alloc.resource() == &mr);
     }
     REQUIRE(mr.current() == 0);
 }

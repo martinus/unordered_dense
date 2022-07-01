@@ -56,3 +56,22 @@ TEST_CASE("initializer_list_assign") {
     REQUIRE(has(map, 2, "hello"sv));
     REQUIRE(has(map, 12346, "world!"sv));
 }
+
+TEST_CASE("initializer_list_ctor_alloc") {
+    using Alloc = std::allocator<std::pair<int, char const*>>;
+    auto map = ankerl::unordered_dense::map<int, char const*>({{1, "a"}, {2, "hello"}, {12346, "world!"}}, 0, Alloc{});
+    REQUIRE(map.size() == 3);
+    REQUIRE(has(map, 1, "a"sv));
+    REQUIRE(has(map, 2, "hello"sv));
+    REQUIRE(has(map, 12346, "world!"sv));
+}
+
+TEST_CASE("initializer_list_ctor_hash_alloc") {
+    using Hash = ankerl::unordered_dense::hash<int>;
+    using Alloc = std::allocator<std::pair<int, char const*>>;
+    auto map = ankerl::unordered_dense::map<int, char const*>({{1, "a"}, {2, "hello"}, {12346, "world!"}}, 0, Hash{}, Alloc{});
+    REQUIRE(map.size() == 3);
+    REQUIRE(has(map, 1, "a"sv));
+    REQUIRE(has(map, 2, "hello"sv));
+    REQUIRE(has(map, 12346, "world!"sv));
+}

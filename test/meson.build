@@ -30,6 +30,7 @@ test_sources = [
     'unit/iterators_insert.cpp',
     'unit/load_factor.cpp',
     'unit/maps_of_maps.cpp',
+    'unit/max_size.cpp',
     'unit/move_to_moved.cpp',
     'unit/multiple_apis.cpp',
     'unit/not_copyable.cpp',
