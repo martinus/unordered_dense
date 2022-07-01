@@ -18,7 +18,7 @@ template <typename A, typename B>
     });
 }
 
-TEST_CASE("count") {
+TEST_CASE("insert_erase_random") {
     auto uds = ankerl::unordered_dense::set<uint32_t>();
     auto us = std::unordered_set<uint32_t>();
     auto rng = ankerl::nanobench::Rng();
@@ -29,9 +29,9 @@ TEST_CASE("count") {
         REQUIRE(uds.size() == us.size());
 
         key = rng.bounded(1000);
-        uds.erase(key);
-        us.erase(key);
+        REQUIRE(uds.erase(key) == us.erase(key));
         REQUIRE(uds.size() == us.size());
     }
     REQUIRE(is_eq(uds, us));
 }
+

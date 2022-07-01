@@ -172,6 +172,10 @@ Counter::~Counter() {
         test::print("ERROR at ~Counter(): got {} objects still alive!", singletonConstructedObjects().size());
         std::abort();
     }
+    if (dtor != ctor + staticDefaultCtor + copyCtor + defaultCtor + moveCtor) {
+        test::print("ERROR at ~Counter(): number of counts does not match!");
+        std::abort();
+    }
 }
 
 auto Counter::total() const -> size_t {

@@ -869,6 +869,8 @@ public:
     }
 
     auto erase(const_iterator first, const_iterator last) -> iterator {
+        auto const it_ret = begin() + (first - cbegin());
+        
         auto first_to_last = std::distance(first, last);
         auto last_to_end = std::distance(last, cend());
 
@@ -880,10 +882,11 @@ public:
         }
 
         // all elements from the right are moved, now remove the last element until all done
-        auto back = cend();
         while (last != mid) {
             erase(--last);
         }
+
+        return it_ret;
     }
 
     auto erase(Key const& key) -> size_t {
@@ -966,7 +969,7 @@ public:
         class H = Hash,
         class KE = KeyEqual,
         std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool> = true>
-    auto find(K const& key) -> const_iterator {
+    auto find(K const& key) const -> const_iterator {
         return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 

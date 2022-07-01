@@ -70,6 +70,4 @@ TEST_CASE("ctors_map") {
         auto m = Map{begin_it, end_it, 0, Hash{}, KeyEq{}};
         REQUIRE(m.size() == 10);
     }
-
-    REQUIRE(counts.dtor == counts.ctor + counts.staticDefaultCtor + counts.copyCtor + counts.defaultCtor + counts.moveCtor);
 }
