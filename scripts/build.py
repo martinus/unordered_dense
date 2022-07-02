@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from subprocess import run
+import subprocess
 
 
 cmd_and_dir = [
@@ -37,6 +37,13 @@ root_path = Path(__file__).parent.parent
 os.chdir(root_path)
 
 
+def run(cmd):
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        exit(result.returncode)
+
+run('scripts/lint/lint-all.py')
+
 for cmd_dir in cmd_and_dir:
     workdir = cmd_dir[-1]
 
@@ -48,10 +55,10 @@ for cmd_dir in cmd_and_dir:
     run(['meson', 'compile', '--clean', '-C', workdir])
 
     # test
-    if workdir.find("clang_cpp17_debug") != -1:
-        run(['meson', 'test', '--wrap="valgrind --leak-check=full --error-exitcode=1" ', '-q', '--print-errorlogs', '-C', workdir])
-    else:
-        run(['meson', 'test', '-q', '--print-errorlogs', '-C', workdir])
+    #if workdir.find("clang_cpp17_debug") != -1:
+    #    run(['meson', 'test', '--wrap=\'valgrind --leak-check=full --error-exitcode=1\'', '-q', '--print-errorlogs', '-C', workdir])
+    #else:
+    run(['meson', 'test', '-q', '--print-errorlogs', '-C', workdir])
 
     # coverage
     if workdir.find("coverage") != -1:
