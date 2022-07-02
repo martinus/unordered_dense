@@ -1,9 +1,9 @@
 #!/bin/env python
 
 import os
-import subprocess
+from pathlib import Path
+from subprocess import run
 
-from numpy import putmask
 
 cmd_and_dir = [
     ['env', 'CXX="clang++"', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/clang_cpp17_release'],
@@ -33,25 +33,32 @@ cmd_and_dir = [
     ['env', 'CXX="clang++"', 'meson', 'setup', '-Db_sanitize=undefined', 'builddir/clang_sanitize_undefined'],
 ]
 
-setup_cmd = ['meson', 'compile', '--clean', '-C']
-test_cmd =  ['meson', 'test', '-q', '--print-errorlogs', '-C']
+root_path = Path(__file__).parent.parent
+os.chdir(root_path)
 
 
-def run(cmd):
-    subprocess.run(cmd)
-
-# setup
 for cmd_dir in cmd_and_dir:
     workdir = cmd_dir[-1]
+
+    # setup
     if not os.path.isdir(workdir):
         out = run(cmd_dir)
     
-    cmd = setup_cmd.copy()
-    cmd.append(workdir)
-    run(cmd)
+    # clean
+    run(['meson', 'compile', '--clean', '-C', workdir])
 
-    cmd = test_cmd.copy()
-    cmd.append(workdir)
-    run(cmd)
+    # test
+    if workdir.find("clang_cpp17_debug") != -1:
+        run(['meson', 'test', '--wrap="valgrind --leak-check=full --error-exitcode=1" ', '-q', '--print-errorlogs', '-C', workdir])
+    else:
+        run(['meson', 'test', '-q', '--print-errorlogs', '-C', workdir])
 
+    # coverage
+    if workdir.find("coverage") != -1:
+        print(workdir)
+        run(['meson', 'compile', '--ninja-args', 'coverage', '-C', workdir])
     
+
+for cmd_dir in cmd_and_dir:
+    workdir = cmd_dir[-1]
+
