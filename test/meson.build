@@ -5,6 +5,7 @@ test_sources = [
     'bench/copy.cpp',
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',
+    'bench/swap.cpp',
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',

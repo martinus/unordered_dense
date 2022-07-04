@@ -1,13 +1,10 @@
 #include <ankerl/unordered_dense.h>
-#include <app/name_of_type.h>
 #include <app/nanobench.h>
 #include <app/robin_hood.h>
 
-#include <chrono>
 #include <doctest.h>
 #include <fmt/format.h>
 
-#include <array>
 #include <unordered_map>
 
 template <typename Map>
