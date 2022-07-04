@@ -2,6 +2,7 @@ test_sources = [
     'app/Counter.cpp',
     'app/doctest.cpp',
     'app/nanobench.cpp',
+    'bench/copy.cpp',
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',
     'unit/assign_to_move.cpp',

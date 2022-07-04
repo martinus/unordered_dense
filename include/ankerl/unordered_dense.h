@@ -368,11 +368,11 @@ private:
     }
 
     // assumes m_values has data, m_buckets_start=m_buckets_end=nullptr, m_shifts is INITIAL_SHIFTS
-    void init_from_values() {
+    void copy_buckets(table const& other) {
         if (!empty()) {
-            m_shifts = calc_shifts_for_size(size());
-            allocate_and_clear_buckets();
-            fill_buckets_from_values();
+            m_shifts = other.m_shifts;
+            allocate_buckets_from_shift();
+            std::memcpy(m_buckets_start, other.m_buckets_start, sizeof(Bucket) * bucket_count());
         }
     }
 
@@ -391,20 +391,20 @@ private:
         m_max_bucket_capacity = 0;
     }
 
-    void allocate_and_clear_buckets() {
+    void allocate_buckets_from_shift() {
         auto bucket_alloc = BucketAlloc(m_values.get_allocator());
         auto num_buckets = calc_num_buckets(m_shifts);
         m_buckets_start = BucketAllocTraits::allocate(bucket_alloc, num_buckets);
         m_buckets_end = m_buckets_start + num_buckets;
         m_max_bucket_capacity = static_cast<uint64_t>(num_buckets * max_load_factor());
-        clear_buckets();
     }
 
     void clear_buckets() {
         std::memset(m_buckets_start, 0, sizeof(Bucket) * bucket_count());
     }
 
-    void fill_buckets_from_values() {
+    void clear_and_fill_buckets_from_values() {
+        clear_buckets();
         for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
             auto const& key = get_key(m_values[value_idx]);
             auto [dist_and_fingerprint, bucket] = next_while_less(key);
@@ -417,8 +417,8 @@ private:
     void increase_size() {
         --m_shifts;
         deallocate_buckets();
-        allocate_and_clear_buckets();
-        fill_buckets_from_values();
+        allocate_buckets_from_shift();
+        clear_and_fill_buckets_from_values();
     }
 
     void do_erase(Bucket* bucket) {
@@ -591,7 +591,7 @@ public:
         , m_max_load_factor(other.m_max_load_factor)
         , m_hash(other.m_hash)
         , m_equal(other.m_equal) {
-        init_from_values();
+        copy_buckets(other);
     }
 
     table(table&& other) noexcept
@@ -637,7 +637,7 @@ public:
             m_hash = other.m_hash;
             m_equal = other.m_equal;
             m_shifts = INITIAL_SHIFTS;
-            init_from_values();
+            copy_buckets(other);
         }
         return *this;
     }
@@ -996,8 +996,8 @@ public:
             m_shifts = shifts;
             deallocate_buckets();
             m_values.shrink_to_fit();
-            allocate_and_clear_buckets();
-            fill_buckets_from_values();
+            allocate_buckets_from_shift();
+            clear_and_fill_buckets_from_values();
         }
     }
 
@@ -1006,8 +1006,8 @@ public:
         if (shifts < m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
-            allocate_and_clear_buckets();
-            fill_buckets_from_values();
+            allocate_buckets_from_shift();
+            clear_and_fill_buckets_from_values();
         }
     }
 
