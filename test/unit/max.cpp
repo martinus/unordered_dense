@@ -18,8 +18,8 @@ TEST_CASE("max_load_factor") {
     auto map_60 = ankerl::unordered_dense::map<int, int>();
     auto map_90 = ankerl::unordered_dense::map<int, int>();
     REQUIRE(map_60.max_load_factor() == doctest::Approx(0.8));
-    map_60.max_load_factor(0.6);
-    map_90.max_load_factor(0.9);
+    map_60.max_load_factor(0.6F);
+    map_90.max_load_factor(0.9F);
     REQUIRE(map_60.max_load_factor() == doctest::Approx(0.6));
     REQUIRE(map_90.max_load_factor() == doctest::Approx(0.9));
 

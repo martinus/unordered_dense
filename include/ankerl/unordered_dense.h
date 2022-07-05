@@ -255,7 +255,7 @@ class table {
     static constexpr uint32_t BUCKET_DIST_INC = 1U << 8U;                    // skip 1 byte fingerprint
     static constexpr uint32_t BUCKET_FINGERPRINT_MASK = BUCKET_DIST_INC - 1; // mask for 1 byte of fingerprint
     static constexpr uint8_t INITIAL_SHIFTS = 64 - 3;                        // 2^(64-m_shift) number of buckets
-    static constexpr float DEFAULT_MAX_LOAD_FACTOR = 0.8;
+    static constexpr float DEFAULT_MAX_LOAD_FACTOR = 0.8F;
 
 public:
     using key_type = Key;
@@ -405,7 +405,7 @@ private:
 
     void clear_and_fill_buckets_from_values() {
         clear_buckets();
-        for (uint32_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
+        for (uint32_t value_idx = 0, end_idx = static_cast<uint32_t>(m_values.size()); value_idx < end_idx; ++value_idx) {
             auto const& key = get_key(m_values[value_idx]);
             auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
@@ -839,7 +839,7 @@ public:
         }
 
         do_erase(bucket);
-        return it;
+        return begin() + value_idx_to_remove;
     }
 
     auto erase(const_iterator it) -> iterator {
@@ -847,24 +847,27 @@ public:
     }
 
     auto erase(const_iterator first, const_iterator last) -> iterator {
-        auto const it_ret = begin() + (first - cbegin());
-
-        auto first_to_last = std::distance(first, last);
-        auto last_to_end = std::distance(last, cend());
+        auto const idx_first = first - cbegin();
+        auto const idx_last = last - cbegin();
+        auto const first_to_last = std::distance(first, last);
+        auto const last_to_end = std::distance(last, cend());
 
         // remove elements from left to right which moves elements from the end back
-        auto const mid = first + std::min(first_to_last, last_to_end);
-        while (first != mid) {
-            erase(first);
-            ++first;
+        auto const mid = idx_first + std::min(first_to_last, last_to_end);
+        auto idx = idx_first;
+        while (idx != mid) {
+            erase(begin() + idx);
+            ++idx;
         }
 
         // all elements from the right are moved, now remove the last element until all done
-        while (last != mid) {
-            erase(--last);
+        idx = idx_last;
+        while (idx != mid) {
+            --idx;
+            erase(begin() + idx);
         }
 
-        return it_ret;
+        return begin() + idx_first;
     }
 
     auto erase(Key const& key) -> size_t {
@@ -1091,13 +1094,13 @@ namespace std { // NOLINT(cert-dcl58-cpp)
 template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Pred>
 auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
     // going back to front because erase() invalidates the end iterator
-    auto old_size = map.size();
-
-    auto back_it = map.end();
-    while (map.begin() != back_it) {
-        --back_it;
-        if (pred(*back_it)) {
-            map.erase(back_it);
+    auto const old_size = map.size();
+    auto idx = old_size;
+    while (idx) {
+        --idx;
+        auto it = map.begin() + idx;
+        if (pred(*it)) {
+            map.erase(it);
         }
     }
 

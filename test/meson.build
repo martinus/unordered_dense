@@ -57,6 +57,12 @@ compiler = meson.get_compiler('cpp')
 if compiler.has_argument('-Wno-stringop-overflow')
     cpp_args += '-Wno-stringop-overflow' # g++ error in fmtlib
 endif
+if compiler.get_id() == 'msvc'
+    add_global_arguments(
+        '/wd4189', # fmt: 'zero': local variable is initialized but not referenced, fixed in https://github.com/fmtlib/fmt/issues/2891
+        '/wd4251', # 'fmt::v8::ostream::file_': class 'fmt::v8::file' needs to have dll-interface to be used by clients of class 'fmt::v8::ostream'
+        language: 'cpp')
+endif
 
 fmt_method = 'auto'
 if get_option('cpp_args').contains('-m32')
