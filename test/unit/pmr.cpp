@@ -80,7 +80,6 @@ TEST_CASE("pmr") {
     {
         REQUIRE(mr.current() == 0);
         auto map = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr);
-        REQUIRE(mr.current() == 0);
 
         for (size_t i = 0; i < 1; ++i) {
             map[i] = i;
@@ -98,6 +97,8 @@ void show([[maybe_unused]] track_peak_memory_resource const& mr, [[maybe_unused]
     // fmt::print("{}: {} allocs, {} deallocs, {} is_equals\n", name, mr.num_allocs(), mr.num_deallocs(), mr.num_is_equals());
 }
 
+// windows' vector has different allocation behavior
+#    ifndef _WIN32
 TEST_CASE("pmr_copy") {
     auto mr1 = track_peak_memory_resource();
     auto map1 = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr1);
@@ -171,5 +172,6 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(mr1.num_deallocs() == 2);
     REQUIRE(mr1.num_is_equals() == 0);
 }
+#    endif
 
 #endif

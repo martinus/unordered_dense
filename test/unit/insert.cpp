@@ -16,7 +16,7 @@ TEST_CASE("insert_hint") {
     auto map = ankerl::unordered_dense::map<unsigned int, int>();
     auto it = map.insert(map.begin(), {1, 2});
 
-    auto vt = std::pair<unsigned int, float>{3, 4.2};
+    auto vt = decltype(map)::value_type{3, 4};
     map.insert(it, vt);
     REQUIRE(map.size() == 2);
     REQUIRE(map[1] == 2);
