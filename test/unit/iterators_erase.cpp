@@ -11,7 +11,7 @@ TEST_CASE("iterators_erase") {
     {
         counts("begin");
         auto map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>();
-        for (uint64_t i = 0; i < 100; ++i) {
+        for (size_t i = 0; i < 100; ++i) {
             map[Counter::Obj(i * 101, counts)] = Counter::Obj(i * 101, counts);
         }
 

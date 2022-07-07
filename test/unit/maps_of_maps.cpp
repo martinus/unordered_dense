@@ -20,7 +20,7 @@ TEST_CASE("mapmap") {
             for (size_t i = 0; i < 100; ++i) {
                 auto a = rng.bounded(20);
                 auto b = rng.bounded(20);
-                auto x = rng();
+                auto x = static_cast<size_t>(rng());
                 // std::cout << i << ": map[" << a << "][" << b << "] = " << x << std::endl;
                 maps[Counter::Obj(a, counts)][Counter::Obj(b, counts)] = Counter::Obj(x, counts);
             }

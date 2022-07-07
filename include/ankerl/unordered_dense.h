@@ -133,7 +133,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[nodiscard]] inline auto hash(void const* key, size_t len) -> uint64_t {
+[[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
     static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
                                               UINT64_C(0xe7037ed1a0b428db),
                                               UINT64_C(0x8ebc6af09c88c6e3),
@@ -180,6 +180,10 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
+[[nodiscard]] static inline auto hash(uint64_t x) -> uint64_t {
+    return detail::wyhash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
+}
+
 } // namespace detail::wyhash
 
 template <typename T, typename Enable = void>
@@ -187,7 +191,7 @@ struct hash : public std::hash<T> {
     using is_avalanching = void;
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
         -> size_t {
-        return detail::wyhash::mix(std::hash<T>::operator()(obj), UINT64_C(0x9E3779B97F4A7C15));
+        return static_cast<size_t>(detail::wyhash::hash(std::hash<T>::operator()(obj)));
     }
 };
 
@@ -195,7 +199,7 @@ template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string<CharT> const& str) const noexcept -> size_t {
-        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
+        return static_cast<size_t>(detail::wyhash::hash(str.data(), sizeof(CharT) * str.size()));
     }
 };
 
@@ -203,9 +207,76 @@ template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> size_t {
-        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
+        return static_cast<size_t>(detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size()));
     }
 };
+
+template <class T>
+struct hash<T*> {
+    using is_avalanching = void;
+    size_t operator()(T* ptr) const noexcept {
+        return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr)));
+    }
+};
+
+template <class T>
+struct hash<std::unique_ptr<T>> {
+    using is_avalanching = void;
+    size_t operator()(std::unique_ptr<T> const& ptr) const noexcept {
+        return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
+    }
+};
+
+template <class T>
+struct hash<std::shared_ptr<T>> {
+    using is_avalanching = void;
+    size_t operator()(std::shared_ptr<T> const& ptr) const noexcept {
+        return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
+    }
+};
+
+template <typename Enum>
+struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
+    using is_avalanching = void;
+    size_t operator()(Enum e) const noexcept {
+        using Underlying = typename std::underlying_type_t<Enum>;
+        return static_cast<size_t>(detail::wyhash::hash(static_cast<Underlying>(e)));
+    }
+};
+
+#define ANKERL_UNORDERED_DENSE_HASH_NUMERIC(T)                                            \
+    template <>                                                                           \
+    struct hash<T> {                                                                      \
+        using is_avalanching = void;                                                      \
+        size_t operator()(T const& obj) const noexcept {                                  \
+            return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
+        }                                                                                 \
+    }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wuseless-cast"
+#endif
+// see https://en.cppreference.com/w/cpp/utility/hash
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(bool);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(char);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(signed char);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned char);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(char16_t);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(char32_t);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(wchar_t);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(short);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned short);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(int);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned int);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(long);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(long long);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned long);
+ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned long long);
+
+#if defined(__GNUC__) && !defined(__clang__)
+#    pragma GCC diagnostic pop
+#endif
 
 namespace detail {
 
@@ -303,7 +374,7 @@ private:
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             return m_hash(key);
         } else {
-            return wyhash::mix(m_hash(key), UINT64_C(0x9E3779B97F4A7C15));
+            return wyhash::hash(m_hash(key));
         }
     }
 

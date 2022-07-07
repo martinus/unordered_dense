@@ -49,9 +49,9 @@ void bench() {
                 for (bool isRandomToInsert : insertRandom) {
                     auto val = anotherUnrelatedRng();
                     if (isRandomToInsert) {
-                        map[rng()] = static_cast<size_t>(1);
+                        map[static_cast<size_t>(rng())] = static_cast<size_t>(1);
                     } else {
-                        map[val] = static_cast<size_t>(1);
+                        map[static_cast<size_t>(val)] = static_cast<size_t>(1);
                     }
                     ++i;
                 }
@@ -62,7 +62,7 @@ void bench() {
                         findCount = 0;
                         findRng = ankerl::nanobench::Rng(anotherUnrelatedRngInitialState);
                     }
-                    auto it = map.find(findRng());
+                    auto it = map.find(static_cast<size_t>(findRng()));
                     if (it != map.end()) {
                         checksum += it->second;
                     }
