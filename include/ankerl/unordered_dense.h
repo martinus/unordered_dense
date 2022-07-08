@@ -214,7 +214,7 @@ struct hash<std::basic_string_view<CharT>> {
 template <class T>
 struct hash<T*> {
     using is_avalanching = void;
-    size_t operator()(T* ptr) const noexcept {
+    auto operator()(T* ptr) const noexcept -> size_t {
         return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr)));
     }
 };
@@ -222,7 +222,7 @@ struct hash<T*> {
 template <class T>
 struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
-    size_t operator()(std::unique_ptr<T> const& ptr) const noexcept {
+    auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> size_t {
         return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
     }
 };
@@ -230,7 +230,7 @@ struct hash<std::unique_ptr<T>> {
 template <class T>
 struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
-    size_t operator()(std::shared_ptr<T> const& ptr) const noexcept {
+    auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> size_t {
         return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
     }
 };
@@ -238,17 +238,17 @@ struct hash<std::shared_ptr<T>> {
 template <typename Enum>
 struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     using is_avalanching = void;
-    size_t operator()(Enum e) const noexcept {
+    auto operator()(Enum e) const noexcept -> size_t {
         using Underlying = typename std::underlying_type_t<Enum>;
         return static_cast<size_t>(detail::wyhash::hash(static_cast<Underlying>(e)));
     }
 };
 
-#define ANKERL_UNORDERED_DENSE_HASH_NUMERIC(T)                                            \
+#define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
     template <>                                                                           \
     struct hash<T> {                                                                      \
         using is_avalanching = void;                                                      \
-        size_t operator()(T const& obj) const noexcept {                                  \
+        auto operator()(T const& obj) const noexcept -> size_t {                          \
             return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
         }                                                                                 \
     }
@@ -258,21 +258,24 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
 #    pragma GCC diagnostic ignored "-Wuseless-cast"
 #endif
 // see https://en.cppreference.com/w/cpp/utility/hash
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(bool);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(char);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(signed char);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned char);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(char16_t);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(char32_t);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(wchar_t);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(short);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned short);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(int);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned int);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(long);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(long long);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned long);
-ANKERL_UNORDERED_DENSE_HASH_NUMERIC(unsigned long long);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(bool);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(signed char);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned char);
+#if __cplusplus >= 202002L
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char8_t);
+#endif
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char16_t);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char32_t);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(wchar_t);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(short);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned short);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(int);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned int);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(long);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(long long);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long);
+ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long long);
 
 #if defined(__GNUC__) && !defined(__clang__)
 #    pragma GCC diagnostic pop
