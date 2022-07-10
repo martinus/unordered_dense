@@ -328,7 +328,8 @@ class table {
 
     static constexpr uint32_t BUCKET_DIST_INC = 1U << 8U;                    // skip 1 byte fingerprint
     static constexpr uint32_t BUCKET_FINGERPRINT_MASK = BUCKET_DIST_INC - 1; // mask for 1 byte of fingerprint
-    static constexpr uint8_t INITIAL_SHIFTS = 64 - 3;                        // 2^(64-m_shift) number of buckets
+    static constexpr uint8_t INITIAL_SHIFTS = 63;                            // can't use 64 (shift by 64 is undefined)
+    static constexpr uint8_t MIN_SHIFTS = 61;
     static constexpr float DEFAULT_MAX_LOAD_FACTOR = 0.8F;
 
 public:
@@ -355,9 +356,11 @@ private:
     static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
+    inline static std::array<Bucket, 2> s_empty_dummy_bucket{};
+
     ValueContainer m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
-    Bucket* m_buckets_start = nullptr;
-    Bucket* m_buckets_end = nullptr;
+    Bucket* m_buckets_start = s_empty_dummy_bucket.data();
+    Bucket* m_buckets_end = s_empty_dummy_bucket.data() + s_empty_dummy_bucket.size();
     uint32_t m_max_bucket_capacity = 0;
     float m_max_load_factor = DEFAULT_MAX_LOAD_FACTOR;
     Hash m_hash{};
@@ -434,7 +437,7 @@ private:
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
-        auto shifts = INITIAL_SHIFTS;
+        auto shifts = MIN_SHIFTS;
         while (shifts > 0 && static_cast<uint64_t>(calc_num_buckets(shifts) * max_load_factor()) < s) {
             --shifts;
         }
@@ -458,11 +461,13 @@ private:
     }
 
     void deallocate_buckets() {
-        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
-        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, bucket_count());
-        m_buckets_start = nullptr;
-        m_buckets_end = nullptr;
-        m_max_bucket_capacity = 0;
+        if (is_buckets_allocated()) {
+            auto bucket_alloc = BucketAlloc(m_values.get_allocator());
+            BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, bucket_count());
+            m_buckets_start = s_empty_dummy_bucket.data();
+            m_buckets_end = s_empty_dummy_bucket.data() + s_empty_dummy_bucket.size();
+            m_max_bucket_capacity = 0;
+        }
     }
 
     void allocate_buckets_from_shift() {
@@ -489,7 +494,11 @@ private:
     }
 
     void increase_size() {
-        --m_shifts;
+        if (INITIAL_SHIFTS == m_shifts) {
+            m_shifts = MIN_SHIFTS;
+        } else {
+            --m_shifts;
+        }
         deallocate_buckets();
         allocate_buckets_from_shift();
         clear_and_fill_buckets_from_values();
@@ -581,10 +590,6 @@ private:
 
     template <typename K>
     auto do_find(K const& key) -> iterator {
-        if (empty()) {
-            return end();
-        }
-
         auto mh = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto const* bucket = bucket_from_hash(mh);
@@ -615,6 +620,10 @@ private:
     template <typename K>
     auto do_find(K const& key) const -> const_iterator {
         return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    }
+
+    [[nodiscard]] auto is_buckets_allocated() const noexcept -> bool {
+        return static_cast<size_t>(m_buckets_end - m_buckets_start) != s_empty_dummy_bucket.size();
     }
 
 public:
@@ -673,8 +682,8 @@ public:
 
     table(table&& other, Allocator const& alloc) noexcept
         : m_values(std::move(other.m_values), alloc)
-        , m_buckets_start(std::exchange(other.m_buckets_start, nullptr))
-        , m_buckets_end(std::exchange(other.m_buckets_end, nullptr))
+        , m_buckets_start(std::exchange(other.m_buckets_start, s_empty_dummy_bucket.data()))
+        , m_buckets_end(std::exchange(other.m_buckets_end, s_empty_dummy_bucket.data() + s_empty_dummy_bucket.size()))
         , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
         , m_max_load_factor(std::exchange(other.m_max_load_factor, DEFAULT_MAX_LOAD_FACTOR))
         , m_hash(std::exchange(other.m_hash, {}))
@@ -699,8 +708,7 @@ public:
         : table(init, bucket_count, hash, KeyEqual(), alloc) {}
 
     ~table() {
-        auto bucket_alloc = BucketAlloc(m_values.get_allocator());
-        BucketAllocTraits::deallocate(bucket_alloc, m_buckets_start, bucket_count());
+        deallocate_buckets();
     }
 
     auto operator=(table const& other) -> table& {
@@ -722,8 +730,8 @@ public:
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
-            m_buckets_start = std::exchange(other.m_buckets_start, nullptr);
-            m_buckets_end = std::exchange(other.m_buckets_end, nullptr);
+            m_buckets_start = std::exchange(other.m_buckets_start, s_empty_dummy_bucket.data());
+            m_buckets_end = std::exchange(other.m_buckets_end, s_empty_dummy_bucket.data() + s_empty_dummy_bucket.size());
             m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
             m_max_load_factor = std::exchange(other.m_max_load_factor, DEFAULT_MAX_LOAD_FACTOR);
             m_hash = std::exchange(other.m_hash, {});
@@ -1064,7 +1072,11 @@ public:
 
     void max_load_factor(float ml) {
         m_max_load_factor = ml;
-        m_max_bucket_capacity = static_cast<uint32_t>(bucket_count() * max_load_factor());
+        if (is_buckets_allocated()) {
+            m_max_bucket_capacity = static_cast<uint32_t>(bucket_count() * max_load_factor());
+        } else {
+            m_max_bucket_capacity = 0;
+        }
     }
 
     void rehash(size_t count) {
