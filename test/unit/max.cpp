@@ -40,6 +40,9 @@ TEST_CASE("max_load_factor") {
 
     // 0.9 max_load should fit more than map_60
     REQUIRE(map_90.size() > map_60.size());
+
+    map_60.max_load_factor(0.9);
+    REQUIRE(map_60.max_load_factor() == map_90.max_load_factor());
 }
 
 TEST_CASE("key_eq") {
