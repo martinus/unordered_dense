@@ -39,3 +39,9 @@ TEST_CASE("insert_erase_random") {
     us.erase(k);
     REQUIRE(is_eq(uds, us));
 }
+
+TEST_CASE("erase") {
+    auto map = ankerl::unordered_dense::map<int, int>();
+    REQUIRE(0 == map.erase(123));
+    REQUIRE(0 == map.count(0));
+}
