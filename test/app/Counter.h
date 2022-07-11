@@ -43,6 +43,8 @@ struct Counter {
     Counter();
     ~Counter();
 
+    void check_all_done() const;
+
     size_t ctor{};
     size_t defaultCtor{};
     size_t copyCtor{};

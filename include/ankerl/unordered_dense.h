@@ -474,7 +474,9 @@ private:
     }
 
     void clear_buckets() {
-        std::memset(m_buckets_start, 0, sizeof(Bucket) * bucket_count());
+        if (m_buckets_start != nullptr) {
+            std::memset(m_buckets_start, 0, sizeof(Bucket) * bucket_count());
+        }
     }
 
     void clear_and_fill_buckets_from_values() {

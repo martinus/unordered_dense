@@ -7,34 +7,43 @@
 #include <stdexcept>
 #include <unordered_set>
 
+#define COUNTER_ENABLE_UNORDERED_SET 0
+
+#if COUNTER_ENABLE_UNORDERED_SET
 auto singletonConstructedObjects() -> std::unordered_set<Counter::Obj const*>& {
     static std::unordered_set<Counter::Obj const*> data{};
     return data;
 }
+#endif
 
 Counter::Obj::Obj()
     : mData(0)
     , mCounts(nullptr) {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (!singletonConstructedObjects().emplace(this).second) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     ++staticDefaultCtor;
 }
 
 Counter::Obj::Obj(const size_t& data, Counter& counts)
     : mData(data)
     , mCounts(&counts) {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (!singletonConstructedObjects().emplace(this).second) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     ++mCounts->ctor;
 }
 
 Counter::Obj::Obj(const Counter::Obj& o)
     : mData(o.mData)
     , mCounts(o.mCounts) {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(&o)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
@@ -43,6 +52,7 @@ Counter::Obj::Obj(const Counter::Obj& o)
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     if (nullptr != mCounts) {
         ++mCounts->copyCtor;
     }
@@ -51,6 +61,7 @@ Counter::Obj::Obj(const Counter::Obj& o)
 Counter::Obj::Obj(Counter::Obj&& o) noexcept
     : mData(o.mData)
     , mCounts(o.mCounts) {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(&o)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
@@ -59,16 +70,19 @@ Counter::Obj::Obj(Counter::Obj&& o) noexcept
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     if (nullptr != mCounts) {
         ++mCounts->moveCtor;
     }
 }
 
 Counter::Obj::~Obj() {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().erase(this)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     if (nullptr != mCounts) {
         ++mCounts->dtor;
     } else {
@@ -77,10 +91,12 @@ Counter::Obj::~Obj() {
 }
 
 auto Counter::Obj::operator==(const Counter::Obj& o) const -> bool {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(this) || 1 != singletonConstructedObjects().count(&o)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     if (nullptr != mCounts) {
         ++mCounts->equals;
     }
@@ -88,10 +104,12 @@ auto Counter::Obj::operator==(const Counter::Obj& o) const -> bool {
 }
 
 auto Counter::Obj::operator<(const Obj& o) const -> bool {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(this) || 1 != singletonConstructedObjects().count(&o)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     if (nullptr != mCounts) {
         ++mCounts->less;
     }
@@ -100,10 +118,12 @@ auto Counter::Obj::operator<(const Obj& o) const -> bool {
 
 // NOLINTNEXTLINE(bugprone-unhandled-self-assignment,cert-oop54-cpp)
 auto Counter::Obj::operator=(const Counter::Obj& o) -> Counter::Obj& {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(this) || 1 != singletonConstructedObjects().count(&o)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     mCounts = o.mCounts;
     if (nullptr != mCounts) {
         ++mCounts->assign;
@@ -113,10 +133,12 @@ auto Counter::Obj::operator=(const Counter::Obj& o) -> Counter::Obj& {
 }
 
 auto Counter::Obj::operator=(Counter::Obj&& o) noexcept -> Counter::Obj& {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(this) || 1 != singletonConstructedObjects().count(&o)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     if (nullptr != o.mCounts) {
         mCounts = o.mCounts;
     }
@@ -142,10 +164,12 @@ auto Counter::Obj::get() -> size_t& {
 }
 
 void Counter::Obj::swap(Obj& other) {
+#if COUNTER_ENABLE_UNORDERED_SET
     if (1 != singletonConstructedObjects().count(this) || 1 != singletonConstructedObjects().count(&other)) {
         test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
         std::abort();
     }
+#endif
     using std::swap;
     swap(mData, other.mData);
     swap(mCounts, other.mCounts);
@@ -166,7 +190,8 @@ Counter::Counter() {
     Counter::staticDtor = 0;
 }
 
-Counter::~Counter() {
+void Counter::check_all_done() const {
+#if COUNTER_ENABLE_UNORDERED_SET
     // check that all are destructed
     if (!singletonConstructedObjects().empty()) {
         test::print("ERROR at ~Counter(): got {} objects still alive!", singletonConstructedObjects().size());
@@ -176,6 +201,11 @@ Counter::~Counter() {
         test::print("ERROR at ~Counter(): number of counts does not match!");
         std::abort();
     }
+#endif
+}
+
+Counter::~Counter() {
+    check_all_done();
 }
 
 auto Counter::total() const -> size_t {
