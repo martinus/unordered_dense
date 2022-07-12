@@ -95,3 +95,26 @@ test(
     'unordered_dense_map test',
     test_exe,
     verbose: true)
+
+
+fuzz_sources = [
+    'app/Counter.cpp',
+    'fuzz/main.cpp',
+]
+
+
+if compiler.get_id() == 'clang'
+    fuzz_exe = executable(
+        'fuzz',
+        fuzz_sources,
+        include_directories: incdir,
+        #cpp_args : ['-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g'],
+        #link_args: ['-fsanitize=undefined,address,fuzzer'],
+        cpp_args : ['-fsanitize=fuzzer', '-g'],
+        link_args: ['-fsanitize=fuzzer'],
+        dependencies: [
+            dependency('threads'),
+            dependency('fmt', method: fmt_method),
+        ],
+    )
+endif
