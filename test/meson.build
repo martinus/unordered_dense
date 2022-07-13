@@ -6,6 +6,7 @@ test_sources = [
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',
     'bench/swap.cpp',
+    'fuzz/api.cpp',
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
@@ -21,6 +22,7 @@ test_sources = [
     'unit/erase_range.cpp',
     'unit/erase.cpp',
     'unit/explicit.cpp',
+    'unit/fuzz_corpus.cpp',
     'unit/hash_char_types.cpp',
     'unit/hash_smart_ptr.cpp',
     'unit/hash_string_view.cpp',
@@ -94,30 +96,33 @@ benchmark(
 test(
     'unordered_dense_map test',
     test_exe,
+    env: 'FUZZ_CORPUS_BASE_DIR=' + meson.source_root() + '/data/fuzz',
     verbose: true)
 
+###################
 
 fuzz_sources = [
     'app/Counter.cpp',
     'fuzz/api.cpp',
 ]
 
-
 if compiler.get_id() == 'clang'
     fuzz_exe = executable(
         'fuzz-api',
         fuzz_sources,
         include_directories: incdir,
-        #cpp_args : ['-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g'],
-        #link_args: ['-fsanitize=undefined,address,fuzzer'],
+
+        cpp_args : ['-DFUZZ', '-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g'],
+        link_args: ['-fsanitize=undefined,address,fuzzer'],
+
         #cpp_args : ['-fsanitize=fuzzer', '-g'],
         #link_args: ['-fsanitize=fuzzer'],
-        cpp_args : ['-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address', '-g'],
-        link_args: ['-fsanitize=undefined,address'],
+
         #cpp_args : ['-fprofile-instr-generate', '-fcoverage-mapping', '-g'],
         #link_args: ['-fprofile-instr-generate', '-fcoverage-mapping', '-g'],
         
         dependencies: [
+            dependency('doctest'),
             dependency('threads'),
             dependency('fmt', method: fmt_method),
         ],

@@ -2,27 +2,39 @@
 
 #include "FuzzedDataProvider.h"
 
-class Fuzz {
+#include <type_traits>
+
+namespace fuzz {
+
+// Helper to provide a little bit more convenient interface than FuzzedDataProvider itself
+class Provider {
     FuzzedDataProvider m_fdp;
 
 public:
-    inline explicit Fuzz(uint8_t const* data, size_t size)
+    inline explicit Provider(uint8_t const* data, size_t size)
         : m_fdp(data, size) {}
 
     // random number in inclusive range [min, max]
     template <typename T>
     auto range(T min, T max) -> T {
-        return m_fdp.ConsumeIntegralInRange(min, max);
+        return m_fdp.ConsumeIntegralInRange<T>(min, max);
+    }
+
+    template <typename T>
+    auto bounded(T max_exclusive) -> T {
+        if (0 == max_exclusive) {
+            return {};
+        }
+        return m_fdp.ConsumeIntegralInRange<T>(0, max_exclusive - 1);
     }
 
     template <typename T>
     auto integral() -> T {
-        return m_fdp.ConsumeIntegral<T>();
-    }
-
-    template <>
-    auto integral<bool>() -> bool {
-        return m_fdp.ConsumeBool();
+        if constexpr (std::is_same_v<bool, T>) {
+            return m_fdp.ConsumeBool();
+        } else {
+            return m_fdp.ConsumeIntegral<T>();
+        }
     }
 
     template <typename... Args>
@@ -37,7 +49,7 @@ public:
     }
 
     template <typename... Ops>
-    void loop_call_any(Ops&&... op) {
+    void repeat_oneof(Ops&&... op) {
         static constexpr auto num_ops = sizeof...(op);
 
         do {
@@ -52,7 +64,7 @@ public:
     }
 
     template <typename... Ops>
-    void limited_loop_call_any(size_t min, size_t max, Ops&&... op) {
+    void limited_repeat_oneof(size_t min, size_t max, Ops&&... op) {
         static constexpr auto num_ops = sizeof...(op);
 
         size_t const num_evaluations = m_fdp.ConsumeIntegralInRange(min, max);
@@ -72,7 +84,9 @@ public:
 
     static inline void require(bool b) {
         if (!b) {
-            __builtin_trap();
+            throw std::exception();
         }
     }
 };
+
+} // namespace fuzz
