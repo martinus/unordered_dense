@@ -82,6 +82,10 @@ public:
         }
     }
 
+    auto has_remaining_bytes() -> bool {
+        return 0U != m_fdp.remaining_bytes();
+    }
+
     static inline void require(bool b) {
         if (!b) {
             throw std::exception();

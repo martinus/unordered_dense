@@ -7,6 +7,7 @@ test_sources = [
     'bench/quick_overall_map.cpp',
     'bench/swap.cpp',
     'fuzz/api.cpp',
+    'fuzz/insert_erase.cpp',
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
@@ -101,30 +102,29 @@ test(
 
 ###################
 
-fuzz_sources = [
-    'app/Counter.cpp',
-    'fuzz/api.cpp',
-]
-
 if compiler.get_id() == 'clang'
-    fuzz_exe = executable(
-        'fuzz-api',
-        fuzz_sources,
-        include_directories: incdir,
-
-        cpp_args : ['-DFUZZ', '-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g'],
-        link_args: ['-fsanitize=undefined,address,fuzzer'],
-
-        #cpp_args : ['-fsanitize=fuzzer', '-g'],
-        #link_args: ['-fsanitize=fuzzer'],
-
-        #cpp_args : ['-fprofile-instr-generate', '-fcoverage-mapping', '-g'],
-        #link_args: ['-fprofile-instr-generate', '-fcoverage-mapping', '-g'],
-        
-        dependencies: [
+    fuzz_deps = [
             dependency('doctest'),
             dependency('threads'),
             dependency('fmt', method: fmt_method),
-        ],
+        ]
+    fuzz_cpp_args = ['-DFUZZ', '-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g']
+    fuzz_link_args = ['-fsanitize=undefined,address,fuzzer']
+
+    fuzz_api = executable(
+        'fuzz_api',
+        ['app/Counter.cpp', 'fuzz/api.cpp'],
+        include_directories: incdir,
+        cpp_args : fuzz_cpp_args,
+        link_args: fuzz_link_args,
+        dependencies: fuzz_deps,
+    )
+    fuzz_api = executable(
+        'fuzz_insert_erase',
+        ['fuzz/insert_erase.cpp'],
+        include_directories: incdir,
+        cpp_args : fuzz_cpp_args,
+        link_args: fuzz_link_args,
+        dependencies: fuzz_deps,
     )
 endif

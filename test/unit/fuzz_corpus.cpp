@@ -1,4 +1,5 @@
 #include <fuzz/api.h>
+#include <fuzz/insert_erase.h>
 
 #include <doctest.h>
 #include <fmt/format.h>
@@ -36,4 +37,8 @@ void run_corpus(std::string_view name, Op op) {
 
 TEST_CASE("fuzz_api") {
     run_corpus("api", fuzz::api);
+}
+
+TEST_CASE("fuzz_insert_erase") {
+    run_corpus("insert_erase", fuzz::insert_erase);
 }
