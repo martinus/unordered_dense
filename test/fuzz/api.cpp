@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <utility>
 
+#define STANDALONE_FUZZ_TARGET 0
+
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
     auto fuzz = Fuzz(data, size);
     Counter counts;
@@ -19,7 +21,9 @@ extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int 
     fuzz.loop_call_any(
         [&] {
             auto key = fuzz.integral<size_t>();
-            map.try_emplace(Counter::Obj(key, counts), Counter::Obj(key, counts));
+            auto it = map.try_emplace(Counter::Obj(key, counts), Counter::Obj(key, counts)).first;
+            Fuzz::require(it != map.end());
+            Fuzz::require(it->first.get() == key);
         },
         [&] {
             auto key = fuzz.integral<size_t>();
@@ -108,6 +112,42 @@ extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int 
             map.~Map();
             counts.check_all_done();
             new (&map) Map();
+        },
+        [&] {
+            std::erase_if(map, [&](Map::value_type const& /*v*/) {
+                return fuzz.integral<bool>();
+            });
         });
     return 0;
 }
+
+#if STANDALONE_FUZZ_TARGET
+
+#    include <cassert>
+
+__attribute__((weak)) extern int LLVMFuzzerInitialize(int* argc, char*** argv);
+
+int main(int argc, char** argv) {
+    fprintf(stderr, "StandaloneFuzzTargetMain: running %d inputs\n", argc - 1);
+    if (LLVMFuzzerInitialize) {
+        LLVMFuzzerInitialize(&argc, &argv);
+    }
+
+    for (int i = 1; i < argc; i++) {
+        fprintf(stderr, "Running: %s\n", argv[i]);
+        FILE* f = fopen(argv[i], "r");
+        assert(f);
+        fseek(f, 0, SEEK_END);
+        size_t len = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        unsigned char* buf = (unsigned char*)malloc(len);
+        size_t n_read = fread(buf, 1, len, f);
+        fclose(f);
+        assert(n_read == len);
+        LLVMFuzzerTestOneInput(buf, len);
+        free(buf);
+        fprintf(stderr, "Done:    %s: (%zd bytes)\n", argv[i], n_read);
+    }
+}
+
+#endif

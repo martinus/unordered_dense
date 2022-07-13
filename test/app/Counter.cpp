@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#define COUNTER_ENABLE_UNORDERED_SET 0
+#define COUNTER_ENABLE_UNORDERED_SET 1
 
 #if COUNTER_ENABLE_UNORDERED_SET
 auto singletonConstructedObjects() -> std::unordered_set<Counter::Obj const*>& {

@@ -99,19 +99,22 @@ test(
 
 fuzz_sources = [
     'app/Counter.cpp',
-    'fuzz/main.cpp',
+    'fuzz/api.cpp',
 ]
 
 
 if compiler.get_id() == 'clang'
     fuzz_exe = executable(
-        'fuzz',
+        'fuzz-api',
         fuzz_sources,
         include_directories: incdir,
-        #cpp_args : ['-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g'],
-        #link_args: ['-fsanitize=undefined,address,fuzzer'],
-        cpp_args : ['-fsanitize=fuzzer', '-g'],
-        link_args: ['-fsanitize=fuzzer'],
+        cpp_args : ['-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g'],
+        link_args: ['-fsanitize=undefined,address,fuzzer'],
+        #cpp_args : ['-fsanitize=fuzzer', '-g'],
+        #link_args: ['-fsanitize=fuzzer'],
+        #cpp_args : ['-fprofile-instr-generate', '-fcoverage-mapping', '-g'],
+        #link_args: ['-fprofile-instr-generate', '-fcoverage-mapping', '-g'],
+        
         dependencies: [
             dependency('threads'),
             dependency('fmt', method: fmt_method),

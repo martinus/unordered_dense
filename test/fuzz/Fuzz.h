@@ -20,6 +20,11 @@ public:
         return m_fdp.ConsumeIntegral<T>();
     }
 
+    template <>
+    auto integral<bool>() -> bool {
+        return m_fdp.ConsumeBool();
+    }
+
     template <typename... Args>
     auto pick(Args&&... args) -> std::common_type_t<decltype(args)...>& {
         static constexpr auto num_ops = sizeof...(args);
