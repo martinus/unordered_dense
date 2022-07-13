@@ -4,12 +4,12 @@
 
 #include "Fuzz.h"
 
+#include <fmt/format.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
-
-#define STANDALONE_FUZZ_TARGET 0
 
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
     auto fuzz = Fuzz(data, size);
@@ -121,33 +121,66 @@ extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int 
     return 0;
 }
 
+#ifndef STANDALONE_FUZZ_TARGET
+#    define STANDALONE_FUZZ_TARGET 1
+#endif
+
 #if STANDALONE_FUZZ_TARGET
 
 #    include <cassert>
+#    include <chrono>
+#    include <filesystem>
+#    include <fstream>
 
 __attribute__((weak)) extern int LLVMFuzzerInitialize(int* argc, char*** argv);
 
+class Periodic {
+    std::chrono::steady_clock::time_point m_next{};
+    std::chrono::steady_clock::duration m_interval{};
+
+public:
+    Periodic(std::chrono::steady_clock::duration interval)
+        : m_interval(interval) {}
+
+    operator bool() {
+        auto now = std::chrono::steady_clock::now();
+        if (now < m_next) {
+            return false;
+        }
+        m_next = now + m_interval;
+        return true;
+    }
+};
+
+
+
 int main(int argc, char** argv) {
-    fprintf(stderr, "StandaloneFuzzTargetMain: running %d inputs\n", argc - 1);
+    using namespace std::literals;
+
     if (LLVMFuzzerInitialize) {
         LLVMFuzzerInitialize(&argc, &argv);
     }
 
-    for (int i = 1; i < argc; i++) {
-        fprintf(stderr, "Running: %s\n", argv[i]);
-        FILE* f = fopen(argv[i], "r");
-        assert(f);
-        fseek(f, 0, SEEK_END);
-        size_t len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        unsigned char* buf = (unsigned char*)malloc(len);
-        size_t n_read = fread(buf, 1, len, f);
-        fclose(f);
-        assert(n_read == len);
-        LLVMFuzzerTestOneInput(buf, len);
-        free(buf);
-        fprintf(stderr, "Done:    %s: (%zd bytes)\n", argv[i], n_read);
+    auto log = Periodic(1s);
+
+    auto num_files = size_t();
+    for (int i = 1; i < argc; ++i) {
+        auto dir = std::filesystem::path(argv[i]);
+        for (auto const& dir_entry : std::filesystem::directory_iterator(dir)) {
+            ++num_files;
+            auto path = dir_entry.path();
+            auto f = std::ifstream(path);
+            auto content = std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            LLVMFuzzerTestOneInput(reinterpret_cast<uint8_t const*>(content.data()), content.size());
+
+            if (log) {
+                fmt::print(stderr, "processing {}. {} files done\n", path.string(), num_files);
+            }
+        }
     }
+    fmt::print(stderr, "{} files checked\n", num_files);
+
+    // last_logged = log(start, num_files, dir);
 }
 
 #endif
