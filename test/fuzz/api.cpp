@@ -132,7 +132,7 @@ extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int 
 #    include <filesystem>
 #    include <fstream>
 
-__attribute__((weak)) extern int LLVMFuzzerInitialize(int* argc, char*** argv);
+__attribute__((weak)) extern auto LLVMFuzzerInitialize(int* argc, char*** argv) -> int;
 
 class Periodic {
     std::chrono::steady_clock::time_point m_next{};
@@ -152,35 +152,88 @@ public:
     }
 };
 
+class ProgressBar {
+    size_t m_width;
+    size_t m_total;
+    std::vector<std::string> m_symbols;
 
+    static auto split(std::string_view symbols, char sep) -> std::vector<std::string> {
+        auto s = std::vector<std::string>();
+        while (true) {
+            auto idx = symbols.find(sep);
+            if (idx == std::string_view::npos) {
+                break;
+            }
+            s.emplace_back(symbols.substr(0, idx));
+            symbols.remove_prefix(idx + 1);
+        }
+        s.emplace_back(symbols);
+        return s;
+    }
 
-int main(int argc, char** argv) {
+public:
+    ProgressBar(size_t width, size_t total, std::string_view symbols = "⡀ ⡄ ⡆ ⡇ ⡏ ⡟ ⡿ ⣿")
+        : m_width(width)
+        , m_total(total)
+        , m_symbols(split(symbols, ' ')) {}
+
+    auto operator()(size_t current) const -> std::string {
+        auto const total_states = m_width * m_symbols.size() + 1;
+        auto const current_state = total_states * current / m_total;
+        std::string str;
+        auto num_full = std::min(m_width, current_state / m_symbols.size());
+        for (size_t i = 0; i < num_full; ++i) {
+            str += m_symbols.back();
+        }
+
+        if (num_full < m_width) {
+            auto remaining = current_state - num_full * m_symbols.size();
+            if (0U != remaining) {
+                str += m_symbols[remaining - 1];
+            }
+
+            auto num_fillers = m_width - num_full - (0U == remaining ? 0 : 1);
+            for (size_t i = 0; i < num_fillers; ++i) {
+                str.push_back(' ');
+            }
+        }
+        return str;
+    }
+};
+
+auto main(int argc, char** argv) -> int {
     using namespace std::literals;
 
-    if (LLVMFuzzerInitialize) {
+    if (nullptr != LLVMFuzzerInitialize) {
         LLVMFuzzerInitialize(&argc, &argv);
     }
 
-    auto log = Periodic(1s);
+    auto total_files = 0;
+    for (int i = 1; i < argc; ++i) {
+        auto dir = std::filesystem::path(argv[i]);
+        auto it = std::filesystem::directory_iterator(dir);
+        total_files += std::distance(begin(it), end(it));
+    }
+
+    auto log = Periodic(200ms);
+    auto const pb = ProgressBar(50, total_files);
 
     auto num_files = size_t();
     for (int i = 1; i < argc; ++i) {
         auto dir = std::filesystem::path(argv[i]);
         for (auto const& dir_entry : std::filesystem::directory_iterator(dir)) {
             ++num_files;
-            auto path = dir_entry.path();
+            auto const& path = dir_entry.path();
             auto f = std::ifstream(path);
             auto content = std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             LLVMFuzzerTestOneInput(reinterpret_cast<uint8_t const*>(content.data()), content.size());
 
             if (log) {
-                fmt::print(stderr, "processing {}. {} files done\n", path.string(), num_files);
+                fmt::print(stderr, "\r|{}| {:7}/{:7}  ", pb(num_files), num_files, total_files);
             }
         }
     }
-    fmt::print(stderr, "{} files checked\n", num_files);
-
-    // last_logged = log(start, num_files, dir);
+    fmt::print(stderr, "\r|{}| {:7}/{:7}  \n", pb(num_files), num_files, total_files);
 }
 
 #endif
