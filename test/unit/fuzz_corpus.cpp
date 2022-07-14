@@ -15,10 +15,26 @@ using namespace std::literals;
 
 namespace {
 
+std::string env(char const* varname) {
+#ifdef _MSC_VER
+    char* pValue;
+    size_t len;
+    errno_t err = _dupenv_s(&pValue, &len, varname);
+    if (err || nullptr == pValue) {
+        return "";
+    }
+    auto str = std::string(pValue, len);
+    free(pValue);
+    return str;
+#else
+    return std::getenv(varname);
+#endif
+}
+
 template <typename Op>
 void run_corpus(std::string_view name, Op op) {
-    auto const* corpus_base_dir = std::getenv("FUZZ_CORPUS_BASE_DIR"); // NOLINT(concurrency-mt-unsafe)
-    if (nullptr == corpus_base_dir) {
+    auto corpus_base_dir = env("FUZZ_CORPUS_BASE_DIR"); // NOLINT(concurrency-mt-unsafe)
+    if (corpus_base_dir.empty()) {
         throw std::runtime_error("Environment variable FUZZ_CORPUS_BASE_DIR not set!");
     }
 
