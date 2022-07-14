@@ -122,7 +122,7 @@ if compiler.get_id() == 'clang'
         'app/Counter.cpp',
     ]
 
-    fuzz_api = executable(
+    executable(
         'fuzz_api',
         fuzz_sources + ['fuzz/api.cpp'],
         include_directories: incdir,
@@ -130,7 +130,7 @@ if compiler.get_id() == 'clang'
         link_args: fuzz_link_args,
         dependencies: fuzz_deps,
     )
-    fuzz_api = executable(
+    executable(
         'fuzz_insert_erase',
         fuzz_sources + ['fuzz/insert_erase.cpp'],
         include_directories: incdir,
