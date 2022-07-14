@@ -15,7 +15,7 @@ using namespace std::literals;
 
 namespace {
 
-std::string env(char const* varname) {
+auto env(char const* varname) -> std::string {
 #ifdef _MSC_VER
     char* pValue;
     size_t len;
