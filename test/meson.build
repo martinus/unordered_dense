@@ -95,8 +95,14 @@ benchmark(
     verbose: true)
 
 test(
-    'unordered_dense_map test',
+    'unit',
     test_exe,
+    verbose: true)
+
+test(
+    'fuzz',
+    test_exe,
+    args: ['-ns', '-ts=fuzz'],
     env: 'FUZZ_CORPUS_BASE_DIR=' + meson.source_root() + '/data/fuzz',
     verbose: true)
 

@@ -21,7 +21,8 @@ void run_corpus(std::string_view name, Op op) {
     auto path = std::filesystem::path(corpus_base_dir) / name;
 
     INFO("loading from " << path);
-    auto num_files = 0;
+    auto num_files = size_t();
+    auto num_bytes = size_t();
     for (auto const& dir_entry : std::filesystem::directory_iterator(path)) {
         auto const& path = dir_entry.path();
         auto f = std::ifstream(path);
@@ -29,16 +30,18 @@ void run_corpus(std::string_view name, Op op) {
         INFO("file " << path);
         op(reinterpret_cast<uint8_t const*>(content.data()), content.size());
         ++num_files;
+        num_bytes += content.size();
     }
     REQUIRE(0U != num_files);
+    fmt::print("{} files, {} bytes in {}\n", num_files, num_bytes, path.string());
 }
 
 } // namespace
 
-TEST_CASE("fuzz_api") {
+TEST_CASE("fuzz_api" * doctest::test_suite("fuzz") * doctest::skip(true)) {
     run_corpus("api", fuzz::api);
 }
 
-TEST_CASE("fuzz_insert_erase") {
+TEST_CASE("fuzz_insert_erase" * doctest::test_suite("fuzz") * doctest::skip(true)) {
     run_corpus("insert_erase", fuzz::insert_erase);
 }
