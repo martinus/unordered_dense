@@ -54,10 +54,10 @@ void run_corpus(std::string_view name, Op op) {
             fmt::print("\r|{}| {:7}/{}  ", progressbar(num_files), num_files, total_files);
         }
 
-        auto const& path = dir_entry.path();
-        INFO("file " << path);
+        auto const& test_file = dir_entry.path();
+        INFO("file " << test_file);
 
-        auto f = std::ifstream(path);
+        auto f = std::ifstream(test_file);
         auto content = std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
         op(reinterpret_cast<uint8_t const*>(content.data()), content.size());
