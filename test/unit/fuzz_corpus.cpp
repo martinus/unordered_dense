@@ -1,3 +1,5 @@
+#include <app/ui/Periodic.h>
+#include <app/ui/ProgressBar.h>
 #include <fuzz/api.h>
 #include <fuzz/insert_erase.h>
 
@@ -8,6 +10,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string_view>
+
+using namespace std::literals;
 
 namespace {
 
@@ -22,18 +26,28 @@ void run_corpus(std::string_view name, Op op) {
 
     INFO("loading from " << path);
     auto num_files = size_t();
-    auto num_bytes = size_t();
+    auto periodic = ui::Periodic(100ms);
+
+    auto dir = std::filesystem::directory_iterator(path);
+    auto const total_files = std::distance(begin(dir), end(dir));
+    auto progressbar = ui::ProgressBar(50, total_files);
+
     for (auto const& dir_entry : std::filesystem::directory_iterator(path)) {
+        ++num_files;
+        if (periodic) {
+            fmt::print("\r|{}| {:7}/{}  ", progressbar(num_files), num_files, total_files);
+        }
+
         auto const& path = dir_entry.path();
+        INFO("file " << path);
+
         auto f = std::ifstream(path);
         auto content = std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        INFO("file " << path);
+
         op(reinterpret_cast<uint8_t const*>(content.data()), content.size());
-        ++num_files;
-        num_bytes += content.size();
     }
     REQUIRE(0U != num_files);
-    fmt::print("{} files, {} bytes in {}\n", num_files, num_bytes, path.string());
+    fmt::print("\r|{}| {:7}/{} {}\n", progressbar(num_files), num_files, total_files, path.string());
 }
 
 } // namespace
