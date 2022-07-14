@@ -17,13 +17,13 @@ namespace {
 
 auto env(char const* varname) -> std::string {
 #ifdef _MSC_VER
-    char* pValue;
-    size_t len;
+    char* pValue = nullptr;
+    size_t len = 0;
     errno_t err = _dupenv_s(&pValue, &len, varname);
     if (err || nullptr == pValue) {
         return "";
     }
-    auto str = std::string(pValue, len);
+    auto str = std::string(pValue);
     free(pValue);
     return str;
 #else
@@ -37,10 +37,10 @@ void run_corpus(std::string_view name, Op op) {
     if (corpus_base_dir.empty()) {
         throw std::runtime_error("Environment variable FUZZ_CORPUS_BASE_DIR not set!");
     }
-
+    INFO("got FUZZ_CORPUS_BASE_DIR='" << corpus_base_dir << "'");
     auto path = std::filesystem::path(corpus_base_dir) / name;
 
-    INFO("loading from " << path);
+    INFO("loading from '" << path << "'");
     auto num_files = size_t();
     auto periodic = ui::Periodic(100ms);
 
