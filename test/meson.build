@@ -105,7 +105,7 @@ test(
     'fuzz',
     test_exe,
     args: ['-ns', '-ts=fuzz'],
-    env: 'FUZZ_CORPUS_BASE_DIR=' + meson.source_root() + '/data/fuzz',
+    env: 'FUZZ_CORPUS_BASE_DIR=' + meson.source_root() / 'data' / 'fuzz',
     verbose: true)
 
 ###################
