@@ -2,6 +2,7 @@
 #include <app/ui/ProgressBar.h>
 #include <fuzz/api.h>
 #include <fuzz/insert_erase.h>
+#include <fuzz/string.h>
 
 #include <doctest.h>
 #include <fmt/format.h>
@@ -74,4 +75,8 @@ TEST_CASE("fuzz_api" * doctest::test_suite("fuzz") * doctest::skip(true)) {
 
 TEST_CASE("fuzz_insert_erase" * doctest::test_suite("fuzz") * doctest::skip(true)) {
     run_corpus("insert_erase", fuzz::insert_erase);
+}
+
+TEST_CASE("fuzz_string" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("string", fuzz::string);
 }

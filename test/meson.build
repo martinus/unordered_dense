@@ -10,6 +10,7 @@ test_sources = [
     'bench/swap.cpp',
     'fuzz/api.cpp',
     'fuzz/insert_erase.cpp',
+    'fuzz/string.cpp',
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
@@ -133,6 +134,14 @@ if compiler.get_id() == 'clang'
     executable(
         'fuzz_insert_erase',
         fuzz_sources + ['fuzz/insert_erase.cpp'],
+        include_directories: incdir,
+        cpp_args : fuzz_cpp_args,
+        link_args: fuzz_link_args,
+        dependencies: fuzz_deps,
+    )
+    executable(
+        'fuzz_string',
+        fuzz_sources + ['fuzz/string.cpp'],
         include_directories: incdir,
         cpp_args : fuzz_cpp_args,
         link_args: fuzz_link_args,

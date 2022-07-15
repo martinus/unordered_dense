@@ -37,6 +37,10 @@ public:
         }
     }
 
+    inline auto string(size_t max_length) -> std::string {
+        return m_fdp.ConsumeRandomLengthString(max_length);
+    }
+
     template <typename... Args>
     auto pick(Args&&... args) -> std::common_type_t<decltype(args)...>& {
         static constexpr auto num_ops = sizeof...(args);

@@ -41,7 +41,7 @@ void insert_erase(uint8_t const* data, size_t size) {
         REQUIRE(ank.erase(key) == ref.erase(key));
         REQUIRE(ank.size() == ref.size());
     }
-    std::unordered_map<uint64_t, uint64_t> cpy(ank.begin(), ank.end());
+    auto cpy = std::unordered_map(ank.begin(), ank.end());
     REQUIRE(cpy == ref);
 }
 

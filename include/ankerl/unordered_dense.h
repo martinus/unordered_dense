@@ -34,42 +34,46 @@
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // add functionality in a backwards compatible manner
 #define ANKERL_UNORDERED_DENSE_VERSION_PATCH 2 // backwards compatible bug fixes
 
-#include <algorithm>
-#include <array>
-#include <cstdint>
-#include <cstring>
-#include <functional>
-#include <initializer_list>
-#include <limits>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
-#define ANKERL_UNORDERED_DENSE_PMR 0
-#if defined(__has_include)
-#    if __has_include(<memory_resource>)
-#        undef ANKERL_UNORDERED_DENSE_PMR
-#        define ANKERL_UNORDERED_DENSE_PMR 1
-#        include <memory_resource>
-#    endif
-#endif
-
-#if defined(_MSC_VER) && defined(_M_X64)
-#    include <intrin.h>
-#    pragma intrinsic(_umul128)
-#endif
-
-#if defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(__clang__)
-#    define ANKERL_UNORDERED_DENSE_LIKELY(x) __builtin_expect(x, 1)
-#    define ANKERL_UNORDERED_DENSE_UNLIKELY(x) __builtin_expect(x, 0)
+#if __cplusplus < 201703L
+#    error ankerl::unordered_dense requires C++17 or higher
 #else
-#    define ANKERL_UNORDERED_DENSE_LIKELY(x) (x)
-#    define ANKERL_UNORDERED_DENSE_UNLIKELY(x) (x)
-#endif
+
+#    include <algorithm>
+#    include <array>
+#    include <cstdint>
+#    include <cstring>
+#    include <functional>
+#    include <initializer_list>
+#    include <limits>
+#    include <memory>
+#    include <stdexcept>
+#    include <string>
+#    include <string_view>
+#    include <type_traits>
+#    include <utility>
+#    include <vector>
+
+#    define ANKERL_UNORDERED_DENSE_PMR 0
+#    if defined(__has_include)
+#        if __has_include(<memory_resource>)
+#            undef ANKERL_UNORDERED_DENSE_PMR
+#            define ANKERL_UNORDERED_DENSE_PMR 1
+#            include <memory_resource>
+#        endif
+#    endif
+
+#    if defined(_MSC_VER) && defined(_M_X64)
+#        include <intrin.h>
+#        pragma intrinsic(_umul128)
+#    endif
+
+#    if defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(__clang__)
+#        define ANKERL_UNORDERED_DENSE_LIKELY(x) __builtin_expect(x, 1)
+#        define ANKERL_UNORDERED_DENSE_UNLIKELY(x) __builtin_expect(x, 0)
+#    else
+#        define ANKERL_UNORDERED_DENSE_LIKELY(x) (x)
+#        define ANKERL_UNORDERED_DENSE_UNLIKELY(x) (x)
+#    endif
 
 namespace ankerl::unordered_dense {
 
@@ -81,14 +85,14 @@ namespace ankerl::unordered_dense {
 namespace detail::wyhash {
 
 static inline void mum(uint64_t* a, uint64_t* b) {
-#if defined(__SIZEOF_INT128__)
+#    if defined(__SIZEOF_INT128__)
     __uint128_t r = *a;
     r *= *b;
     *a = static_cast<uint64_t>(r);
     *b = static_cast<uint64_t>(r >> 64U);
-#elif defined(_MSC_VER) && defined(_M_X64)
+#    elif defined(_MSC_VER) && defined(_M_X64)
     *a = _umul128(*a, *b, b);
-#else
+#    else
     uint64_t ha = *a >> 32U;
     uint64_t hb = *b >> 32U;
     uint64_t la = static_cast<uint32_t>(*a);
@@ -106,7 +110,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
     *a = lo;
     *b = hi;
-#endif
+#    endif
 }
 
 // multiply and xor mix function, aka MUM
@@ -244,27 +248,27 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     }
 };
 
-#define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
-    template <>                                                                           \
-    struct hash<T> {                                                                      \
-        using is_avalanching = void;                                                      \
-        auto operator()(T const& obj) const noexcept -> size_t {                          \
-            return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
-        }                                                                                 \
-    }
+#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
+        template <>                                                                           \
+        struct hash<T> {                                                                      \
+            using is_avalanching = void;                                                      \
+            auto operator()(T const& obj) const noexcept -> size_t {                          \
+                return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
+            }                                                                                 \
+        }
 
-#if defined(__GNUC__) && !defined(__clang__)
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wuseless-cast"
-#endif
+#    if defined(__GNUC__) && !defined(__clang__)
+#        pragma GCC diagnostic push
+#        pragma GCC diagnostic ignored "-Wuseless-cast"
+#    endif
 // see https://en.cppreference.com/w/cpp/utility/hash
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(bool);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(signed char);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned char);
-#if __cplusplus >= 202002L
+#    if __cplusplus >= 202002L
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char8_t);
-#endif
+#    endif
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char16_t);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char32_t);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(wchar_t);
@@ -277,9 +281,9 @@ ANKERL_UNORDERED_DENSE_HASH_STATICCAST(long long);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long long);
 
-#if defined(__GNUC__) && !defined(__clang__)
-#    pragma GCC diagnostic pop
-#endif
+#    if defined(__GNUC__) && !defined(__clang__)
+#        pragma GCC diagnostic pop
+#    endif
 
 namespace detail {
 
@@ -1147,7 +1151,7 @@ using map = detail::table<Key, T, Hash, KeyEqual, Allocator>;
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
 using set = detail::table<Key, void, Hash, KeyEqual, Allocator>;
 
-#if ANKERL_UNORDERED_DENSE_PMR
+#    if ANKERL_UNORDERED_DENSE_PMR
 
 namespace pmr {
 
@@ -1159,7 +1163,7 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 
 } // namespace pmr
 
-#endif
+#    endif
 
 // deduction guides ///////////////////////////////////////////////////////////
 
@@ -1189,4 +1193,5 @@ auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, All
 
 } // namespace std
 
+#endif
 #endif

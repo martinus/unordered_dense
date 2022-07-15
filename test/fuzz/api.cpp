@@ -1,6 +1,5 @@
 #include <ankerl/unordered_dense.h>
 #include <app/Counter.h>
-#include <app/robin_hood.h>
 
 #include "Provider.h"
 
@@ -24,7 +23,6 @@ void api(uint8_t const* data, size_t size) {
     Counter counts;
 
     using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
-    // using Map = robin_hood::unordered_flat_map<Counter::Obj, Counter::Obj>;
     auto map = Map();
     p.repeat_oneof(
         [&] {
