@@ -70,6 +70,10 @@ if compiler.get_id() == 'msvc'
         language: 'cpp')
 endif
 
+# for include-what-you-use
+#cpp_args += '-isystem'
+#cpp_args += '/usr/lib64/clang/14.0.0/include/'
+
 fmt_method = 'auto'
 if get_option('cpp_args').contains('-m32')
     # use builtin so we can compile it for 32bit. 
@@ -117,7 +121,13 @@ if compiler.get_id() == 'clang'
             dependency('threads'),
             dependency('fmt', method: fmt_method),
         ]
-    fuzz_cpp_args = ['-DFUZZ', '-fsanitize-undefined-trap-on-error', '-fsanitize=undefined,address,fuzzer', '-g']
+    fuzz_cpp_args = [
+        '-DFUZZ',
+        '-fsanitize-undefined-trap-on-error',
+        '-fsanitize=undefined,address,fuzzer',
+        '-g',
+        '-isystem', '/usr/lib64/clang/14.0.0/include/',
+    ]
     fuzz_link_args = ['-fsanitize=undefined,address,fuzzer']
     fuzz_sources = [
         'app/Counter.cpp',

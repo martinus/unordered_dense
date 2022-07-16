@@ -2,7 +2,9 @@
 
 #include <doctest.h>
 
-#include <string>
+#include <string>  // for string, operator==, allocator
+#include <utility> // for pair
+#include <vector>  // for vector
 
 TEST_CASE("insert_or_assign") {
     auto map = ankerl::unordered_dense::map<std::string, std::string>();

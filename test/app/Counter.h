@@ -1,16 +1,12 @@
 #pragma once
 
-#include <fmt/core.h>
-#include <fmt/format.h>
+#include <fmt/core.h> // for format_context, format_parse_context, format_to
 
-#include <cstddef>
-#include <functional>
-#include <iosfwd>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-
-class CountObj;
+#include <cstddef>     // for size_t
+#include <functional>  // for hash
+#include <iosfwd>      // for ostream
+#include <string>      // for allocator, string
+#include <string_view> // for hash, string_view
 
 struct Counter {
     // Obj for only swaps & equals. Used for optimizing.

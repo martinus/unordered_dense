@@ -3,8 +3,9 @@
 #include <doctest.h>
 
 #include <app/Counter.h>
-#include <functional>
-#include <unordered_map>
+
+#include <cstddef> // for size_t
+#include <utility> // for pair
 
 // very minimal input iterator
 // https://en.cppreference.com/w/cpp/named_req/InputIterator#Concept

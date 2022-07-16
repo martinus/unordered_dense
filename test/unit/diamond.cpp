@@ -2,6 +2,9 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+#include <vector>  // for vector
+
 // struct that provides both hash and equals operator
 struct HashWithEqual {
     auto operator()(int x) const -> size_t {

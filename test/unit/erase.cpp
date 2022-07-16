@@ -1,12 +1,14 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/checksum.h>
 #include <app/nanobench.h>
 
 #include <doctest.h>
 
-#include <algorithm>
-#include <unordered_set>
+#include <algorithm>     // for all_of
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint32_t
+#include <unordered_set> // for unordered_set, operator!=
+#include <vector>        // for vector
 
 template <typename A, typename B>
 [[nodiscard]] auto is_eq(A const& a, B const& b) -> bool {

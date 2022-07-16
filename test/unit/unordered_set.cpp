@@ -2,7 +2,11 @@
 
 #include <doctest.h>
 
-#include <iostream>
+#include <cstddef>     // for size_t
+#include <cstdint>     // for UINT64_C, uint64_t
+#include <string>      // for basic_string, allocator, operator==
+#include <type_traits> // for integral_constant<>::value, is_same
+#include <vector>      // for vector
 
 TEST_CASE("unordered_set_asserts") {
     using Set = ankerl::unordered_dense::set<uint64_t>;

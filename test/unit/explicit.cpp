@@ -2,7 +2,6 @@
 
 #include <doctest.h>
 
-#include <iostream>
 #include <unordered_map>
 #include <vector>
 

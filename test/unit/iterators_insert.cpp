@@ -2,7 +2,9 @@
 
 #include <doctest.h>
 
-#include <vector>
+#include <algorithm> // for max
+#include <utility>   // for pair
+#include <vector>    // for vector
 
 TEST_CASE("iterators_insert") {
     auto v = std::vector<std::pair<int, int>>();

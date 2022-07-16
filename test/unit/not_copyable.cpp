@@ -2,6 +2,10 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+#include <tuple>   // for forward_as_tuple
+#include <utility> // for move, piecewise_construct
+
 // not copyable, but movable.
 class NoCopy {
 public:

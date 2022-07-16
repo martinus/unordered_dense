@@ -2,6 +2,8 @@
 
 #include <doctest.h>
 
+#include <stdexcept> // for out_of_range
+
 using Map = ankerl::unordered_dense::map<int, int>;
 
 TEST_CASE("at") {

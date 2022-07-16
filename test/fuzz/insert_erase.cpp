@@ -7,7 +7,12 @@
 #    include <doctest.h>
 #endif
 
-#include <unordered_map>
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint64_t, uint8_t
+#include <functional>    // for equal_to
+#include <iterator>      // for __iter_val_t, __iter_key_t
+#include <unordered_map> // for unordered_map, operator==, hash
+#include <vector>        // for allocator, vector
 
 namespace {
 

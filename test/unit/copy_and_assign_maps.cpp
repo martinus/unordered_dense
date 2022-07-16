@@ -5,6 +5,9 @@
 
 #include <doctest.h>
 
+#include <utility> // for pair
+#include <vector>  // for vector
+
 using Map = ankerl::unordered_dense::map<int, int>;
 
 // creates a map with some data in it

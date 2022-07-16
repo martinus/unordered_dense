@@ -5,6 +5,9 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+#include <vector>  // for vector
+
 TEST_CASE("erase_range") {
     int const num_elements = 10;
 

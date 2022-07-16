@@ -1,11 +1,15 @@
-#include <ankerl/unordered_dense.h>
-#include <app/nanobench.h>
-#include <app/robin_hood.h>
+#include <ankerl/unordered_dense.h> // for map, operator==
 
-#include <doctest.h>
-#include <fmt/format.h>
+#include <app/nanobench.h>  // for Rng, Bench
+#include <app/robin_hood.h> // for unordered_node_map, unordered_fl...
 
-#include <unordered_map>
+#include <doctest.h>  // for TestCase, skip, TEST_CASE, test_...
+#include <fmt/core.h> // for format
+
+#include <cstdint>       // for uint64_t
+#include <stddef.h>      // for size_t
+#include <string_view>   // for string_view
+#include <unordered_map> // for unordered_map, operator==
 
 template <typename Map>
 void bench(std::string_view name) {

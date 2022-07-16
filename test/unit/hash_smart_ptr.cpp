@@ -1,8 +1,10 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <doctest.h> // for ResultBuilder, TestCase, REQUIRE
 
-#include <memory>
+#include <cstdint>     // for uint64_t
+#include <memory>      // for shared_ptr, __unique_ptr_t, make...
+#include <type_traits> // for declval
 
 template <typename Ptr>
 void check(Ptr const& ptr) {

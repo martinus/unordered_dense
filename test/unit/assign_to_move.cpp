@@ -5,6 +5,10 @@
 
 #include <doctest.h>
 
+#include <type_traits> // for remove_reference, remove_referen...
+#include <utility>     // for move
+#include <vector>      // for vector
+
 TEST_CASE("assign_to_moved") {
     auto a = ankerl::unordered_dense::map<int, int>();
     a[1] = 2;

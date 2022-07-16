@@ -4,8 +4,9 @@
 
 #include <doctest.h>
 
-#include <string>
-#include <unordered_map>
+#include <cstdint> // for uint64_t
+#include <string>  // for allocator, string
+#include <vector>  // for vector
 
 TEST_CASE("reserve_and_assign") {
     using Map = ankerl::unordered_dense::map<std::string, uint64_t>;

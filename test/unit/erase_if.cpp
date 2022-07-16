@@ -4,6 +4,10 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+#include <cstdint> // for uint64_t
+#include <utility> // for pair
+
 using Set = ankerl::unordered_dense::set<Counter::Obj>;
 
 TEST_CASE("erase_if_set") {

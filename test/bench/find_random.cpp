@@ -1,14 +1,18 @@
-#include <ankerl/unordered_dense.h>
-#include <app/name_of_type.h>
-#include <app/nanobench.h>
-#include <app/robin_hood.h>
+#include <ankerl/unordered_dense.h> // for map
 
-#include <chrono>
-#include <doctest.h>
-#include <fmt/format.h>
+#include <app/name_of_type.h> // for name_of_type
+#include <app/nanobench.h>    // for Rng
+#include <app/robin_hood.h>   // for unordered_flat_map
 
-#include <array>
-#include <unordered_map>
+#include <doctest.h>  // for TestCase, skip, ResultBuilder
+#include <fmt/core.h> // for format, print
+
+#include <algorithm>     // for fill_n
+#include <array>         // for array
+#include <chrono>        // for duration, operator-, steady_clock
+#include <cstddef>       // for size_t
+#include <unordered_map> // for unordered_map, operator!=
+#include <vector>        // for vector
 
 template <typename Map>
 void bench() {

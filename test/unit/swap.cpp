@@ -5,6 +5,8 @@
 
 #include <doctest.h>
 
+#include <vector>
+
 TEST_CASE("swap") {
     {
         auto b = ankerl::unordered_dense::map<int, int>();

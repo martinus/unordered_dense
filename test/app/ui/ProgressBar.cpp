@@ -1,5 +1,7 @@
 #include "ProgressBar.h"
 
+#include <algorithm> // for min
+
 namespace {
 
 auto split(std::string_view symbols, char sep) -> std::vector<std::string> {

@@ -2,6 +2,10 @@
 
 #include <doctest.h>
 
+#include <tuple>   // for forward_as_tuple
+#include <utility> // for piecewise_construct
+#include <vector>  // for vector
+
 TEST_CASE("insert") {
     using Map = ankerl::unordered_dense::map<unsigned int, int>;
     auto map = Map();

@@ -3,7 +3,11 @@
 #include <app/Counter.h>
 #include <doctest.h>
 
-#include <unordered_set>
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint64_t
+#include <unordered_set> // for unordered_set
+#include <utility>       // for pair
+#include <vector>        // for vector
 
 TEST_CASE("iterators_erase") {
     Counter counts;

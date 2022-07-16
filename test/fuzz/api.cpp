@@ -9,12 +9,12 @@
 #    include <doctest.h>
 #endif
 
-#include <fmt/format.h>
-
-#include <cstddef>
-#include <cstdint>
-#include <stdexcept>
-#include <utility>
+#include <initializer_list> // for initializer_list
+#include <iterator>         // for distance, __iterator_traits<>::d...
+#include <new>              // for operator new
+#include <tuple>            // for forward_as_tuple
+#include <utility>          // for swap, pair, piecewise_construct
+#include <vector>           // for vector
 
 namespace fuzz {
 

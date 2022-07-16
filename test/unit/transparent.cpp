@@ -2,6 +2,15 @@
 
 #include <doctest.h>
 
+#include <array>       // for array
+#include <cstddef>     // for size_t
+#include <functional>  // for equal_to
+#include <string>      // for basic_string, string, operator""s
+#include <string_view> // for basic_string_view, operator""sv
+#include <type_traits> // for add_const_t
+#include <utility>     // for pair, as_const
+#include <vector>      // for vector
+
 using namespace std::literals;
 
 // transparent hash, counts number of calls per operator

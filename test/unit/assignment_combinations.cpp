@@ -5,6 +5,10 @@
 
 #include <doctest.h>
 
+#include <cstdint> // for uint64_t
+#include <utility> // for pair
+#include <vector>  // for vector
+
 using Map = ankerl::unordered_dense::map<uint64_t, uint64_t>;
 
 TEST_CASE("assignment_combinations_1") {

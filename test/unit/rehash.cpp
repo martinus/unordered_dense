@@ -2,6 +2,8 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+
 TEST_CASE("rehash") {
     auto map = ankerl::unordered_dense::map<size_t, int>();
 

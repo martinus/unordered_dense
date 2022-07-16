@@ -6,6 +6,10 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+#include <cstdint> // for uint64_t
+#include <utility> // for move
+
 TEST_CASE("mapmap") {
     Counter counts;
     INFO(counts);

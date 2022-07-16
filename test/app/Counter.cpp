@@ -1,11 +1,11 @@
 #include <app/Counter.h>
 
-#include <app/print.h>
-#include <fmt/format.h>
+#include <app/print.h> // for print
 
-#include <ostream>
-#include <stdexcept>
-#include <unordered_set>
+#include <cstdlib>       // for abort
+#include <stdexcept>     // for runtime_error
+#include <unordered_set> // for unordered_set
+#include <utility>       // for swap, pair
 
 #define COUNTER_ENABLE_UNORDERED_SET 1
 

@@ -2,7 +2,9 @@
 
 #include <doctest.h>
 
-#include <limits>
+#include <cstdint>    // for uint32_t
+#include <functional> // for equal_to
+#include <limits>     // for numeric_limits
 
 TEST_CASE("max_size") {
     auto const map = ankerl::unordered_dense::map<int, int>();

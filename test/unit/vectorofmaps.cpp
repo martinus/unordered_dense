@@ -5,8 +5,10 @@
 
 #include <doctest.h>
 
-#include <ostream>
-#include <vector>
+#include <algorithm> // for max
+#include <cstddef>   // for size_t
+#include <utility>   // for move
+#include <vector>    // for vector
 
 template <typename Map>
 void fill(Counter& counts, Map& map, ankerl::nanobench::Rng& rng) {

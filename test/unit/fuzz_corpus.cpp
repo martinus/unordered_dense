@@ -1,16 +1,23 @@
-#include <app/ui/Periodic.h>
-#include <app/ui/ProgressBar.h>
-#include <fuzz/api.h>
-#include <fuzz/insert_erase.h>
-#include <fuzz/string.h>
+#include <app/ui/Periodic.h>    // for Periodic
+#include <app/ui/ProgressBar.h> // for ProgressBar
 
-#include <doctest.h>
-#include <fmt/format.h>
+#include <fuzz/api.h>          // for api
+#include <fuzz/insert_erase.h> // for insert_erase
+#include <fuzz/string.h>       // for string
 
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <string_view>
+#include <doctest.h>  // for TestCase, MessageBuilder, skip, INFO
+#include <fmt/core.h> // for print
+
+#include <chrono>      // for operator""ms, literals, steady_clock...
+#include <cstdint>     // for uint8_t
+#include <cstdlib>     // for getenv, size_t
+#include <filesystem>  // for directory_iterator, operator<<, begin
+#include <fstream>     // for operator<<, basic_istream, ifstream
+#include <iterator>    // for istreambuf_iterator, operator!=, dis...
+#include <sstream>     // for basic_stringbuf<>::int_type, basic_s...
+#include <stdexcept>   // for runtime_error
+#include <string>      // for basic_string, operator<<, allocator
+#include <string_view> // for string_view
 
 using namespace std::literals;
 

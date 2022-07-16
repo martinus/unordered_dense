@@ -2,6 +2,8 @@
 
 #include <doctest.h>
 
+#include <cstdint> // for uint64_t
+
 TEST_CASE("contains") {
     auto map = ankerl::unordered_dense::map<uint64_t, uint64_t>();
 

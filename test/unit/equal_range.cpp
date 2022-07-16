@@ -2,7 +2,9 @@
 
 #include <doctest.h>
 
-#include <unordered_map>
+#include <type_traits> // for add_const_t
+#include <utility>     // for pair, as_const
+#include <vector>      // for vector
 
 TEST_CASE("equal_range") {
     auto map = ankerl::unordered_dense::map<int, int>();

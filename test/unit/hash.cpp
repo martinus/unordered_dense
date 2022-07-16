@@ -1,8 +1,11 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <doctest.h> // for ResultBuilder, TestCase, REQUIRE
 
-#include <unordered_set>
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint64_t
+#include <string>        // for string, basic_string
+#include <unordered_set> // for unordered_set
 
 TEST_CASE("hash_string") {
     auto h = ankerl::unordered_dense::hash<std::string>();

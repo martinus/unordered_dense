@@ -7,7 +7,11 @@
 #    include <doctest.h>
 #endif
 
-#include <unordered_map>
+#include <cstdint>       // for uint8_t
+#include <string>        // for string, basic_string, operator==
+#include <unordered_map> // for unordered_map, operator==, unord...
+#include <utility>       // for pair
+#include <vector>        // for vector
 
 namespace fuzz {
 

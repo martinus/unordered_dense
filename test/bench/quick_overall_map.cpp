@@ -1,13 +1,19 @@
-#include <ankerl/unordered_dense.h>
-#include <app/geomean.h>
-#include <app/nanobench.h>
-#include <app/robin_hood.h>
+#include <ankerl/unordered_dense.h> // for map, hash
 
-#include <doctest.h>
-#include <fmt/format.h>
+#include <app/geomean.h>    // for geomean
+#include <app/nanobench.h>  // for Rng, doNotOptimizeAway, Bench
+#include <app/robin_hood.h> // for unordered_node_map, unordered_fl...
 
-#include <string_view>
-#include <unordered_map>
+#include <doctest.h>  // for TestCase, skip, ResultBuilder
+#include <fmt/core.h> // for print, format
+
+#include <chrono>        // for duration, operator-, high_resolu...
+#include <cstring>       // for size_t, memcpy
+#include <stdint.h>      // for uint64_t
+#include <string>        // for string, basic_string, operator==
+#include <string_view>   // for string_view, literals
+#include <unordered_map> // for unordered_map, operator!=
+#include <vector>        // for vector
 
 using namespace std::literals;
 

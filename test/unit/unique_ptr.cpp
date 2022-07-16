@@ -2,7 +2,10 @@
 
 #include <doctest.h>
 
-#include <memory>
+#include <cstddef> // for size_t
+#include <memory>  // for operator!=, unique_ptr, make_unique
+#include <utility> // for move, pair
+#include <vector>  // for vector
 
 TEST_CASE("unique_ptr") {
     using Map = ankerl::unordered_dense::map<size_t, std::unique_ptr<int>>;

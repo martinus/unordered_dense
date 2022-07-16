@@ -2,7 +2,10 @@
 
 #include <doctest.h>
 
-#include <string>
+#include <cstddef> // for size_t
+#include <string>  // for allocator, string, operator==
+#include <utility> // for pair, move
+#include <vector>  // for vector
 
 struct RegularType {
     // cppcheck-suppress passedByValue

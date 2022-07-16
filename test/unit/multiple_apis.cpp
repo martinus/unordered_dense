@@ -5,8 +5,12 @@
 
 #include <doctest.h>
 
-#include <unordered_map>
-#include <utility>
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint64_t
+#include <type_traits>   // for __enable_if_t
+#include <unordered_map> // for _Node_iterator, unordered_map
+#include <utility>       // for pair, make_pair
+#include <vector>        // for vector
 
 TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
     using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;

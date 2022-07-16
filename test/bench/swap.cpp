@@ -1,13 +1,15 @@
-#include <ankerl/unordered_dense.h>
-#include <app/nanobench.h>
-#include <app/robin_hood.h>
+#include <ankerl/unordered_dense.h> // for map
+#include <app/nanobench.h>          // for Rng, doNotOptimizeAway, Bench
+#include <app/robin_hood.h>         // for unordered_node_map, unordered_fl...
 
-#include <cstdint>
-#include <doctest.h>
-#include <fmt/format.h>
+#include <doctest.h>  // for TestCase, skip, TEST_CASE, test_...
+#include <fmt/core.h> // for format
 
-#include <iostream>
-#include <unordered_map>
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint64_t
+#include <string_view>   // for string_view
+#include <unordered_map> // for unordered_map, swap
+#include <utility>       // for swap
 
 namespace {
 

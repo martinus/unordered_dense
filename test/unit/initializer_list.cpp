@@ -2,7 +2,11 @@
 
 #include <doctest.h>
 
-#include <string_view>
+#include <cstddef>     // for size_t
+#include <string>      // for string, operator==, allocator
+#include <string_view> // for basic_string_view, operator""sv
+#include <utility>     // for pair
+#include <vector>      // for vector
 
 using namespace std::literals;
 

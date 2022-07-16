@@ -2,6 +2,9 @@
 
 #include <doctest.h>
 
+#include <string> // for operator==, basic_string, operat...
+#include <vector> // for vector
+
 TEST_CASE("set") {
     auto set = ankerl::unordered_dense::set<std::string>();
 

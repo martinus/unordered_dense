@@ -1,8 +1,9 @@
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <vector>
+#include <cstddef>     // for size_t
+#include <string>      // for string, basic_string
+#include <string_view> // for string_view
+#include <vector>      // for vector
 
 namespace ui {
 

@@ -2,6 +2,10 @@
 
 #include <doctest.h>
 
+#include <cstddef> // for size_t
+#include <tuple>   // for forward_as_tuple
+#include <utility> // for piecewise_construct
+
 class NoMove {
 public:
     NoMove() noexcept = default;
