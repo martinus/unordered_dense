@@ -4,6 +4,7 @@ test_sources = [
     'app/nanobench.cpp',
     'app/ui/Periodic.cpp',
     'app/ui/ProgressBar.cpp',
+    'app/unordered_dense.cpp',
     'bench/copy.cpp',
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',

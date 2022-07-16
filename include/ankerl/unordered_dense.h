@@ -38,27 +38,28 @@
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
 
-#    include <algorithm>
-#    include <array>
-#    include <cstdint>
-#    include <cstring>
-#    include <functional>
-#    include <initializer_list>
-#    include <limits>
-#    include <memory>
-#    include <stdexcept>
-#    include <string>
-#    include <string_view>
-#    include <type_traits>
-#    include <utility>
-#    include <vector>
+#    include <array>            // for array
+#    include <cstdint>          // for uint64_t, uint32_t, uint8_t, UINT64_C
+#    include <cstring>          // for size_t, memcpy, memset
+#    include <functional>       // for equal_to, hash
+#    include <initializer_list> // for initializer_list
+#    include <iterator>         // for pair, distance
+#    include <limits>           // for numeric_limits
+#    include <memory>           // for allocator, allocator_traits, shared_ptr
+#    include <stdexcept>        // for out_of_range
+#    include <string>           // for basic_string
+#    include <string_view>      // for basic_string_view, hash
+#    include <tuple>            // for forward_as_tuple
+#    include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
+#    include <utility>          // for forward, exchange, pair, as_const, piece...
+#    include <vector>           // for vector
 
 #    define ANKERL_UNORDERED_DENSE_PMR 0
 #    if defined(__has_include)
 #        if __has_include(<memory_resource>)
 #            undef ANKERL_UNORDERED_DENSE_PMR
 #            define ANKERL_UNORDERED_DENSE_PMR 1
-#            include <memory_resource>
+#            include <memory_resource> // for polymorphic_allocator
 #        endif
 #    endif
 
