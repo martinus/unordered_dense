@@ -20,6 +20,7 @@ test_sources = [
     'unit/copyassignment.cpp',
     'unit/count.cpp',
     'unit/ctors.cpp',
+    'unit/deduction_guides.cpp',
     'unit/diamond.cpp',
     'unit/empty.cpp',
     'unit/equal_range.cpp',

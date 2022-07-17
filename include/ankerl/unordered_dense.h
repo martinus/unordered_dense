@@ -1168,7 +1168,8 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 
 // deduction guides ///////////////////////////////////////////////////////////
 
-// TODO not yet implemented
+// deduction guides for alias templates are only possible since C++20
+// see https://en.cppreference.com/w/cpp/language/class_template_argument_deduction
 
 } // namespace ankerl::unordered_dense
 
