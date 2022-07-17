@@ -3,6 +3,7 @@
 #include <app/print.h> // for print
 
 #include <cstdlib>       // for abort
+#include <ostream>       // for ostream
 #include <stdexcept>     // for runtime_error
 #include <unordered_set> // for unordered_set
 #include <utility>       // for swap, pair
