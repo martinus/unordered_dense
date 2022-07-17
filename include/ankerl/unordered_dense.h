@@ -562,8 +562,23 @@ private:
     }
 
     template <typename K, typename... Args>
+    auto do_place_element(uint32_t dist_and_fingerprint, Bucket* bucket, K&& key, Args&&... args)
+        -> std::pair<iterator, bool> {
+
+        // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
+        m_values.emplace_back(std::piecewise_construct,
+                              std::forward_as_tuple(std::forward<K>(key)),
+                              std::forward_as_tuple(std::forward<Args>(args)...));
+
+        // place element and shift up until we find an empty spot
+        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
+        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
+        return {begin() + value_idx, true};
+    }
+
+    template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
-        if (is_full()) {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full())) {
             increase_size();
         }
 
@@ -579,20 +594,12 @@ private:
             bucket = next(bucket);
         }
 
-        // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
-        m_values.emplace_back(std::piecewise_construct,
-                              std::forward_as_tuple(std::forward<K>(key)),
-                              std::forward_as_tuple(std::forward<Args>(args)...));
-
-        // place element and shift up until we find an empty spot
-        uint32_t value_idx = static_cast<uint32_t>(m_values.size()) - 1;
-        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
-        return {begin() + value_idx, true};
+        return do_place_element(dist_and_fingerprint, bucket, std::forward<K>(key), std::forward<Args>(args)...);
     }
 
     template <typename K>
     auto do_find(K const& key) -> iterator {
-        if (empty()) {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty())) {
             return end();
         }
 
