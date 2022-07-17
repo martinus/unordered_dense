@@ -8,8 +8,8 @@
 #include <fmt/core.h> // for print, format
 
 #include <chrono>        // for duration, operator-, high_resolu...
+#include <cstdint>       // for uint64_t
 #include <cstring>       // for size_t, memcpy
-#include <stdint.h>      // for uint64_t
 #include <string>        // for string, basic_string, operator==
 #include <string_view>   // for string_view, literals
 #include <unordered_map> // for unordered_map, operator!=

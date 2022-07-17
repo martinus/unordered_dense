@@ -6,8 +6,8 @@
 #include <doctest.h>  // for TestCase, skip, TEST_CASE, test_...
 #include <fmt/core.h> // for format
 
+#include <cstddef>       // for size_t
 #include <cstdint>       // for uint64_t
-#include <stddef.h>      // for size_t
 #include <string_view>   // for string_view
 #include <unordered_map> // for unordered_map, operator==
 
