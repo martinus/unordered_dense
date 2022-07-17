@@ -3,12 +3,11 @@
 #include <doctest.h>
 #include <fmt/core.h>
 
-#include <cstddef>         // for size_t
-#include <cstdint>         // for uint64_t
-#include <memory_resource> // for new_delete_resource, memory_reso...
-#include <string_view>     // for string_view
-#include <utility>         // for move
-#include <vector>          // for vector
+#include <cstddef>     // for size_t
+#include <cstdint>     // for uint64_t
+#include <string_view> // for string_view
+#include <utility>     // for move
+#include <vector>      // for vector
 
 #if ANKERL_UNORDERED_DENSE_PMR
 
