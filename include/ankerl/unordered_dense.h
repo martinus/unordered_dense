@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 1.0.2
+// Version 1.0.3
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -32,7 +32,7 @@
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // add functionality in a backwards compatible manner
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 2 // backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 3 // backwards compatible bug fixes
 
 #if __cplusplus < 201703L
 #    error ankerl::unordered_dense requires C++17 or higher
@@ -586,15 +586,16 @@ private:
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto* bucket = bucket_from_hash(hash);
 
-        while (dist_and_fingerprint <= bucket->dist_and_fingerprint) {
+        while (true) {
             if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
                 return {begin() + bucket->value_idx, false};
+            }
+            if (dist_and_fingerprint > bucket->dist_and_fingerprint) {
+                return do_place_element(dist_and_fingerprint, bucket, std::forward<K>(key), std::forward<Args>(args)...);
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
         }
-
-        return do_place_element(dist_and_fingerprint, bucket, std::forward<K>(key), std::forward<Args>(args)...);
     }
 
     template <typename K>
