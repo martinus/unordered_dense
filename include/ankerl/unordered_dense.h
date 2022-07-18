@@ -587,10 +587,11 @@ private:
         auto* bucket = bucket_from_hash(hash);
 
         while (true) {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, m_values[bucket->value_idx].first)) {
-                return {begin() + bucket->value_idx, false};
-            }
-            if (dist_and_fingerprint > bucket->dist_and_fingerprint) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint) {
+                if (m_equal(key, m_values[bucket->value_idx].first)) {
+                    return {begin() + bucket->value_idx, false};
+                }
+            } else if (dist_and_fingerprint > bucket->dist_and_fingerprint) {
                 return do_place_element(dist_and_fingerprint, bucket, std::forward<K>(key), std::forward<Args>(args)...);
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
@@ -621,14 +622,17 @@ private:
         dist_and_fingerprint += BUCKET_DIST_INC;
         bucket = next(bucket);
 
-        do {
-            if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
-                return begin() + bucket->value_idx;
+        while (true) {
+            if (dist_and_fingerprint == bucket->dist_and_fingerprint) {
+                if (m_equal(key, get_key(m_values[bucket->value_idx]))) {
+                    return begin() + bucket->value_idx;
+                }
+            } else if (dist_and_fingerprint > bucket->dist_and_fingerprint) {
+                return end();
             }
             dist_and_fingerprint += BUCKET_DIST_INC;
             bucket = next(bucket);
-        } while (dist_and_fingerprint <= bucket->dist_and_fingerprint);
-        return end();
+        }
     }
 
     template <typename K>
