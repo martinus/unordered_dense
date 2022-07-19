@@ -34,10 +34,15 @@
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // add functionality in a backwards compatible manner
 #define ANKERL_UNORDERED_DENSE_VERSION_PATCH 3 // backwards compatible bug fixes
 
-#if __cplusplus < 201703L
+#if defined(_MSVC_LANG)
+#    define ANKERL_UNORDERED_DENSE_CPP_VERSION _MSVC_LANG
+#else
+#    define ANKERL_UNORDERED_DENSE_CPP_VERSION __cplusplus
+#endif
+
+#if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
-
 #    include <array>            // for array
 #    include <cstdint>          // for uint64_t, uint32_t, uint8_t, UINT64_C
 #    include <cstring>          // for size_t, memcpy, memset
@@ -267,7 +272,7 @@ ANKERL_UNORDERED_DENSE_HASH_STATICCAST(bool);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(signed char);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned char);
-#    if __cplusplus >= 202002L
+#    if ANKERL_UNORDERED_DENSE_CPP_VERSION >= 202002L
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char8_t);
 #    endif
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char16_t);
