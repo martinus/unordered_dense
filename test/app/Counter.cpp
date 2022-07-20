@@ -198,8 +198,16 @@ void Counter::check_all_done() const {
         test::print("ERROR at ~Counter(): got {} objects still alive!", singletonConstructedObjects().size());
         std::abort();
     }
-    if (dtor != ctor + staticDefaultCtor + copyCtor + defaultCtor + moveCtor) {
-        test::print("ERROR at ~Counter(): number of counts does not match!");
+    if (dtor + staticDtor != ctor + staticDefaultCtor + copyCtor + defaultCtor + moveCtor) {
+        test::print("ERROR at ~Counter(): number of counts does not match!\n");
+        test::print("{} dtor + {} staticDtor != {} ctor + {} staticDefaultCtor + {} copyCtor + {} defaultCtor + {} moveCtor\n",
+                    dtor,
+                    staticDtor,
+                    ctor,
+                    staticDefaultCtor,
+                    copyCtor,
+                    defaultCtor,
+                    moveCtor);
         std::abort();
     }
 #endif
