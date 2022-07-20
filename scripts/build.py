@@ -27,9 +27,16 @@ cmd_and_dir = [
     # see https://clang.llvm.org/docs/UsersManual.html#controlling-code-generation
     #
     # can't use ccache, it doesn't work with the ignorelist.txt
+    ['env', 'CXX=ccache g++',     'meson', 'setup', '-Db_sanitize=address',   'builddir/gcc_sanitize_address'],
     ['env', 'CXX=ccache clang++', 'meson', 'setup', '-Db_sanitize=address',   'builddir/clang_sanitize_address'],
+
+    ['env', 'CXX=ccache g++',     'meson', 'setup', '-Db_sanitize=thread',    'builddir/gcc_sanitize_thread'],
     ['env', 'CXX=ccache clang++', 'meson', 'setup', '-Db_sanitize=thread',    'builddir/clang_sanitize_thread'],
-    # ['env', 'CXX=ccache clang++ meson setup -Db_sanitize=memory',    'builddir/clang_sanitize_memory], # doesn't work due to STL, and ignore doesn't work either :-(
+
+    # ['env', 'CXX=ccache g++',     'meson', 'setup', '-Db_sanitize=memory',    'builddir/gcc_sanitize_memory'], # doesn't work due to STL, and ignore doesn't work either :-(
+    # ['env', 'CXX=ccache clang++', 'meson', 'setup', '-Db_sanitize=memory',    'builddir/clang_sanitize_memory'], # doesn't work due to STL, and ignore doesn't work either :-(
+
+    ['env', 'CXX=ccache g++',     'meson', 'setup', '-Db_sanitize=undefined', 'builddir/gcc_sanitize_undefined'],
     ['env', 'CXX=ccache clang++', 'meson', 'setup', '-Db_sanitize=undefined', 'builddir/clang_sanitize_undefined'],
 ]
 
