@@ -154,6 +154,7 @@ void benchRandomFind(ankerl::nanobench::Bench* bench, std::string_view name) {
 template <typename Map>
 void benchAll(ankerl::nanobench::Bench* bench, std::string_view name) {
     bench->title("benchmarking");
+    bench->minEpochTime(100ms);
     benchIterate<Map>(bench, name);
     benchRandomInsertErase<Map>(bench, name);
     benchRandomFind<Map>(bench, name);
