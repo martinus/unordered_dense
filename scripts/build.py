@@ -12,8 +12,8 @@ cmd_and_dir = [
     ['env', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'debug',   '-Dcpp_std=c++17', 'builddir/gcc_cpp17_debug'],
 
     # 32bit. Install lib32-clang
-    ['env', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'debug', '-Dcpp_std=c++17', '-Dcpp_args="-m32"', '-Dcpp_link_args="-m32"', '-Dc_args="-m32"', '-Dc_link_args="-m32"', 'builddir/gcc_cpp17_debug_32'],
-    ['env', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'debug', '-Dcpp_std=c++17', '-Dcpp_args="-m32"', '-Dcpp_link_args="-m32"', '-Dc_args="-m32"', '-Dc_link_args="-m32"', 'builddir/clang_cpp17_debug_32'],
+    ['env', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'debug', '-Dcpp_std=c++17', '-Dcpp_args=-m32', '-Dcpp_link_args=-m32', '-Dc_args=-m32', '-Dc_link_args=-m32', 'builddir/gcc_cpp17_debug_32'],
+    ['env', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'debug', '-Dcpp_std=c++17', '-Dcpp_args=-m32', '-Dcpp_link_args=-m32', '-Dc_args=-m32', '-Dc_link_args=-m32', 'builddir/clang_cpp17_debug_32'],
 
     # c++20
     ['env', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'debug', '-Dcpp_std=c++20', 'builddir/clang_cpp20_debug'],
@@ -60,6 +60,9 @@ for cmd_dir in cmd_and_dir:
     
     # clean
     run(['meson', 'compile', '--clean', '-C', workdir])
+
+    # compile everything
+    run(['meson', 'compile', '-C', workdir])
 
     # test
     #if workdir.find("clang_cpp17_debug") != -1:

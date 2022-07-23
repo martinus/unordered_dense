@@ -127,10 +127,14 @@ if compiler.get_id() == 'clang'
         '-DFUZZ',
         '-fsanitize-undefined-trap-on-error',
         '-fsanitize=undefined,address,fuzzer',
+        '-fno-sanitize=thread',
         '-g',
         '-isystem', '/usr/lib64/clang/14.0.0/include/',
     ]
-    fuzz_link_args = ['-fsanitize=undefined,address,fuzzer']
+    fuzz_link_args = [
+        '-fsanitize=undefined,address,fuzzer',
+        '-fno-sanitize=thread',
+    ]
     fuzz_sources = [
         'app/Counter.cpp',
     ]
