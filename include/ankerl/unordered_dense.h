@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 1.0.3
+// Version 1.1.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -31,8 +31,8 @@
 
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // add functionality in a backwards compatible manner
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 3 // backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 1 // add functionality in a backwards compatible manner
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
 
 #if defined(_MSVC_LANG)
 #    define ANKERL_UNORDERED_DENSE_CPP_VERSION _MSVC_LANG
@@ -344,18 +344,19 @@ class table {
 public:
     using key_type = Key;
     using mapped_type = T;
-    using value_type = typename ValueContainer::value_type;
-    using size_type = typename ValueContainer::size_type;
-    using difference_type = typename ValueContainer::difference_type;
+    using value_container_type = ValueContainer;
+    using value_type = typename value_container_type::value_type;
+    using size_type = typename value_container_type::size_type;
+    using difference_type = typename value_container_type::difference_type;
     using hasher = Hash;
     using key_equal = KeyEqual;
-    using allocator_type = typename ValueContainer::allocator_type;
-    using reference = typename ValueContainer::reference;
-    using const_reference = typename ValueContainer::const_reference;
-    using pointer = typename ValueContainer::pointer;
-    using const_pointer = typename ValueContainer::const_pointer;
-    using iterator = typename ValueContainer::iterator;
-    using const_iterator = typename ValueContainer::const_iterator;
+    using allocator_type = typename value_container_type::allocator_type;
+    using reference = typename value_container_type::reference;
+    using const_reference = typename value_container_type::const_reference;
+    using pointer = typename value_container_type::pointer;
+    using const_pointer = typename value_container_type::const_pointer;
+    using iterator = typename value_container_type::iterator;
+    using const_iterator = typename value_container_type::const_iterator;
 
 private:
     struct Bucket {
@@ -365,7 +366,7 @@ private:
     static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
-    ValueContainer m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
+    value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
     Bucket* m_buckets_start = nullptr;
     Bucket* m_buckets_end = nullptr;
     uint32_t m_max_bucket_capacity = 0;
@@ -745,7 +746,7 @@ public:
     }
 
     auto operator=(table&& other) noexcept(
-        noexcept(std::is_nothrow_move_assignable_v<ValueContainer>&& std::is_nothrow_move_assignable_v<Hash>&&
+        noexcept(std::is_nothrow_move_assignable_v<value_container_type>&& std::is_nothrow_move_assignable_v<Hash>&&
                      std::is_nothrow_move_assignable_v<KeyEqual>)) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
@@ -855,6 +856,12 @@ public:
 
     void insert(std::initializer_list<value_type> ilist) {
         insert(ilist.begin(), ilist.end());
+    }
+
+    // nonstandard API: *this is emptied.
+    // Also see "A Standard flat_map" https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p0429r9.pdf
+    auto extract() && -> value_container_type {
+        return std::move(m_values);
     }
 
     template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
@@ -981,8 +988,8 @@ public:
         return do_erase_key(std::forward<K>(key));
     }
 
-    void swap(table& other) noexcept(noexcept(std::is_nothrow_swappable_v<ValueContainer>&& std::is_nothrow_swappable_v<Hash>&&
-                                                  std::is_nothrow_swappable_v<KeyEqual>)) {
+    void swap(table& other) noexcept(noexcept(std::is_nothrow_swappable_v<value_container_type>&&
+                                                  std::is_nothrow_swappable_v<Hash>&& std::is_nothrow_swappable_v<KeyEqual>)) {
         using std::swap;
         swap(other, *this);
     }
@@ -1125,6 +1132,11 @@ public:
 
     auto key_eq() const -> key_equal {
         return m_equal;
+    }
+
+    // nonstandard API: expose the underlying values container
+    [[nodiscard]] auto values() const noexcept -> value_container_type const& {
+        return m_values;
     }
 
     // non-member functions ///////////////////////////////////////////////////
