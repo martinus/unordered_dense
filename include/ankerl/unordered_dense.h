@@ -1107,6 +1107,7 @@ public:
     }
 
     void reserve(size_t capa) {
+        m_values.reserve(capa);
         auto shifts = calc_shifts_for_size(std::max(capa, size()));
         if (shifts < m_shifts) {
             m_shifts = shifts;
