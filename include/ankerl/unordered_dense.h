@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 1.1.0
+// Version 1.2.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -31,7 +31,7 @@
 
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 1 // add functionality in a backwards compatible manner
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 2 // add functionality in a backwards compatible manner
 #define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
 
 #if defined(_MSVC_LANG)
@@ -347,6 +347,9 @@ using detect_avalanching = typename T::is_avalanching;
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
 
+template <typename T>
+using detect_iterator = typename T::iterator;
+
 template <typename H, typename KE>
 using is_transparent =
     std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool>;
@@ -356,12 +359,15 @@ template <class Key,
           class T, // when void, treat it as a set.
           class Hash,
           class KeyEqual,
-          class Allocator,
+          class AllocatorOrContainer,
           class Bucket>
 class table {
-    using ValueContainer =
-        typename std::vector<typename std::conditional_t<std::is_void_v<T>, Key, std::pair<Key, T>>, Allocator>;
-    using BucketAlloc = typename std::allocator_traits<Allocator>::template rebind_alloc<Bucket>;
+    using ValueContainer = std::conditional_t<
+        is_detected_v<detect_iterator, AllocatorOrContainer>,
+        AllocatorOrContainer,
+        typename std::vector<typename std::conditional_t<std::is_void_v<T>, Key, std::pair<Key, T>>, AllocatorOrContainer>>;
+
+    using BucketAlloc = typename std::allocator_traits<typename ValueContainer::allocator_type>::template rebind_alloc<Bucket>;
     using BucketAllocTraits = std::allocator_traits<BucketAlloc>;
 
     static constexpr uint8_t INITIAL_SHIFTS = 64 - 3; // 2^(64-m_shift) number of buckets
@@ -393,7 +399,7 @@ private:
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
-    Bucket* m_buckets = nullptr;
+    typename std::allocator_traits<BucketAlloc>::pointer m_buckets{};
     size_t m_num_buckets = 0;
     value_idx_type m_max_bucket_capacity = 0;
     float m_max_load_factor = DEFAULT_MAX_LOAD_FACTOR;
@@ -403,6 +409,12 @@ private:
 
     [[nodiscard]] auto next(size_t bucket_idx) const -> size_t {
         return ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1 == m_num_buckets) ? 0 : bucket_idx + 1;
+    }
+
+    // Helper to access bucket through pointer types
+    [[nodiscard]] static constexpr auto at(typename std::allocator_traits<BucketAlloc>::pointer bucket_ptr, size_t offset)
+        -> Bucket& {
+        return *(bucket_ptr + static_cast<typename std::allocator_traits<BucketAlloc>::difference_type>(offset));
     }
 
     template <typename K>
@@ -436,7 +448,7 @@ private:
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
 
-        while (dist_and_fingerprint < m_buckets[bucket_idx].dist_and_fingerprint) {
+        while (dist_and_fingerprint < at(m_buckets, bucket_idx).dist_and_fingerprint) {
             dist_and_fingerprint += Bucket::DIST_INC;
             bucket_idx = next(bucket_idx);
         }
@@ -444,12 +456,12 @@ private:
     }
 
     void place_and_shift_up(Bucket bucket, size_t place) {
-        while (0 != m_buckets[place].dist_and_fingerprint) {
-            bucket = std::exchange(m_buckets[place], bucket);
+        while (0 != at(m_buckets, place).dist_and_fingerprint) {
+            bucket = std::exchange(at(m_buckets, place), bucket);
             bucket.dist_and_fingerprint += Bucket::DIST_INC;
             place = next(place);
         }
-        m_buckets[place] = bucket;
+        at(m_buckets, place) = bucket;
     }
 
     [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
@@ -497,7 +509,7 @@ private:
 
     void clear_buckets() {
         if (m_buckets != nullptr) {
-            std::memset(m_buckets, 0, sizeof(Bucket) * bucket_count());
+            std::memset(&*m_buckets, 0, sizeof(Bucket) * bucket_count());
         }
     }
 
@@ -521,16 +533,16 @@ private:
     }
 
     void do_erase(size_t bucket_idx) {
-        auto const value_idx_to_remove = m_buckets[bucket_idx].value_idx;
+        auto const value_idx_to_remove = at(m_buckets, bucket_idx).value_idx;
 
         // shift down until either empty or an element with correct spot is found
         auto next_bucket_idx = next(bucket_idx);
-        while (m_buckets[next_bucket_idx].dist_and_fingerprint >= Bucket::DIST_INC * 2) {
-            m_buckets[bucket_idx] = {m_buckets[next_bucket_idx].dist_and_fingerprint - Bucket::DIST_INC,
-                                     m_buckets[next_bucket_idx].value_idx};
+        while (at(m_buckets, next_bucket_idx).dist_and_fingerprint >= Bucket::DIST_INC * 2) {
+            at(m_buckets, bucket_idx) = {at(m_buckets, next_bucket_idx).dist_and_fingerprint - Bucket::DIST_INC,
+                                         at(m_buckets, next_bucket_idx).value_idx};
             bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
         }
-        m_buckets[bucket_idx] = {};
+        at(m_buckets, bucket_idx) = {};
 
         // update m_values
         if (value_idx_to_remove != m_values.size() - 1) {
@@ -543,10 +555,10 @@ private:
             bucket_idx = bucket_idx_from_hash(mh);
 
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
-            while (values_idx_back != m_buckets[bucket_idx].value_idx) {
+            while (values_idx_back != at(m_buckets, bucket_idx).value_idx) {
                 bucket_idx = next(bucket_idx);
             }
-            m_buckets[bucket_idx].value_idx = value_idx_to_remove;
+            at(m_buckets, bucket_idx).value_idx = value_idx_to_remove;
         }
         m_values.pop_back();
     }
@@ -559,13 +571,13 @@ private:
 
         auto [dist_and_fingerprint, bucket_idx] = next_while_less(key);
 
-        while (dist_and_fingerprint == m_buckets[bucket_idx].dist_and_fingerprint &&
-               !m_equal(key, get_key(m_values[m_buckets[bucket_idx].value_idx]))) {
+        while (dist_and_fingerprint == at(m_buckets, bucket_idx).dist_and_fingerprint &&
+               !m_equal(key, get_key(m_values[at(m_buckets, bucket_idx).value_idx]))) {
             dist_and_fingerprint += Bucket::DIST_INC;
             bucket_idx = next(bucket_idx);
         }
 
-        if (dist_and_fingerprint != m_buckets[bucket_idx].dist_and_fingerprint) {
+        if (dist_and_fingerprint != at(m_buckets, bucket_idx).dist_and_fingerprint) {
             return 0;
         }
         do_erase(bucket_idx);
@@ -607,7 +619,7 @@ private:
         auto bucket_idx = bucket_idx_from_hash(hash);
 
         while (true) {
-            auto* bucket = m_buckets + bucket_idx;
+            auto* bucket = &at(m_buckets, bucket_idx);
             if (dist_and_fingerprint == bucket->dist_and_fingerprint) {
                 if (m_equal(key, m_values[bucket->value_idx].first)) {
                     return {begin() + static_cast<difference_type>(bucket->value_idx), false};
@@ -629,7 +641,7 @@ private:
         auto mh = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto bucket_idx = bucket_idx_from_hash(mh);
-        auto* bucket = m_buckets + bucket_idx;
+        auto* bucket = &at(m_buckets, bucket_idx);
 
         // unrolled loop. *Always* check a few directly, then enter the loop. This is faster.
         if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
@@ -637,14 +649,14 @@ private:
         }
         dist_and_fingerprint += Bucket::DIST_INC;
         bucket_idx = next(bucket_idx);
-        bucket = m_buckets + bucket_idx;
+        bucket = &at(m_buckets, bucket_idx);
 
         if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
             return begin() + static_cast<difference_type>(bucket->value_idx);
         }
         dist_and_fingerprint += Bucket::DIST_INC;
         bucket_idx = next(bucket_idx);
-        bucket = m_buckets + bucket_idx;
+        bucket = &at(m_buckets, bucket_idx);
 
         while (true) {
             if (dist_and_fingerprint == bucket->dist_and_fingerprint) {
@@ -656,7 +668,7 @@ private:
             }
             dist_and_fingerprint += Bucket::DIST_INC;
             bucket_idx = next(bucket_idx);
-            bucket = m_buckets + bucket_idx;
+            bucket = &at(m_buckets, bucket_idx);
         }
     }
 
@@ -672,19 +684,19 @@ public:
     explicit table(size_t /*bucket_count*/,
                    Hash const& hash = Hash(),
                    KeyEqual const& equal = KeyEqual(),
-                   Allocator const& alloc = Allocator())
-        : m_values(alloc)
+                   AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
+        : m_values(alloc_or_container)
         , m_hash(hash)
         , m_equal(equal) {}
 
-    table(size_t bucket_count, Allocator const& alloc)
-        : table(bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(size_t bucket_count, AllocatorOrContainer const& alloc_or_container)
+        : table(bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
 
-    table(size_t bucket_count, Hash const& hash, Allocator const& alloc)
-        : table(bucket_count, hash, KeyEqual(), alloc) {}
+    table(size_t bucket_count, Hash const& hash, AllocatorOrContainer const& alloc_or_container)
+        : table(bucket_count, hash, KeyEqual(), alloc_or_container) {}
 
-    explicit table(Allocator const& alloc)
-        : table(0, Hash(), KeyEqual(), alloc) {}
+    explicit table(AllocatorOrContainer const& alloc_or_container)
+        : table(0, Hash(), KeyEqual(), alloc_or_container) {}
 
     template <class InputIt>
     table(InputIt first,
@@ -692,24 +704,25 @@ public:
           size_type bucket_count = 0,
           Hash const& hash = Hash(),
           KeyEqual const& equal = KeyEqual(),
-          Allocator const& alloc = Allocator())
-        : table(bucket_count, hash, equal, alloc) {
+          AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
+        : table(bucket_count, hash, equal, alloc_or_container) {
         insert(first, last);
     }
 
     template <class InputIt>
-    table(InputIt first, InputIt last, size_type bucket_count, Allocator const& alloc)
-        : table(first, last, bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(InputIt first, InputIt last, size_type bucket_count, AllocatorOrContainer const& alloc_or_container)
+        : table(first, last, bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
 
     template <class InputIt>
-    table(InputIt first, InputIt last, size_type bucket_count, Hash const& hash, Allocator const& alloc)
-        : table(first, last, bucket_count, hash, KeyEqual(), alloc) {}
+    table(
+        InputIt first, InputIt last, size_type bucket_count, Hash const& hash, AllocatorOrContainer const& alloc_or_container)
+        : table(first, last, bucket_count, hash, KeyEqual(), alloc_or_container) {}
 
     table(table const& other)
         : table(other, other.m_values.get_allocator()) {}
 
-    table(table const& other, Allocator const& alloc)
-        : m_values(other.m_values, alloc)
+    table(table const& other, AllocatorOrContainer const& alloc_or_container)
+        : m_values(other.m_values, alloc_or_container)
         , m_max_load_factor(other.m_max_load_factor)
         , m_hash(other.m_hash)
         , m_equal(other.m_equal) {
@@ -719,8 +732,8 @@ public:
     table(table&& other) noexcept
         : table(std::move(other), other.m_values.get_allocator()) {}
 
-    table(table&& other, Allocator const& alloc) noexcept
-        : m_values(std::move(other.m_values), alloc)
+    table(table&& other, AllocatorOrContainer const& alloc_or_container) noexcept
+        : m_values(std::move(other.m_values), alloc_or_container)
         , m_buckets(std::exchange(other.m_buckets, nullptr))
         , m_num_buckets(std::exchange(other.m_num_buckets, 0))
         , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
@@ -735,16 +748,19 @@ public:
           size_t bucket_count = 0,
           Hash const& hash = Hash(),
           KeyEqual const& equal = KeyEqual(),
-          Allocator const& alloc = Allocator())
-        : table(bucket_count, hash, equal, alloc) {
+          AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
+        : table(bucket_count, hash, equal, alloc_or_container) {
         insert(ilist);
     }
 
-    table(std::initializer_list<value_type> ilist, size_type bucket_count, const Allocator& alloc)
-        : table(ilist, bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(std::initializer_list<value_type> ilist, size_type bucket_count, AllocatorOrContainer const& alloc_or_container)
+        : table(ilist, bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
 
-    table(std::initializer_list<value_type> init, size_type bucket_count, Hash const& hash, Allocator const& alloc)
-        : table(init, bucket_count, hash, KeyEqual(), alloc) {}
+    table(std::initializer_list<value_type> init,
+          size_type bucket_count,
+          Hash const& hash,
+          AllocatorOrContainer const& alloc_or_container)
+        : table(init, bucket_count, hash, KeyEqual(), alloc_or_container) {}
 
     ~table() {
         auto bucket_alloc = BucketAlloc(m_values.get_allocator());
@@ -915,11 +931,11 @@ public:
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
 
-        while (dist_and_fingerprint <= m_buckets[bucket_idx].dist_and_fingerprint) {
-            if (dist_and_fingerprint == m_buckets[bucket_idx].dist_and_fingerprint &&
-                m_equal(get_key(val), get_key(m_values[m_buckets[bucket_idx].value_idx]))) {
+        while (dist_and_fingerprint <= at(m_buckets, bucket_idx).dist_and_fingerprint) {
+            if (dist_and_fingerprint == at(m_buckets, bucket_idx).dist_and_fingerprint &&
+                m_equal(get_key(val), get_key(m_values[at(m_buckets, bucket_idx).value_idx]))) {
                 m_values.pop_back(); // value was already there, so get rid of it
-                return {begin() + static_cast<difference_type>(m_buckets[bucket_idx].value_idx), false};
+                return {begin() + static_cast<difference_type>(at(m_buckets, bucket_idx).value_idx), false};
             }
             dist_and_fingerprint += Bucket::DIST_INC;
             bucket_idx = next(bucket_idx);
@@ -962,7 +978,7 @@ public:
         auto bucket_idx = bucket_idx_from_hash(hash);
 
         auto const value_idx_to_remove = static_cast<value_idx_type>(it - cbegin());
-        while (m_buckets[bucket_idx].value_idx != value_idx_to_remove) {
+        while (at(m_buckets, bucket_idx).value_idx != value_idx_to_remove) {
             bucket_idx = next(bucket_idx);
         }
 
@@ -1195,16 +1211,16 @@ template <class Key,
           class T,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
-          class Allocator = std::allocator<std::pair<Key, T>>,
+          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
           class Bucket = bucket_type::standard>
-using map = detail::table<Key, T, Hash, KeyEqual, Allocator, Bucket>;
+using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket>;
 
 template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
-          class Allocator = std::allocator<Key>,
+          class AllocatorOrContainer = std::allocator<Key>,
           class Bucket = bucket_type::standard>
-using set = detail::table<Key, void, Hash, KeyEqual, Allocator, Bucket>;
+using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket>;
 
 #    if ANKERL_UNORDERED_DENSE_PMR
 
@@ -1235,9 +1251,10 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 
 namespace std { // NOLINT(cert-dcl58-cpp)
 
-template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Bucket, class Pred>
-auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, Allocator, Bucket>& map, Pred pred) -> size_t {
-    using Map = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, Allocator, Bucket>;
+template <class Key, class T, class Hash, class KeyEqual, class AllocatorOrContainer, class Bucket, class Pred>
+auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket>& map, Pred pred)
+    -> size_t {
+    using Map = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket>;
 
     // going back to front because erase() invalidates the end iterator
     auto const old_size = map.size();
