@@ -5,13 +5,16 @@ test_sources = [
     'app/ui/Periodic.cpp',
     'app/ui/ProgressBar.cpp',
     'app/unordered_dense.cpp',
+
     'bench/copy.cpp',
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',
     'bench/swap.cpp',
+
     'fuzz/api.cpp',
     'fuzz/insert_erase.cpp',
     'fuzz/string.cpp',
+
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
@@ -20,6 +23,7 @@ test_sources = [
     'unit/copyassignment.cpp',
     'unit/count.cpp',
     'unit/ctors.cpp',
+    'unit/custom_container.cpp',
     'unit/deduction_guides.cpp',
     'unit/diamond.cpp',
     'unit/empty.cpp',

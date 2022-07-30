@@ -319,6 +319,9 @@ using detect_avalanching = typename T::is_avalanching;
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
 
+template <typename T>
+using detect_iterator = typename T::iterator;
+
 template <typename H, typename KE>
 using is_transparent =
     std::enable_if_t<is_detected_v<detect_is_transparent, H> && is_detected_v<detect_is_transparent, KE>, bool>;
@@ -328,12 +331,16 @@ template <class Key,
           class T, // when void, treat it as a set.
           class Hash,
           class KeyEqual,
-          class Allocator>
+          class AllocatorOrContainer>
 class table {
     struct Bucket;
-    using ValueContainer =
-        typename std::vector<typename std::conditional_t<std::is_void_v<T>, Key, std::pair<Key, T>>, Allocator>;
-    using BucketAlloc = typename std::allocator_traits<Allocator>::template rebind_alloc<Bucket>;
+
+    using ValueContainer = std::conditional_t<
+        is_detected_v<detect_iterator, AllocatorOrContainer>,
+        AllocatorOrContainer,
+        typename std::vector<typename std::conditional_t<std::is_void_v<T>, Key, std::pair<Key, T>>, AllocatorOrContainer>>;
+
+    using BucketAlloc = typename std::allocator_traits<typename ValueContainer::allocator_type>::template rebind_alloc<Bucket>;
     using BucketAllocTraits = std::allocator_traits<BucketAlloc>;
 
     static constexpr uint32_t BUCKET_DIST_INC = 1U << 8U;                    // skip 1 byte fingerprint
@@ -653,19 +660,19 @@ public:
     explicit table(size_t /*bucket_count*/,
                    Hash const& hash = Hash(),
                    KeyEqual const& equal = KeyEqual(),
-                   Allocator const& alloc = Allocator())
-        : m_values(alloc)
+                   AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
+        : m_values(alloc_or_container)
         , m_hash(hash)
         , m_equal(equal) {}
 
-    table(size_t bucket_count, Allocator const& alloc)
-        : table(bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(size_t bucket_count, AllocatorOrContainer const& alloc_or_container)
+        : table(bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
 
-    table(size_t bucket_count, Hash const& hash, Allocator const& alloc)
-        : table(bucket_count, hash, KeyEqual(), alloc) {}
+    table(size_t bucket_count, Hash const& hash, AllocatorOrContainer const& alloc_or_container)
+        : table(bucket_count, hash, KeyEqual(), alloc_or_container) {}
 
-    explicit table(Allocator const& alloc)
-        : table(0, Hash(), KeyEqual(), alloc) {}
+    explicit table(AllocatorOrContainer const& alloc_or_container)
+        : table(0, Hash(), KeyEqual(), alloc_or_container) {}
 
     template <class InputIt>
     table(InputIt first,
@@ -673,24 +680,25 @@ public:
           size_type bucket_count = 0,
           Hash const& hash = Hash(),
           KeyEqual const& equal = KeyEqual(),
-          Allocator const& alloc = Allocator())
-        : table(bucket_count, hash, equal, alloc) {
+          AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
+        : table(bucket_count, hash, equal, alloc_or_container) {
         insert(first, last);
     }
 
     template <class InputIt>
-    table(InputIt first, InputIt last, size_type bucket_count, Allocator const& alloc)
-        : table(first, last, bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(InputIt first, InputIt last, size_type bucket_count, AllocatorOrContainer const& alloc_or_container)
+        : table(first, last, bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
 
     template <class InputIt>
-    table(InputIt first, InputIt last, size_type bucket_count, Hash const& hash, Allocator const& alloc)
-        : table(first, last, bucket_count, hash, KeyEqual(), alloc) {}
+    table(
+        InputIt first, InputIt last, size_type bucket_count, Hash const& hash, AllocatorOrContainer const& alloc_or_container)
+        : table(first, last, bucket_count, hash, KeyEqual(), alloc_or_container) {}
 
     table(table const& other)
         : table(other, other.m_values.get_allocator()) {}
 
-    table(table const& other, Allocator const& alloc)
-        : m_values(other.m_values, alloc)
+    table(table const& other, AllocatorOrContainer const& alloc_or_container)
+        : m_values(other.m_values, alloc_or_container)
         , m_max_load_factor(other.m_max_load_factor)
         , m_hash(other.m_hash)
         , m_equal(other.m_equal) {
@@ -700,8 +708,8 @@ public:
     table(table&& other) noexcept
         : table(std::move(other), other.m_values.get_allocator()) {}
 
-    table(table&& other, Allocator const& alloc) noexcept
-        : m_values(std::move(other.m_values), alloc)
+    table(table&& other, AllocatorOrContainer const& alloc_or_container) noexcept
+        : m_values(std::move(other.m_values), alloc_or_container)
         , m_buckets_start(std::exchange(other.m_buckets_start, nullptr))
         , m_buckets_end(std::exchange(other.m_buckets_end, nullptr))
         , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
@@ -716,16 +724,19 @@ public:
           size_t bucket_count = 0,
           Hash const& hash = Hash(),
           KeyEqual const& equal = KeyEqual(),
-          Allocator const& alloc = Allocator())
-        : table(bucket_count, hash, equal, alloc) {
+          AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
+        : table(bucket_count, hash, equal, alloc_or_container) {
         insert(ilist);
     }
 
-    table(std::initializer_list<value_type> ilist, size_type bucket_count, const Allocator& alloc)
-        : table(ilist, bucket_count, Hash(), KeyEqual(), alloc) {}
+    table(std::initializer_list<value_type> ilist, size_type bucket_count, AllocatorOrContainer const& alloc_or_container)
+        : table(ilist, bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
 
-    table(std::initializer_list<value_type> init, size_type bucket_count, Hash const& hash, Allocator const& alloc)
-        : table(init, bucket_count, hash, KeyEqual(), alloc) {}
+    table(std::initializer_list<value_type> init,
+          size_type bucket_count,
+          Hash const& hash,
+          AllocatorOrContainer const& alloc_or_container)
+        : table(init, bucket_count, hash, KeyEqual(), alloc_or_container) {}
 
     ~table() {
         auto bucket_alloc = BucketAlloc(m_values.get_allocator());
@@ -1176,11 +1187,14 @@ template <class Key,
           class T,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
-          class Allocator = std::allocator<std::pair<Key, T>>>
-using map = detail::table<Key, T, Hash, KeyEqual, Allocator>;
+          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>>
+using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
-using set = detail::table<Key, void, Hash, KeyEqual, Allocator>;
+template <class Key,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<Key>>
+using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer>;
 
 #    if ANKERL_UNORDERED_DENSE_PMR
 
@@ -1207,8 +1221,8 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 
 namespace std { // NOLINT(cert-dcl58-cpp)
 
-template <class Key, class T, class Hash, class KeyEqual, class Allocator, class Pred>
-auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, Allocator>& map, Pred pred) -> size_t {
+template <class Key, class T, class Hash, class KeyEqual, class AllocatorOrContainer, class Pred>
+auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer>& map, Pred pred) -> size_t {
     // going back to front because erase() invalidates the end iterator
     auto const old_size = map.size();
     auto idx = old_size;
