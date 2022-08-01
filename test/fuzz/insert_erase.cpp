@@ -21,7 +21,7 @@ struct DummyHash {
     using is_avalanching = void;
 
     auto operator()(uint64_t x) const noexcept -> size_t {
-        return x;
+        return static_cast<size_t>(x);
     }
 };
 

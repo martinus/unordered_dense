@@ -54,7 +54,7 @@ void run_corpus(std::string_view name, Op op) {
 
     auto dir = std::filesystem::directory_iterator(path);
     auto const total_files = std::distance(begin(dir), end(dir));
-    auto progressbar = ui::ProgressBar(50, total_files);
+    auto progressbar = ui::ProgressBar(50, static_cast<size_t>(total_files));
 
     for (auto const& dir_entry : std::filesystem::directory_iterator(path)) {
         ++num_files;
