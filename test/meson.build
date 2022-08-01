@@ -65,17 +65,27 @@ test_sources = [
 # see https://mesonbuild.com/Reference-tables.html
 cpp_args = []
 compiler = meson.get_compiler('cpp')
-if compiler.get_id() == 'gcc'
-    cpp_args += [
-        '-Warith-conversion',
-        '-Wno-stringop-overflow', # g++ error in fmtlib
-    ]
-elif compiler.get_id() == 'gcc' or compiler.get_id() == 'clang'
-    cpp_args += [
-        '-Wconversion',
-        '-Wextra',
-    ]
-elif compiler.get_id() == 'msvc'
+foreach arg : [
+            # gcc
+            '-Wno-stringop-overflow', # g++ error in fmtlib
+            '-Warith-conversion',
+            '-Wshadow=global',
+
+            # gcc / clang
+            '-Wconversion',
+            '-Wextra',
+            '-Wunreachable-code',
+            '-Wuninitialized',
+            '-pedantic-errors',
+            '-Wold-style-cast',
+            # '-Weffc++', doesn't work with fmt
+        ]
+    if compiler.has_argument(arg)
+        cpp_args += [arg]
+    endif
+endforeach
+
+if compiler.get_id() == 'msvc'
     add_global_arguments(
         '/wd4189', # fmt: 'zero': local variable is initialized but not referenced, fixed in https://github.com/fmtlib/fmt/issues/2891
         '/wd4251', # 'fmt::v8::ostream::file_': class 'fmt::v8::file' needs to have dll-interface to be used by clients of class 'fmt::v8::ostream'
