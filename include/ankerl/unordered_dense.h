@@ -415,7 +415,7 @@ private:
     }
 
     [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> dist_and_fingerprint_type {
-        return Bucket::DIST_INC | (hash & Bucket::FINGERPRINT_MASK);
+        return Bucket::DIST_INC | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::FINGERPRINT_MASK);
     }
 
     [[nodiscard]] constexpr auto bucket_idx_from_hash(uint64_t hash) const -> size_t {
