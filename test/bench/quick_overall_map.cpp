@@ -210,6 +210,27 @@ TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::sk
     fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
 
+TEST_CASE("bench_quick_overall_udm_bigbucket" * doctest::test_suite("bench") * doctest::skip()) {
+    ankerl::nanobench::Bench bench;
+    // bench.minEpochTime(1s);
+    benchAll<ankerl::unordered_dense::map<uint64_t,
+                                          size_t,
+                                          ankerl::unordered_dense::hash<uint64_t>,
+                                          std::equal_to<uint64_t>,
+                                          std::allocator<std::pair<uint64_t, size_t>>,
+                                          ankerl::unordered_dense::bucket_type::big>>(
+        &bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
+
+    benchAll<ankerl::unordered_dense::map<std::string,
+                                          size_t,
+                                          ankerl::unordered_dense::hash<std::string>,
+                                          std::equal_to<std::string>,
+                                          std::allocator<std::pair<std::string, size_t>>,
+                                          ankerl::unordered_dense::bucket_type::big>>(
+        &bench, "ankerl::unordered_dense::map<std::string, size_t>");
+    fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
+}
+
 template <typename Map>
 void testBig() {
     Map map;

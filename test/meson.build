@@ -15,6 +15,7 @@ test_sources = [
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
+    'unit/bucket.cpp',
     'unit/contains.cpp',
     'unit/copy_and_assign_maps.cpp',
     'unit/copyassignment.cpp',
