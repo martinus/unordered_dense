@@ -8,12 +8,12 @@
 
 TEST_CASE("max_size") {
     auto const map = ankerl::unordered_dense::map<int, int>();
-    REQUIRE(map.max_size() == std::numeric_limits<uint32_t>::max());
+    REQUIRE(map.max_size() == std::numeric_limits<decltype(decltype(map)::bucket_type::value_idx)>::max());
 }
 
 TEST_CASE("max_bucket_count") {
     auto const map = ankerl::unordered_dense::map<int, int>();
-    REQUIRE(map.max_bucket_count() == std::numeric_limits<uint32_t>::max());
+    REQUIRE(map.max_bucket_count() == std::numeric_limits<decltype(decltype(map)::bucket_type::value_idx)>::max());
 }
 
 TEST_CASE("max_load_factor") {
