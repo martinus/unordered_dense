@@ -2,6 +2,7 @@ test_sources = [
     'app/Counter.cpp',
     'app/doctest.cpp',
     'app/nanobench.cpp',
+    'app/stacktrace.cpp',
     'app/ui/Periodic.cpp',
     'app/ui/ProgressBar.cpp',
     'app/unordered_dense.cpp',
