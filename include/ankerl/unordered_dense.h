@@ -401,14 +401,16 @@ private:
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
     typename std::allocator_traits<BucketAlloc>::pointer m_buckets{};
     size_t m_num_buckets = 0;
-    value_idx_type m_max_bucket_capacity = 0;
+    size_t m_max_bucket_capacity = 0;
     float m_max_load_factor = DEFAULT_MAX_LOAD_FACTOR;
     Hash m_hash{};
     KeyEqual m_equal{};
     uint8_t m_shifts = INITIAL_SHIFTS;
 
-    [[nodiscard]] auto next(size_t bucket_idx) const -> size_t {
-        return ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1 == m_num_buckets) ? 0 : bucket_idx + 1;
+    [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
+        return ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1U == m_num_buckets)
+                   ? 0
+                   : static_cast<value_idx_type>(bucket_idx + 1U);
     }
 
     // Helper to access bucket through pointer types
@@ -417,10 +419,24 @@ private:
         return *(bucket_ptr + static_cast<typename std::allocator_traits<BucketAlloc>::difference_type>(offset));
     }
 
+    // use the dist_inc and dist_dec functions so that uint16_t types work without warning
+    [[nodiscard]] static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+        return static_cast<dist_and_fingerprint_type>(x + Bucket::DIST_INC);
+    }
+
+    [[nodiscard]] static constexpr auto dist_dec(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+        return static_cast<dist_and_fingerprint_type>(x - Bucket::DIST_INC);
+    }
+
     template <typename K>
     [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
+#    if SIZE_MAX == UINT32_MAX
+            // On 32bit systems we still want 64bit hashes
+            return m_hash(key) * UINT64_C(0x9ddfea08eb382d69);
+#    else
             return m_hash(key);
+#    endif
         } else {
             return wyhash::hash(m_hash(key));
         }
@@ -430,8 +446,8 @@ private:
         return Bucket::DIST_INC | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::FINGERPRINT_MASK);
     }
 
-    [[nodiscard]] constexpr auto bucket_idx_from_hash(uint64_t hash) const -> size_t {
-        return static_cast<size_t>(hash >> m_shifts);
+    [[nodiscard]] constexpr auto bucket_idx_from_hash(uint64_t hash) const -> value_idx_type {
+        return static_cast<value_idx_type>(hash >> m_shifts);
     }
 
     [[nodiscard]] static constexpr auto get_key(value_type const& vt) -> key_type const& {
@@ -443,29 +459,29 @@ private:
     }
 
     template <typename K>
-    [[nodiscard]] auto next_while_less(K const& key) const -> std::pair<dist_and_fingerprint_type, size_t> {
+    [[nodiscard]] auto next_while_less(K const& key) const -> Bucket {
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
 
         while (dist_and_fingerprint < at(m_buckets, bucket_idx).dist_and_fingerprint) {
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
         }
         return {dist_and_fingerprint, bucket_idx};
     }
 
-    void place_and_shift_up(Bucket bucket, size_t place) {
+    void place_and_shift_up(Bucket bucket, value_idx_type place) {
         while (0 != at(m_buckets, place).dist_and_fingerprint) {
             bucket = std::exchange(at(m_buckets, place), bucket);
-            bucket.dist_and_fingerprint += Bucket::DIST_INC;
+            bucket.dist_and_fingerprint = dist_inc(bucket.dist_and_fingerprint);
             place = next(place);
         }
         at(m_buckets, place) = bucket;
     }
 
     [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
-        return size_t{1} << (64U - shifts);
+        return std::min(max_bucket_count(), size_t{1} << (64U - shifts));
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
@@ -504,7 +520,12 @@ private:
         auto bucket_alloc = BucketAlloc(m_values.get_allocator());
         m_num_buckets = calc_num_buckets(m_shifts);
         m_buckets = BucketAllocTraits::allocate(bucket_alloc, m_num_buckets);
-        m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(m_num_buckets) * max_load_factor());
+        if (m_num_buckets == max_bucket_count()) {
+            // reached the maximum, make sure we can use each bucket
+            m_max_bucket_capacity = max_bucket_count();
+        } else {
+            m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(m_num_buckets) * max_load_factor());
+        }
     }
 
     void clear_buckets() {
@@ -526,19 +547,22 @@ private:
     }
 
     void increase_size() {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_max_bucket_capacity == max_bucket_count())) {
+            throw std::overflow_error("ankerl::unordered_dense: reached max bucket size, cannot increase size");
+        }
         --m_shifts;
         deallocate_buckets();
         allocate_buckets_from_shift();
         clear_and_fill_buckets_from_values();
     }
 
-    void do_erase(size_t bucket_idx) {
+    void do_erase(value_idx_type bucket_idx) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).value_idx;
 
         // shift down until either empty or an element with correct spot is found
         auto next_bucket_idx = next(bucket_idx);
         while (at(m_buckets, next_bucket_idx).dist_and_fingerprint >= Bucket::DIST_INC * 2) {
-            at(m_buckets, bucket_idx) = {at(m_buckets, next_bucket_idx).dist_and_fingerprint - Bucket::DIST_INC,
+            at(m_buckets, bucket_idx) = {dist_dec(at(m_buckets, next_bucket_idx).dist_and_fingerprint),
                                          at(m_buckets, next_bucket_idx).value_idx};
             bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
         }
@@ -573,7 +597,7 @@ private:
 
         while (dist_and_fingerprint == at(m_buckets, bucket_idx).dist_and_fingerprint &&
                !m_equal(key, get_key(m_values[at(m_buckets, bucket_idx).value_idx]))) {
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
         }
 
@@ -594,7 +618,7 @@ private:
     }
 
     template <typename K, typename... Args>
-    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, size_t bucket_idx, K&& key, Args&&... args)
+    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, K&& key, Args&&... args)
         -> std::pair<iterator, bool> {
 
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
@@ -603,7 +627,7 @@ private:
                               std::forward_as_tuple(std::forward<Args>(args)...));
 
         // place element and shift up until we find an empty spot
-        auto value_idx = static_cast<value_idx_type>(m_values.size()) - 1;
+        auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
         place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
@@ -627,7 +651,7 @@ private:
             } else if (dist_and_fingerprint > bucket->dist_and_fingerprint) {
                 return do_place_element(dist_and_fingerprint, bucket_idx, std::forward<K>(key), std::forward<Args>(args)...);
             }
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
         }
     }
@@ -647,14 +671,14 @@ private:
         if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
             return begin() + static_cast<difference_type>(bucket->value_idx);
         }
-        dist_and_fingerprint += Bucket::DIST_INC;
+        dist_and_fingerprint = dist_inc(dist_and_fingerprint);
         bucket_idx = next(bucket_idx);
         bucket = &at(m_buckets, bucket_idx);
 
         if (dist_and_fingerprint == bucket->dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->value_idx]))) {
             return begin() + static_cast<difference_type>(bucket->value_idx);
         }
-        dist_and_fingerprint += Bucket::DIST_INC;
+        dist_and_fingerprint = dist_inc(dist_and_fingerprint);
         bucket_idx = next(bucket_idx);
         bucket = &at(m_buckets, bucket_idx);
 
@@ -666,7 +690,7 @@ private:
             } else if (dist_and_fingerprint > bucket->dist_and_fingerprint) {
                 return end();
             }
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
             bucket = &at(m_buckets, bucket_idx);
         }
@@ -845,7 +869,11 @@ public:
     }
 
     [[nodiscard]] static constexpr auto max_size() noexcept -> size_t {
-        return std::numeric_limits<value_idx_type>::max();
+        if constexpr (std::numeric_limits<value_idx_type>::max() == std::numeric_limits<size_t>::max()) {
+            return size_t{1} << (sizeof(value_idx_type) * 8 - 1);
+        } else {
+            return size_t{1} << (sizeof(value_idx_type) * 8);
+        }
     }
 
     // modifiers //////////////////////////////////////////////////////////////
@@ -937,12 +965,12 @@ public:
                 m_values.pop_back(); // value was already there, so get rid of it
                 return {begin() + static_cast<difference_type>(at(m_buckets, bucket_idx).value_idx), false};
             }
-            dist_and_fingerprint += Bucket::DIST_INC;
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
         }
 
         // value is new, place the bucket and shift up until we find an empty spot
-        value_idx_type value_idx = static_cast<value_idx_type>(m_values.size()) - 1;
+        auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
         place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
 
         return {begin() + static_cast<difference_type>(value_idx), true};
@@ -1119,7 +1147,7 @@ public:
     }
 
     static constexpr auto max_bucket_count() noexcept -> size_t { // NOLINT(modernize-use-nodiscard)
-        return std::numeric_limits<value_idx_type>::max();
+        return max_size();
     }
 
     // hash policy ////////////////////////////////////////////////////////////
@@ -1134,10 +1162,13 @@ public:
 
     void max_load_factor(float ml) {
         m_max_load_factor = ml;
-        m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(bucket_count()) * max_load_factor());
+        if (m_num_buckets != max_bucket_count()) {
+            m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(bucket_count()) * max_load_factor());
+        }
     }
 
     void rehash(size_t count) {
+        count = std::min(count, max_size());
         auto shifts = calc_shifts_for_size(std::max(count, size()));
         if (shifts != m_shifts) {
             m_shifts = shifts;
@@ -1149,6 +1180,7 @@ public:
     }
 
     void reserve(size_t capa) {
+        capa = std::min(capa, max_size());
         m_values.reserve(capa);
         auto shifts = calc_shifts_for_size(std::max(capa, size()));
         if (shifts < m_shifts) {

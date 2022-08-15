@@ -6,16 +6,6 @@
 #include <functional> // for equal_to
 #include <limits>     // for numeric_limits
 
-TEST_CASE("max_size") {
-    auto const map = ankerl::unordered_dense::map<int, int>();
-    REQUIRE(map.max_size() == std::numeric_limits<decltype(decltype(map)::bucket_type::value_idx)>::max());
-}
-
-TEST_CASE("max_bucket_count") {
-    auto const map = ankerl::unordered_dense::map<int, int>();
-    REQUIRE(map.max_bucket_count() == std::numeric_limits<decltype(decltype(map)::bucket_type::value_idx)>::max());
-}
-
 TEST_CASE("max_load_factor") {
     auto map_60 = ankerl::unordered_dense::map<int, int>();
     auto map_90 = ankerl::unordered_dense::map<int, int>();
