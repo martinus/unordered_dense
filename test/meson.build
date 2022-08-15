@@ -5,13 +5,16 @@ test_sources = [
     'app/ui/Periodic.cpp',
     'app/ui/ProgressBar.cpp',
     'app/unordered_dense.cpp',
+
     'bench/copy.cpp',
     'bench/find_random.cpp',
     'bench/quick_overall_map.cpp',
     'bench/swap.cpp',
+
     'fuzz/api.cpp',
     'fuzz/insert_erase.cpp',
     'fuzz/string.cpp',
+
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
@@ -21,6 +24,8 @@ test_sources = [
     'unit/copyassignment.cpp',
     'unit/count.cpp',
     'unit/ctors.cpp',
+    'unit/custom_container_boost.cpp',
+    'unit/custom_container.cpp',
     'unit/deduction_guides.cpp',
     'unit/diamond.cpp',
     'unit/empty.cpp',
@@ -104,17 +109,28 @@ if get_option('cpp_args').contains('-m32')
     fmt_method = 'builtin'
 endif
 
+opt_boost = dependency('boost', required: false)
+link_args = []
+if opt_boost.found()
+    add_global_arguments('-DANKERL_UNORDERED_DENSE_HAS_BOOST=1', language: 'cpp')
+    link_args += ['-lrt']
+else
+    add_global_arguments('-DANKERL_UNORDERED_DENSE_HAS_BOOST=0', language: 'cpp')
+endif
+
 test_exe = executable(
     'udm',
     test_sources,
     include_directories: incdir,
     cpp_args: cpp_args,
+    link_args: link_args,
     dependencies: [
         dependency('threads'), # add dependency for threads (-lpthread, see https://mesonbuild.com/howtox.html),
 
         # see what's in the [provide] sections for the dependency names
         dependency('doctest'),
         dependency('fmt', method: fmt_method),
+        opt_boost, # boost might not be found
     ],
 )
 
