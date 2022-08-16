@@ -938,7 +938,8 @@ public:
         return std::move(m_values);
     }
 
-    // Discards the internally held container and replaces the one passed. Erases non-unique elements.
+    // nonstandard API:
+    // Discards the internally held container and replaces it with the one passed. Erases non-unique elements.
     auto replace(value_container_type&& container) {
         if (container.size() > max_size()) {
             throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
