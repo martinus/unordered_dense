@@ -1,5 +1,7 @@
 #pragma once
 
+#include <boost/functional/hash.hpp>
+
 #include <fmt/core.h> // for format_context, format_parse_context, format_to
 
 #include <cstddef>     // for size_t
@@ -81,6 +83,17 @@ struct hash<Counter::Obj> {
 };
 
 } // namespace std
+
+namespace boost {
+
+template <>
+struct hash<Counter::Obj> {
+    [[nodiscard]] auto operator()(const Counter::Obj& c) const noexcept -> size_t {
+        return hash<size_t>{}(c.getForHash());
+    }
+};
+
+} // namespace boost
 
 template <>
 struct fmt::formatter<Counter::Obj> {

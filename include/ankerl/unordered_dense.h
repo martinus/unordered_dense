@@ -1,3 +1,30 @@
+#include <boost/unordered_map.hpp>
+#include <boost/unordered_set.hpp>
+
+#include <iterator>
+
+namespace ankerl::unordered_dense {
+
+template <class Key,
+          class T,
+          class Hash = boost::hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<std::pair<const Key, T>>>
+using map = boost::unordered_map<Key, T, Hash, KeyEqual, AllocatorOrContainer>;
+
+template <class Key,
+          class Hash = boost::hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<const Key>>
+using set = boost::unordered_set<Key, Hash, KeyEqual, AllocatorOrContainer>;
+
+template <typename T>
+using hash = boost::hash<T>;
+
+} // namespace ankerl::unordered_dense
+
+#if 0
+
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
@@ -26,66 +53,66 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#ifndef ANKERL_UNORDERED_DENSE_H
-#define ANKERL_UNORDERED_DENSE_H
+#    ifndef ANKERL_UNORDERED_DENSE_H
+#        define ANKERL_UNORDERED_DENSE_H
 
 // see https://semver.org/spec/v2.0.0.html
-#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 2 // add functionality in a backwards compatible manner
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
+#        define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
+#        define ANKERL_UNORDERED_DENSE_VERSION_MINOR 2 // add functionality in a backwards compatible manner
+#        define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
 
-#if defined(_MSVC_LANG)
-#    define ANKERL_UNORDERED_DENSE_CPP_VERSION _MSVC_LANG
-#else
-#    define ANKERL_UNORDERED_DENSE_CPP_VERSION __cplusplus
-#endif
-
-#if defined(__GNUC__)
-#    define ANKERL_UNORDERED_DENSE_PACK(decl) decl __attribute__((__packed__))
-#elif defined(_MSC_VER)
-#    define ANKERL_UNORDERED_DENSE_PACK(decl) __pragma(pack(push, 1)) decl __pragma(pack(pop))
-#endif
-
-#if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
-#    error ankerl::unordered_dense requires C++17 or higher
-#else
-#    include <array>            // for array
-#    include <cstdint>          // for uint64_t, uint32_t, uint8_t, UINT64_C
-#    include <cstring>          // for size_t, memcpy, memset
-#    include <functional>       // for equal_to, hash
-#    include <initializer_list> // for initializer_list
-#    include <iterator>         // for pair, distance
-#    include <limits>           // for numeric_limits
-#    include <memory>           // for allocator, allocator_traits, shared_ptr
-#    include <stdexcept>        // for out_of_range
-#    include <string>           // for basic_string
-#    include <string_view>      // for basic_string_view, hash
-#    include <tuple>            // for forward_as_tuple
-#    include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
-#    include <utility>          // for forward, exchange, pair, as_const, piece...
-#    include <vector>           // for vector
-
-#    define ANKERL_UNORDERED_DENSE_PMR 0
-#    if defined(__has_include)
-#        if __has_include(<memory_resource>)
-#            undef ANKERL_UNORDERED_DENSE_PMR
-#            define ANKERL_UNORDERED_DENSE_PMR 1
-#            include <memory_resource> // for polymorphic_allocator
+#        if defined(_MSVC_LANG)
+#            define ANKERL_UNORDERED_DENSE_CPP_VERSION _MSVC_LANG
+#        else
+#            define ANKERL_UNORDERED_DENSE_CPP_VERSION __cplusplus
 #        endif
-#    endif
 
-#    if defined(_MSC_VER) && defined(_M_X64)
-#        include <intrin.h>
-#        pragma intrinsic(_umul128)
-#    endif
+#        if defined(__GNUC__)
+#            define ANKERL_UNORDERED_DENSE_PACK(decl) decl __attribute__((__packed__))
+#        elif defined(_MSC_VER)
+#            define ANKERL_UNORDERED_DENSE_PACK(decl) __pragma(pack(push, 1)) decl __pragma(pack(pop))
+#        endif
 
-#    if defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(__clang__)
-#        define ANKERL_UNORDERED_DENSE_LIKELY(x) __builtin_expect(x, 1)
-#        define ANKERL_UNORDERED_DENSE_UNLIKELY(x) __builtin_expect(x, 0)
-#    else
-#        define ANKERL_UNORDERED_DENSE_LIKELY(x) (x)
-#        define ANKERL_UNORDERED_DENSE_UNLIKELY(x) (x)
-#    endif
+#        if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
+#            error ankerl::unordered_dense requires C++17 or higher
+#        else
+#            include <array>            // for array
+#            include <cstdint>          // for uint64_t, uint32_t, uint8_t, UINT64_C
+#            include <cstring>          // for size_t, memcpy, memset
+#            include <functional>       // for equal_to, hash
+#            include <initializer_list> // for initializer_list
+#            include <iterator>         // for pair, distance
+#            include <limits>           // for numeric_limits
+#            include <memory>           // for allocator, allocator_traits, shared_ptr
+#            include <stdexcept>        // for out_of_range
+#            include <string>           // for basic_string
+#            include <string_view>      // for basic_string_view, hash
+#            include <tuple>            // for forward_as_tuple
+#            include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
+#            include <utility>          // for forward, exchange, pair, as_const, piece...
+#            include <vector>           // for vector
+
+#            define ANKERL_UNORDERED_DENSE_PMR 0
+#            if defined(__has_include)
+#                if __has_include(<memory_resource>)
+#                    undef ANKERL_UNORDERED_DENSE_PMR
+#                    define ANKERL_UNORDERED_DENSE_PMR 1
+#                    include <memory_resource> // for polymorphic_allocator
+#                endif
+#            endif
+
+#            if defined(_MSC_VER) && defined(_M_X64)
+#                include <intrin.h>
+#                pragma intrinsic(_umul128)
+#            endif
+
+#            if defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(__clang__)
+#                define ANKERL_UNORDERED_DENSE_LIKELY(x) __builtin_expect(x, 1)
+#                define ANKERL_UNORDERED_DENSE_UNLIKELY(x) __builtin_expect(x, 0)
+#            else
+#                define ANKERL_UNORDERED_DENSE_LIKELY(x) (x)
+#                define ANKERL_UNORDERED_DENSE_UNLIKELY(x) (x)
+#            endif
 
 namespace ankerl::unordered_dense {
 
@@ -97,14 +124,14 @@ namespace ankerl::unordered_dense {
 namespace detail::wyhash {
 
 static inline void mum(uint64_t* a, uint64_t* b) {
-#    if defined(__SIZEOF_INT128__)
+#            if defined(__SIZEOF_INT128__)
     __uint128_t r = *a;
     r *= *b;
     *a = static_cast<uint64_t>(r);
     *b = static_cast<uint64_t>(r >> 64U);
-#    elif defined(_MSC_VER) && defined(_M_X64)
+#            elif defined(_MSC_VER) && defined(_M_X64)
     *a = _umul128(*a, *b, b);
-#    else
+#            else
     uint64_t ha = *a >> 32U;
     uint64_t hb = *b >> 32U;
     uint64_t la = static_cast<uint32_t>(*a);
@@ -122,7 +149,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
     *a = lo;
     *b = hi;
-#    endif
+#            endif
 }
 
 // multiply and xor mix function, aka MUM
@@ -260,27 +287,27 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     }
 };
 
-#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
-        template <>                                                                           \
-        struct hash<T> {                                                                      \
-            using is_avalanching = void;                                                      \
-            auto operator()(T const& obj) const noexcept -> size_t {                          \
-                return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
-            }                                                                                 \
-        }
+#            define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
+                template <>                                                                           \
+                struct hash<T> {                                                                      \
+                    using is_avalanching = void;                                                      \
+                    auto operator()(T const& obj) const noexcept -> size_t {                          \
+                        return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
+                    }                                                                                 \
+                }
 
-#    if defined(__GNUC__) && !defined(__clang__)
-#        pragma GCC diagnostic push
-#        pragma GCC diagnostic ignored "-Wuseless-cast"
-#    endif
+#            if defined(__GNUC__) && !defined(__clang__)
+#                pragma GCC diagnostic push
+#                pragma GCC diagnostic ignored "-Wuseless-cast"
+#            endif
 // see https://en.cppreference.com/w/cpp/utility/hash
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(bool);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(signed char);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned char);
-#    if ANKERL_UNORDERED_DENSE_CPP_VERSION >= 202002L
+#            if ANKERL_UNORDERED_DENSE_CPP_VERSION >= 202002L
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char8_t);
-#    endif
+#            endif
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char16_t);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(char32_t);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(wchar_t);
@@ -293,9 +320,9 @@ ANKERL_UNORDERED_DENSE_HASH_STATICCAST(long long);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long);
 ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long long);
 
-#    if defined(__GNUC__) && !defined(__clang__)
-#        pragma GCC diagnostic pop
-#    endif
+#            if defined(__GNUC__) && !defined(__clang__)
+#                pragma GCC diagnostic pop
+#            endif
 
 // bucket_type //////////////////////////////////////////////////////////
 
@@ -431,12 +458,12 @@ private:
     template <typename K>
     [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
-#    if SIZE_MAX == UINT32_MAX
+#            if SIZE_MAX == UINT32_MAX
             // On 32bit systems we still want 64bit hashes
             return m_hash(key) * UINT64_C(0x9ddfea08eb382d69);
-#    else
+#            else
             return m_hash(key);
-#    endif
+#            endif
         } else {
             return wyhash::hash(m_hash(key));
         }
@@ -1254,7 +1281,7 @@ template <class Key,
           class Bucket = bucket_type::standard>
 using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket>;
 
-#    if ANKERL_UNORDERED_DENSE_PMR
+#            if ANKERL_UNORDERED_DENSE_PMR
 
 namespace pmr {
 
@@ -1270,7 +1297,7 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 
 } // namespace pmr
 
-#    endif
+#            endif
 
 // deduction guides ///////////////////////////////////////////////////////////
 
@@ -1304,5 +1331,7 @@ auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, All
 
 } // namespace std
 
-#endif
+#        endif
+#    endif
+
 #endif

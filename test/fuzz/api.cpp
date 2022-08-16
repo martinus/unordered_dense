@@ -18,6 +18,14 @@
 
 namespace fuzz {
 
+template <typename It>
+inline auto advance(It it, int num) -> It {
+    for (int i = 0; i < num; ++i) {
+        ++it;
+    }
+    return it;
+}
+
 void api(uint8_t const* data, size_t size) {
     auto p = fuzz::Provider(data, size);
     Counter counts;
@@ -79,7 +87,7 @@ void api(uint8_t const* data, size_t size) {
         [&] {
             if (!map.empty()) {
                 auto idx = p.bounded(static_cast<int>(map.size()));
-                auto it = map.cbegin() + idx;
+                auto it = advance(map.cbegin(), idx);
                 auto const& key = it->first;
                 auto found_it = map.find(key);
                 REQUIRE(it == found_it);
@@ -87,7 +95,7 @@ void api(uint8_t const* data, size_t size) {
         },
         [&] {
             if (!map.empty()) {
-                auto it = map.begin() + p.bounded(static_cast<int>(map.size()));
+                auto it = advance(map.begin(), p.bounded(static_cast<int>(map.size())));
                 map.erase(it);
             }
         },
@@ -96,7 +104,7 @@ void api(uint8_t const* data, size_t size) {
             std::swap(tmp, map);
         },
         [&] {
-            map = std::initializer_list<std::pair<Counter::Obj, Counter::Obj>>{
+            map = std::initializer_list<std::pair<const Counter::Obj, Counter::Obj>>{
                 {{1, counts}, {2, counts}},
                 {{3, counts}, {4, counts}},
                 {{5, counts}, {6, counts}},
@@ -113,7 +121,7 @@ void api(uint8_t const* data, size_t size) {
                     std::swap(first_idx, last_idx);
                 }
             }
-            map.erase(map.cbegin() + first_idx, map.cbegin() + last_idx);
+            map.erase(advance(map.cbegin(), first_idx), advance(map.cbegin(), last_idx));
         },
         [&] {
             map.~Map();
@@ -121,9 +129,13 @@ void api(uint8_t const* data, size_t size) {
             new (&map) Map();
         },
         [&] {
-            std::erase_if(map, [&](Map::value_type const& /*v*/) {
-                return p.integral<bool>();
-            });
+            for (auto i = map.begin(), last = map.end(); i != last;) {
+                if (p.integral<bool>()) {
+                    i = map.erase(i);
+                } else {
+                    ++i;
+                }
+            }
         });
 }
 
