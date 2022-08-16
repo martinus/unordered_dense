@@ -52,6 +52,9 @@ TEST_CASE("unique_ptr_fill") {
     Map m;
     for (int i = 0; i < 1000; ++i) {
         // m.emplace(i % 500, std::make_unique<int>(i));
-        m.emplace(static_cast<size_t>(123), new int(i));
+        m.emplace(static_cast<size_t>(i), new int(i));
+        // element is still constructed, so there's no memory leak here.
+        // Boost 1.80 behaves differently
+        m.emplace(static_cast<size_t>(i), new int(i));
     }
 }
