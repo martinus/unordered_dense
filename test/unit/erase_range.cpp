@@ -8,6 +8,18 @@
 #include <cstddef> // for size_t
 #include <vector>  // for vector
 
+namespace {
+
+template <typename It>
+inline auto advance(It it, int num) -> It {
+    for (int i = 0; i < num; ++i) {
+        ++it;
+    }
+    return it;
+}
+
+} // namespace
+
 TEST_CASE("erase_range") {
     int const num_elements = 10;
 
@@ -25,9 +37,9 @@ TEST_CASE("erase_range") {
             }
             REQUIRE(map.size() == num_elements);
 
-            auto it_ret = map.erase(map.cbegin() + first_pos, map.cbegin() + last_pos);
+            auto it_ret = map.erase(advance(map.cbegin(), first_pos), advance(map.cbegin(), last_pos));
             REQUIRE(map.size() == num_elements - (last_pos - first_pos));
-            REQUIRE(it_ret == map.begin() + first_pos);
+            REQUIRE(it_ret == advance(map.begin(), first_pos));
         }
     }
 }

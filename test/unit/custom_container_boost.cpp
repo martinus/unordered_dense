@@ -1,4 +1,4 @@
-#if ANKERL_UNORDERED_DENSE_HAS_BOOST
+#if 0
 
 #    include <ankerl/unordered_dense.h>
 
@@ -11,6 +11,7 @@
 
 #    include <deque>
 
+#    if 0
 // See https://www.boost.org/doc/libs/1_80_0/doc/html/interprocess/allocators_containers.html
 TEST_CASE("boost_container_vector") {
     // Remove shared memory on construction and destruction
@@ -56,4 +57,6 @@ TEST_CASE("boost_container_vector") {
     map.emplace(std::pair<int, std::string>(9999, "hello"));
     REQUIRE(map.size() == 100);
 }
+#    endif
+
 #endif

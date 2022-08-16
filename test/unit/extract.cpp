@@ -3,6 +3,7 @@
 
 #include <doctest.h>
 
+#if 0
 TEST_CASE("extract") {
     Counter counts;
     INFO(counts);
@@ -24,3 +25,5 @@ TEST_CASE("extract") {
         REQUIRE(container[i].second.get() == i);
     }
 }
+
+#endif

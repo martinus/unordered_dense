@@ -10,6 +10,7 @@
 
 using Set = ankerl::unordered_dense::set<Counter::Obj>;
 
+#if 0
 TEST_CASE("erase_if_set") {
     Counter counts;
     INFO(counts);
@@ -53,3 +54,5 @@ TEST_CASE("erase_if_map") {
         }
     }
 }
+
+#endif

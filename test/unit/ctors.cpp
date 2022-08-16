@@ -7,6 +7,7 @@
 #include <cstddef> // for size_t
 #include <utility> // for pair
 
+#if 0
 // very minimal input iterator
 // https://en.cppreference.com/w/cpp/named_req/InputIterator#Concept
 class It {
@@ -72,3 +73,5 @@ TEST_CASE("ctors_map") {
         REQUIRE(m.size() == 10);
     }
 }
+
+#endif

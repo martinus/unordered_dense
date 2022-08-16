@@ -84,7 +84,7 @@ foreach arg : [
             '-Wunreachable-code',
             '-Wuninitialized',
             '-pedantic-errors',
-            '-Wold-style-cast',
+            # '-Wold-style-cast',
             # '-Weffc++', doesn't work with fmt
         ]
     if compiler.has_argument(arg)
@@ -109,6 +109,7 @@ if get_option('cpp_args').contains('-m32')
     # Can't use it as a default or sanitizer doesn't work...
     fmt_method = 'builtin'
 endif
+
 
 opt_boost = dependency('boost', required: false)
 link_args = []

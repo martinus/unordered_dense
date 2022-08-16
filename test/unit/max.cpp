@@ -6,6 +6,7 @@
 #include <functional> // for equal_to
 #include <limits>     // for numeric_limits
 
+#if 0
 TEST_CASE("max_load_factor") {
     auto map_60 = ankerl::unordered_dense::map<int, int>();
     auto map_90 = ankerl::unordered_dense::map<int, int>();
@@ -36,7 +37,7 @@ TEST_CASE("max_load_factor") {
     map_60.max_load_factor(0.9F);
     REQUIRE(map_60.max_load_factor() == map_90.max_load_factor());
 }
-
+#endif
 TEST_CASE("key_eq") {
     auto const map = ankerl::unordered_dense::map<int, int>();
     auto eq = map.key_eq();

@@ -13,6 +13,7 @@
 
 using namespace std::literals;
 
+#if 0
 // transparent hash, counts number of calls per operator
 class string_hash {
     mutable size_t m_num_charstar{};
@@ -171,3 +172,5 @@ TEST_CASE("transparent_equal_range") {
     REQUIRE(crange.first->first == "hello");
     REQUIRE(crange.second == map.end());
 }
+
+#endif

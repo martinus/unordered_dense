@@ -15,11 +15,15 @@ using map = boost::unordered_map<Key, T, Hash, KeyEqual, AllocatorOrContainer>;
 template <class Key,
           class Hash = boost::hash<Key>,
           class KeyEqual = std::equal_to<Key>,
-          class AllocatorOrContainer = std::allocator<const Key>>
+          class AllocatorOrContainer = std::allocator<Key>>
 using set = boost::unordered_set<Key, Hash, KeyEqual, AllocatorOrContainer>;
 
 template <typename T>
 using hash = boost::hash<T>;
+
+#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 2 // add functionality in a backwards compatible manner
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
 
 } // namespace ankerl::unordered_dense
 
