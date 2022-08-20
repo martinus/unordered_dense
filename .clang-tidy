@@ -6,6 +6,7 @@ Checks: '*,
     -llvmlibc*,
 
     -bugprone-easily-swappable-parameters,
+    -cert-err58-cpp,
     -cppcoreguidelines-avoid-magic-numbers,
     -cppcoreguidelines-pro-bounds-pointer-arithmetic,
     -llvm-header-guard,

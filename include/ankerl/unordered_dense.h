@@ -149,7 +149,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
     static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
                                               UINT64_C(0xe7037ed1a0b428db),
                                               UINT64_C(0x8ebc6af09c88c6e3),
@@ -203,45 +203,45 @@ static inline void mum(uint64_t* a, uint64_t* b) {
 } // namespace detail::wyhash
 
 template <typename T, typename Enable = void>
-struct hash : public std::hash<T> {
+struct hash {
     using is_avalanching = void;
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> size_t {
-        return static_cast<size_t>(detail::wyhash::hash(std::hash<T>::operator()(obj)));
+        -> uint64_t {
+        return detail::wyhash::hash(std::hash<T>{}(obj));
     }
 };
 
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
-    auto operator()(std::basic_string<CharT> const& str) const noexcept -> size_t {
-        return static_cast<size_t>(detail::wyhash::hash(str.data(), sizeof(CharT) * str.size()));
+    auto operator()(std::basic_string<CharT> const& str) const noexcept -> uint64_t {
+        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
     }
 };
 
 template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
-    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> size_t {
-        return static_cast<size_t>(detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size()));
+    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> uint64_t {
+        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
     }
 };
 
 template <class T>
 struct hash<T*> {
     using is_avalanching = void;
-    auto operator()(T* ptr) const noexcept -> size_t {
+    auto operator()(T* ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr)));
+        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr));
     }
 };
 
 template <class T>
 struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
-    auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> size_t {
+    auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
+        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
     }
 };
 
@@ -250,27 +250,27 @@ struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
     auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
+        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
     }
 };
 
 template <typename Enum>
 struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     using is_avalanching = void;
-    auto operator()(Enum e) const noexcept -> size_t {
+    auto operator()(Enum e) const noexcept -> uint64_t {
         using Underlying = typename std::underlying_type_t<Enum>;
-        return static_cast<size_t>(detail::wyhash::hash(static_cast<Underlying>(e)));
+        return detail::wyhash::hash(static_cast<Underlying>(e));
     }
 };
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
-        template <>                                                                           \
-        struct hash<T> {                                                                      \
-            using is_avalanching = void;                                                      \
-            auto operator()(T const& obj) const noexcept -> size_t {                          \
-                return static_cast<size_t>(detail::wyhash::hash(static_cast<uint64_t>(obj))); \
-            }                                                                                 \
+#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                    \
+        template <>                                                      \
+        struct hash<T> {                                                 \
+            using is_avalanching = void;                                 \
+            auto operator()(T const& obj) const noexcept -> uint64_t {   \
+                return detail::wyhash::hash(static_cast<uint64_t>(obj)); \
+            }                                                            \
         }
 
 #    if defined(__GNUC__) && !defined(__clang__)
@@ -432,16 +432,20 @@ private:
         return static_cast<dist_and_fingerprint_type>(x - Bucket::DIST_INC);
     }
 
+    // The goal of mixed_hash is to always produce a high quality 64bit hash.
     template <typename K>
     [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
-#    if SIZE_MAX == UINT32_MAX
-            // On 32bit systems we still want 64bit hashes
-            return m_hash(key) * UINT64_C(0x9ddfea08eb382d69);
-#    else
-            return m_hash(key);
-#    endif
+            // we know that the hash is good because is_avalanching.
+            if constexpr (sizeof(decltype(m_hash(key))) < sizeof(uint64_t)) {
+                // 32bit hash and is_avalanching => multiply with a constant to avalanche bits upwards
+                return m_hash(key) * UINT64_C(0x9ddfea08eb382d69);
+            } else {
+                // 64bit and is_avalanching => only use the hash itself.
+                return m_hash(key);
+            }
         } else {
+            // not is_avalanching => apply wyhash
             return wyhash::hash(m_hash(key));
         }
     }

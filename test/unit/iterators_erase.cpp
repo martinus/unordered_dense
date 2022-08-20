@@ -19,12 +19,12 @@ TEST_CASE("iterators_erase") {
             map[Counter::Obj(i * 101, counts)] = Counter::Obj(i * 101, counts);
         }
 
-        auto it = map.find(Counter::Obj(20 * 101, counts));
+        auto it = map.find(Counter::Obj(size_t{20} * 101, counts));
         REQUIRE(map.size() == 100);
-        REQUIRE(map.end() != map.find(Counter::Obj(20 * 101, counts)));
+        REQUIRE(map.end() != map.find(Counter::Obj(size_t{20} * 101, counts)));
         it = map.erase(it);
         REQUIRE(map.size() == 99);
-        REQUIRE(map.end() == map.find(Counter::Obj(20 * 101, counts)));
+        REQUIRE(map.end() == map.find(Counter::Obj(size_t{20} * 101, counts)));
 
         it = map.begin();
         size_t currentSize = map.size();

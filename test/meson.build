@@ -60,6 +60,7 @@ test_sources = [
     'unit/reserve_and_assign.cpp',
     'unit/reserve.cpp',
     'unit/set.cpp',
+    'unit/std_hash.cpp',
     'unit/swap.cpp',
     'unit/transparent.cpp',
     'unit/try_emplace.cpp',

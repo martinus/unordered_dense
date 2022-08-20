@@ -23,17 +23,17 @@ public:
     using hash_type = ankerl::unordered_dense::hash<std::string_view>;
     using is_transparent = void;
 
-    [[nodiscard]] auto operator()(const char* str) const -> size_t {
+    [[nodiscard]] auto operator()(const char* str) const -> uint64_t {
         ++m_num_charstar;
         return hash_type{}(str);
     }
 
-    [[nodiscard]] auto operator()(std::string_view str) const -> size_t {
+    [[nodiscard]] auto operator()(std::string_view str) const -> uint64_t {
         ++m_num_stringview;
         return hash_type{}(str);
     }
 
-    [[nodiscard]] auto operator()(std::string const& str) const -> size_t {
+    [[nodiscard]] auto operator()(std::string const& str) const -> uint64_t {
         ++m_num_string;
         return hash_type{}(str);
     }

@@ -10,15 +10,15 @@ namespace checksum {
 
 // final step from MurmurHash3
 [[nodiscard]] static inline auto mix(uint64_t k) -> uint64_t {
-    k ^= k >> 33;
+    k ^= k >> 33U;
     k *= 0xff51afd7ed558ccdULL;
-    k ^= k >> 33;
+    k ^= k >> 33U;
     k *= 0xc4ceb9fe1a85ec53ULL;
-    k ^= k >> 33;
+    k ^= k >> 33U;
     return k;
 }
 
-[[nodiscard]] static inline auto mix(std::string_view data) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] static inline auto mix(std::string_view data) -> uint64_t {
     constexpr uint64_t FNV_offset_basis = UINT64_C(14695981039346656037);
     constexpr uint64_t FNV_prime = UINT64_C(1099511628211);
 
@@ -30,12 +30,12 @@ namespace checksum {
     return val;
 }
 
-[[nodiscard]] static inline auto mix(Counter::Obj const& cdv) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] static inline auto mix(Counter::Obj const& cdv) -> uint64_t {
     return mix(cdv.get());
 }
 
 // from boost::hash_combine, with additional fmix64 of value
-[[nodiscard]] static inline auto combine(uint64_t seed, uint64_t value) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] static inline auto combine(uint64_t seed, uint64_t value) -> uint64_t {
     return seed ^ (value + 0x9e3779b9 + (seed << 6U) + (seed >> 2U));
 }
 
