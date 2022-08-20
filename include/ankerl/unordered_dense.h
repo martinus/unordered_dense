@@ -134,7 +134,7 @@ static inline void mum(uint64_t* a, uint64_t* b) {
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
 [[nodiscard]] static inline auto r8(const uint8_t* p) -> uint64_t {
     uint64_t v{};
-    std::memcpy(&v, p, 8);
+    std::memcpy(&v, p, 8U);
     return v;
 }
 
@@ -231,6 +231,7 @@ template <class T>
 struct hash<T*> {
     using is_avalanching = void;
     auto operator()(T* ptr) const noexcept -> size_t {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr)));
     }
 };
@@ -239,6 +240,7 @@ template <class T>
 struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
     auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> size_t {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
     }
 };
@@ -246,7 +248,8 @@ struct hash<std::unique_ptr<T>> {
 template <class T>
 struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
-    auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> size_t {
+    auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> uint64_t {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         return static_cast<size_t>(detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get())));
     }
 };
@@ -260,6 +263,7 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     }
 };
 
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                                         \
         template <>                                                                           \
         struct hash<T> {                                                                      \
