@@ -719,7 +719,10 @@ public:
                    AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
         : m_values(alloc_or_container)
         , m_hash(hash)
-        , m_equal(equal) {}
+        , m_equal(equal) {
+        // If alloc_or_container is a container with elements, we don't want the data that was in it
+        m_values.clear();
+    }
 
     table(size_t bucket_count, AllocatorOrContainer const& alloc_or_container)
         : table(bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
@@ -942,7 +945,7 @@ public:
         }
 
         auto shifts = calc_shifts_for_size(container.size());
-        if (0 == m_num_buckets || shifts < m_shifts) {
+        if (0 == m_num_buckets || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
             m_shifts = shifts;
             deallocate_buckets();
             allocate_buckets_from_shift();
