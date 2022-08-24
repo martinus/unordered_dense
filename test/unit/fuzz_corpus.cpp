@@ -3,6 +3,7 @@
 
 #include <fuzz/api.h>          // for api
 #include <fuzz/insert_erase.h> // for insert_erase
+#include <fuzz/replace.h>      // for replace
 #include <fuzz/string.h>       // for string
 
 #include <doctest.h>  // for TestCase, MessageBuilder, skip, INFO
@@ -59,7 +60,7 @@ void run_corpus(std::string_view name, Op op) {
     for (auto const& dir_entry : std::filesystem::directory_iterator(path)) {
         ++num_files;
         if (periodic) {
-            fmt::print("\r|{}| {:7}/{}  ", progressbar(num_files), num_files, total_files);
+            fmt::print("\r|{}| {:7}/{:<7}  ", progressbar(num_files), num_files, total_files);
         }
 
         auto const& test_file = dir_entry.path();
@@ -71,13 +72,17 @@ void run_corpus(std::string_view name, Op op) {
         op(reinterpret_cast<uint8_t const*>(content.data()), content.size());
     }
     REQUIRE(0U != num_files);
-    fmt::print("\r|{}| {:7}/{} {}\n", progressbar(num_files), num_files, total_files, path.string());
+    fmt::print("\r|{}| {:7}/{:<7} {}\n", progressbar(num_files), num_files, total_files, path.string());
 }
 
 } // namespace
 
 TEST_CASE("fuzz_api" * doctest::test_suite("fuzz") * doctest::skip(true)) {
     run_corpus("api", fuzz::api);
+}
+
+TEST_CASE("fuzz_replace" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("replace", fuzz::replace);
 }
 
 TEST_CASE("fuzz_insert_erase" * doctest::test_suite("fuzz") * doctest::skip(true)) {

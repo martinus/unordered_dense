@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 1.2.0
+// Version 1.3.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -31,7 +31,7 @@
 
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 1 // incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 2 // add functionality in a backwards compatible manner
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 3 // add functionality in a backwards compatible manner
 #define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // backwards compatible bug fixes
 
 #if defined(_MSVC_LANG)
@@ -719,7 +719,10 @@ public:
                    AllocatorOrContainer const& alloc_or_container = AllocatorOrContainer())
         : m_values(alloc_or_container)
         , m_hash(hash)
-        , m_equal(equal) {}
+        , m_equal(equal) {
+        // If alloc_or_container is a container with elements, we don't want the data that was in it
+        m_values.clear();
+    }
 
     table(size_t bucket_count, AllocatorOrContainer const& alloc_or_container)
         : table(bucket_count, Hash(), KeyEqual(), alloc_or_container) {}
@@ -933,6 +936,60 @@ public:
     // Also see "A Standard flat_map" https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p0429r9.pdf
     auto extract() && -> value_container_type {
         return std::move(m_values);
+    }
+
+    // nonstandard API:
+    // Discards the internally held container and replaces it with the one passed. Erases non-unique elements.
+    auto replace(value_container_type&& container) {
+        if (container.size() > max_size()) {
+            throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
+        }
+
+        auto shifts = calc_shifts_for_size(container.size());
+        if (0 == m_num_buckets || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
+            m_shifts = shifts;
+            deallocate_buckets();
+            allocate_buckets_from_shift();
+        }
+        clear_buckets();
+
+        m_values = std::move(container);
+
+        // can't use clear_and_fill_buckets_from_values() because container elements might not be unique
+        auto value_idx = value_idx_type{};
+
+        // loop until we reach the end of the container. duplicated entries will be replaced with back().
+        while (value_idx != static_cast<value_idx_type>(m_values.size())) {
+            auto const& key = get_key(m_values[value_idx]);
+
+            auto hash = mixed_hash(key);
+            auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+            auto bucket_idx = bucket_idx_from_hash(hash);
+
+            bool key_found = false;
+            while (true) {
+                auto const& bucket = at(m_buckets, bucket_idx);
+                if (dist_and_fingerprint > bucket.dist_and_fingerprint) {
+                    break;
+                }
+                if (dist_and_fingerprint == bucket.dist_and_fingerprint && m_equal(key, m_values[bucket.value_idx].first)) {
+                    key_found = true;
+                    break;
+                }
+                dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+                bucket_idx = next(bucket_idx);
+            }
+
+            if (key_found) {
+                if (value_idx != static_cast<value_idx_type>(m_values.size() - 1)) {
+                    m_values[value_idx] = std::move(m_values.back());
+                }
+                m_values.pop_back();
+            } else {
+                place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
+                ++value_idx;
+            }
+        }
     }
 
     template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
@@ -1191,7 +1248,7 @@ public:
         capa = std::min(capa, max_size());
         m_values.reserve(capa);
         auto shifts = calc_shifts_for_size(std::max(capa, size()));
-        if (shifts < m_shifts) {
+        if (0 == m_num_buckets || shifts < m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
             allocate_buckets_from_shift();

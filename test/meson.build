@@ -14,6 +14,7 @@ test_sources = [
 
     'fuzz/api.cpp',
     'fuzz/insert_erase.cpp',
+    'fuzz/replace.cpp',
     'fuzz/string.cpp',
 
     'unit/assign_to_move.cpp',
@@ -57,6 +58,7 @@ test_sources = [
     'unit/not_moveable.cpp',
     'unit/pmr.cpp',
     'unit/rehash.cpp',
+    'unit/replace.cpp',
     'unit/reserve_and_assign.cpp',
     'unit/reserve.cpp',
     'unit/set.cpp',
@@ -186,6 +188,14 @@ if compiler.get_id() == 'clang'
         link_args: fuzz_link_args,
         dependencies: fuzz_deps,
     )
+    executable(
+        'fuzz_replace',
+        fuzz_sources + ['fuzz/replace.cpp'],
+        include_directories: incdir,
+        cpp_args : fuzz_cpp_args,
+        link_args: fuzz_link_args,
+        dependencies: fuzz_deps,
+    )    
     executable(
         'fuzz_insert_erase',
         fuzz_sources + ['fuzz/insert_erase.cpp'],
