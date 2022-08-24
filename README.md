@@ -38,6 +38,7 @@ The chosen design has a few advantages over `std::unordered_map`:
 * Low memory usage
 * Full support for `std::allocators`, and [polymorphic allocators](https://en.cppreference.com/w/cpp/memory/polymorphic_allocator). There are `ankerl::unordered_dense::pmr` typedefs available
 * Customizeable storage type: with a template parameter you can e.g. switch from `std::vector` to `boost::interprocess::vector` or any other compatible random-access container.
+* Better debugging: the underlying data can be easily seen in any debugger that can show an `std::vector`.
 
 There's no free lunch, so there are a few disadvantages:
 
