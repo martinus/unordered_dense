@@ -935,6 +935,59 @@ public:
         return std::move(m_values);
     }
 
+    // Discards the internally held container and replaces the one passed. Erases non-unique elements.
+    auto replace(value_container_type&& container) {
+        if (container.size() > max_size()) {
+            throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
+        }
+
+        auto shifts = calc_shifts_for_size(container.size());
+        if (0 == m_num_buckets || shifts < m_shifts) {
+            m_shifts = shifts;
+            deallocate_buckets();
+            allocate_buckets_from_shift();
+        }
+        clear_buckets();
+
+        m_values = std::move(container);
+
+        // can't use clear_and_fill_buckets_from_values() because container elements might not be unique
+        auto value_idx = value_idx_type{};
+
+        // loop until we reach the end of the container. duplicated entries will be replaced with back().
+        while (value_idx != static_cast<value_idx_type>(m_values.size())) {
+            auto const& key = get_key(m_values[value_idx]);
+
+            auto hash = mixed_hash(key);
+            auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+            auto bucket_idx = bucket_idx_from_hash(hash);
+
+            bool key_found = false;
+            while (true) {
+                auto const& bucket = at(m_buckets, bucket_idx);
+                if (dist_and_fingerprint > bucket.dist_and_fingerprint) {
+                    break;
+                }
+                if (dist_and_fingerprint == bucket.dist_and_fingerprint && m_equal(key, m_values[bucket.value_idx].first)) {
+                    key_found = true;
+                    break;
+                }
+                dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+                bucket_idx = next(bucket_idx);
+            }
+
+            if (key_found) {
+                if (value_idx != static_cast<value_idx_type>(m_values.size() - 1)) {
+                    m_values[value_idx] = std::move(m_values.back());
+                }
+                m_values.pop_back();
+            } else {
+                place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
+                ++value_idx;
+            }
+        }
+    }
+
     template <class M, typename Q = T, std::enable_if_t<!std::is_void_v<Q>, bool> = true>
     auto insert_or_assign(Key const& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(key, std::forward<M>(mapped));
@@ -1191,7 +1244,7 @@ public:
         capa = std::min(capa, max_size());
         m_values.reserve(capa);
         auto shifts = calc_shifts_for_size(std::max(capa, size()));
-        if (shifts < m_shifts) {
+        if (0 == m_num_buckets || shifts < m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
             allocate_buckets_from_shift();

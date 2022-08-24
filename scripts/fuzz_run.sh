@@ -2,7 +2,11 @@
 set -ev
 
 # Start from a build directory, usually clang_cpp17_release
-# usage: fuzz_run.sh <testname>
+#   ../../scripts/fuzz_run.sh <testname>
+#
+# Found a crash? Minimize it like so:
+#   ./test/fuzz_replace -minimize_crash=1 ./crash-123abcdef
+
 FUZZ_TARGET=$1
 SCRIPT_DIR=`dirname "$0"`
 CORPUS_SMALL=${SCRIPT_DIR}/../data/fuzz/${FUZZ_TARGET}
