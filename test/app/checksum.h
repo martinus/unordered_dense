@@ -1,6 +1,6 @@
 #pragma once
 
-#include <app/Counter.h>
+#include <app/counter.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -19,18 +19,18 @@ namespace checksum {
 }
 
 [[maybe_unused]] [[nodiscard]] static inline auto mix(std::string_view data) -> uint64_t {
-    constexpr uint64_t FNV_offset_basis = UINT64_C(14695981039346656037);
-    constexpr uint64_t FNV_prime = UINT64_C(1099511628211);
+    static constexpr uint64_t fnv_offset_basis = UINT64_C(14695981039346656037);
+    static constexpr uint64_t fnv_prime = UINT64_C(1099511628211);
 
-    uint64_t val = FNV_offset_basis;
+    uint64_t val = fnv_offset_basis;
     for (auto c : data) {
         val ^= static_cast<uint64_t>(c);
-        val *= FNV_prime;
+        val *= fnv_prime;
     }
     return val;
 }
 
-[[maybe_unused]] [[nodiscard]] static inline auto mix(Counter::Obj const& cdv) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] static inline auto mix(counter::obj const& cdv) -> uint64_t {
     return mix(cdv.get());
 }
 
@@ -45,15 +45,15 @@ template <typename M>
 [[nodiscard]] auto map(const M& map) -> uint64_t {
     uint64_t combined_hash = 1;
 
-    uint64_t numElements = 0;
+    uint64_t num_elements = 0;
     for (auto const& entry : map) {
         auto entry_hash = combine(mix(entry.first), mix(entry.second));
 
         combined_hash ^= entry_hash;
-        ++numElements;
+        ++num_elements;
     }
 
-    return combine(combined_hash, numElements);
+    return combine(combined_hash, num_elements);
 }
 
 // map of maps
@@ -61,15 +61,15 @@ template <typename MM>
 [[nodiscard]] auto mapmap(const MM& mapmap) -> uint64_t {
     uint64_t combined_hash = 1;
 
-    uint64_t numElements = 0;
+    uint64_t num_elements = 0;
     for (auto const& entry : mapmap) {
         auto entry_hash = combine(mix(entry.first), map(entry.second));
 
         combined_hash ^= entry_hash;
-        ++numElements;
+        ++num_elements;
     }
 
-    return combine(combined_hash, numElements);
+    return combine(combined_hash, num_elements);
 }
 
 } // namespace checksum

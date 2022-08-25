@@ -1,10 +1,10 @@
 test_sources = [
-    'app/Counter.cpp',
+    'app/counter.cpp',
     'app/doctest.cpp',
     'app/nanobench.cpp',
     'app/stacktrace.cpp',
-    'app/ui/Periodic.cpp',
-    'app/ui/ProgressBar.cpp',
+    'app/ui/periodic.cpp',
+    'app/ui/progress_bar.cpp',
     'app/unordered_dense.cpp',
 
     'bench/copy.cpp',
@@ -177,7 +177,7 @@ if compiler.get_id() == 'clang'
         '-fno-sanitize=thread',
     ]
     fuzz_sources = [
-        'app/Counter.cpp',
+        'app/counter.cpp',
     ]
 
     executable(

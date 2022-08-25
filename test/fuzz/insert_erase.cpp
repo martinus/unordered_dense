@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h>
-#include <fuzz/Provider.h>
+#include <fuzz/provider.h>
 
 #if defined(FUZZ)
-#    define REQUIRE(x) ::fuzz::Provider::require(x)
+#    define REQUIRE(x) ::fuzz::provider::require(x) // NOLINT(cppcoreguidelines-macro-usage)
 #else
 #    include <doctest.h>
 #endif
@@ -17,7 +17,7 @@
 namespace {
 
 // Using DummyHash to make it easier for the fuzzer
-struct DummyHash {
+struct dummy_hash {
     using is_avalanching = void;
 
     auto operator()(uint64_t x) const noexcept -> size_t {
@@ -30,9 +30,9 @@ struct DummyHash {
 namespace fuzz {
 
 void insert_erase(uint8_t const* data, size_t size) {
-    auto p = fuzz::Provider(data, size);
+    auto p = fuzz::provider(data, size);
 
-    auto ank = ankerl::unordered_dense::map<uint64_t, uint64_t, DummyHash>();
+    auto ank = ankerl::unordered_dense::map<uint64_t, uint64_t, dummy_hash>();
     auto ref = std::unordered_map<uint64_t, uint64_t>();
 
     auto c = uint64_t();
@@ -53,6 +53,7 @@ void insert_erase(uint8_t const* data, size_t size) {
 } // namespace fuzz
 
 #if defined(FUZZ)
+// NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
     fuzz::insert_erase(data, size);
     return 0;

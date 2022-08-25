@@ -1,7 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/Counter.h>
-#include <app/nanobench.h>
+#include <app/counter.h>
+#include <third-party/nanobench.h>
 
 #include <doctest.h>
 
@@ -13,13 +13,14 @@
 #include <vector>        // for vector
 
 TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
-    using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
-    Counter counts;
+    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
+    counter counts;
     INFO(counts);
 
-    Map map;
+    map_t map;
     REQUIRE(map.size() == static_cast<size_t>(0));
-    std::pair<typename Map::iterator, bool> it_outer = map.insert(typename Map::value_type{{32145, counts}, {123, counts}});
+    std::pair<typename map_t::iterator, bool> it_outer =
+        map.insert(typename map_t::value_type{{32145, counts}, {123, counts}});
     REQUIRE(it_outer.second);
     REQUIRE(it_outer.first->first.get() == 32145);
     REQUIRE(it_outer.first->second.get() == 123);
@@ -28,13 +29,14 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
     const size_t times = 10000;
     for (size_t i = 0; i < times; ++i) {
         INFO(i);
-        std::pair<typename Map::iterator, bool> it_inner = map.insert(typename Map::value_type({i * 4U, counts}, {i, counts}));
+        std::pair<typename map_t::iterator, bool> it_inner =
+            map.insert(typename map_t::value_type({i * 4U, counts}, {i, counts}));
 
         REQUIRE(it_inner.second);
         REQUIRE(it_inner.first->first.get() == i * 4);
         REQUIRE(it_inner.first->second.get() == i);
 
-        auto found = map.find(Counter::Obj{i * 4, counts});
+        auto found = map.find(counter::obj{i * 4, counts});
         REQUIRE(map.end() != found);
         REQUIRE(found->second.get() == i);
         REQUIRE(map.size() == 2 + i);
@@ -42,7 +44,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
 
     // check if everything can be found
     for (size_t i = 0; i < times; ++i) {
-        auto found = map.find(Counter::Obj{i * 4, counts});
+        auto found = map.find(counter::obj{i * 4, counts});
         REQUIRE(map.end() != found);
         REQUIRE(found->second.get() == i);
         REQUIRE(found->first.get() == i * 4);
@@ -50,7 +52,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
 
     // check non-elements
     for (size_t i = 0; i < times; ++i) {
-        auto found = map.find(Counter::Obj{(i + times) * 4U, counts});
+        auto found = map.find(counter::obj{(i + times) * 4U, counts});
         REQUIRE(map.end() == found);
     }
 
@@ -63,7 +65,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
 
     for (uint64_t i = 0; i < times; ++i) {
         auto r = static_cast<size_t>(rng.bounded(times / 4));
-        auto rhh_it = map.insert(typename Map::value_type({r, counts}, {r * 2, counts}));
+        auto rhh_it = map.insert(typename map_t::value_type({r, counts}, {r * 2, counts}));
         auto uo_it = uo.insert(std::make_pair(r, r * 2));
         REQUIRE(rhh_it.second == uo_it.second);
         REQUIRE(rhh_it.first->first.get() == uo_it.first->first);
@@ -71,7 +73,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
         REQUIRE(map.size() == uo.size());
 
         r = rng.bounded(times / 4);
-        auto mapIt = map.find(Counter::Obj{r, counts});
+        auto mapIt = map.find(counter::obj{r, counts});
         auto uoIt = uo.find(r);
         REQUIRE((map.end() == mapIt) == (uo.end() == uoIt));
         if (map.end() != mapIt) {
@@ -86,7 +88,7 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
         const auto r = static_cast<size_t>(rng.bounded(times / 4));
         map[{r, counts}] = {r * 2, counts};
         uo[r] = r * 2;
-        REQUIRE(map.find(Counter::Obj{r, counts})->second.get() == uo.find(r)->second);
+        REQUIRE(map.find(counter::obj{r, counts})->second.get() == uo.find(r)->second);
         REQUIRE(map.size() == uo.size());
     }
 
@@ -98,8 +100,8 @@ TEST_CASE("multiple_different_APIs" * doctest::test_suite("stochastic")) {
     REQUIRE(map.size() == numChecks);
 
     numChecks = 0;
-    const Map& constRhhs = map;
-    for (const typename Map::value_type& vt : constRhhs) {
+    map_t const& const_rhhs = map;
+    for (const typename map_t::value_type& vt : const_rhhs) {
         REQUIRE(uo.end() != uo.find(vt.first.get()));
         ++numChecks;
     }

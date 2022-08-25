@@ -1,5 +1,5 @@
-#include <app/ui/Periodic.h>    // for Periodic
-#include <app/ui/ProgressBar.h> // for ProgressBar
+#include <app/ui/periodic.h>     // for Periodic
+#include <app/ui/progress_bar.h> // for ProgressBar
 
 #include <fuzz/api.h>          // for api
 #include <fuzz/insert_erase.h> // for insert_erase
@@ -36,13 +36,13 @@ auto env(char const* varname) -> std::string {
     free(pValue);
     return str;
 #else
-    return std::getenv(varname);
+    return std::getenv(varname); // NOLINT(concurrency-mt-unsafe,clang-analyzer-cplusplus.StringChecker)
 #endif
 }
 
 template <typename Op>
 void run_corpus(std::string_view name, Op op) {
-    auto corpus_base_dir = env("FUZZ_CORPUS_BASE_DIR"); // NOLINT(concurrency-mt-unsafe)
+    auto corpus_base_dir = env("FUZZ_CORPUS_BASE_DIR");
     if (corpus_base_dir.empty()) {
         throw std::runtime_error("Environment variable FUZZ_CORPUS_BASE_DIR not set!");
     }
@@ -51,11 +51,11 @@ void run_corpus(std::string_view name, Op op) {
 
     INFO("loading from '" << path << "'");
     auto num_files = size_t();
-    auto periodic = ui::Periodic(100ms);
+    auto periodic = ui::periodic(100ms);
 
     auto dir = std::filesystem::directory_iterator(path);
     auto const total_files = std::distance(begin(dir), end(dir));
-    auto progressbar = ui::ProgressBar(50, static_cast<size_t>(total_files));
+    auto progressbar = ui::progress_bar(50, static_cast<size_t>(total_files));
 
     for (auto const& dir_entry : std::filesystem::directory_iterator(path)) {
         ++num_files;
@@ -69,6 +69,7 @@ void run_corpus(std::string_view name, Op op) {
         auto f = std::ifstream(test_file);
         auto content = std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         op(reinterpret_cast<uint8_t const*>(content.data()), content.size());
     }
     REQUIRE(0U != num_files);

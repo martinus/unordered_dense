@@ -1,9 +1,9 @@
 #include <ankerl/unordered_dense.h>
-#include <app/Counter.h>
-#include <fuzz/Provider.h>
+#include <app/counter.h>
+#include <fuzz/provider.h>
 
 #if defined(FUZZ)
-#    define REQUIRE(x) ::fuzz::Provider::require(x)
+#    define REQUIRE(x) ::fuzz::provider::require(x) // NOLINT(cppcoreguidelines-macro-usage)
 #else
 #    include <doctest.h>
 #endif
@@ -13,25 +13,25 @@
 namespace fuzz {
 
 void replace(uint8_t const* data, size_t size) {
-    auto p = fuzz::Provider{data, size};
+    auto p = fuzz::provider{data, size};
 
-    auto counts = Counter{};
+    auto counts = counter{};
 
-    using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
+    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
 
     auto initial_size = p.bounded<size_t>(100);
-    auto map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>{};
+    auto map = ankerl::unordered_dense::map<counter::obj, counter::obj>{};
     for (size_t i = 0; i < initial_size; ++i) {
-        map.try_emplace(Counter::Obj{i, counts}, Counter::Obj{i, counts});
+        map.try_emplace(counter::obj{i, counts}, counter::obj{i, counts});
     }
 
     // create a container with data in it provided by fuzzer
-    auto container = Map::value_container_type{};
+    auto container = map_t::value_container_type{};
     auto comparison_container = std::vector<std::pair<size_t, size_t>>();
     auto v = size_t{};
     while (p.has_remaining_bytes()) {
         auto key = p.integral<size_t>();
-        container.emplace_back(Counter::Obj{key, counts}, Counter::Obj{v, counts});
+        container.emplace_back(counter::obj{key, counts}, counter::obj{v, counts});
         comparison_container.emplace_back(key, v);
         ++v;
     }
@@ -54,8 +54,8 @@ void replace(uint8_t const* data, size_t size) {
     // now check if the data in the map is exactly what we expect
     REQUIRE(map.size() == comparison_map.size());
     for (auto [key, val] : comparison_map) {
-        auto key_obj = Counter::Obj{key, counts};
-        auto val_obj = Counter::Obj{val, counts};
+        auto key_obj = counter::obj{key, counts};
+        auto val_obj = counter::obj{val, counts};
         auto it = map.find(key_obj);
         REQUIRE(it != map.end());
         REQUIRE(it->first == key_obj);
@@ -66,6 +66,7 @@ void replace(uint8_t const* data, size_t size) {
 } // namespace fuzz
 
 #if defined(FUZZ)
+// NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
     fuzz::replace(data, size);
     return 0;

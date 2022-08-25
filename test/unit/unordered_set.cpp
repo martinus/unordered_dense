@@ -9,15 +9,15 @@
 #include <vector>      // for vector
 
 TEST_CASE("unordered_set_asserts") {
-    using Set = ankerl::unordered_dense::set<uint64_t>;
-    static_assert(std::is_same<typename Set::key_type, uint64_t>::value, "key_type same");
-    static_assert(std::is_same<typename Set::value_type, uint64_t>::value, "value_type same");
+    using set_t = ankerl::unordered_dense::set<uint64_t>;
+    static_assert(std::is_same<typename set_t::key_type, uint64_t>::value, "key_type same");
+    static_assert(std::is_same<typename set_t::value_type, uint64_t>::value, "value_type same");
 }
 
 TEST_CASE("unordered_set") {
-    using Set = ankerl::unordered_dense::set<uint64_t>;
+    using set_t = ankerl::unordered_dense::set<uint64_t>;
 
-    Set set;
+    set_t set;
     set.emplace(UINT64_C(123));
     REQUIRE(set.size() == 1U);
 
@@ -32,9 +32,9 @@ TEST_CASE("unordered_set") {
 }
 
 TEST_CASE("unordered_set_string") {
-    using Set = ankerl::unordered_dense::set<std::string>;
+    using set_t = ankerl::unordered_dense::set<std::string>;
 
-    Set set;
+    set_t set;
     REQUIRE(set.begin() == set.end());
 
     set.emplace(static_cast<size_t>(2000), 'a');
@@ -49,10 +49,10 @@ TEST_CASE("unordered_set_string") {
 }
 
 TEST_CASE("unordered_set_eq") {
-    using Set = ankerl::unordered_dense::set<std::string>;
+    using set_t = ankerl::unordered_dense::set<std::string>;
 
-    Set set1;
-    Set set2;
+    set_t set1;
+    set_t set2;
     REQUIRE(set1.size() == set2.size());
     REQUIRE(set1 == set2);
     REQUIRE(set2 == set1);

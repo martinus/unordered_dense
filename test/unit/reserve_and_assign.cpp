@@ -9,8 +9,8 @@
 #include <vector>  // for vector
 
 TEST_CASE("reserve_and_assign") {
-    using Map = ankerl::unordered_dense::map<std::string, uint64_t>;
-    Map a = {
+    using map_t = ankerl::unordered_dense::map<std::string, uint64_t>;
+    map_t a = {
         {"button", {}},
         {"selectbox-tr", {}},
         {"slidertrack-t", {}},
@@ -73,11 +73,11 @@ TEST_CASE("reserve_and_assign") {
         {"checkbox", {}},
     };
 
-    Map b;
+    map_t b;
     b = a;
     REQUIRE(b.find("button") != b.end()); // Passes OK.
 
-    Map c;
+    map_t c;
     c.reserve(51);
     c = a;
     REQUIRE(checksum::map(a) == checksum::map(c));

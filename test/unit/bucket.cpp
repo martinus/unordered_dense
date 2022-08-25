@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/Counter.h>
+#include <app/counter.h>
 
 #include <doctest.h>
 #include <fmt/format.h>
@@ -8,60 +8,61 @@
 #include <limits>
 #include <stdexcept> // for out_of_range
 
-using MapDefault = ankerl::unordered_dense::map<std::string, size_t>;
+using map_default_t = ankerl::unordered_dense::map<std::string, size_t>;
 
 // big bucket type allows 2^64 elements, but has more memory & CPU overhead.
-using MapBig = ankerl::unordered_dense::map<std::string,
-                                            size_t,
-                                            ankerl::unordered_dense::hash<std::string>,
-                                            std::equal_to<std::string>,
-                                            std::allocator<std::pair<std::string, size_t>>,
-                                            ankerl::unordered_dense::bucket_type::big>;
+using map_big_t = ankerl::unordered_dense::map<std::string,
+                                               size_t,
+                                               ankerl::unordered_dense::hash<std::string>,
+                                               std::equal_to<std::string>,
+                                               std::allocator<std::pair<std::string, size_t>>,
+                                               ankerl::unordered_dense::bucket_type::big>;
 
-static_assert(sizeof(MapDefault::bucket_type) == 8U);
-static_assert(sizeof(MapBig::bucket_type) == sizeof(size_t) + 4U);
-static_assert(MapDefault::max_size() == MapDefault::max_bucket_count());
+static_assert(sizeof(map_default_t::bucket_type) == 8U);
+static_assert(sizeof(map_big_t::bucket_type) == sizeof(size_t) + 4U);
+static_assert(map_default_t::max_size() == map_default_t::max_bucket_count());
 
 #if SIZE_MAX == UINT32_MAX
-static_assert(MapDefault::max_size() == uint64_t{1} << 31U);
-static_assert(MapBig::max_size() == uint64_t{1} << 31U);
+static_assert(map_default_t::max_size() == uint64_t{1} << 31U);
+static_assert(map_big_t::max_size() == uint64_t{1} << 31U);
 #else
-static_assert(MapDefault::max_size() == uint64_t{1} << 32U);
-static_assert(MapBig::max_size() == uint64_t{1} << 63U);
+static_assert(map_default_t::max_size() == uint64_t{1} << 32U);
+static_assert(map_big_t::max_size() == uint64_t{1} << 63U);
 #endif
 
 struct bucket_micro {
-    static constexpr uint8_t DIST_INC = 1U << 1U;             // 1 bits for fingerprint
-    static constexpr uint8_t FINGERPRINT_MASK = DIST_INC - 1; // 11 bit = 2048 positions for distance
+    static constexpr uint8_t dist_inc = 1U << 1U;             // 1 bits for fingerprint
+    static constexpr uint8_t fingerprint_mask = dist_inc - 1; // 11 bit = 2048 positions for distance
 
-    uint8_t dist_and_fingerprint;
-    uint8_t value_idx;
+    uint8_t m_dist_and_fingerprint;
+    uint8_t m_value_idx;
 };
 
 TEST_CASE("bucket_micro") {
-    using Map = ankerl::unordered_dense::map<Counter::Obj,
-                                             Counter::Obj,
-                                             ankerl::unordered_dense::hash<Counter::Obj>,
-                                             std::equal_to<Counter::Obj>,
-                                             std::allocator<std::pair<Counter::Obj, Counter::Obj>>,
-                                             bucket_micro>;
+    using map_t = ankerl::unordered_dense::map<counter::obj,
+                                               counter::obj,
+                                               ankerl::unordered_dense::hash<counter::obj>,
+                                               std::equal_to<counter::obj>,
+                                               std::allocator<std::pair<counter::obj, counter::obj>>,
+                                               bucket_micro>;
 
-    Counter counts;
+    counter counts;
     INFO(counts);
 
-    auto map = Map();
-    for (size_t i = 0; i < Map::max_size(); ++i) {
+    auto map = map_t();
+    for (size_t i = 0; i < map_t::max_size(); ++i) {
         auto const r = map.try_emplace({i, counts}, i, counts);
         REQUIRE(r.second);
 
         auto it = map.find({0, counts});
         REQUIRE(it != map.end());
     }
-    REQUIRE_THROWS_AS(map.try_emplace({Map::max_size(), counts}, Map::max_size(), counts), std::overflow_error);
+    // NOLINTNEXTLINE(llvm-else-after-return,readability-else-after-return)
+    REQUIRE_THROWS_AS(map.try_emplace({map_t::max_size(), counts}, map_t::max_size(), counts), std::overflow_error);
 
     // check that all elements are there
-    REQUIRE(map.size() == Map::max_size());
-    for (size_t i = 0; i < Map::max_size(); ++i) {
+    REQUIRE(map.size() == map_t::max_size());
+    for (size_t i = 0; i < map_t::max_size(); ++i) {
         INFO(i);
         auto it = map.find({i, counts});
         REQUIRE(it != map.end());

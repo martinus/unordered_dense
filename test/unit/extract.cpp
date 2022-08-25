@@ -1,18 +1,18 @@
 #include <ankerl/unordered_dense.h>
-#include <app/Counter.h>
+#include <app/counter.h>
 
 #include <doctest.h>
 
 TEST_CASE("extract") {
-    Counter counts;
+    auto counts = counter();
     INFO(counts);
 
-    auto container = std::vector<std::pair<Counter::Obj, Counter::Obj>>();
+    auto container = std::vector<std::pair<counter::obj, counter::obj>>();
     {
-        auto map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>();
+        auto map = ankerl::unordered_dense::map<counter::obj, counter::obj>();
 
         for (size_t i = 0; i < 100; ++i) {
-            map.try_emplace(Counter::Obj{i, counts}, i, counts);
+            map.try_emplace(counter::obj{i, counts}, i, counts);
         }
 
         container = std::move(map).extract();

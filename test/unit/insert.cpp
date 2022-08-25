@@ -7,9 +7,9 @@
 #include <vector>  // for vector
 
 TEST_CASE("insert") {
-    using Map = ankerl::unordered_dense::map<unsigned int, int>;
-    auto map = Map();
-    typename Map::value_type val(123U, 321);
+    using map_t = ankerl::unordered_dense::map<unsigned int, int>;
+    auto map = map_t();
+    typename map_t::value_type val(123U, 321);
     map.insert(val);
     REQUIRE(map.size() == 1);
 

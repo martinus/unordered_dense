@@ -1,11 +1,11 @@
-#include "Periodic.h"
+#include "periodic.h"
 
 namespace ui {
 
-Periodic::Periodic(std::chrono::steady_clock::duration interval)
+periodic::periodic(std::chrono::steady_clock::duration interval)
     : m_interval(interval) {}
 
-Periodic::operator bool() {
+periodic::operator bool() {
     auto now = std::chrono::steady_clock::now();
     if (now < m_next) {
         return false;

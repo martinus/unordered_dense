@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/Counter.h>
+#include <app/counter.h>
 
 #include <doctest.h>
 
@@ -8,18 +8,18 @@
 #include <cstdint> // for uint64_t
 #include <utility> // for pair
 
-using Set = ankerl::unordered_dense::set<Counter::Obj>;
+using set_t = ankerl::unordered_dense::set<counter::obj>;
 
 TEST_CASE("erase_if_set") {
-    Counter counts;
+    auto counts = counter();
     INFO(counts);
-    auto set = Set();
+    auto set = set_t();
 
     for (size_t i = 0; i < 1000; ++i) {
         set.emplace(i, counts);
     }
     REQUIRE(set.size() == 1000);
-    std::erase_if(set, [](Counter::Obj const& obj) {
+    std::erase_if(set, [](counter::obj const& obj) {
         return 0 == obj.get() % 3;
     });
 
