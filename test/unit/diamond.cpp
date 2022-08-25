@@ -6,7 +6,7 @@
 #include <vector>  // for vector
 
 // struct that provides both hash and equals operator
-struct HashWithEqual {
+struct hash_with_equal {
     auto operator()(int x) const -> size_t {
         return static_cast<size_t>(x);
     }
@@ -18,7 +18,7 @@ struct HashWithEqual {
 
 // make sure the map works with the same type (check that it handles the diamond problem)
 TEST_CASE("diamond_problem") {
-    ankerl::unordered_dense::map<int, int, HashWithEqual, HashWithEqual> map;
+    auto map = ankerl::unordered_dense::map<int, int, hash_with_equal, hash_with_equal>();
     map[1] = 2;
     REQUIRE(map.size() == 1);
     REQUIRE(map.find(1) != map.end());

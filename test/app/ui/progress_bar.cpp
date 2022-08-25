@@ -1,4 +1,4 @@
-#include "ProgressBar.h"
+#include "progress_bar.h"
 
 #include <algorithm> // for min
 
@@ -22,12 +22,12 @@ auto split(std::string_view symbols, char sep) -> std::vector<std::string> {
 
 namespace ui {
 
-ProgressBar::ProgressBar(size_t width, size_t total, std::string_view symbols)
+progress_bar::progress_bar(size_t width, size_t total, std::string_view symbols)
     : m_width(width)
     , m_total(total)
     , m_symbols(split(symbols, ' ')) {}
 
-auto ProgressBar::operator()(size_t current) const -> std::string {
+auto progress_bar::operator()(size_t current) const -> std::string {
     auto const total_states = m_width * m_symbols.size() + 1;
     auto const current_state = total_states * current / m_total;
     std::string str;

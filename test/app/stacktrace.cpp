@@ -3,15 +3,15 @@
 #    include <fmt/format.h>
 
 #    include <array>
+#    include <csignal>
 #    include <cstdio>
 #    include <cstdlib>
 #    include <execinfo.h>
-#    include <signal.h>
 #    include <unistd.h>
 
 namespace {
 
-void handler(int sig) {
+void handle(int sig) {
     fmt::print(stderr, "Error: signal {}:\n", sig);
     auto ary = std::array<void*, 50>();
 
@@ -27,14 +27,14 @@ void handler(int sig) {
     exit(1); // NOLINT(concurrency-mt-unsafe)
 }
 
-class Handler {
+class handler {
 public:
-    Handler() {
-        (void)signal(SIGTERM, handler);
+    handler() {
+        (void)signal(SIGTERM, handle);
     }
 };
 
-auto const h = Handler();
+auto const global_h = handler();
 
 } // namespace
 

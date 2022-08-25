@@ -1,7 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/Counter.h>
-#include <app/nanobench.h>
+#include <app/counter.h>
+#include <third-party/nanobench.h>
 
 #include <doctest.h>
 
@@ -11,7 +11,7 @@
 #include <vector>    // for vector
 
 template <typename Map>
-void fill(Counter& counts, Map& map, ankerl::nanobench::Rng& rng) {
+void fill(counter& counts, Map& map, ankerl::nanobench::Rng& rng) {
     auto n = rng.bounded(20);
     for (size_t i = 0; i < n; ++i) {
         auto a = rng.bounded(20);
@@ -21,18 +21,18 @@ void fill(Counter& counts, Map& map, ankerl::nanobench::Rng& rng) {
 }
 
 TEST_CASE("vectormap") {
-    Counter counts;
+    auto counts = counter();
     INFO(counts);
 
-    using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
+    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
     auto rng = ankerl::nanobench::Rng(32154);
     {
         counts("begin");
-        std::vector<Map> maps;
+        std::vector<map_t> maps;
 
         // copies
         for (size_t i = 0; i < 10; ++i) {
-            Map m;
+            map_t m;
             fill(counts, m, rng);
             maps.push_back(m);
         }
@@ -40,7 +40,7 @@ TEST_CASE("vectormap") {
 
         // move
         for (size_t i = 0; i < 10; ++i) {
-            Map m;
+            map_t m;
             fill(counts, m, rng);
             maps.push_back(std::move(m));
         }
@@ -54,5 +54,6 @@ TEST_CASE("vectormap") {
         counts("emplace");
     }
     counts("dtor");
-    REQUIRE(counts.dtor == counts.ctor + counts.staticDefaultCtor + counts.copyCtor + counts.defaultCtor + counts.moveCtor);
+    REQUIRE(counts.dtor() ==
+            counts.ctor() + counts.static_default_ctor + counts.copy_ctor() + counts.default_ctor() + counts.move_ctor());
 }

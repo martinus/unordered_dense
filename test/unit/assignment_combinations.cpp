@@ -9,19 +9,19 @@
 #include <utility> // for pair
 #include <vector>  // for vector
 
-using Map = ankerl::unordered_dense::map<uint64_t, uint64_t>;
+using map_t = ankerl::unordered_dense::map<uint64_t, uint64_t>;
 
 TEST_CASE("assignment_combinations_1") {
-    Map a;
-    Map b;
+    map_t a;
+    map_t b;
     b = a;
     REQUIRE(b == a);
 }
 
 TEST_CASE("assignment_combinations_2") {
-    Map a;
-    Map const& aConst = a;
-    Map b;
+    map_t a;
+    map_t const& aConst = a;
+    map_t b;
     a[123] = 321;
     b = a;
 
@@ -40,8 +40,8 @@ TEST_CASE("assignment_combinations_2") {
 }
 
 TEST_CASE("assignment_combinations_3") {
-    Map a;
-    Map b;
+    map_t a;
+    map_t b;
     a[123] = 321;
     a.clear();
     b = a;
@@ -51,8 +51,8 @@ TEST_CASE("assignment_combinations_3") {
 }
 
 TEST_CASE("assignment_combinations_4") {
-    Map a;
-    Map b;
+    map_t a;
+    map_t b;
     b[123] = 321;
     b = a;
 
@@ -61,8 +61,8 @@ TEST_CASE("assignment_combinations_4") {
 }
 
 TEST_CASE("assignment_combinations_5") {
-    Map a;
-    Map b;
+    map_t a;
+    map_t b;
     b[123] = 321;
     b.clear();
     b = a;
@@ -72,9 +72,9 @@ TEST_CASE("assignment_combinations_5") {
 }
 
 TEST_CASE("assignment_combinations_6") {
-    Map a;
+    map_t a;
     a[1] = 2;
-    Map b;
+    map_t b;
     b[3] = 4;
     b = a;
 
@@ -88,10 +88,10 @@ TEST_CASE("assignment_combinations_6") {
 }
 
 TEST_CASE("assignment_combinations_7") {
-    Map a;
+    map_t a;
     a[1] = 2;
     a.clear();
-    Map b;
+    map_t b;
     REQUIRE(a == b);
     b[3] = 4;
     REQUIRE(a != b);
@@ -100,9 +100,9 @@ TEST_CASE("assignment_combinations_7") {
 }
 
 TEST_CASE("assignment_combinations_7") {
-    Map a;
+    map_t a;
     a[1] = 2;
-    Map b;
+    map_t b;
     REQUIRE(a != b);
     b[3] = 4;
     b.clear();
@@ -112,10 +112,10 @@ TEST_CASE("assignment_combinations_7") {
 }
 
 TEST_CASE("assignment_combinations_8") {
-    Map a;
+    map_t a;
     a[1] = 2;
     a.clear();
-    Map b;
+    map_t b;
     b[3] = 4;
     REQUIRE(a != b);
     b.clear();
@@ -125,11 +125,11 @@ TEST_CASE("assignment_combinations_8") {
 }
 
 TEST_CASE("assignment_combinations_9") {
-    Map a;
+    map_t a;
     a[1] = 2;
 
     // self assignment should work too
-    Map* b = &a;
+    map_t* b = &a;
     a = *b;
     REQUIRE(a == a);
     REQUIRE(a.size() == 1);
@@ -137,9 +137,9 @@ TEST_CASE("assignment_combinations_9") {
 }
 
 TEST_CASE("assignment_combinations_10") {
-    Map a;
+    map_t a;
     a[1] = 2;
-    Map b;
+    map_t b;
     b[2] = 1;
 
     // maps have the same number of elements, but are not equal.
@@ -149,7 +149,7 @@ TEST_CASE("assignment_combinations_10") {
     REQUIRE(!(a == b));
     REQUIRE(!(b == a));
 
-    Map c;
+    map_t c;
     c[1] = 3;
     REQUIRE(a != c);
     REQUIRE(c != a);
@@ -162,7 +162,7 @@ TEST_CASE("assignment_combinations_10") {
     REQUIRE(!(a == b));
     REQUIRE(!(b == a));
 
-    Map empty;
+    map_t empty;
     REQUIRE(b == empty);
     REQUIRE(empty == b);
     REQUIRE(!(b != empty));

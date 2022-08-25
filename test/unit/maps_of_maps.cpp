@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/Counter.h>
 #include <app/checksum.h>
-#include <app/nanobench.h>
+#include <app/counter.h>
+#include <third-party/nanobench.h>
 
 #include <doctest.h>
 
@@ -11,48 +11,48 @@
 #include <utility> // for move
 
 TEST_CASE("mapmap") {
-    Counter counts;
+    auto counts = counter();
     INFO(counts);
 
-    using M = ankerl::unordered_dense::map<Counter::Obj, ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>>;
+    using map_t = ankerl::unordered_dense::map<counter::obj, ankerl::unordered_dense::map<counter::obj, counter::obj>>;
 
     auto rng = ankerl::nanobench::Rng();
     for (size_t trial = 0; trial < 4; ++trial) {
         {
             counts("start");
-            auto maps = M();
+            auto maps = map_t();
             for (size_t i = 0; i < 100; ++i) {
                 auto a = rng.bounded(20);
                 auto b = rng.bounded(20);
                 auto x = static_cast<size_t>(rng());
                 // std::cout << i << ": map[" << a << "][" << b << "] = " << x << std::endl;
-                maps[Counter::Obj(a, counts)][Counter::Obj(b, counts)] = Counter::Obj(x, counts);
+                maps[counter::obj(a, counts)][counter::obj(b, counts)] = counter::obj(x, counts);
             }
             counts("filled");
 
-            M mapsCopied;
+            map_t mapsCopied;
             mapsCopied = maps;
             REQUIRE(checksum::mapmap(mapsCopied) == checksum::mapmap(maps));
             REQUIRE(mapsCopied == maps);
             counts("copied");
 
-            M mapsMoved;
+            map_t mapsMoved;
             mapsMoved = std::move(mapsCopied);
             counts("moved");
 
             // move
             REQUIRE(checksum::mapmap(mapsMoved) == checksum::mapmap(maps));
-            REQUIRE(mapsCopied.size() == 0); // NOLINT(bugprone-use-after-move)
+            REQUIRE(mapsCopied.size() == 0); // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved)
             mapsCopied = std::move(mapsMoved);
             counts("moved back");
 
             // move back
             REQUIRE(checksum::mapmap(mapsCopied) == checksum::mapmap(maps));
-            REQUIRE(mapsMoved.size() == 0); // NOLINT(bugprone-use-after-move)
+            REQUIRE(mapsMoved.size() == 0); // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved)
             counts("done");
         }
         counts("all destructed");
-        REQUIRE(counts.dtor ==
-                counts.ctor + counts.copyCtor + counts.staticDefaultCtor + counts.defaultCtor + counts.moveCtor);
+        REQUIRE(counts.dtor() ==
+                counts.ctor() + counts.static_default_ctor + counts.copy_ctor() + counts.default_ctor() + counts.move_ctor());
     }
 }

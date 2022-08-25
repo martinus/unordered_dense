@@ -1,10 +1,9 @@
 #include <ankerl/unordered_dense.h>
-#include <app/Counter.h>
-
-#include "Provider.h"
+#include <app/counter.h>
+#include <fuzz/provider.h>
 
 #if defined(FUZZ)
-#    define REQUIRE(x) ::fuzz::Provider::require(x)
+#    define REQUIRE(x) ::fuzz::provider::require(x) // NOLINT(cppcoreguidelines-macro-usage)
 #else
 #    include <doctest.h>
 #endif
@@ -19,15 +18,15 @@
 namespace fuzz {
 
 void api(uint8_t const* data, size_t size) {
-    auto p = fuzz::Provider(data, size);
-    Counter counts;
+    auto p = fuzz::provider(data, size);
+    auto counts = counter();
 
-    using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
-    auto map = Map();
+    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
+    auto map = map_t();
     p.repeat_oneof(
         [&] {
             auto key = p.integral<size_t>();
-            auto it = map.try_emplace(Counter::Obj(key, counts), Counter::Obj(key, counts)).first;
+            auto it = map.try_emplace(counter::obj(key, counts), counter::obj(key, counts)).first;
             REQUIRE(it != map.end());
             REQUIRE(it->first.get() == key);
         },
@@ -37,25 +36,25 @@ void api(uint8_t const* data, size_t size) {
         },
         [&] {
             auto key = p.integral<size_t>();
-            map[Counter::Obj(key, counts)] = Counter::Obj(key + 123, counts);
+            map[counter::obj(key, counts)] = counter::obj(key + 123, counts);
         },
         [&] {
             auto key = p.integral<size_t>();
-            map.insert(std::pair<Counter::Obj, Counter::Obj>(Counter::Obj(key, counts), Counter::Obj(key, counts)));
+            map.insert(std::pair<counter::obj, counter::obj>(counter::obj(key, counts), counter::obj(key, counts)));
         },
         [&] {
             auto key = p.integral<size_t>();
-            map.insert_or_assign(Counter::Obj(key, counts), Counter::Obj(key + 1, counts));
+            map.insert_or_assign(counter::obj(key, counts), counter::obj(key + 1, counts));
         },
         [&] {
             auto key = p.integral<size_t>();
-            map.erase(Counter::Obj(key, counts));
+            map.erase(counter::obj(key, counts));
         },
         [&] {
-            map = Map{};
+            map = map_t{};
         },
         [&] {
-            auto m = Map{};
+            auto m = map_t{};
             m.swap(map);
         },
         [&] {
@@ -71,7 +70,7 @@ void api(uint8_t const* data, size_t size) {
         },
         [&] {
             auto key = p.integral<size_t>();
-            auto it = map.find(Counter::Obj(key, counts));
+            auto it = map.find(counter::obj(key, counts));
             auto d = std::distance(map.begin(), it);
             REQUIRE(0 <= d);
             REQUIRE(d <= static_cast<std::ptrdiff_t>(map.size()));
@@ -92,11 +91,11 @@ void api(uint8_t const* data, size_t size) {
             }
         },
         [&] {
-            auto tmp = Map();
+            auto tmp = map_t();
             std::swap(tmp, map);
         },
         [&] {
-            map = std::initializer_list<std::pair<Counter::Obj, Counter::Obj>>{
+            map = std::initializer_list<std::pair<counter::obj, counter::obj>>{
                 {{1, counts}, {2, counts}},
                 {{3, counts}, {4, counts}},
                 {{5, counts}, {6, counts}},
@@ -116,12 +115,12 @@ void api(uint8_t const* data, size_t size) {
             map.erase(map.cbegin() + first_idx, map.cbegin() + last_idx);
         },
         [&] {
-            map.~Map();
+            map.~map_t();
             counts.check_all_done();
-            new (&map) Map();
+            new (&map) map_t();
         },
         [&] {
-            std::erase_if(map, [&](Map::value_type const& /*v*/) {
+            std::erase_if(map, [&](map_t::value_type const& /*v*/) {
                 return p.integral<bool>();
             });
         });
@@ -130,6 +129,7 @@ void api(uint8_t const* data, size_t size) {
 } // namespace fuzz
 
 #if defined(FUZZ)
+// NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
     fuzz::api(data, size);
     return 0;

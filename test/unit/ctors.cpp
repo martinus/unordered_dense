@@ -2,73 +2,73 @@
 
 #include <doctest.h>
 
-#include <app/Counter.h>
+#include <app/counter.h>
 
 #include <cstddef> // for size_t
 #include <utility> // for pair
 
 // very minimal input iterator
 // https://en.cppreference.com/w/cpp/named_req/InputIterator#Concept
-class It {
-    std::pair<Counter::Obj, Counter::Obj> m_kv;
+class it {
+    std::pair<counter::obj, counter::obj> m_kv;
 
 public:
-    It(size_t val, Counter& counts)
+    it(size_t val, counter& counts)
         : m_kv({val, counts}, {val, counts}) {}
 
-    auto operator++() -> It& {
+    auto operator++() -> it& {
         ++m_kv.first.get();
         ++m_kv.second.get();
         return *this;
     }
 
-    auto operator*() -> std::pair<Counter::Obj, Counter::Obj> const& {
+    auto operator*() -> std::pair<counter::obj, counter::obj> const& {
         return m_kv;
     }
 
-    auto operator!=(It const& other) const -> bool {
+    auto operator!=(it const& other) const -> bool {
         return other.m_kv.first.get() != m_kv.first.get() || other.m_kv.second.get() != m_kv.second.get();
     }
 };
 
 TEST_CASE("ctors_map") {
-    using Map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>;
-    // using Map = std::unordered_map<Counter::Obj, Counter::Obj>;
-    using Alloc = Map::allocator_type;
-    using Hash = Map::hasher;
-    using KeyEq = Map::key_equal;
+    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
+    // using map_t = std::unordered_map<counter::obj, counter::obj>;
+    using alloc_t = map_t::allocator_type;
+    using hash_t = map_t::hasher;
+    using key_eq_t = map_t::key_equal;
 
-    Counter counts;
+    auto counts = counter();
     INFO(counts);
 
-    { auto m = Map{}; }
-    { auto m = Map{0, Alloc{}}; }
-    { auto m = Map{0, Hash{}, Alloc{}}; }
-    { auto m = Map{Alloc{}}; }
-    REQUIRE(counts.dtor == 0);
+    { auto m = map_t{}; }
+    { auto m = map_t{0, alloc_t{}}; }
+    { auto m = map_t{0, hash_t{}, alloc_t{}}; }
+    { auto m = map_t{alloc_t{}}; }
+    REQUIRE(counts.dtor() == 0);
 
     {
-        auto begin_it = It{size_t{0}, counts};
-        auto end_it = It{size_t{10}, counts};
-        auto m = Map{begin_it, end_it};
+        auto begin_it = it{size_t{0}, counts};
+        auto end_it = it{size_t{10}, counts};
+        auto m = map_t{begin_it, end_it};
         REQUIRE(m.size() == 10);
     }
     {
-        auto begin_it = It{size_t{0}, counts};
-        auto end_it = It{size_t{10}, counts};
-        auto m = Map{begin_it, end_it, 0, Alloc{}};
+        auto begin_it = it{size_t{0}, counts};
+        auto end_it = it{size_t{10}, counts};
+        auto m = map_t{begin_it, end_it, 0, alloc_t{}};
         REQUIRE(m.size() == 10);
     }
     {
-        auto begin_it = It{size_t{0}, counts};
-        auto end_it = It{size_t{10}, counts};
-        auto m = Map{begin_it, end_it, 0, Hash{}, Alloc{}};
+        auto begin_it = it{size_t{0}, counts};
+        auto end_it = it{size_t{10}, counts};
+        auto m = map_t{begin_it, end_it, 0, hash_t{}, alloc_t{}};
         REQUIRE(m.size() == 10);
     }
     {
-        auto begin_it = It{size_t{0}, counts};
-        auto end_it = It{size_t{10}, counts};
-        auto m = Map{begin_it, end_it, 0, Hash{}, KeyEq{}};
+        auto begin_it = it{size_t{0}, counts};
+        auto end_it = it{size_t{10}, counts};
+        auto m = map_t{begin_it, end_it, 0, hash_t{}, key_eq_t{}};
         REQUIRE(m.size() == 10);
     }
 }

@@ -8,48 +8,48 @@
 #include <utility> // for pair
 #include <vector>  // for vector
 
-using Map = ankerl::unordered_dense::map<int, int>;
+using map_t = ankerl::unordered_dense::map<int, int>;
 
 // creates a map with some data in it
 template <class M>
-[[nodiscard]] auto createMap(int numElements) -> M {
+[[nodiscard]] auto create_map(int num_elements) -> M {
     M m;
-    for (int i = 0; i < numElements; ++i) {
+    for (int i = 0; i < num_elements; ++i) {
         m[static_cast<typename M::key_type>((i + 123) * 7)] = static_cast<typename M::mapped_type>(i);
     }
     return m;
 }
 
 TEST_CASE("copy_and_assign_maps") {
-    { auto a = createMap<Map>(15); }
+    { auto a = create_map<map_t>(15); }
 
-    { auto a = createMap<Map>(100); }
+    { auto a = create_map<map_t>(100); }
 
     {
-        auto a = createMap<Map>(1);
+        auto a = create_map<map_t>(1);
         // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
         auto b = a;
         REQUIRE(a == b);
     }
 
     {
-        Map a;
+        map_t a;
         REQUIRE(a.empty());
         a.clear();
         REQUIRE(a.empty());
     }
 
     {
-        auto a = createMap<Map>(100);
+        auto a = create_map<map_t>(100);
         // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
         auto b = a;
         REQUIRE(b == a);
     }
     {
-        Map a;
+        map_t a;
         a[123] = 321;
         a.clear();
-        std::vector<Map> maps(10, a);
+        std::vector<map_t> maps(10, a);
 
         for (auto const& map : maps) {
             REQUIRE(map.empty());
@@ -57,20 +57,20 @@ TEST_CASE("copy_and_assign_maps") {
     }
 
     {
-        std::vector<Map> maps(10);
+        std::vector<map_t> maps(10);
         REQUIRE(maps.size() == 10U);
     }
 
     {
-        Map a;
-        std::vector<Map> maps(12, a);
+        map_t a;
+        std::vector<map_t> maps(12, a);
         REQUIRE(maps.size() == 12U);
     }
 
     {
-        Map a;
+        map_t a;
         a[123] = 321;
-        std::vector<Map> maps(10, a);
+        std::vector<map_t> maps(10, a);
         a[123] = 1;
 
         for (auto const& map : maps) {

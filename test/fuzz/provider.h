@@ -1,17 +1,17 @@
 #pragma once
 
-#include "FuzzedDataProvider.h"
+#include <third-party/FuzzedDataProvider.h>
 
 #include <type_traits>
 
 namespace fuzz {
 
 // Helper to provide a little bit more convenient interface than FuzzedDataProvider itself
-class Provider {
+class provider {
     FuzzedDataProvider m_fdp;
 
 public:
-    inline explicit Provider(uint8_t const* data, size_t size)
+    inline explicit provider(uint8_t const* data, size_t size)
         : m_fdp(data, size) {}
 
     // random number in inclusive range [min, max]

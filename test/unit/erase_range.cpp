@@ -1,7 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
-#include <app/Counter.h>
-#include <app/nanobench.h>
+#include <app/counter.h>
+#include <third-party/nanobench.h>
 
 #include <doctest.h>
 
@@ -13,10 +13,10 @@ TEST_CASE("erase_range") {
 
     for (int first_pos = 0; first_pos <= num_elements; ++first_pos) {
         for (int last_pos = first_pos; last_pos <= num_elements; ++last_pos) {
-            Counter counts;
+            auto counts = counter();
             INFO(counts);
 
-            auto map = ankerl::unordered_dense::map<Counter::Obj, Counter::Obj>();
+            auto map = ankerl::unordered_dense::map<counter::obj, counter::obj>();
 
             for (size_t i = 0; i < num_elements; ++i) {
                 auto key = i;

@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h>
-#include <fuzz/Provider.h>
+#include <fuzz/provider.h>
 
 #if defined(FUZZ)
-#    define REQUIRE(x) ::fuzz::Provider::require(x)
+#    define REQUIRE(x) ::fuzz::provider::require(x) // NOLINT(cppcoreguidelines-macro-usage)
 #else
 #    include <doctest.h>
 #endif
@@ -16,7 +16,7 @@
 namespace fuzz {
 
 void string(uint8_t const* data, size_t size) {
-    auto p = fuzz::Provider(data, size);
+    auto p = fuzz::provider(data, size);
 
     auto ank = ankerl::unordered_dense::map<std::string, std::string>();
     auto ref = std::unordered_map<std::string, std::string>();
@@ -49,6 +49,7 @@ void string(uint8_t const* data, size_t size) {
 } // namespace fuzz
 
 #if defined(FUZZ)
+// NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
     fuzz::string(data, size);
     return 0;

@@ -1,7 +1,7 @@
 #include <ankerl/unordered_dense.h> // for map, operator==
 
-#include <app/nanobench.h>  // for Rng, Bench
-#include <app/robin_hood.h> // for unordered_node_map, unordered_fl...
+#include <third-party/nanobench.h>  // for Rng, Bench
+#include <third-party/robin_hood.h> // for unordered_node_map, unordered_fl...
 
 #include <doctest.h>  // for TestCase, skip, TEST_CASE, test_...
 #include <fmt/core.h> // for format

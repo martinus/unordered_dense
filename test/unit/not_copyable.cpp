@@ -7,32 +7,32 @@
 #include <utility> // for move, piecewise_construct
 
 // not copyable, but movable.
-class NoCopy {
+class no_copy {
 public:
-    NoCopy() noexcept = default;
-    explicit NoCopy(size_t d) noexcept
-        : mData(d) {}
+    no_copy() noexcept = default;
+    explicit no_copy(size_t d) noexcept
+        : m_mData(d) {}
 
-    ~NoCopy() = default;
-    NoCopy(NoCopy const&) = delete;
-    auto operator=(NoCopy const&) -> NoCopy& = delete;
+    ~no_copy() = default;
+    no_copy(no_copy const&) = delete;
+    auto operator=(no_copy const&) -> no_copy& = delete;
 
-    NoCopy(NoCopy&&) = default;
-    auto operator=(NoCopy&&) -> NoCopy& = default;
+    no_copy(no_copy&&) = default;
+    auto operator=(no_copy&&) -> no_copy& = default;
 
     [[nodiscard]] auto data() const -> size_t {
-        return mData;
+        return m_mData;
     }
 
 private:
-    size_t mData{};
+    size_t m_mData{};
 };
 
 TEST_CASE("not_copyable") {
-    using Map = ankerl::unordered_dense::map<size_t, NoCopy>;
+    using map_t = ankerl::unordered_dense::map<size_t, no_copy>;
 
     // it's ok because it is movable.
-    Map m;
+    map_t m;
     for (size_t i = 0; i < 100; ++i) {
         m[i];
         m.emplace(std::piecewise_construct, std::forward_as_tuple(i * 100), std::forward_as_tuple(i));
@@ -40,11 +40,11 @@ TEST_CASE("not_copyable") {
     REQUIRE(m.size() == 199);
 
     // not copyable, because m is not copyable!
-    // Map m2 = m;
+    // map_t m2 = m;
 
     // movable works
-    Map m2 = std::move(m);
+    map_t m2 = std::move(m);
     REQUIRE(m2.size() == 199);
-    m = Map{};
+    m = map_t{};
     REQUIRE(m.size() == 0);
 }

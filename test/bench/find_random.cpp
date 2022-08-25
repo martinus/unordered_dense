@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h> // for map
 
-#include <app/name_of_type.h> // for name_of_type
-#include <app/nanobench.h>    // for Rng
-#include <app/robin_hood.h>   // for unordered_flat_map
+#include <app/name_of_type.h>       // for name_of_type
+#include <third-party/nanobench.h>  // for Rng
+#include <third-party/robin_hood.h> // for unordered_flat_map
 
 #include <doctest.h>  // for TestCase, skip, ResultBuilder
 #include <fmt/core.h> // for format, print
@@ -16,43 +16,43 @@
 
 template <typename Map>
 void bench() {
-    static constexpr size_t numTotal = 4;
+    static constexpr size_t num_total = 4;
 
     auto requiredChecksum = std::array{200000, 25198620, 50197240, 75195862, 100194482};
     auto total = std::chrono::steady_clock::duration();
 
     for (size_t numFound = 0; numFound < 5; ++numFound) {
-        auto title = fmt::format("random find {}% success {}", numFound * 100 / numTotal, name_of_type<Map>());
+        auto title = fmt::format("random find {}% success {}", numFound * 100 / num_total, name_of_type<Map>());
         auto rng = ankerl::nanobench::Rng(123);
 
         size_t checksum = 0;
 
-        using Ary = std::array<bool, numTotal>;
-        Ary insertRandom;
-        insertRandom.fill(true);
-        for (typename Ary::size_type i = 0; i < numFound; ++i) {
-            insertRandom[i] = false;
+        using ary_t = std::array<bool, num_total>;
+        auto insert_random = ary_t();
+        insert_random.fill(true);
+        for (typename ary_t::size_type i = 0; i < numFound; ++i) {
+            insert_random[i] = false;
         }
 
-        auto anotherUnrelatedRng = ankerl::nanobench::Rng(987654321);
-        auto const anotherUnrelatedRngInitialState = anotherUnrelatedRng.state();
-        auto findRng = ankerl::nanobench::Rng(anotherUnrelatedRngInitialState);
+        auto another_unrelated_rng = ankerl::nanobench::Rng(987654321);
+        auto const another_unrelated_rng_initial_state = another_unrelated_rng.state();
+        auto find_rng = ankerl::nanobench::Rng(another_unrelated_rng_initial_state);
 
         {
-            static constexpr size_t numInserts = 200000;
-            static constexpr size_t numFindsPerInsert = 500;
-            static constexpr size_t numFindsPerIter = numFindsPerInsert * numTotal;
+            static constexpr size_t num_inserts = 200000;
+            static constexpr size_t num_finds_per_insert = 500;
+            static constexpr size_t num_finds_per_iter = num_finds_per_insert * num_total;
 
             Map map;
             size_t i = 0;
-            size_t findCount = 0;
+            size_t find_count = 0;
             auto before = std::chrono::steady_clock::now();
             do {
                 // insert numTotal entries: some random, some sequential.
-                rng.shuffle(insertRandom);
-                for (bool isRandomToInsert : insertRandom) {
-                    auto val = anotherUnrelatedRng();
-                    if (isRandomToInsert) {
+                rng.shuffle(insert_random);
+                for (bool is_random_to_insert : insert_random) {
+                    auto val = another_unrelated_rng();
+                    if (is_random_to_insert) {
                         map[static_cast<size_t>(rng())] = static_cast<size_t>(1);
                     } else {
                         map[static_cast<size_t>(val)] = static_cast<size_t>(1);
@@ -61,17 +61,17 @@ void bench() {
                 }
 
                 // the actual benchmark code which should be as fast as possible
-                for (size_t j = 0; j < numFindsPerIter; ++j) {
-                    if (++findCount > i) {
-                        findCount = 0;
-                        findRng = ankerl::nanobench::Rng(anotherUnrelatedRngInitialState);
+                for (size_t j = 0; j < num_finds_per_iter; ++j) {
+                    if (++find_count > i) {
+                        find_count = 0;
+                        find_rng = ankerl::nanobench::Rng(another_unrelated_rng_initial_state);
                     }
-                    auto it = map.find(static_cast<size_t>(findRng()));
+                    auto it = map.find(static_cast<size_t>(find_rng()));
                     if (it != map.end()) {
                         checksum += it->second;
                     }
                 }
-            } while (i < numInserts);
+            } while (i < num_inserts);
             checksum += map.size();
             auto after = std::chrono::steady_clock::now();
             total += after - before;

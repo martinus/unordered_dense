@@ -14,27 +14,34 @@
 // See https://www.boost.org/doc/libs/1_80_0/doc/html/interprocess/allocators_containers.html
 TEST_CASE("boost_container_vector") {
     // Remove shared memory on construction and destruction
-    struct ShmRemove {
-        ShmRemove() {
+    struct shm_remove {
+        shm_remove() {
             boost::interprocess::shared_memory_object::remove("MySharedMemory");
         }
-        ~ShmRemove() {
+        ~shm_remove() {
             boost::interprocess::shared_memory_object::remove("MySharedMemory");
         }
-    } remover;
+
+        shm_remove(shm_remove const&) = delete;
+        shm_remove(shm_remove&&) = delete;
+        auto operator=(shm_remove const&) -> shm_remove = delete;
+        auto operator=(shm_remove&&) -> shm_remove = delete;
+    };
+
+    auto remover = shm_remove();
 
     // Create shared memory
     auto segment = boost::interprocess::managed_shared_memory(boost::interprocess::create_only, "MySharedMemory", 65536);
 
     // Alias an STL-like allocator of ints that allocates ints from the segment
-    using ShmemAllocator = boost::interprocess::allocator<std::pair<int, std::string>,
-                                                          boost::interprocess::managed_shared_memory::segment_manager>;
-    using ShmemVector = boost::interprocess::vector<std::pair<int, std::string>, ShmemAllocator>;
+    using shmem_allocator = boost::interprocess::allocator<std::pair<int, std::string>,
+                                                           boost::interprocess::managed_shared_memory::segment_manager>;
+    using shmem_vector = boost::interprocess::vector<std::pair<int, std::string>, shmem_allocator>;
 
-    using Map =
-        ankerl::unordered_dense::map<int, std::string, ankerl::unordered_dense::hash<int>, std::equal_to<int>, ShmemVector>;
+    using map_t =
+        ankerl::unordered_dense::map<int, std::string, ankerl::unordered_dense::hash<int>, std::equal_to<int>, shmem_vector>;
 
-    auto map = Map{ShmemVector{ShmemAllocator{segment.get_segment_manager()}}};
+    auto map = map_t{shmem_vector{shmem_allocator{segment.get_segment_manager()}}};
 
     for (int i = 0; i < 100; ++i) {
         map.try_emplace(i, std::to_string(i));
