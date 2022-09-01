@@ -34,6 +34,13 @@
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 3 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
 #define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
+// API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
+#define ANKERL_UNORDERED_DENSE_VERSION_CONCAT1(major, minor, patch) v##major##_##minor##_##patch
+#define ANKERL_UNORDERED_DENSE_VERSION_CONCAT(major, minor, patch) ANKERL_UNORDERED_DENSE_VERSION_CONCAT1(major, minor, patch)
+#define ANKERL_UNORDERED_DENSE_NAMESPACE   \
+    ANKERL_UNORDERED_DENSE_VERSION_CONCAT( \
+        ANKERL_UNORDERED_DENSE_VERSION_MAJOR, ANKERL_UNORDERED_DENSE_VERSION_MINOR, ANKERL_UNORDERED_DENSE_VERSION_PATCH)
+
 #if defined(_MSVC_LANG)
 #    define ANKERL_UNORDERED_DENSE_CPP_VERSION _MSVC_LANG
 #else
@@ -90,6 +97,7 @@
 #    endif
 
 namespace ankerl::unordered_dense {
+inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 
 // hash ///////////////////////////////////////////////////////////////////////
 
@@ -1347,6 +1355,7 @@ using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_alloc
 // deduction guides for alias templates are only possible since C++20
 // see https://en.cppreference.com/w/cpp/language/class_template_argument_deduction
 
+} // namespace ANKERL_UNORDERED_DENSE_NAMESPACE
 } // namespace ankerl::unordered_dense
 
 // std extensions /////////////////////////////////////////////////////////////

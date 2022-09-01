@@ -54,6 +54,7 @@ test_sources = [
     'unit/max.cpp',
     'unit/move_to_moved.cpp',
     'unit/multiple_apis.cpp',
+    'unit/namespace.cpp',
     'unit/not_copyable.cpp',
     'unit/not_moveable.cpp',
     'unit/pmr.cpp',
