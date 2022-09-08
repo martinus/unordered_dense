@@ -5,6 +5,7 @@
 
 #include <cstddef>     // for size_t
 #include <cstdint>     // for uint64_t
+#include <stdexcept>   // thrown in no_null_memory_resource
 #include <string_view> // for string_view
 #include <utility>     // for move
 #include <vector>      // for vector
@@ -21,6 +22,26 @@ class logging_memory_resource : public std::pmr::memory_resource {
 
     void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
         fmt::print("- {} bytes, {} alignment, {} ptr\n", bytes, alignment, p);
+        return std::pmr::new_delete_resource()->deallocate(p, bytes, alignment);
+    }
+
+    [[nodiscard]] auto do_is_equal(const std::pmr::memory_resource& other) const noexcept -> bool override {
+        return this == &other;
+    }
+};
+
+class no_null_memory_resource : public std::pmr::memory_resource {
+    auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
+        if (bytes == 0) {
+            throw std::runtime_error("no_null_memory_resource::do_allocate should not do_allocate 0");
+        }
+        return std::pmr::new_delete_resource()->allocate(bytes, alignment);
+    }
+
+    void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
+        if (nullptr == p || 0U == bytes || 0U == alignment) {
+            throw std::runtime_error("no_null_memory_resource::do_deallocate should not deallocate with any 0 value");
+        }
         return std::pmr::new_delete_resource()->deallocate(p, bytes, alignment);
     }
 
@@ -97,6 +118,16 @@ TEST_CASE("pmr") {
         REQUIRE(alloc.resource() == &mr);
     }
     REQUIRE(mr.current() == 0);
+}
+
+TEST_CASE("pmr_no_null") {
+    auto mr = no_null_memory_resource();
+    {
+        auto map = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr);
+        for (size_t i = 0; i < 1; ++i) {
+            map[i] = i;
+        }
+    }
 }
 
 void show([[maybe_unused]] track_peak_memory_resource const& mr, [[maybe_unused]] std::string_view name) {
