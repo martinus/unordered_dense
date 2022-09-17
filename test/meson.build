@@ -54,6 +54,7 @@ test_sources = [
     'unit/maps_of_maps.cpp',
     'unit/max.cpp',
     'unit/move_to_moved.cpp',
+    'unit/multi_wyhash.cpp',
     'unit/multiple_apis.cpp',
     'unit/namespace.cpp',
     'unit/not_copyable.cpp',
