@@ -28,6 +28,7 @@ test_sources = [
     'unit/ctors.cpp',
     'unit/custom_container_boost.cpp',
     'unit/custom_container.cpp',
+    'unit/custom_hash.cpp',
     'unit/deduction_guides.cpp',
     'unit/diamond.cpp',
     'unit/empty.cpp',
