@@ -17,11 +17,12 @@ The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` ar
   - [2.1. Installing using cmake](#21-installing-using-cmake)
 - [3. Extensions](#3-extensions)
   - [3.1. Hash](#31-hash)
-    - [A Simple Hash](#a-simple-hash)
-    - [A High Quality Hash](#a-high-quality-hash)
-    - [Specialize `ankerl::unordered_dense::hash`](#specialize-ankerlunordered_densehash)
-    - [Automatic Fallback to `std::hash`](#automatic-fallback-to-stdhash)
-    - [Hash the Whole Memory](#hash-the-whole-memory)
+    - [3.1.1. Simple Hash](#311-simple-hash)
+    - [3.1.2. High Quality Hash](#312-high-quality-hash)
+    - [3.1.3. Specialize `ankerl::unordered_dense::hash`](#313-specialize-ankerlunordered_densehash)
+    - [3.1.4. Heterogenous lookup using `is_transparent`](#314-heterogenous-lookup-using-is_transparent)
+    - [3.1.5. Automatic Fallback to `std::hash`](#315-automatic-fallback-to-stdhash)
+    - [3.1.6. Hash the Whole Memory](#316-hash-the-whole-memory)
   - [3.2. Container API](#32-container-api)
     - [3.2.1. `auto extract() && -> value_container_type`](#321-auto-extract----value_container_type)
     - [3.2.2. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#322-nodiscard-auto-values-const-noexcept---value_container_type-const)
@@ -97,7 +98,7 @@ This is the cases for the specializations `bool`, `char`, `signed char`, `unsign
 
 Hashes that do not contain such a marker are assumed to be of bad quality and receive an additional mixing step inside the map/set implementation.
 
-#### A Simple Hash
+#### 3.1.1. Simple Hash
 
 Consider a simple custom key type:
 
@@ -128,7 +129,7 @@ auto ids = ankerl::unordered_dense::set<id, custom_hash_simple>();
 
 Since `custom_hash_simple` doesn't have a `using is_avalanching = void;` marker it is considered to be of bad quality and additional mixing of `x.value` is automatically provided inside the set.
 
-#### A High Quality Hash
+#### 3.1.2. High Quality Hash
 
 Back to the `id` example, we can easily implement a higher quality hash:
 
@@ -145,7 +146,7 @@ struct custom_hash_avalanching {
 We know `wyhash::hash` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
 
 
-#### Specialize `ankerl::unordered_dense::hash`
+#### 3.1.3. Specialize `ankerl::unordered_dense::hash`
 
 Instead of creating a new class you can also specialize `ankerl::unordered_dense::hash`:
 
@@ -160,12 +161,47 @@ struct ankerl::unordered_dense::hash<id> {
 };
 ```
 
-#### Automatic Fallback to `std::hash`
+#### 3.1.4. Heterogenous lookup using `is_transparent`
+
+This map/set supports heterogenous lookup as described in [P1690R1
+Refinement Proposal for P0919 Heterogeneous lookup for unordered containers](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1690r1.html). This enables calls to hash and equal without converting to the key type. For this to work, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
+
+Here is a sample implementation for multiple string types:
+
+```cpp
+struct string_hash {
+    using is_transparent = void; // enable heterogenous lookup
+    using is_avalanching = void; // mark class as high quality avalanching hash
+
+    [[nodiscard]] auto operator()(const char* str) const noexcept -> uint64_t {
+        return ankerl::unordered_dense::hash<std::string_view>{}(str);
+    }
+
+    [[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t {
+        return ankerl::unordered_dense::hash<std::string_view>{}(str);
+    }
+
+    [[nodiscard]] auto operator()(std::string const& str) const noexcept -> uint64_t {
+        return ankerl::unordered_dense::hash<std::string_view>{}(str);
+    }
+};
+```
+
+To make use of this hash you'll need to specify it as a type, and also a `key_equal` with `is_transparent` like [std::equal_to<>](https://en.cppreference.com/w/cpp/utility/functional/equal_to_void):
+
+```cpp
+auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+```
+
+For more information see the examples in `test/unit/transparent.cpp`.
+
+
+#### 3.1.5. Automatic Fallback to `std::hash`
 
 When an implementation for `std::hash` of a custom type is available, this is automatically used and assumed to be of bad quality (thus `std::hash` is used, but an additional mixing step is performed).
 
 
-#### Hash the Whole Memory
+#### 3.1.6. Hash the Whole Memory
 
 When the type [has a unique object representation](https://en.cppreference.com/w/cpp/types/has_unique_object_representations) (no padding, trivially copyable), one can just hash the object's memory. Consider a simple class
 
