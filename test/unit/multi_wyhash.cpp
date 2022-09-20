@@ -121,12 +121,22 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
+[[maybe_unused]] [[nodiscard]] static inline auto hash64(uint64_t const* key, size_t s) -> uint64_t {
+    static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f), UINT64_C(0xe7037ed1a0b428db)};
+
+    auto seed = secret[0];
+    for (size_t i = 0; i < s; ++i) {
+        seed = mix(key[i] ^ secret[1], seed);
+    }
+    return mix(s ^ secret[1], seed);
+}
+
 } // namespace wyhash
 
 template <typename... Args>
 auto hash_multi(Args&&... args) -> uint64_t {
     auto ary = std::array<uint64_t, sizeof...(args)>{static_cast<uint64_t>(args)...};
-    return wyhash::hash(ary.data(), ary.size() * sizeof(uint64_t));
+    return wyhash::hash64(ary.data(), ary.size());
 }
 
 TEST_CASE("wyhash_multiarg") {
