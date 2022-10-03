@@ -21,6 +21,11 @@ file_pattern_count = [
         f"{root}/CMakeLists.txt",
         r"^\s+VERSION (\d+)\.(\d+)\.(\d+)\n",
         1),
+    (
+        f"{root}/test/unit/namespace.cpp",
+        r"unordered_dense::v(\d+)_(\d+)_(\d+)",
+        3
+    )
 ]
 
 # let's parse the reference from svector.h
