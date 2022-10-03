@@ -163,25 +163,18 @@ struct ankerl::unordered_dense::hash<id> {
 
 #### 3.1.4. Heterogenous lookup using `is_transparent`
 
-This map/set supports heterogenous lookup as described in [P1690R1
-Refinement Proposal for P0919 Heterogeneous lookup for unordered containers](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1690r1.html). This enables calls to hash and equal without converting to the key type. For this to work, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
+This map/set supports heterogenous lookup as described in [P2363 Extending associative containers with the remaining heterogeneous overloads](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html) which is [targeted for C++26](https://wg21.link/p2077r2). This has overloads for `find`, `count`, `contains`, `equal_range` (see [P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)), `erase` (see [P2077R2](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2077r2.html)), and  `try_emplace`, `insert_or_assign`, `operator[]`, `at`, and `insert` & `emplace` for sets (see [P2363R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html)).
 
-Here is a sample implementation for multiple string types:
+For heterogenous lookup to take affect, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
+
+Here is an example implementation that's usable with any string types that is convertible to `std::string_view` (e.g. `char const*` and `std::string`):
 
 ```cpp
 struct string_hash {
     using is_transparent = void; // enable heterogenous lookup
     using is_avalanching = void; // mark class as high quality avalanching hash
 
-    [[nodiscard]] auto operator()(const char* str) const noexcept -> uint64_t {
-        return ankerl::unordered_dense::hash<std::string_view>{}(str);
-    }
-
     [[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t {
-        return ankerl::unordered_dense::hash<std::string_view>{}(str);
-    }
-
-    [[nodiscard]] auto operator()(std::string const& str) const noexcept -> uint64_t {
         return ankerl::unordered_dense::hash<std::string_view>{}(str);
     }
 };
