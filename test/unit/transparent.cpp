@@ -78,7 +78,7 @@ public:
 namespace docs {
 
 struct string_hash {
-    using is_transparent = void; // enable heterogenous lookup
+    using is_transparent = void; // enable heterogeneous lookup
     using is_avalanching = void; // mark class as high quality avalanching hash
 
     [[nodiscard]] auto operator()(const char* str) const noexcept -> uint64_t {
@@ -372,7 +372,7 @@ TEST_CASE("transparent_set_emplace_not") {
 }
 
 struct string_hash_simple {
-    using is_transparent = void; // enable heterogenous lookup
+    using is_transparent = void; // enable heterogeneous lookup
     using is_avalanching = void; // mark class as high quality avalanching hash
 
     [[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t {

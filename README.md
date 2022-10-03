@@ -20,7 +20,7 @@ The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` ar
     - [3.1.1. Simple Hash](#311-simple-hash)
     - [3.1.2. High Quality Hash](#312-high-quality-hash)
     - [3.1.3. Specialize `ankerl::unordered_dense::hash`](#313-specialize-ankerlunordered_densehash)
-    - [3.1.4. Heterogenous lookup using `is_transparent`](#314-heterogenous-lookup-using-is_transparent)
+    - [3.1.4. Heterogeneous Overloads using `is_transparent`](#314-heterogeneous-overloads-using-is_transparent)
     - [3.1.5. Automatic Fallback to `std::hash`](#315-automatic-fallback-to-stdhash)
     - [3.1.6. Hash the Whole Memory](#316-hash-the-whole-memory)
   - [3.2. Container API](#32-container-api)
@@ -161,17 +161,17 @@ struct ankerl::unordered_dense::hash<id> {
 };
 ```
 
-#### 3.1.4. Heterogenous lookup using `is_transparent`
+#### 3.1.4. Heterogeneous Overloads using `is_transparent`
 
-This map/set supports heterogenous lookup as described in [P2363 Extending associative containers with the remaining heterogeneous overloads](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html) which is [targeted for C++26](https://wg21.link/p2077r2). This has overloads for `find`, `count`, `contains`, `equal_range` (see [P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)), `erase` (see [P2077R2](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2077r2.html)), and  `try_emplace`, `insert_or_assign`, `operator[]`, `at`, and `insert` & `emplace` for sets (see [P2363R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html)).
+This map/set supports heterogeneous overloads as described in [P2363 Extending associative containers with the remaining heterogeneous overloads](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html) which is [targeted for C++26](https://wg21.link/p2077r2). This has overloads for `find`, `count`, `contains`, `equal_range` (see [P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)), `erase` (see [P2077R2](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2077r2.html)), and  `try_emplace`, `insert_or_assign`, `operator[]`, `at`, and `insert` & `emplace` for sets (see [P2363R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html)).
 
-For heterogenous lookup to take affect, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
+For heterogeneous overloads to take affect, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
 
 Here is an example implementation that's usable with any string types that is convertible to `std::string_view` (e.g. `char const*` and `std::string`):
 
 ```cpp
 struct string_hash {
-    using is_transparent = void; // enable heterogenous lookup
+    using is_transparent = void; // enable heterogeneous overloads
     using is_avalanching = void; // mark class as high quality avalanching hash
 
     [[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t {
