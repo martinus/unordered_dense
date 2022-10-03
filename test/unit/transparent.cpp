@@ -370,3 +370,39 @@ TEST_CASE("transparent_set_emplace_not") {
     set.emplace("abcdefg");
     check(__LINE__, set, 0, 0, 2);
 }
+
+struct string_hash_simple {
+    using is_transparent = void; // enable heterogenous lookup
+    using is_avalanching = void; // mark class as high quality avalanching hash
+
+    [[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t {
+        return ankerl::unordered_dense::hash<std::string_view>{}(str);
+    }
+};
+
+TEST_CASE("transparent_find_simple") {
+    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash_simple, std::equal_to<>>();
+    map.try_emplace("hello", 1);
+    auto it = map.find("huh");
+    REQUIRE(it == map.end());
+    it = map.find("hello");
+    REQUIRE(it != map.end());
+
+    auto cit = std::as_const(map).find("huh");
+    REQUIRE(cit == map.end());
+    REQUIRE(cit == map.cend());
+    cit = std::as_const(map).find("hello");
+    REQUIRE(cit != map.end());
+
+    // string_view
+    it = map.find("huh"sv);
+    REQUIRE(it == map.end());
+    it = map.find("hello"sv);
+    REQUIRE(it != map.end());
+
+    // string
+    it = map.find("huh"s);
+    REQUIRE(it == map.end());
+    it = map.find("hello"s);
+    REQUIRE(it != map.end());
+}
