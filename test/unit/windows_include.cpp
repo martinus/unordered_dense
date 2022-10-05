@@ -18,29 +18,29 @@ TEST_CASE("unordered_dense_with_windows_h") {
     auto map = map_t();
 
     {
-        auto key = size_t(1);
+        auto key = size_t{1};
         auto it = map.try_emplace(counter::obj(key, counts), counter::obj(key, counts)).first;
         REQUIRE(it != map.end());
         REQUIRE(it->first.get() == key);
     }
     {
-        auto key = size_t(2);
+        auto key = size_t{2};
         map.emplace(std::piecewise_construct, std::forward_as_tuple(key, counts), std::forward_as_tuple(key + 77, counts));
     }
     {
-        auto key = size_t(3);
+        auto key = size_t{3};
         map[counter::obj(key, counts)] = counter::obj(key + 123, counts);
     }
     {
-        auto key = size_t(4);
+        auto key = size_t{4};
         map.insert(std::pair<counter::obj, counter::obj>(counter::obj(key, counts), counter::obj(key, counts)));
     }
     {
-        auto key = size_t(5);
+        auto key = size_t{5};
         map.insert_or_assign(counter::obj(key, counts), counter::obj(key + 1, counts));
     }
     {
-        auto key = size_t(6);
+        auto key = size_t{6};
         map.erase(counter::obj(key, counts));
     }
     { map = map_t{}; }
@@ -50,15 +50,15 @@ TEST_CASE("unordered_dense_with_windows_h") {
     }
     { map.clear(); }
     {
-        auto s = size_t(7);
+        auto s = size_t{7};
         map.rehash(s);
     }
     {
-        auto s = size_t(8);
+        auto s = size_t{8};
         map.reserve(s);
     }
     {
-        auto key = size_t(9);
+        auto key = size_t{9};
         auto it = map.find(counter::obj(key, counts));
         auto d = std::distance(map.begin(), it);
         REQUIRE(0 <= d);

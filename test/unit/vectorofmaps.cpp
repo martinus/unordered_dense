@@ -1,9 +1,9 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
-#include <third-party/nanobench.h>
+#include <app/doctest.h>
 
-#include <doctest.h>
+#include <third-party/nanobench.h>
 
 #include <algorithm> // for max
 #include <cstddef>   // for size_t
@@ -20,11 +20,10 @@ void fill(counter& counts, Map& map, ankerl::nanobench::Rng& rng) {
     }
 }
 
-TEST_CASE("vectormap") {
+TEST_CASE_MAP("vectormap", counter::obj, counter::obj) {
     auto counts = counter();
     INFO(counts);
 
-    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
     auto rng = ankerl::nanobench::Rng(32154);
     {
         counts("begin");

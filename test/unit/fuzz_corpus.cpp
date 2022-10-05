@@ -78,18 +78,42 @@ void run_corpus(std::string_view name, Op op) {
 
 } // namespace
 
-TEST_CASE("fuzz_api" * doctest::test_suite("fuzz") * doctest::skip(true)) {
-    run_corpus("api", fuzz::api);
+TEST_CASE("fuzz_api_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("api", fuzz::api_map);
+}
+TEST_CASE("fuzz_api_segmented_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("api", fuzz::api_segmented_map);
+}
+TEST_CASE("fuzz_api_deque_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("api", fuzz::api_deque_map);
 }
 
-TEST_CASE("fuzz_replace" * doctest::test_suite("fuzz") * doctest::skip(true)) {
-    run_corpus("replace", fuzz::replace);
+TEST_CASE("fuzz_replace_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("replace", fuzz::replace_map);
+}
+TEST_CASE("fuzz_replace_segmented_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("replace", fuzz::replace_segmented_map);
+}
+TEST_CASE("fuzz_replace_deque_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("replace", fuzz::replace_deque_map);
 }
 
-TEST_CASE("fuzz_insert_erase" * doctest::test_suite("fuzz") * doctest::skip(true)) {
-    run_corpus("insert_erase", fuzz::insert_erase);
+TEST_CASE("fuzz_insert_erase_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("insert_erase", fuzz::insert_erase_map);
+}
+TEST_CASE("fuzz_insert_erase_segmented_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("insert_erase", fuzz::insert_erase_segmented_map);
+}
+TEST_CASE("fuzz_insert_erase_deque_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("insert_erase", fuzz::insert_erase_deque_map);
 }
 
-TEST_CASE("fuzz_string" * doctest::test_suite("fuzz") * doctest::skip(true)) {
-    run_corpus("string", fuzz::string);
+TEST_CASE("fuzz_string_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("string", fuzz::string_map);
+}
+TEST_CASE("fuzz_string_segmented_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("string", fuzz::string_segmented_map);
+}
+TEST_CASE("fuzz_string_deque_map" * doctest::test_suite("fuzz") * doctest::skip(true)) {
+    run_corpus("string", fuzz::string_deque_map);
 }

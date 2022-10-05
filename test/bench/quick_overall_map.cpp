@@ -9,6 +9,7 @@
 #include <chrono>        // for duration, operator-, high_resolu...
 #include <cstdint>       // for uint64_t
 #include <cstring>       // for size_t, memcpy
+#include <deque>         // for deque
 #include <string>        // for string, basic_string, operator==
 #include <string_view>   // for string_view, literals
 #include <unordered_map> // for unordered_map, operator!=
@@ -67,7 +68,7 @@ void bench_random_insert_erase(ankerl::nanobench::Bench* bench, std::string_view
 // iterate
 template <typename Map>
 void bench_iterate(ankerl::nanobench::Bench* bench, std::string_view name) {
-    size_t num_elements = 5000;
+    size_t const num_elements = 5000;
 
     auto key = init_key<typename Map::key_type>();
 
@@ -197,6 +198,14 @@ TEST_CASE("bench_quick_overall_rhn" * doctest::test_suite("bench") * doctest::sk
 
 #endif
 
+using hash_t = ankerl::unordered_dense::hash<uint64_t>;
+using eq_t = std::equal_to<uint64_t>;
+using pair_t = std::pair<uint64_t, size_t>;
+
+using hash_str_t = ankerl::unordered_dense::hash<std::string>;
+using eq_str_t = std::equal_to<std::string>;
+using pair_str_t = std::pair<std::string, size_t>;
+
 TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
     bench_all<std::unordered_map<uint64_t, size_t>>(&bench, "std::unordered_map<uint64_t, size_t>");
@@ -207,30 +216,59 @@ TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::sk
 TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
     // bench.minEpochTime(1s);
-    bench_all<ankerl::unordered_dense::map<uint64_t, size_t>>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
-    bench_all<ankerl::unordered_dense::map<std::string, size_t, ankerl::unordered_dense::hash<std::string>>>(
-        &bench, "ankerl::unordered_dense::map<std::string, size_t>");
+
+    using map_t = ankerl::unordered_dense::map<uint64_t, size_t>;
+    bench_all<map_t>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
+
+    using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t>;
+    bench_all<map_str_t>(&bench, "ankerl::unordered_dense::map<std::string, size_t>");
+
     fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
 
-TEST_CASE("bench_quick_overall_udm_bigbucket" * doctest::test_suite("bench") * doctest::skip()) {
+TEST_CASE("bench_quick_overall_segmented_vector" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
     // bench.minEpochTime(1s);
-    bench_all<ankerl::unordered_dense::map<uint64_t,
-                                           size_t,
-                                           ankerl::unordered_dense::hash<uint64_t>,
-                                           std::equal_to<uint64_t>,
-                                           std::allocator<std::pair<uint64_t, size_t>>,
-                                           ankerl::unordered_dense::bucket_type::big>>(
-        &bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
+    using vec_t = ankerl::unordered_dense::segmented_vector<pair_t>;
+    using map_t = ankerl::unordered_dense::segmented_map<uint64_t, size_t, hash_t, eq_t, vec_t>;
+    bench_all<map_t>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t> segmented_vector");
 
-    bench_all<ankerl::unordered_dense::map<std::string,
-                                           size_t,
-                                           ankerl::unordered_dense::hash<std::string>,
-                                           std::equal_to<std::string>,
-                                           std::allocator<std::pair<std::string, size_t>>,
-                                           ankerl::unordered_dense::bucket_type::big>>(
-        &bench, "ankerl::unordered_dense::map<std::string, size_t>");
+    using vec_str_t = ankerl::unordered_dense::segmented_vector<pair_str_t>;
+    using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t, eq_str_t, vec_str_t>;
+    bench_all<map_str_t>(&bench, "ankerl::unordered_dense::map<std::string, size_t> segmented_vector");
+
+    fmt::print("{} bench_quick_overall_segmented_vector\n", geomean1(bench));
+}
+
+TEST_CASE("bench_quick_overall_deque" * doctest::test_suite("bench") * doctest::skip()) {
+    ankerl::nanobench::Bench bench;
+    // bench.minEpochTime(1s);
+
+    using vec_t = std::deque<pair_t>;
+    using map_t = ankerl::unordered_dense::map<uint64_t, size_t, hash_t, eq_t, vec_t>;
+    bench_all<map_t>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t> deque");
+
+    using vec_str_t = std::deque<pair_str_t>;
+    using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t, eq_str_t, vec_str_t>;
+    bench_all<map_str_t>(&bench, "ankerl::unordered_dense::map<std::string, size_t> deque");
+
+    fmt::print("{} bench_quick_overall_deque\n", geomean1(bench));
+}
+
+TEST_CASE("bench_quick_overall_udm_bigbucket" * doctest::test_suite("bench") * doctest::skip()) {
+    using bucket_t = ankerl::unordered_dense::bucket_type::big;
+
+    ankerl::nanobench::Bench bench;
+    // bench.minEpochTime(1s);
+
+    using alloc_t = std::allocator<pair_t>;
+    using map_t = ankerl::unordered_dense::map<uint64_t, size_t, hash_t, eq_t, alloc_t, bucket_t>;
+    bench_all<map_t>(&bench, "ankerl::unordered_dense::map<uint64_t, size_t>");
+
+    using alloc_str_t = std::allocator<pair_str_t>;
+    using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t, eq_str_t, alloc_str_t, bucket_t>;
+    bench_all<map_str_t>(&bench, "ankerl::unordered_dense::map<std::string, size_t>");
+
     fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
 

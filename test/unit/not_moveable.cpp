@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <tuple>   // for forward_as_tuple
@@ -27,11 +27,11 @@ private:
     size_t m_mData{};
 };
 
+TYPE_TO_STRING_MAP(size_t, no_move);
+
 // doesn't work with robin_hood::unordered_flat_map<size_t, NoMove> because not movable and not
 // copyable
-TEST_CASE("not_moveable") {
-    using map_t = ankerl::unordered_dense::map<size_t, no_move>;
-
+TEST_CASE_MAP("not_moveable", size_t, no_move) {
     // it's ok because it is movable.
     auto m = map_t();
     for (size_t i = 0; i < 100; ++i) {

@@ -1,10 +1,8 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
-using map_t = ankerl::unordered_dense::map<int, int>;
-
-TEST_CASE("empty_map_operations") {
+TEST_CASE_MAP("empty_map_operations", int, int) {
     map_t m;
 
     REQUIRE(m.end() == m.find(123));

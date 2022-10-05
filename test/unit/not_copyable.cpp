@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <tuple>   // for forward_as_tuple
@@ -28,9 +28,9 @@ private:
     size_t m_mData{};
 };
 
-TEST_CASE("not_copyable") {
-    using map_t = ankerl::unordered_dense::map<size_t, no_copy>;
+TYPE_TO_STRING_MAP(size_t, no_copy);
 
+TEST_CASE_MAP("not_copyable", size_t, no_copy) {
     // it's ok because it is movable.
     map_t m;
     for (size_t i = 0; i < 100; ++i) {

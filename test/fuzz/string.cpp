@@ -8,17 +8,19 @@
 #endif
 
 #include <cstdint>       // for uint8_t
+#include <deque>         // for deque
 #include <string>        // for string, basic_string, operator==
 #include <unordered_map> // for unordered_map, operator==, unord...
 #include <utility>       // for pair
 #include <vector>        // for vector
 
-namespace fuzz {
+namespace {
 
+template <typename Map>
 void string(uint8_t const* data, size_t size) {
     auto p = fuzz::provider(data, size);
 
-    auto ank = ankerl::unordered_dense::map<std::string, std::string>();
+    auto ank = Map();
     auto ref = std::unordered_map<std::string, std::string>();
 
     while (p.has_remaining_bytes()) {
@@ -46,12 +48,31 @@ void string(uint8_t const* data, size_t size) {
     REQUIRE(std::unordered_map(ank.begin(), ank.end()) == ref);
 }
 
+} // namespace
+
+namespace fuzz {
+
+void string_map(uint8_t const* data, size_t size) {
+    string<ankerl::unordered_dense::map<std::string, std::string>>(data, size);
+}
+
+void string_segmented_map(uint8_t const* data, size_t size) {
+    string<ankerl::unordered_dense::segmented_map<std::string, std::string>>(data, size);
+}
+void string_deque_map(uint8_t const* data, size_t size) {
+    string<ankerl::unordered_dense::map<std::string,
+                                        std::string,
+                                        ankerl::unordered_dense::hash<std::string>,
+                                        std::equal_to<std::string>,
+                                        std::deque<std::pair<std::string, std::string>>>>(data, size);
+}
+
 } // namespace fuzz
 
 #if defined(FUZZ)
 // NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
-    fuzz::string(data, size);
+    fuzz::string_map(data, size);
     return 0;
 }
 #endif

@@ -1,13 +1,13 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <string>  // for string, operator==, allocator
 #include <utility> // for pair
 #include <vector>  // for vector
 
-TEST_CASE("insert_or_assign") {
-    auto map = ankerl::unordered_dense::map<std::string, std::string>();
+TEST_CASE_MAP("insert_or_assign", std::string, std::string) {
+    auto map = map_t();
 
     auto ret = map.insert_or_assign("a", "b");
     REQUIRE(ret.second);

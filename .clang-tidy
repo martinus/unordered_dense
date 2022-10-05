@@ -1,20 +1,18 @@
 ---
-Checks: '*,
-
-    -altera*,
-    -fuchsia*,
-    -llvmlibc*,
-
-    -bugprone-easily-swappable-parameters,
-    -cert-err58-cpp,
-    -cppcoreguidelines-avoid-magic-numbers,
-    -cppcoreguidelines-pro-bounds-constant-array-index,
-    -cppcoreguidelines-pro-bounds-pointer-arithmetic,
-    -llvm-header-guard,
-    -readability-function-cognitive-complexity,
-    -readability-identifier-length,
-    -readability-magic-numbers,
-    '
+Checks: '*
+  -altera*
+  -bugprone-easily-swappable-parameters
+  -cert-err58-cpp
+  -cppcoreguidelines-avoid-magic-numbers
+  -cppcoreguidelines-pro-bounds-constant-array-index
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic
+  -fuchsia*
+  -llvm-header-guard
+  -llvmlibc*
+  -readability-function-cognitive-complexity
+  -readability-identifier-length
+  -readability-magic-numbers
+  '
 WarningsAsErrors: '*'
 HeaderFilterRegex: ''
 CheckOptions:

@@ -1,19 +1,18 @@
 #include <ankerl/unordered_dense.h>
 
 #define ENABLE_LOG_LINE
+#include <app/doctest.h>
 #include <app/print.h>
-
-#include <doctest.h>
 
 #include <type_traits> // for remove_reference, remove_referen...
 #include <utility>     // for move
 
-TEST_CASE("move_to_moved") {
-    auto a = ankerl::unordered_dense::map<int, int>();
+TEST_CASE_MAP("move_to_moved", int, int) {
+    auto a = map_t();
     a[1] = 2;
     auto moved = std::move(a);
 
-    auto c = ankerl::unordered_dense::map<int, int>();
+    auto c = map_t();
     c[3] = 4;
 
     // assign to a moved map

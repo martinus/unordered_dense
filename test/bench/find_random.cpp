@@ -3,8 +3,8 @@
 #include <app/name_of_type.h>      // for name_of_type
 #include <third-party/nanobench.h> // for Rng
 
-#include <doctest.h>  // for TestCase, skip, ResultBuilder
-#include <fmt/core.h> // for format, print
+#include <app/doctest.h> // for TestCase, skip, ResultBuilder
+#include <fmt/core.h>    // for format, print
 
 #include <algorithm>     // for fill_n
 #include <array>         // for array
@@ -17,11 +17,11 @@ template <typename Map>
 void bench() {
     static constexpr size_t num_total = 4;
 
-    auto requiredChecksum = std::array{200000, 25198620, 50197240, 75195862, 100194482};
+    auto required_checksum = std::array{200000, 25198620, 50197240, 75195862, 100194482};
     auto total = std::chrono::steady_clock::duration();
 
-    for (size_t numFound = 0; numFound < 5; ++numFound) {
-        auto title = fmt::format("random find {}% success {}", numFound * 100 / num_total, name_of_type<Map>());
+    for (size_t num_found = 0; num_found < 5; ++num_found) {
+        auto title = fmt::format("random find {}% success {}", num_found * 100 / num_total, name_of_type<Map>());
         auto rng = ankerl::nanobench::Rng(123);
 
         size_t checksum = 0;
@@ -29,7 +29,7 @@ void bench() {
         using ary_t = std::array<bool, num_total>;
         auto insert_random = ary_t();
         insert_random.fill(true);
-        for (typename ary_t::size_type i = 0; i < numFound; ++i) {
+        for (typename ary_t::size_type i = 0; i < num_found; ++i) {
             insert_random[i] = false;
         }
 
@@ -49,7 +49,7 @@ void bench() {
             do {
                 // insert numTotal entries: some random, some sequential.
                 rng.shuffle(insert_random);
-                for (bool is_random_to_insert : insert_random) {
+                for (bool const is_random_to_insert : insert_random) {
                     auto val = another_unrelated_rng();
                     if (is_random_to_insert) {
                         map[static_cast<size_t>(rng())] = static_cast<size_t>(1);
@@ -76,7 +76,7 @@ void bench() {
             total += after - before;
             fmt::print("{}s {}\n", std::chrono::duration<double>(after - before).count(), title);
         }
-        REQUIRE(checksum == requiredChecksum[numFound]);
+        REQUIRE(checksum == required_checksum[num_found]);
     }
     fmt::print("{}s total\n", std::chrono::duration<double>(total).count());
 }
@@ -96,6 +96,6 @@ TEST_CASE("bench_find_random_rh" * doctest::test_suite("bench") * doctest::skip(
 #endif
 
 // 8.87
-TEST_CASE("bench_find_random_udm" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<ankerl::unordered_dense::map<size_t, size_t>>();
+TEST_CASE_MAP("bench_find_random_udm" * doctest::test_suite("bench") * doctest::skip(), size_t, size_t) {
+    bench<map_t>();
 }

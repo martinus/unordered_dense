@@ -9,6 +9,7 @@
 
 #include <cstddef>       // for size_t
 #include <cstdint>       // for uint64_t, uint8_t
+#include <deque>         // for deque
 #include <functional>    // for equal_to
 #include <iterator>      // for __iter_val_t, __iter_key_t
 #include <unordered_map> // for unordered_map, operator==, hash
@@ -25,14 +26,11 @@ struct dummy_hash {
     }
 };
 
-} // namespace
-
-namespace fuzz {
-
+template <typename Map>
 void insert_erase(uint8_t const* data, size_t size) {
     auto p = fuzz::provider(data, size);
 
-    auto ank = ankerl::unordered_dense::map<uint64_t, uint64_t, dummy_hash>();
+    auto ank = Map();
     auto ref = std::unordered_map<uint64_t, uint64_t>();
 
     auto c = uint64_t();
@@ -50,12 +48,29 @@ void insert_erase(uint8_t const* data, size_t size) {
     REQUIRE(cpy == ref);
 }
 
+} // namespace
+
+namespace fuzz {
+
+void insert_erase_map(uint8_t const* data, size_t size) {
+    insert_erase<ankerl::unordered_dense::map<uint64_t, uint64_t, dummy_hash>>(data, size);
+}
+void insert_erase_segmented_map(uint8_t const* data, size_t size) {
+    insert_erase<ankerl::unordered_dense::segmented_map<uint64_t, uint64_t, dummy_hash>>(data, size);
+}
+void insert_erase_deque_map(uint8_t const* data, size_t size) {
+    insert_erase<ankerl::unordered_dense::map<uint64_t,
+                                              uint64_t,
+                                              ankerl::unordered_dense::hash<uint64_t>,
+                                              std::equal_to<uint64_t>,
+                                              std::deque<std::pair<uint64_t, uint64_t>>>>(data, size);
+}
 } // namespace fuzz
 
 #if defined(FUZZ)
 // NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
-    fuzz::insert_erase(data, size);
+    fuzz::insert_erase_map(data, size);
     return 0;
 }
 #endif

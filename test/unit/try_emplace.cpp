@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <string>  // for allocator, string, operator==
@@ -22,8 +22,9 @@ private:
     std::size_t m_i;
 };
 
-TEST_CASE("try_emplace") {
-    using map_t = ankerl::unordered_dense::map<std::string, regular_type>;
+TYPE_TO_STRING_MAP(std::string, regular_type);
+
+TEST_CASE_MAP("try_emplace", std::string, regular_type) {
     map_t map;
     auto ret = map.try_emplace("a", 1U, "b");
     REQUIRE(ret.second);

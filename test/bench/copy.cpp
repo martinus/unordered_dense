@@ -2,8 +2,8 @@
 
 #include <third-party/nanobench.h> // for Rng, Bench
 
-#include <doctest.h>  // for TestCase, skip, TEST_CASE, test_...
-#include <fmt/core.h> // for format
+#include <app/doctest.h> // for TestCase, skip, TEST_CASE, test_...
+#include <fmt/core.h>    // for format
 
 #include <cstddef>       // for size_t
 #include <cstdint>       // for uint64_t
@@ -38,8 +38,8 @@ TEST_CASE("bench_copy_rhf" * doctest::test_suite("bench") * doctest::skip()) {
 
 #endif
 
-TEST_CASE("bench_copy_udm" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<ankerl::unordered_dense::map<uint64_t, uint64_t>>("ankerl::unordered_dense::map");
+TEST_CASE_MAP("bench_copy_udm" * doctest::test_suite("bench") * doctest::skip(), uint64_t, uint64_t) {
+    bench<map_t>("ankerl::unordered_dense::map");
 }
 
 TEST_CASE("bench_copy_std" * doctest::test_suite("bench") * doctest::skip()) {

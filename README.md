@@ -10,7 +10,9 @@
 
 A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
 
-The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` are (almost) drop-in replacements of `std::unordered_map` and `std::unordered_set`. While they don't have as strong iterator / reference stability guaranties, they are typically *much* faster. 
+The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` are (almost) drop-in replacements of `std::unordered_map` and `std::unordered_set`. While they don't have as strong iterator / reference stability guaranties, they are typically *much* faster.
+
+Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::unordered_dense::segmented_set` with lower peak memory usage.
 
 - [1. Overview](#1-overview)
 - [2. Installation](#2-installation)
@@ -257,13 +259,29 @@ The map/set supports two different bucket types. The default should be good for 
 * up to 2^63 = 9223372036854775808 elements.
 * 12 bytes overhead per bucket.
 
-## 4. Design
+## 4. `segmented_map` and `segmented_set`
+
+`ankerl::unordered_dense` provides a custom container implementation that has lower memory requirements than the default `std::vector`. Memory is not contiguous, but it can allocate segments without having to reallocate and move all the elements. In summary, this leads to
+
+* Much smoother memory usage, memory usage increases continuously.
+* No high peak memory usage.
+* Faster insertion because elements never need to be moved to new allocated blocks
+* Slightly slower indexing compared to `std::vector` because an additional indirection is needed.
+
+Here is a comparison against `absl::flat_hash_map` and the `ankerl::unordered_dense::map` when inserting 10 million entries
+![allocated memory](doc/allocated_memory.png)
+
+Abseil is fastest for this simple inserting test, taking a bit over 0.8 seconds. It's peak memory usage is about 430 MB. Note how the memory usage goes down after the last peak; when it goes down to ~290MB it has finished rehashing and could free the previously used memory block.
+
+`ankerl::unordered_dense::segmented_map` doesn't have these peaks, and instead has a smooth increase of memory usage. Note there are still sudden drops & increases in memory because the indexing data structure needs still needs to increase by a fixed factor. But due to holding the data in a separate container we are able to first free the old data structure, and then allocate a new, bigger indexing structure; thus we do not have peaks.
+
+## 5. Design
 
 The map/set has two data structures:
 * `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
 * An indexing structure (bucket array), which is a flat array with 8-byte buckets.
 
-### 4.1. Inserts
+### 5.1. Inserts
 
 Whenever an element is added it is `emplace_back` to the vector. The key is hashed, and an entry (bucket) is added at the
 corresponding location in the bucket array. The bucket has this structure:
@@ -283,12 +301,12 @@ Each bucket stores 3 things:
 This structure is especially designed for the collision resolution strategy robin-hood hashing with backward shift
 deletion.
 
-### 4.2. Lookups
+### 5.2. Lookups
 
 The key is hashed and the bucket array is searched if it has an entry at that location with that fingerprint. When found,
 the key in the data vector is compared, and when equal the value is returned.
 
-### 4.3. Removals
+### 5.3. Removals
 
 Since all data is stored in a vector, removals are a bit more complicated:
 

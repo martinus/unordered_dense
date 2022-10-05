@@ -1,15 +1,13 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
+#include <app/doctest.h>
 
-#include <doctest.h>
-
-TEST_CASE("replace") {
+TEST_CASE_MAP("replace", counter::obj, counter::obj) {
     auto counts = counter{};
     INFO(counts);
 
-    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
-    auto container = map_t::value_container_type{};
+    auto container = typename map_t::value_container_type{};
 
     for (size_t i = 0; i < 100; ++i) {
         container.emplace_back(counter::obj{i, counts}, counter::obj{i, counts});

@@ -3,31 +3,31 @@
 #define ENABLE_LOG_LINE
 #include <app/print.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <type_traits> // for remove_reference, remove_referen...
 #include <utility>     // for move
 #include <vector>      // for vector
 
-TEST_CASE("assign_to_moved") {
-    auto a = ankerl::unordered_dense::map<int, int>();
+TEST_CASE_MAP("assign_to_moved", int, int) {
+    auto a = map_t();
     a[1] = 2;
     auto moved = std::move(a);
     REQUIRE(moved.size() == 1U);
 
-    auto c = ankerl::unordered_dense::map<int, int>();
+    auto c = map_t();
     c[3] = 4;
 
     // assign to a moved map
     a = c;
 }
 
-TEST_CASE("move_to_moved") {
-    auto a = ankerl::unordered_dense::map<int, int>();
+TEST_CASE_MAP("move_to_moved", int, int) {
+    auto a = map_t();
     a[1] = 2;
     auto moved = std::move(a);
 
-    auto c = ankerl::unordered_dense::map<int, int>();
+    auto c = map_t();
     c[3] = 4;
 
     // assign to a moved map
@@ -38,11 +38,11 @@ TEST_CASE("move_to_moved") {
     REQUIRE(moved[6] == 7);
 }
 
-TEST_CASE("swap") {
+TEST_CASE_MAP("swap", int, int) {
     {
-        auto b = ankerl::unordered_dense::map<int, int>();
+        auto b = map_t();
         {
-            auto a = ankerl::unordered_dense::map<int, int>();
+            auto a = map_t();
             b[1] = 2;
 
             a.swap(b);
@@ -56,9 +56,9 @@ TEST_CASE("swap") {
     }
 
     {
-        auto a = ankerl::unordered_dense::map<int, int>();
+        auto a = map_t();
         {
-            auto b = ankerl::unordered_dense::map<int, int>();
+            auto b = map_t();
             b[1] = 2;
 
             a.swap(b);
@@ -72,9 +72,9 @@ TEST_CASE("swap") {
     }
 
     {
-        auto a = ankerl::unordered_dense::map<int, int>();
+        auto a = map_t();
         {
-            auto b = ankerl::unordered_dense::map<int, int>();
+            auto b = map_t();
             a.swap(b);
             REQUIRE(a.end() == a.find(1));
             REQUIRE(b.end() == b.find(1));

@@ -1,14 +1,15 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <memory>  // for operator!=, unique_ptr, make_unique
 #include <utility> // for move, pair
 #include <vector>  // for vector
 
-TEST_CASE("unique_ptr") {
-    using map_t = ankerl::unordered_dense::map<size_t, std::unique_ptr<int>>;
+TYPE_TO_STRING_MAP(size_t, std::unique_ptr<int>);
+
+TEST_CASE_MAP("unique_ptr", size_t, std::unique_ptr<int>) {
     map_t m;
     REQUIRE(m.end() == m.find(123));
     REQUIRE(m.end() == m.begin());
@@ -46,9 +47,7 @@ TEST_CASE("unique_ptr") {
     REQUIRE(m4.end() == m4.find(32));
 }
 
-TEST_CASE("unique_ptr_fill") {
-    using map_t = ankerl::unordered_dense::map<size_t, std::unique_ptr<int>>;
-
+TEST_CASE_MAP("unique_ptr_fill", size_t, std::unique_ptr<int>) {
     map_t m;
     for (int i = 0; i < 1000; ++i) {
         // m.emplace(i % 500, std::make_unique<int>(i));
