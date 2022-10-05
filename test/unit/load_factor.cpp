@@ -1,9 +1,9 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
-TEST_CASE("load_factor") {
-    auto m = ankerl::unordered_dense::map<int, int>();
+TEST_CASE_MAP("load_factor", int, int) {
+    auto m = map_t();
 
     REQUIRE(static_cast<double>(m.load_factor()) == doctest::Approx(0.0));
 

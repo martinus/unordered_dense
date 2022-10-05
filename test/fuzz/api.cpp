@@ -8,6 +8,7 @@
 #    include <doctest.h>
 #endif
 
+#include <deque>            // for deque
 #include <initializer_list> // for initializer_list
 #include <iterator>         // for distance, __iterator_traits<>::d...
 #include <new>              // for operator new
@@ -15,13 +16,14 @@
 #include <utility>          // for swap, pair, piecewise_construct
 #include <vector>           // for vector
 
-namespace fuzz {
+namespace {
 
+template <typename Map>
 void api(uint8_t const* data, size_t size) {
+    using map_t = Map;
     auto p = fuzz::provider(data, size);
     auto counts = counter();
 
-    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
     auto map = map_t();
     p.repeat_oneof(
         [&] {
@@ -120,10 +122,30 @@ void api(uint8_t const* data, size_t size) {
             new (&map) map_t();
         },
         [&] {
-            std::erase_if(map, [&](map_t::value_type const& /*v*/) {
+            std::erase_if(map, [&](typename map_t::value_type const& /*v*/) {
                 return p.integral<bool>();
             });
         });
+}
+
+} // namespace
+
+namespace fuzz {
+
+void api_map(uint8_t const* data, size_t size) {
+    api<ankerl::unordered_dense::map<counter::obj, counter::obj>>(data, size);
+}
+
+void api_segmented_map(uint8_t const* data, size_t size) {
+    api<ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>>(data, size);
+}
+
+void api_deque_map(uint8_t const* data, size_t size) {
+    api<ankerl::unordered_dense::map<counter::obj,
+                                     counter::obj,
+                                     ankerl::unordered_dense::hash<counter::obj>,
+                                     std::equal_to<counter::obj>,
+                                     std::deque<std::pair<counter::obj, counter::obj>>>>(data, size);
 }
 
 } // namespace fuzz
@@ -131,7 +153,7 @@ void api(uint8_t const* data, size_t size) {
 #if defined(FUZZ)
 // NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
-    fuzz::api(data, size);
+    fuzz::api_segmented_map(data, size);
     return 0;
 }
 #endif

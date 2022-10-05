@@ -8,25 +8,27 @@
 #    include <doctest.h>
 #endif
 
+#include <deque>
 #include <unordered_map>
 
-namespace fuzz {
+namespace {
 
+template <typename Map>
 void replace(uint8_t const* data, size_t size) {
     auto p = fuzz::provider{data, size};
 
     auto counts = counter{};
 
-    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
+    using map_t = Map;
 
     auto initial_size = p.bounded<size_t>(100);
-    auto map = ankerl::unordered_dense::map<counter::obj, counter::obj>{};
+    auto map = map_t{};
     for (size_t i = 0; i < initial_size; ++i) {
         map.try_emplace(counter::obj{i, counts}, counter::obj{i, counts});
     }
 
     // create a container with data in it provided by fuzzer
-    auto container = map_t::value_container_type{};
+    auto container = typename map_t::value_container_type{};
     auto comparison_container = std::vector<std::pair<size_t, size_t>>();
     auto v = size_t{};
     while (p.has_remaining_bytes()) {
@@ -63,12 +65,32 @@ void replace(uint8_t const* data, size_t size) {
     }
 }
 
+} // namespace
+
+namespace fuzz {
+
+void replace_map(uint8_t const* data, size_t size) {
+    replace<ankerl::unordered_dense::map<counter::obj, counter::obj>>(data, size);
+}
+
+void replace_segmented_map(uint8_t const* data, size_t size) {
+    replace<ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>>(data, size);
+}
+
+void replace_deque_map(uint8_t const* data, size_t size) {
+    replace<ankerl::unordered_dense::map<counter::obj,
+                                         counter::obj,
+                                         ankerl::unordered_dense::hash<counter::obj>,
+                                         std::equal_to<counter::obj>,
+                                         std::deque<std::pair<counter::obj, counter::obj>>>>(data, size);
+}
+
 } // namespace fuzz
 
 #if defined(FUZZ)
 // NOLINTNEXTLINE(readability-identifier-naming)
 extern "C" auto LLVMFuzzerTestOneInput(uint8_t const* data, size_t size) -> int {
-    fuzz::replace(data, size);
+    fuzz::replace_map(data, size);
     return 0;
 }
 #endif

@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <vector>  // for vector
@@ -16,9 +16,11 @@ struct hash_with_equal {
     }
 };
 
+TYPE_TO_STRING_MAP(int, int, hash_with_equal, hash_with_equal);
+
 // make sure the map works with the same type (check that it handles the diamond problem)
-TEST_CASE("diamond_problem") {
-    auto map = ankerl::unordered_dense::map<int, int, hash_with_equal, hash_with_equal>();
+TEST_CASE_MAP("diamond_problem", int, int, hash_with_equal, hash_with_equal) {
+    auto map = map_t();
     map[1] = 2;
     REQUIRE(map.size() == 1);
     REQUIRE(map.find(1) != map.end());

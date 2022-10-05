@@ -1,15 +1,13 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/checksum.h>
-
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstdint> // for uint64_t
 #include <string>  // for allocator, string
 #include <vector>  // for vector
 
-TEST_CASE("reserve_and_assign") {
-    using map_t = ankerl::unordered_dense::map<std::string, uint64_t>;
+TEST_CASE_MAP("reserve_and_assign", std::string, uint64_t) {
     map_t a = {
         {"button", {}},
         {"selectbox-tr", {}},
@@ -84,7 +82,7 @@ TEST_CASE("reserve_and_assign") {
     REQUIRE(c.find("button") != c.end()); // Fails.
 }
 
-TEST_CASE("unit_reserve_only_flat") {
-    auto map = ankerl::unordered_dense::map<std::string, uint64_t>();
+TEST_CASE_MAP("unit_reserve_only_flat", std::string, uint64_t) {
+    auto map = map_t();
     map.reserve(51);
 }

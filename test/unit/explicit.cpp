@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <unordered_map>
 #include <vector>
@@ -15,15 +15,19 @@ struct per_image {
     std::unordered_map<void*, texture*> m_texture_index;
 };
 
+template <typename Map>
 struct scene {
     std::vector<per_image> m_per_image;
-    ankerl::unordered_dense::map<void*, texture*> m_textures_per_key;
+    Map m_textures_per_key;
 };
 
+template <typename Map>
 struct app_state {
-    scene m_scene;
+    scene<Map> m_scene;
 };
 
-TEST_CASE("unit_create_AppState_issue_97") {
-    app_state app_state{};
+TYPE_TO_STRING_MAP(void*, texture*);
+
+TEST_CASE_MAP("unit_create_AppState_issue_97", void*, texture*) {
+    app_state<map_t> const app_state{};
 }

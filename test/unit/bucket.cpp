@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
+#include <app/doctest.h>
 
-#include <doctest.h>
 #include <fmt/format.h>
 
 #include <limits>
@@ -38,14 +38,20 @@ struct bucket_micro {
     uint8_t m_value_idx;
 };
 
-TEST_CASE("bucket_micro") {
-    using map_t = ankerl::unordered_dense::map<counter::obj,
-                                               counter::obj,
-                                               ankerl::unordered_dense::hash<counter::obj>,
-                                               std::equal_to<counter::obj>,
-                                               std::allocator<std::pair<counter::obj, counter::obj>>,
-                                               bucket_micro>;
+TYPE_TO_STRING_MAP(counter::obj,
+                   counter::obj,
+                   ankerl::unordered_dense::hash<counter::obj>,
+                   std::equal_to<counter::obj>,
+                   std::allocator<std::pair<counter::obj, counter::obj>>,
+                   bucket_micro);
 
+TEST_CASE_MAP("bucket_micro",
+              counter::obj,
+              counter::obj,
+              ankerl::unordered_dense::hash<counter::obj>,
+              std::equal_to<counter::obj>,
+              std::allocator<std::pair<counter::obj, counter::obj>>,
+              bucket_micro) {
     counter counts;
     INFO(counts);
 

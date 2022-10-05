@@ -1,13 +1,13 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <type_traits> // for add_const_t
 #include <utility>     // for pair, as_const
 #include <vector>      // for vector
 
-TEST_CASE("equal_range") {
-    auto map = ankerl::unordered_dense::map<int, int>();
+TEST_CASE_MAP("equal_range", int, int) {
+    auto map = map_t();
     // auto map = std::unordered_map<int, int>();
 
     auto range = map.equal_range(123);

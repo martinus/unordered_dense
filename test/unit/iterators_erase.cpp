@@ -1,7 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef>       // for size_t
 #include <cstdint>       // for uint64_t
@@ -9,12 +9,12 @@
 #include <utility>       // for pair
 #include <vector>        // for vector
 
-TEST_CASE("iterators_erase") {
+TEST_CASE_MAP("iterators_erase", counter::obj, counter::obj) {
     auto counts = counter();
     INFO(counts);
     {
         counts("begin");
-        auto map = ankerl::unordered_dense::map<counter::obj, counter::obj>();
+        auto map = map_t();
         for (size_t i = 0; i < 100; ++i) {
             map[counter::obj(i * 101, counts)] = counter::obj(i * 101, counts);
         }
@@ -27,13 +27,13 @@ TEST_CASE("iterators_erase") {
         REQUIRE(map.end() == map.find(counter::obj(size_t{20} * 101, counts)));
 
         it = map.begin();
-        size_t currentSize = map.size();
+        size_t current_size = map.size();
         std::unordered_set<uint64_t> keys;
         while (it != map.end()) {
             REQUIRE(keys.emplace(it->first.get()).second);
             it = map.erase(it);
-            currentSize--;
-            REQUIRE(map.size() == currentSize);
+            current_size--;
+            REQUIRE(map.size() == current_size);
         }
         REQUIRE(map.size() == static_cast<size_t>(0));
         counts("done");

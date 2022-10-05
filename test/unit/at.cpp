@@ -1,12 +1,10 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <stdexcept> // for out_of_range
 
-using map_t = ankerl::unordered_dense::map<int, int>;
-
-TEST_CASE("at") {
+TEST_CASE_MAP("at", int, int) {
     map_t map;
     map_t const& cmap = map;
 

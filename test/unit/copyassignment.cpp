@@ -1,12 +1,12 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <string>
 
-TEST_CASE("copyassignment") {
-    auto map = ankerl::unordered_dense::map<std::string, std::string>();
-    auto tmp = ankerl::unordered_dense::map<std::string, std::string>();
+TEST_CASE_MAP("copyassignment", std::string, std::string) {
+    auto map = map_t();
+    auto tmp = map_t();
 
     map.emplace("a", "b");
     map = tmp;

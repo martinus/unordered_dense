@@ -1,16 +1,13 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
-
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <cstdint> // for uint64_t
 #include <utility> // for pair
 
-using set_t = ankerl::unordered_dense::set<counter::obj>;
-
-TEST_CASE("erase_if_set") {
+TEST_CASE_SET("erase_if_set", counter::obj) {
     auto counts = counter();
     INFO(counts);
     auto set = set_t();
@@ -33,8 +30,8 @@ TEST_CASE("erase_if_set") {
     }
 }
 
-TEST_CASE("erase_if_map") {
-    auto map = ankerl::unordered_dense::map<uint64_t, uint64_t>();
+TEST_CASE_MAP("erase_if_map", uint64_t, uint64_t) {
+    auto map = map_t();
     for (size_t i = 0; i < 1000; ++i) {
         map.try_emplace(i, i);
     }

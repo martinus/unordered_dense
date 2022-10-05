@@ -2,7 +2,7 @@
 
 #include <third-party/nanobench.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <algorithm>     // for all_of
 #include <cstddef>       // for size_t
@@ -20,8 +20,8 @@ template <typename A, typename B>
     });
 }
 
-TEST_CASE("insert_erase_random") {
-    auto uds = ankerl::unordered_dense::set<uint32_t>();
+TEST_CASE_SET("insert_erase_random", uint32_t) {
+    auto uds = set_t();
     auto us = std::unordered_set<uint32_t>();
     auto rng = ankerl::nanobench::Rng(123);
     for (size_t i = 0; i < 10000; ++i) {
@@ -42,7 +42,7 @@ TEST_CASE("insert_erase_random") {
     REQUIRE(is_eq(uds, us));
 }
 
-TEST_CASE("erase") {
+TEST_CASE_MAP("erase", int, int) {
     auto map = ankerl::unordered_dense::map<int, int>();
     REQUIRE(0 == map.erase(123));
     REQUIRE(0 == map.count(0));

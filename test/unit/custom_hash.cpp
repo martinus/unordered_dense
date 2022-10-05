@@ -1,12 +1,13 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
+
 #include <type_traits>
 
 namespace {
 
 struct id {
-    uint64_t value{};
+    uint64_t value{}; // NOLINT
 
     auto operator==(id const& other) const -> bool {
         return value == other.value;
@@ -28,8 +29,8 @@ struct custom_hash_avalanching {
 };
 
 struct point {
-    int x{};
-    int y{};
+    int x{}; // NOLINT
+    int y{}; // NOLINT
 
     auto operator==(point const& other) const -> bool {
         return x == other.x && y == other.y;
@@ -56,23 +57,29 @@ struct ankerl::unordered_dense::hash<id> {
     }
 };
 
-TEST_CASE("custom_hash") {
-    {
-        auto set = ankerl::unordered_dense::set<id, custom_hash_simple>();
-        set.insert(id{124});
-    }
-    {
-        auto set = ankerl::unordered_dense::set<id, custom_hash_avalanching>();
-        set.insert(id{124});
-    }
-    {
-        auto set = ankerl::unordered_dense::set<point, custom_hash_unique_object_representation>();
-        set.insert(point{123, 321});
-    }
-    {
-        auto set = ankerl::unordered_dense::set<id>();
-        set.insert(id{124});
-    }
+TYPE_TO_STRING_SET(id);
+TYPE_TO_STRING_SET(id, custom_hash_simple);
+TYPE_TO_STRING_SET(id, custom_hash_avalanching);
+TYPE_TO_STRING_SET(point, custom_hash_unique_object_representation);
+
+TEST_CASE_SET("custom_hash_simple", id, custom_hash_simple) {
+    auto set = set_t();
+    set.insert(id{124});
+}
+
+TEST_CASE_SET("custom_hash_avalanching", id, custom_hash_avalanching) {
+    auto set = set_t();
+    set.insert(id{124});
+}
+
+TEST_CASE_SET("custom_hash_unique", point, custom_hash_unique_object_representation) {
+    auto set = set_t();
+    set.insert(point{123, 321});
+}
+
+TEST_CASE_SET("custom_hash_default", id) {
+    auto set = set_t();
+    set.insert(id{124});
 }
 
 static_assert(

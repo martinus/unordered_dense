@@ -7,26 +7,35 @@
 #include <iosfwd>      // for ostream
 #include <string>      // for allocator, string
 #include <string_view> // for hash, string_view
+#include <type_traits>
 
 class counter {
-    size_t m_ctor{};
-    size_t m_default_ctor{};
-    size_t m_copy_ctor{};
-    size_t m_dtor{};
-    size_t m_equals{};
-    size_t m_less{};
-    size_t m_assign{};
-    size_t m_swaps{};
-    size_t m_get{};
-    size_t m_const_get{};
-    size_t m_hash{};
-    size_t m_move_ctor{};
-    size_t m_move_assign{};
-
-    std::string m_records =
-        "\n     ctor  defctor  cpyctor     dtor   assign    swaps      get  cnstget     hash   equals     less   ctormv assignmv|   total |\n";
-
 public:
+    struct data_t {
+        size_t m_ctor{};
+        size_t m_default_ctor{};
+        size_t m_copy_ctor{};
+        size_t m_dtor{};
+        size_t m_assign{};
+        size_t m_swaps{};
+        size_t m_get{};
+        size_t m_const_get{};
+        size_t m_hash{};
+        size_t m_equals{};
+        size_t m_less{};
+        size_t m_move_ctor{};
+        size_t m_move_assign{};
+
+        friend auto operator==(data_t const& a, data_t const& b) -> bool {
+            static_assert(std::has_unique_object_representations_v<data_t>);
+            return 0 == std::memcmp(&a, &b, sizeof(data_t));
+        }
+
+        friend auto operator!=(data_t const& a, data_t const& b) -> bool {
+            return !(a == b);
+        }
+    };
+
     counter(counter const&) = delete;
     counter(counter&&) = delete;
     auto operator=(counter const&) -> counter& = delete;
@@ -65,55 +74,59 @@ public:
     void check_all_done() const;
 
     [[nodiscard]] auto ctor() const -> size_t {
-        return m_ctor;
+        return m_data.m_ctor;
     }
 
     [[nodiscard]] auto default_ctor() const -> size_t {
-        return m_default_ctor;
+        return m_data.m_default_ctor;
     }
 
     [[nodiscard]] auto copy_ctor() const -> size_t {
-        return m_copy_ctor;
+        return m_data.m_copy_ctor;
     }
 
     [[nodiscard]] auto dtor() const -> size_t {
-        return m_dtor;
+        return m_data.m_dtor;
     }
 
     [[nodiscard]] auto equals() const -> size_t {
-        return m_equals;
+        return m_data.m_equals;
     }
 
     [[nodiscard]] auto less() const -> size_t {
-        return m_less;
+        return m_data.m_less;
     }
 
     [[nodiscard]] auto assign() const -> size_t {
-        return m_assign;
+        return m_data.m_assign;
     }
 
     [[nodiscard]] auto swaps() const -> size_t {
-        return m_swaps;
+        return m_data.m_swaps;
     }
 
     [[nodiscard]] auto get() const -> size_t {
-        return m_get;
+        return m_data.m_get;
     }
 
     [[nodiscard]] auto const_get() const -> size_t {
-        return m_const_get;
+        return m_data.m_const_get;
     }
 
     [[nodiscard]] auto hash() const -> size_t {
-        return m_hash;
+        return m_data.m_hash;
     }
 
     [[nodiscard]] auto move_ctor() const -> size_t {
-        return m_move_ctor;
+        return m_data.m_move_ctor;
     }
 
     [[nodiscard]] auto move_assign() const -> size_t {
-        return m_move_assign;
+        return m_data.m_move_assign;
+    }
+
+    [[nodiscard]] auto data() const -> data_t const& {
+        return m_data;
     }
 
     friend auto operator<<(std::ostream& os, counter const& c) -> std::ostream&;
@@ -124,6 +137,12 @@ public:
 
     static size_t static_default_ctor; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
     static size_t static_dtor;         // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
+private:
+    data_t m_data{};
+
+    std::string m_records =
+        "\n     ctor  defctor  cpyctor     dtor   assign    swaps      get  cnstget     hash   equals     less   ctormv assignmv|   total |\n";
 };
 
 // Throws an exception, this overload should never be taken!

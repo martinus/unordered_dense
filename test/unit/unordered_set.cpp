@@ -1,6 +1,6 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef>     // for size_t
 #include <cstdint>     // for UINT64_C, uint64_t
@@ -9,14 +9,16 @@
 #include <vector>      // for vector
 
 TEST_CASE("unordered_set_asserts") {
-    using set_t = ankerl::unordered_dense::set<uint64_t>;
-    static_assert(std::is_same<typename set_t::key_type, uint64_t>::value, "key_type same");
-    static_assert(std::is_same<typename set_t::value_type, uint64_t>::value, "value_type same");
+    using set1_t = ankerl::unordered_dense::set<uint64_t>;
+    static_assert(std::is_same<typename set1_t::key_type, uint64_t>::value, "key_type same");
+    static_assert(std::is_same<typename set1_t::value_type, uint64_t>::value, "value_type same");
+
+    using set2_t = ankerl::unordered_dense::segmented_set<uint64_t>;
+    static_assert(std::is_same<typename set2_t::key_type, uint64_t>::value, "key_type same");
+    static_assert(std::is_same<typename set2_t::value_type, uint64_t>::value, "value_type same");
 }
 
-TEST_CASE("unordered_set") {
-    using set_t = ankerl::unordered_dense::set<uint64_t>;
-
+TEST_CASE_SET("unordered_set", uint64_t) {
     set_t set;
     set.emplace(UINT64_C(123));
     REQUIRE(set.size() == 1U);
@@ -31,9 +33,7 @@ TEST_CASE("unordered_set") {
     REQUIRE(set.size() == 1U);
 }
 
-TEST_CASE("unordered_set_string") {
-    using set_t = ankerl::unordered_dense::set<std::string>;
-
+TEST_CASE_SET("unordered_set_string", std::string) {
     set_t set;
     REQUIRE(set.begin() == set.end());
 
@@ -48,9 +48,7 @@ TEST_CASE("unordered_set_string") {
     REQUIRE(++it == set.end());
 }
 
-TEST_CASE("unordered_set_eq") {
-    using set_t = ankerl::unordered_dense::set<std::string>;
-
+TEST_CASE_SET("unordered_set_eq", std::string) {
     set_t set1;
     set_t set2;
     REQUIRE(set1.size() == set2.size());

@@ -1,11 +1,11 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 
-TEST_CASE("rehash") {
-    auto map = ankerl::unordered_dense::map<size_t, int>();
+TEST_CASE_MAP("rehash", size_t, int) {
+    auto map = map_t();
 
     for (size_t i = 0; i < 1000; ++i) {
         map[i];

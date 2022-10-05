@@ -1,8 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
-
 #include <app/counter.h>
+#include <app/doctest.h>
 
 #include <cstddef> // for size_t
 #include <utility> // for pair
@@ -31,12 +30,10 @@ public:
     }
 };
 
-TEST_CASE("ctors_map") {
-    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
-    // using map_t = std::unordered_map<counter::obj, counter::obj>;
-    using alloc_t = map_t::allocator_type;
-    using hash_t = map_t::hasher;
-    using key_eq_t = map_t::key_equal;
+TEST_CASE_MAP("ctors_map", counter::obj, counter::obj) {
+    using alloc_t = typename map_t::allocator_type;
+    using hash_t = typename map_t::hasher;
+    using key_eq_t = typename map_t::key_equal;
 
     auto counts = counter();
     INFO(counts);
@@ -73,18 +70,19 @@ TEST_CASE("ctors_map") {
     }
 }
 
-TEST_CASE("ctor_bucket_count") {
+TEST_CASE_MAP("ctor_bucket_count_map", counter::obj, counter::obj) {
     {
-        auto m = ankerl::unordered_dense::map<counter::obj, counter::obj>{};
+        auto m = map_t{};
         REQUIRE(m.bucket_count() == 0U);
     }
     {
-        auto m = ankerl::unordered_dense::map<counter::obj, counter::obj>{150U};
+        auto m = map_t{150U};
         REQUIRE(m.bucket_count() == 256U);
     }
-    {
-        auto m = ankerl::unordered_dense::set<int>{{1, 2, 3, 4}, 300U};
-        REQUIRE(m.size() == 4U);
-        REQUIRE(m.bucket_count() == 512U);
-    }
+}
+
+TEST_CASE_SET("ctor_bucket_count_set", int) {
+    auto m = ankerl::unordered_dense::set<int>{{1, 2, 3, 4}, 300U};
+    REQUIRE(m.size() == 4U);
+    REQUIRE(m.bucket_count() == 512U);
 }

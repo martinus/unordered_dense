@@ -7,10 +7,12 @@ test_sources = [
     'app/ui/progress_bar.cpp',
     'app/unordered_dense.cpp',
 
-    'bench/copy.cpp',
-    'bench/find_random.cpp',
-    'bench/quick_overall_map.cpp',
     'bench/swap.cpp',
+    'bench/show_allocations.cpp',
+    'bench/quick_overall_map.cpp',
+    'bench/game_of_life.cpp',
+    'bench/find_random.cpp',
+    'bench/copy.cpp',
 
     'fuzz/api.cpp',
     'fuzz/insert_erase.cpp',
@@ -63,6 +65,7 @@ test_sources = [
     'unit/replace.cpp',
     'unit/reserve_and_assign.cpp',
     'unit/reserve.cpp',
+    'unit/segmented_vector.cpp',
     'unit/set_or_map_types.cpp',
     'unit/set.cpp',
     'unit/std_hash.cpp',
@@ -93,6 +96,8 @@ foreach arg : [
             '-pedantic-errors',
             '-Wold-style-cast',
             # '-Weffc++', doesn't work with fmt
+            
+            # '-march=native',
         ]
     if compiler.has_argument(arg)
         cpp_args += [arg]
@@ -117,6 +122,8 @@ if get_option('cpp_args').contains('-m32')
     fmt_method = 'builtin'
 endif
 
+# use e.g.
+# CXX='ccache clang++' BOOST_ROOT=/home/martinus/dev/boost_1_81_0/ meson setup --buildtype release -Dcpp_std=c++17 build
 opt_boost = dependency('boost', required: false)
 link_args = []
 if opt_boost.found()
@@ -125,6 +132,13 @@ if opt_boost.found()
 else
     add_global_arguments('-DANKERL_UNORDERED_DENSE_HAS_BOOST=0', language: 'cpp')
 endif
+
+#opt_absl = dependency('absl_container', required: true, )
+#if opt_boost.found()
+#    add_global_arguments('-DANKERL_UNORDERED_DENSE_HAS_ABSL=1', language: 'cpp')
+#else
+#    add_global_arguments('-DANKERL_UNORDERED_DENSE_HAS_ABSL=0', language: 'cpp')
+#endif
 
 test_exe = executable(
     'udm',
@@ -138,7 +152,10 @@ test_exe = executable(
         # see what's in the [provide] sections for the dependency names
         dependency('doctest'),
         dependency('fmt', method: fmt_method),
-        opt_boost, # boost might not be found
+
+        # disable these two if you don't want them
+        #dependency('boost'),
+        #dependency('absl_container', default_options: ['warning_level=0', 'werror=false'])
     ],
 )
 

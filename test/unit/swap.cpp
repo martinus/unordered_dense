@@ -1,17 +1,16 @@
 #include <ankerl/unordered_dense.h>
 
 #define ENABLE_LOG_LINE
+#include <app/doctest.h>
 #include <app/print.h>
-
-#include <doctest.h>
 
 #include <vector>
 
-TEST_CASE("swap") {
+TEST_CASE_MAP("swap", int, int) {
     {
-        auto b = ankerl::unordered_dense::map<int, int>();
+        auto b = map_t();
         {
-            auto a = ankerl::unordered_dense::map<int, int>();
+            auto a = map_t();
             b[1] = 2;
 
             a.swap(b);
@@ -25,9 +24,9 @@ TEST_CASE("swap") {
     }
 
     {
-        auto a = ankerl::unordered_dense::map<int, int>();
+        auto a = map_t();
         {
-            auto b = ankerl::unordered_dense::map<int, int>();
+            auto b = map_t();
             b[1] = 2;
 
             a.swap(b);
@@ -41,9 +40,9 @@ TEST_CASE("swap") {
     }
 
     {
-        auto a = ankerl::unordered_dense::map<int, int>();
+        auto a = map_t();
         {
-            auto b = ankerl::unordered_dense::map<int, int>();
+            auto b = map_t();
             a.swap(b);
             REQUIRE(a.end() == a.find(1));
             REQUIRE(b.end() == b.find(1));

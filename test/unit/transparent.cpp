@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h>
 
+#include <app/doctest.h>
 #include <app/name_of_type.h>
 
-#include <doctest.h>
 #include <fmt/format.h>
 
 #include <array>         // for array
@@ -24,9 +24,11 @@ public:
     using is_transparent = void;
 
     template <class T, class U>
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     auto operator()(T&& lhs, U&& rhs) const -> decltype(std::forward<T>(lhs) == std::forward<U>(rhs)) {
         auto names = fmt::format("{} -> {}", name_of_type<T>(), name_of_type<U>());
         ++m_names_to_counts[names];
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
         return std::forward<T>(lhs) == std::forward<U>(rhs);
     }
 
@@ -108,8 +110,10 @@ void check(int line, C const& container, size_t num_charstar, size_t num_stringv
     REQUIRE(counts[2] == num_string);
 }
 
-TEST_CASE("transparent_find") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+TYPE_TO_STRING_MAP(std::string, size_t, string_hash, std::equal_to<>);
+
+TEST_CASE_MAP("transparent_find", std::string, size_t, string_hash, std::equal_to<>) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
     check(__LINE__, map, 1, 0, 0);
 
@@ -145,8 +149,8 @@ TEST_CASE("transparent_find") {
     check(__LINE__, map, 5, 2, 2);
 }
 
-TEST_CASE("transparent_count") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+TEST_CASE_MAP("transparent_count", std::string, size_t, string_hash, std::equal_to<>) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
     check(__LINE__, map, 1, 0, 0);
 
@@ -166,8 +170,8 @@ TEST_CASE("transparent_count") {
     check(__LINE__, map, 3, 2, 2);
 }
 
-TEST_CASE("transparent_contains") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+TEST_CASE_MAP("transparent_contains", std::string, size_t, string_hash, std::equal_to<>) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
     check(__LINE__, map, 1, 0, 0);
 
@@ -187,8 +191,8 @@ TEST_CASE("transparent_contains") {
     check(__LINE__, map, 3, 2, 2);
 }
 
-TEST_CASE("transparent_erase") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+TEST_CASE_MAP("transparent_erase", std::string, size_t, string_hash, std::equal_to<>) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
     check(__LINE__, map, 1, 0, 0);
     REQUIRE(0 == map.erase("huh"));
@@ -211,8 +215,8 @@ TEST_CASE("transparent_erase") {
     check(__LINE__, map, 5, 2, 2);
 }
 
-TEST_CASE("transparent_equal_range") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::equal_to<>>();
+TEST_CASE_MAP("transparent_equal_range", std::string, size_t, string_hash, std::equal_to<>) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
     check(__LINE__, map, 1, 0, 0);
 
@@ -229,8 +233,10 @@ TEST_CASE("transparent_equal_range") {
     REQUIRE(crange.second == map.end());
 }
 
-TEST_CASE("transparent_string_eq") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, string_eq>();
+TYPE_TO_STRING_MAP(std::string, size_t, string_hash, string_eq);
+
+TEST_CASE_MAP("transparent_string_eq", std::string, size_t, string_hash, string_eq) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
 
     REQUIRE(map.count("hello"));
@@ -244,8 +250,8 @@ TEST_CASE("transparent_string_eq") {
     }
 }
 
-TEST_CASE("transparent_at") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, string_eq>();
+TEST_CASE_MAP("transparent_at", std::string, size_t, string_hash, string_eq) {
+    auto map = map_t();
     map.try_emplace("asdf", 123);
     check(__LINE__, map, 1, 0, 0);
 
@@ -258,9 +264,11 @@ TEST_CASE("transparent_at") {
     check(__LINE__, map, 2, 1, 0);
 }
 
-TEST_CASE("transparent_at_not") {
+TYPE_TO_STRING_MAP(std::string, size_t, string_hash);
+
+TEST_CASE_MAP("transparent_at_not", std::string, size_t, string_hash) {
     // no string_eq, so not is_transparent
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash>();
+    auto map = map_t();
     map.try_emplace("asdf", 123);
     check(__LINE__, map, 0, 0, 1);
 
@@ -273,8 +281,8 @@ TEST_CASE("transparent_at_not") {
     check(__LINE__, map, 0, 0, 3);
 }
 
-TEST_CASE("transparent_insert_or_assign") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, string_eq>();
+TEST_CASE_MAP("transparent_insert_or_assign", std::string, size_t, string_hash, string_eq) {
+    auto map = map_t();
     auto r = map.insert_or_assign("asdf", 123U);
     check(__LINE__, map, 1, 0, 0);
     REQUIRE(r.first->first == "asdf");
@@ -289,8 +297,8 @@ TEST_CASE("transparent_insert_or_assign") {
     REQUIRE(map.size() == 1U);
 }
 
-TEST_CASE("transparent_insert_or_assign_not") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash>();
+TEST_CASE_MAP("transparent_insert_or_assign_not", std::string, size_t, string_hash) {
+    auto map = map_t();
     auto r = map.insert_or_assign("asdf", 123U);
     check(__LINE__, map, 0, 0, 1);
     REQUIRE(r.first->first == "asdf");
@@ -305,48 +313,50 @@ TEST_CASE("transparent_insert_or_assign_not") {
     REQUIRE(map.size() == 1U);
 }
 
-TEST_CASE("transparent_insert_or_assign_iterator") {
-    using map_t = ankerl::unordered_dense::map<std::string, size_t, string_hash, string_eq>;
+TEST_CASE_MAP("transparent_insert_or_assign_iterator", std::string, size_t, string_hash, string_eq) {
     auto map = map_t();
-    auto r = map.insert_or_assign(map_t::const_iterator{}, "asdf", 123U);
+    auto r = map.insert_or_assign(typename map_t::const_iterator{}, "asdf", 123U);
     check(__LINE__, map, 1, 0, 0);
     REQUIRE(r->first == "asdf");
     REQUIRE(r->second == 123U);
 
-    r = map.insert_or_assign(map_t::const_iterator{}, "asdf", 42U);
+    r = map.insert_or_assign(typename map_t::const_iterator{}, "asdf", 42U);
     check(__LINE__, map, 2, 0, 0);
     REQUIRE(r->first == "asdf");
     REQUIRE(r->second == 42U);
     REQUIRE(map.size() == 1U);
 }
 
-TEST_CASE("transparent_insert_or_assign_iterator_not") {
-    using map_t = ankerl::unordered_dense::map<std::string, size_t, string_hash>;
+TEST_CASE_MAP("transparent_insert_or_assign_iterator_not", std::string, size_t, string_hash) {
     auto map = map_t();
-    auto r = map.insert_or_assign(map_t::const_iterator{}, "asdf", 123U);
+    auto r = map.insert_or_assign(typename map_t::const_iterator{}, "asdf", 123U);
     check(__LINE__, map, 0, 0, 1);
     REQUIRE(r->first == "asdf");
     REQUIRE(r->second == 123U);
 
-    r = map.insert_or_assign(map_t::const_iterator{}, "asdf", 42U);
+    r = map.insert_or_assign(typename map_t::const_iterator{}, "asdf", 42U);
     check(__LINE__, map, 0, 0, 2);
     REQUIRE(r->first == "asdf");
     REQUIRE(r->second == 42U);
     REQUIRE(map.size() == 1U);
 }
+
+TYPE_TO_STRING_SET(std::string, string_hash, string_eq);
 
 // insert() transparent is only possible with unordered_set, not with unordered_map
-TEST_CASE("transparent_set_insert") {
-    auto set = ankerl::unordered_dense::set<std::string, string_hash, string_eq>();
+TEST_CASE_SET("transparent_set_insert", std::string, string_hash, string_eq) {
+    auto set = set_t();
     set.insert("abcdefg");
     check(__LINE__, set, 1, 0, 0);
     set.insert("abcdefg");
     check(__LINE__, set, 2, 0, 0);
 }
 
+TYPE_TO_STRING_SET(std::string, string_hash);
+
 // insert() transparent is only possible with unordered_set, not with unordered_map
-TEST_CASE("transparent_set_insert_not") {
-    auto set = ankerl::unordered_dense::set<std::string, string_hash>();
+TEST_CASE_SET("transparent_set_insert_not", std::string, string_hash) {
+    auto set = set_t();
     set.insert("abcdefg");
     check(__LINE__, set, 0, 0, 1);
     set.insert("abcdefg");
@@ -354,8 +364,8 @@ TEST_CASE("transparent_set_insert_not") {
 }
 
 // emplace() transparent is only possible with unordered_set, not with unordered_map
-TEST_CASE("transparent_set_emplace") {
-    auto set = ankerl::unordered_dense::set<std::string, string_hash, string_eq>();
+TEST_CASE_SET("transparent_set_emplace", std::string, string_hash, string_eq) {
+    auto set = set_t();
     set.emplace("abcdefg");
     check(__LINE__, set, 1, 0, 0);
     set.emplace("abcdefg");
@@ -363,8 +373,8 @@ TEST_CASE("transparent_set_emplace") {
 }
 
 // emplace() transparent is only possible with unordered_set, not with unordered_map
-TEST_CASE("transparent_set_emplace_not") {
-    auto set = ankerl::unordered_dense::set<std::string, string_hash>();
+TEST_CASE_SET("transparent_set_emplace_not", std::string, string_hash) {
+    auto set = set_t();
     set.emplace("abcdefg");
     check(__LINE__, set, 0, 0, 1);
     set.emplace("abcdefg");
@@ -380,8 +390,10 @@ struct string_hash_simple {
     }
 };
 
-TEST_CASE("transparent_find_simple") {
-    auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash_simple, std::equal_to<>>();
+TYPE_TO_STRING_MAP(std::string, size_t, string_hash_simple, std::equal_to<>);
+
+TEST_CASE_MAP("transparent_find_simple", std::string, size_t, string_hash_simple, std::equal_to<>) {
+    auto map = map_t();
     map.try_emplace("hello", 1);
     auto it = map.find("huh");
     REQUIRE(it == map.end());

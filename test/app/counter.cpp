@@ -36,7 +36,7 @@ counter::obj::obj(const size_t& data, counter& counts)
             std::abort();
         }
     }
-    ++m_counts->m_ctor;
+    ++m_counts->m_data.m_ctor;
 }
 
 counter::obj::obj(const counter::obj& o)
@@ -53,7 +53,7 @@ counter::obj::obj(const counter::obj& o)
         }
     }
     if (nullptr != m_counts) {
-        ++m_counts->m_copy_ctor;
+        ++m_counts->m_data.m_copy_ctor;
     }
 }
 
@@ -71,7 +71,7 @@ counter::obj::obj(counter::obj&& o) noexcept
         }
     }
     if (nullptr != m_counts) {
-        ++m_counts->m_move_ctor;
+        ++m_counts->m_data.m_move_ctor;
     }
 }
 
@@ -83,7 +83,7 @@ counter::obj::~obj() {
         }
     }
     if (nullptr != m_counts) {
-        ++m_counts->m_dtor;
+        ++m_counts->m_data.m_dtor;
     } else {
         ++static_dtor;
     }
@@ -97,7 +97,7 @@ auto counter::obj::operator==(obj const& o) const -> bool {
         }
     }
     if (nullptr != m_counts) {
-        ++m_counts->m_equals;
+        ++m_counts->m_data.m_equals;
     }
     return m_data == o.m_data;
 }
@@ -110,7 +110,7 @@ auto counter::obj::operator<(obj const& o) const -> bool {
         }
     }
     if (nullptr != m_counts) {
-        ++m_counts->m_less;
+        ++m_counts->m_data.m_less;
     }
     return m_data < o.m_data;
 }
@@ -125,7 +125,7 @@ auto counter::obj::operator=(obj const& o) -> counter::obj& {
     }
     m_counts = o.m_counts;
     if (nullptr != m_counts) {
-        ++m_counts->m_assign;
+        ++m_counts->m_data.m_assign;
     }
     m_data = o.m_data;
     return *this;
@@ -143,21 +143,21 @@ auto counter::obj::operator=(obj&& o) noexcept -> counter::obj& {
     }
     m_data = o.m_data;
     if (nullptr != m_counts) {
-        ++m_counts->m_move_assign;
+        ++m_counts->m_data.m_move_assign;
     }
     return *this;
 }
 
 auto counter::obj::get() const -> size_t const& {
     if (nullptr != m_counts) {
-        ++m_counts->m_const_get;
+        ++m_counts->m_data.m_const_get;
     }
     return m_data;
 }
 
 auto counter::obj::get() -> size_t& {
     if (nullptr != m_counts) {
-        ++m_counts->m_get;
+        ++m_counts->m_data.m_get;
     }
     return m_data;
 }
@@ -173,13 +173,13 @@ void counter::obj::swap(obj& other) {
     swap(m_data, other.m_data);
     swap(m_counts, other.m_counts);
     if (nullptr != m_counts) {
-        ++m_counts->m_swaps;
+        ++m_counts->m_data.m_swaps;
     }
 }
 
 auto counter::obj::get_for_hash() const -> size_t {
     if (nullptr != m_counts) {
-        ++m_counts->m_hash;
+        ++m_counts->m_data.m_hash;
     }
     return m_data;
 }
@@ -196,17 +196,19 @@ void counter::check_all_done() const {
             test::print("ERROR at ~counter(): got {} objects still alive!", singleton_constructed_objects().size());
             std::abort();
         }
-        if (m_dtor + static_dtor != m_ctor + static_default_ctor + m_copy_ctor + m_default_ctor + m_move_ctor) {
+
+        if (m_data.m_dtor + static_dtor !=
+            m_data.m_ctor + static_default_ctor + m_data.m_copy_ctor + m_data.m_default_ctor + m_data.m_move_ctor) {
             test::print("ERROR at ~counter(): number of counts does not match!\n");
             test::print(
                 "{} dtor + {} staticDtor != {} ctor + {} staticDefaultCtor + {} copyCtor + {} defaultCtor + {} moveCtor\n",
-                m_dtor,
+                m_data.m_dtor,
                 static_dtor,
-                m_ctor,
+                m_data.m_ctor,
                 static_default_ctor,
-                m_copy_ctor,
-                m_default_ctor,
-                m_move_ctor);
+                m_data.m_copy_ctor,
+                m_data.m_default_ctor,
+                m_data.m_move_ctor);
             std::abort();
         }
     }
@@ -217,25 +219,26 @@ counter::~counter() {
 }
 
 auto counter::total() const -> size_t {
-    return m_ctor + static_default_ctor + m_copy_ctor + (m_dtor + static_dtor) + m_equals + m_less + m_assign + m_swaps +
-           m_get + m_const_get + m_hash + m_move_ctor + m_move_assign;
+    return m_data.m_ctor + static_default_ctor + m_data.m_copy_ctor + (m_data.m_dtor + static_dtor) + m_data.m_equals +
+           m_data.m_less + m_data.m_assign + m_data.m_swaps + m_data.m_get + m_data.m_const_get + m_data.m_hash +
+           m_data.m_move_ctor + m_data.m_move_assign;
 }
 
 void counter::operator()(std::string_view title) {
     m_records += fmt::format("{:9}{:9}{:9}{:9}{:9}{:9}{:9}{:9}{:9}{:9}{:9}{:9}{:9}|{:9}| {}\n",
-                             m_ctor,
+                             m_data.m_ctor,
                              static_default_ctor,
-                             m_copy_ctor,
-                             m_dtor + static_dtor,
-                             m_assign,
-                             m_swaps,
-                             m_get,
-                             m_const_get,
-                             m_hash,
-                             m_equals,
-                             m_less,
-                             m_move_ctor,
-                             m_move_assign,
+                             m_data.m_copy_ctor,
+                             m_data.m_dtor + static_dtor,
+                             m_data.m_assign,
+                             m_data.m_swaps,
+                             m_data.m_get,
+                             m_data.m_const_get,
+                             m_data.m_hash,
+                             m_data.m_equals,
+                             m_data.m_less,
+                             m_data.m_move_ctor,
+                             m_data.m_move_assign,
                              total(),
                              title);
 }

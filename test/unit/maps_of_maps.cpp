@@ -2,25 +2,24 @@
 
 #include <app/checksum.h>
 #include <app/counter.h>
-#include <third-party/nanobench.h>
+#include <app/doctest.h>
 
-#include <doctest.h>
+#include <third-party/nanobench.h>
 
 #include <cstddef> // for size_t
 #include <cstdint> // for uint64_t
 #include <utility> // for move
 
-TEST_CASE("mapmap") {
+template <typename Map>
+void test() {
     auto counts = counter();
     INFO(counts);
-
-    using map_t = ankerl::unordered_dense::map<counter::obj, ankerl::unordered_dense::map<counter::obj, counter::obj>>;
 
     auto rng = ankerl::nanobench::Rng();
     for (size_t trial = 0; trial < 4; ++trial) {
         {
             counts("start");
-            auto maps = map_t();
+            auto maps = Map();
             for (size_t i = 0; i < 100; ++i) {
                 auto a = rng.bounded(20);
                 auto b = rng.bounded(20);
@@ -30,29 +29,40 @@ TEST_CASE("mapmap") {
             }
             counts("filled");
 
-            map_t mapsCopied;
-            mapsCopied = maps;
-            REQUIRE(checksum::mapmap(mapsCopied) == checksum::mapmap(maps));
-            REQUIRE(mapsCopied == maps);
+            Map maps_copied;
+            maps_copied = maps;
+            REQUIRE(checksum::mapmap(maps_copied) == checksum::mapmap(maps));
+            REQUIRE(maps_copied == maps);
             counts("copied");
 
-            map_t mapsMoved;
-            mapsMoved = std::move(mapsCopied);
+            Map maps_moved;
+            maps_moved = std::move(maps_copied);
             counts("moved");
 
             // move
-            REQUIRE(checksum::mapmap(mapsMoved) == checksum::mapmap(maps));
-            REQUIRE(mapsCopied.size() == 0); // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved)
-            mapsCopied = std::move(mapsMoved);
+            REQUIRE(checksum::mapmap(maps_moved) == checksum::mapmap(maps));
+            REQUIRE(maps_copied.size() == 0); // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved)
+            maps_copied = std::move(maps_moved);
             counts("moved back");
 
             // move back
-            REQUIRE(checksum::mapmap(mapsCopied) == checksum::mapmap(maps));
-            REQUIRE(mapsMoved.size() == 0); // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved)
+            REQUIRE(checksum::mapmap(maps_copied) == checksum::mapmap(maps));
+            REQUIRE(maps_moved.size() == 0); // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved)
             counts("done");
         }
         counts("all destructed");
         REQUIRE(counts.dtor() ==
                 counts.ctor() + counts.static_default_ctor + counts.copy_ctor() + counts.default_ctor() + counts.move_ctor());
     }
+}
+
+TYPE_TO_STRING_MAP(counter::obj, ankerl::unordered_dense::map<counter::obj, counter::obj>);
+TYPE_TO_STRING_MAP(counter::obj, ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>);
+
+TEST_CASE_MAP("mapmap_map", counter::obj, ankerl::unordered_dense::map<counter::obj, counter::obj>) {
+    test<map_t>();
+}
+
+TEST_CASE_MAP("mapmap_segmented_map", counter::obj, ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>) {
+    test<map_t>();
 }

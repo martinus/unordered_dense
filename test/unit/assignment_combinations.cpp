@@ -1,45 +1,42 @@
 #include <ankerl/unordered_dense.h>
 
 #define ENABLE_LOG_LINE
+#include <app/doctest.h>
 #include <app/print.h>
-
-#include <doctest.h>
 
 #include <cstdint> // for uint64_t
 #include <utility> // for pair
 #include <vector>  // for vector
 
-using map_t = ankerl::unordered_dense::map<uint64_t, uint64_t>;
-
-TEST_CASE("assignment_combinations_1") {
+TEST_CASE_MAP("assignment_combinations_1", uint64_t, uint64_t) {
     map_t a;
     map_t b;
     b = a;
     REQUIRE(b == a);
 }
 
-TEST_CASE("assignment_combinations_2") {
+TEST_CASE_MAP("assignment_combinations_2", uint64_t, uint64_t) {
     map_t a;
-    map_t const& aConst = a;
+    map_t const& a_const = a;
     map_t b;
     a[123] = 321;
     b = a;
 
     REQUIRE(a.find(123)->second == 321);
-    REQUIRE(aConst.find(123)->second == 321);
+    REQUIRE(a_const.find(123)->second == 321);
 
     REQUIRE(b.find(123)->second == 321);
     a[123] = 111;
     REQUIRE(a.find(123)->second == 111);
-    REQUIRE(aConst.find(123)->second == 111);
+    REQUIRE(a_const.find(123)->second == 111);
     REQUIRE(b.find(123)->second == 321);
     b[123] = 222;
     REQUIRE(a.find(123)->second == 111);
-    REQUIRE(aConst.find(123)->second == 111);
+    REQUIRE(a_const.find(123)->second == 111);
     REQUIRE(b.find(123)->second == 222);
 }
 
-TEST_CASE("assignment_combinations_3") {
+TEST_CASE_MAP("assignment_combinations_3", uint64_t, uint64_t) {
     map_t a;
     map_t b;
     a[123] = 321;
@@ -50,7 +47,7 @@ TEST_CASE("assignment_combinations_3") {
     REQUIRE(b.size() == 0);
 }
 
-TEST_CASE("assignment_combinations_4") {
+TEST_CASE_MAP("assignment_combinations_4", uint64_t, uint64_t) {
     map_t a;
     map_t b;
     b[123] = 321;
@@ -60,7 +57,7 @@ TEST_CASE("assignment_combinations_4") {
     REQUIRE(b.size() == 0);
 }
 
-TEST_CASE("assignment_combinations_5") {
+TEST_CASE_MAP("assignment_combinations_5", uint64_t, uint64_t) {
     map_t a;
     map_t b;
     b[123] = 321;
@@ -71,7 +68,7 @@ TEST_CASE("assignment_combinations_5") {
     REQUIRE(b.size() == 0);
 }
 
-TEST_CASE("assignment_combinations_6") {
+TEST_CASE_MAP("assignment_combinations_6", uint64_t, uint64_t) {
     map_t a;
     a[1] = 2;
     map_t b;
@@ -87,7 +84,7 @@ TEST_CASE("assignment_combinations_6") {
     REQUIRE(b.find(1)->second == 2);
 }
 
-TEST_CASE("assignment_combinations_7") {
+TEST_CASE_MAP("assignment_combinations_7", uint64_t, uint64_t) {
     map_t a;
     a[1] = 2;
     a.clear();
@@ -99,7 +96,7 @@ TEST_CASE("assignment_combinations_7") {
     REQUIRE(a == b);
 }
 
-TEST_CASE("assignment_combinations_7") {
+TEST_CASE_MAP("assignment_combinations_7", uint64_t, uint64_t) {
     map_t a;
     a[1] = 2;
     map_t b;
@@ -111,7 +108,7 @@ TEST_CASE("assignment_combinations_7") {
     REQUIRE(a == b);
 }
 
-TEST_CASE("assignment_combinations_8") {
+TEST_CASE_MAP("assignment_combinations_8", uint64_t, uint64_t) {
     map_t a;
     a[1] = 2;
     a.clear();
@@ -124,7 +121,7 @@ TEST_CASE("assignment_combinations_8") {
     REQUIRE(a == b);
 }
 
-TEST_CASE("assignment_combinations_9") {
+TEST_CASE_MAP("assignment_combinations_9", uint64_t, uint64_t) {
     map_t a;
     a[1] = 2;
 
@@ -136,7 +133,7 @@ TEST_CASE("assignment_combinations_9") {
     REQUIRE(a.find(1) != a.end());
 }
 
-TEST_CASE("assignment_combinations_10") {
+TEST_CASE_MAP("assignment_combinations_10", uint64_t, uint64_t) {
     map_t a;
     a[1] = 2;
     map_t b;
