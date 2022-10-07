@@ -22,4 +22,10 @@ TEST_CASE("custom_container") {
 
     REQUIRE(std::is_same_v<std::deque<std::pair<int, std::string>>, typename map_t::value_container_type>);
     std::deque<std::pair<int, std::string>> container = std::move(map).extract();
+
+    auto m2 = map_t();
+    m2 = map;
+
+    auto map2 = map;
+    std::swap(map2, map);
 }

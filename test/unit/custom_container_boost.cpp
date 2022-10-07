@@ -41,7 +41,7 @@ TEST_CASE("boost_container_vector") {
     using map_t =
         ankerl::unordered_dense::map<int, std::string, ankerl::unordered_dense::hash<int>, std::equal_to<int>, shmem_vector>;
 
-    auto map = map_t{shmem_vector{shmem_allocator{segment.get_segment_manager()}}};
+    auto map = map_t{shmem_allocator{segment.get_segment_manager()}};
 
     for (int i = 0; i < 100; ++i) {
         map.try_emplace(i, std::to_string(i));
