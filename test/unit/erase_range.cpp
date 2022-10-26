@@ -8,7 +8,6 @@
 #include <cstddef> // for size_t
 #include <vector>  // for vector
 
-
 template <typename It>
 auto advance(It it, int times) -> It {
     for (int i = 0; i < times; ++i) {

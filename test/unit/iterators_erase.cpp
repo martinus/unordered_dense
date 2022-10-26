@@ -1,14 +1,14 @@
 #if 0
-#include <ankerl/unordered_dense.h>
+#    include <ankerl/unordered_dense.h>
 
-#include <app/counter.h>
-#include <doctest.h>
+#    include <app/counter.h>
+#    include <doctest.h>
 
-#include <cstddef>       // for size_t
-#include <cstdint>       // for uint64_t
-#include <unordered_set> // for unordered_set
-#include <utility>       // for pair
-#include <vector>        // for vector
+#    include <cstddef>       // for size_t
+#    include <cstdint>       // for uint64_t
+#    include <unordered_set> // for unordered_set
+#    include <utility>       // for pair
+#    include <vector>        // for vector
 
 TEST_CASE("iterators_erase") {
     auto counts = counter();

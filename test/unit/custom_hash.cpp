@@ -1,8 +1,8 @@
 #if 0
-#include <ankerl/unordered_dense.h>
+#    include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
-#include <type_traits>
+#    include <doctest.h>
+#    include <type_traits>
 
 namespace {
 

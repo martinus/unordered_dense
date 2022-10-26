@@ -1,8 +1,8 @@
 #if 0
-#include <ankerl/unordered_dense.h>
-#include <app/counter.h>
+#    include <ankerl/unordered_dense.h>
+#    include <app/counter.h>
 
-#include <doctest.h>
+#    include <doctest.h>
 
 TEST_CASE("extract") {
     auto counts = counter();

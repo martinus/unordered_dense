@@ -1,9 +1,9 @@
 #if 0 // not in boost
-#include <ankerl/unordered_dense.h>
+#    include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#    include <doctest.h>
 
-#include <deque>
+#    include <deque>
 
 static_assert(
     ankerl::unordered_dense::detail::is_detected_v<ankerl::unordered_dense::detail::detect_iterator, std::deque<int>>);

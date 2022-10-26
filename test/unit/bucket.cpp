@@ -1,13 +1,13 @@
 #if 0
-#include <ankerl/unordered_dense.h>
+#    include <ankerl/unordered_dense.h>
 
-#include <app/counter.h>
+#    include <app/counter.h>
 
-#include <doctest.h>
-#include <fmt/format.h>
+#    include <doctest.h>
+#    include <fmt/format.h>
 
-#include <limits>
-#include <stdexcept> // for out_of_range
+#    include <limits>
+#    include <stdexcept> // for out_of_range
 
 using map_default_t = ankerl::unordered_dense::map<std::string, size_t>;
 
@@ -23,13 +23,13 @@ static_assert(sizeof(map_default_t::bucket_type) == 8U);
 static_assert(sizeof(map_big_t::bucket_type) == sizeof(size_t) + 4U);
 static_assert(map_default_t::max_size() == map_default_t::max_bucket_count());
 
-#if SIZE_MAX == UINT32_MAX
+#    if SIZE_MAX == UINT32_MAX
 static_assert(map_default_t::max_size() == uint64_t{1} << 31U);
 static_assert(map_big_t::max_size() == uint64_t{1} << 31U);
-#else
+#    else
 static_assert(map_default_t::max_size() == uint64_t{1} << 32U);
 static_assert(map_big_t::max_size() == uint64_t{1} << 63U);
-#endif
+#    endif
 
 struct bucket_micro {
     static constexpr uint8_t dist_inc = 1U << 1U;             // 1 bits for fingerprint

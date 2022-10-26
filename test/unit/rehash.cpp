@@ -19,6 +19,6 @@ TEST_CASE("rehash") {
 
     map.clear();
     map.rehash(0);
-    //REQUIRE(map.bucket_count() > 0);
+    // REQUIRE(map.bucket_count() > 0);
     REQUIRE(map.bucket_count() < old_bucket_size);
 }

@@ -1,12 +1,12 @@
 #if 0
-#include <ankerl/unordered_dense.h>
+#    include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#    include <doctest.h>
 
-#include <cstddef> // for size_t
-#include <string>  // for allocator, string, operator==
-#include <utility> // for pair, move
-#include <vector>  // for vector
+#    include <cstddef> // for size_t
+#    include <string>  // for allocator, string, operator==
+#    include <utility> // for pair, move
+#    include <vector>  // for vector
 
 namespace {
 
