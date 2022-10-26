@@ -1,3 +1,4 @@
+#if 0
 #include <ankerl/unordered_dense.h>
 
 #include <doctest.h> // for ResultBuilder, TestCase, REQUIRE
@@ -18,3 +19,5 @@ TEST_CASE("hash_string") {
     }
     REQUIRE(set.size() == 100);
 }
+
+#endif

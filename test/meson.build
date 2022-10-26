@@ -89,7 +89,7 @@ foreach arg : [
             '-Wunreachable-code',
             '-Wuninitialized',
             '-pedantic-errors',
-            '-Wold-style-cast',
+            # '-Wold-style-cast',
             # '-Weffc++', doesn't work with fmt
         ]
     if compiler.has_argument(arg)

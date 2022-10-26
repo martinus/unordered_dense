@@ -32,7 +32,7 @@ public:
 };
 
 TEST_CASE("ctors_map") {
-    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj>;
+    using map_t = ankerl::unordered_dense::map<counter::obj, counter::obj, std::hash<counter::obj>>;
     // using map_t = std::unordered_map<counter::obj, counter::obj>;
     using alloc_t = map_t::allocator_type;
     using hash_t = map_t::hasher;

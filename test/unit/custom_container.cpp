@@ -1,3 +1,4 @@
+#if 0 // not in boost
 #include <ankerl/unordered_dense.h>
 
 #include <doctest.h>
@@ -29,3 +30,5 @@ TEST_CASE("custom_container") {
     auto map2 = map;
     std::swap(map2, map);
 }
+
+#endif

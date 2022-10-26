@@ -1,3 +1,4 @@
+#if 0
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
@@ -70,3 +71,5 @@ TEST_CASE("bucket_micro") {
         REQUIRE(it->second.get() == i);
     }
 }
+
+#endif

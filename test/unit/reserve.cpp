@@ -1,6 +1,7 @@
-#include <ankerl/unordered_dense.h>
+#if 0
+#    include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#    include <doctest.h>
 
 TEST_CASE("reserve") {
     auto map = ankerl::unordered_dense::map<int, int>();
@@ -9,3 +10,5 @@ TEST_CASE("reserve") {
     REQUIRE(map.values().capacity() >= 1000U);
     REQUIRE(0U == map.values().size());
 }
+
+#endif

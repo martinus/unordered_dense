@@ -1,10 +1,11 @@
-#include <ankerl/unordered_dense.h>
+#if 0
+#    include <ankerl/unordered_dense.h>
 
-#include <doctest.h>
+#    include <doctest.h>
 
-#include <cstdint>    // for uint32_t
-#include <functional> // for equal_to
-#include <limits>     // for numeric_limits
+#    include <cstdint>    // for uint32_t
+#    include <functional> // for equal_to
+#    include <limits>     // for numeric_limits
 
 TEST_CASE("max_load_factor") {
     auto map_60 = ankerl::unordered_dense::map<int, int>();
@@ -42,3 +43,4 @@ TEST_CASE("key_eq") {
     auto eq = map.key_eq();
     REQUIRE(eq(5, 5));
 }
+#endif

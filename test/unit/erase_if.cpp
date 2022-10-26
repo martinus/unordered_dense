@@ -1,12 +1,13 @@
-#include <ankerl/unordered_dense.h>
+#if 0
+#    include <ankerl/unordered_dense.h>
 
-#include <app/counter.h>
+#    include <app/counter.h>
 
-#include <doctest.h>
+#    include <doctest.h>
 
-#include <cstddef> // for size_t
-#include <cstdint> // for uint64_t
-#include <utility> // for pair
+#    include <cstddef> // for size_t
+#    include <cstdint> // for uint64_t
+#    include <utility> // for pair
 
 using set_t = ankerl::unordered_dense::set<counter::obj>;
 
@@ -53,3 +54,4 @@ TEST_CASE("erase_if_map") {
         }
     }
 }
+#endif

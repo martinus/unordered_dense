@@ -1,3 +1,4 @@
+#if 0
 #include <ankerl/unordered_dense.h>
 
 #include <app/counter.h>
@@ -33,3 +34,4 @@ TEST_CASE("replace") {
         REQUIRE(map.contains(counter::obj{i, counts}));
     }
 }
+#endif
