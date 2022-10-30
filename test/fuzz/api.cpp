@@ -17,14 +17,6 @@
 
 namespace fuzz {
 
-template <typename It>
-auto advance(It it, int times) -> It {
-    for (int i = 0; i < times; ++i) {
-        ++it;
-    }
-    return it;
-}
-
 void api(uint8_t const* data, size_t size) {
     auto p = fuzz::provider(data, size);
     auto counts = counter();
@@ -86,7 +78,8 @@ void api(uint8_t const* data, size_t size) {
         [&] {
             if (!map.empty()) {
                 auto idx = p.bounded(static_cast<int>(map.size()));
-                auto it = advance(map.cbegin(), idx);
+                auto it = map.cbegin();
+                std::advance(it, idx);
                 auto const& key = it->first;
                 auto found_it = map.find(key);
                 REQUIRE(it == found_it);
@@ -94,7 +87,8 @@ void api(uint8_t const* data, size_t size) {
         },
         [&] {
             if (!map.empty()) {
-                auto it = advance(map.begin(), p.bounded(static_cast<int>(map.size())));
+                auto it = map.begin();
+                std::advance(it, p.bounded(static_cast<int>(map.size())));
                 map.erase(it);
             }
         },
@@ -120,7 +114,11 @@ void api(uint8_t const* data, size_t size) {
                     std::swap(first_idx, last_idx);
                 }
             }
-            map.erase(advance(map.cbegin(), first_idx), advance(map.cbegin(), last_idx));
+            auto it1 = map.cbegin();
+            std::advance(it1, first_idx);
+            auto it2 = map.cbegin();
+            std::advance(it2, last_idx);
+            map.erase(it1, it2);
         },
         [&] {
             map.~map_t();
