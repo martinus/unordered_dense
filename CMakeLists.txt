@@ -42,18 +42,18 @@ if(_unordered_dense_is_toplevel_project)
     configure_package_config_file(
         "${PROJECT_SOURCE_DIR}/cmake/unordered_denseConfig.cmake.in"
         "${PROJECT_BINARY_DIR}/unordered_denseConfig.cmake"
-        INSTALL_DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/unordered_dense/cmake)
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
     install(
         EXPORT unordered_dense_Targets
         FILE unordered_denseTargets.cmake
         NAMESPACE unordered_dense::
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/unordered_dense/cmake)
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
     install(
         FILES "${PROJECT_BINARY_DIR}/unordered_denseConfig.cmake"
         "${PROJECT_BINARY_DIR}/unordered_denseConfigVersion.cmake"
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/unordered_dense/cmake)
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
     install(
         DIRECTORY ${PROJECT_SOURCE_DIR}/include/ankerl
