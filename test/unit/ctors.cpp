@@ -72,3 +72,19 @@ TEST_CASE("ctors_map") {
         REQUIRE(m.size() == 10);
     }
 }
+
+TEST_CASE("ctor_bucket_count") {
+    {
+        auto m = ankerl::unordered_dense::map<counter::obj, counter::obj>{};
+        REQUIRE(m.bucket_count() == 0U);
+    }
+    {
+        auto m = ankerl::unordered_dense::map<counter::obj, counter::obj>{150U};
+        REQUIRE(m.bucket_count() == 256U);
+    }
+    {
+        auto m = ankerl::unordered_dense::set<int>{{1, 2, 3, 4}, 300U};
+        REQUIRE(m.size() == 4U);
+        REQUIRE(m.bucket_count() == 512U);
+    }
+}
