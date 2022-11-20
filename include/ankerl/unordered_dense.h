@@ -363,6 +363,9 @@ using detect_is_transparent = typename T::is_transparent;
 template <typename T>
 using detect_iterator = typename T::iterator;
 
+template <typename T>
+using detect_reserve = decltype(std::declval<T&>().reserve(size_t{}));
+
 // enable_if helpers
 
 template <typename Mapped>
@@ -373,6 +376,9 @@ constexpr bool is_transparent_v = is_detected_v<detect_is_transparent, Hash>&& i
 
 template <typename From, typename To1, typename To2>
 constexpr bool is_neither_convertible_v = !std::is_convertible_v<From, To1> && !std::is_convertible_v<From, To2>;
+
+template <typename T>
+constexpr bool has_reserve = is_detected_v<detect_reserve, T>;
 
 // This is it, the table. Doubles as map and set, and uses `void` for T when its used as a set.
 template <class Key,
@@ -746,13 +752,17 @@ public:
     table()
         : table(0) {}
 
-    explicit table(size_t /*bucket_count*/,
+    explicit table(size_t bucket_count,
                    Hash const& hash = Hash(),
                    KeyEqual const& equal = KeyEqual(),
                    allocator_type const& alloc_or_container = allocator_type())
         : m_values(alloc_or_container)
         , m_hash(hash)
-        , m_equal(equal) {}
+        , m_equal(equal) {
+        if (0 != bucket_count) {
+            reserve(bucket_count);
+        }
+    }
 
     table(size_t bucket_count, allocator_type const& alloc)
         : table(bucket_count, Hash(), KeyEqual(), alloc) {}
@@ -1375,7 +1385,10 @@ public:
 
     void reserve(size_t capa) {
         capa = std::min(capa, max_size());
-        m_values.reserve(capa);
+        if constexpr (has_reserve<value_container_type>) {
+            // std::deque doesn't have reserve(). Make sure we only call when available
+            m_values.reserve(capa);
+        }
         auto shifts = calc_shifts_for_size(std::max(capa, size()));
         if (0 == m_num_buckets || shifts < m_shifts) {
             m_shifts = shifts;
