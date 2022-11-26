@@ -101,10 +101,13 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 
 // hash ///////////////////////////////////////////////////////////////////////
 
-// This is a stripped-down implementation of wyhash: https://github.com/wangyi-fudan/wyhash
-// No big-endian support (because different values on different machines don't matter),
-// hardcodes seed and the secret, reformattes the code, and clang-tidy fixes.
-namespace detail::wyhash {
+// This is based on wyhash https://github.com/wangyi-fudan/wyhash
+// Changes are:
+// * Reduced mixing quality. It's good enough for hashmaps, but not good for a generic hash.
+// * The logic for length 0-16 is different. Less quality, but quite a bit faster.
+// * No big-endian support (because different values on different machines don't matter)
+// * hardcodes seed and the secret, reformattes the code, and clang-tidy fixes.
+namespace detail::container_hash {
 
 static inline void mum(uint64_t* a, uint64_t* b) {
 #    if defined(__SIZEOF_INT128__)
@@ -159,58 +162,57 @@ static inline void mum(uint64_t* a, uint64_t* b) {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[maybe_unused]] [[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
-    static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
-                                              UINT64_C(0xe7037ed1a0b428db),
-                                              UINT64_C(0x8ebc6af09c88c6e3),
-                                              UINT64_C(0x589965cc75374cc3)};
+static constexpr auto secret = std::array{
+    UINT64_C(0xa0761d6478bd642f), UINT64_C(0xe7037ed1a0b428db), UINT64_C(0x8ebc6af09c88c6e3), UINT64_C(0x589965cc75374cc3)};
 
-    auto const* p = static_cast<uint8_t const*>(key);
-    uint64_t seed = secret[0];
-    uint64_t a{};
-    uint64_t b{};
-    if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 16)) {
-        if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 4)) {
-            a = (r4(p) << 32U) | r4(p + ((len >> 3U) << 2U));
-            b = (r4(p + len - 4) << 32U) | r4(p + len - 4 - ((len >> 3U) << 2U));
-        } else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0)) {
-            a = r3(p, len);
-            b = 0;
-        } else {
-            a = 0;
-            b = 0;
-        }
-    } else {
-        size_t i = len;
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 48)) {
-            uint64_t see1 = seed;
-            uint64_t see2 = seed;
-            do {
-                seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-                see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
-                see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
-                p += 48;
-                i -= 48;
-            } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 48));
-            seed ^= see1 ^ see2;
-        }
-        while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16)) {
+static inline auto hash_long(uint8_t const* p, size_t len) -> uint64_t {
+    uint64_t seed = secret[1];
+    size_t i = len;
+    if (i > 48) {
+        uint64_t see1 = secret[1];
+        uint64_t see2 = secret[1];
+        do {
             seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-            i -= 16;
-            p += 16;
-        }
-        a = r8(p + i - 16);
-        b = r8(p + i - 8);
+            see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
+            see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
+            p += 48;
+            i -= 48;
+        } while ((i > 48));
+        seed ^= see1 ^ see2;
     }
 
-    return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
+    while (i > 16) {
+        seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+        i -= 16;
+        p += 16;
+    }
+
+    auto a = r8(p + i - 16);
+    auto b = r8(p + i - 8);
+    return mix(a ^ secret[1], b ^ seed);
+}
+
+[[maybe_unused]] [[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
+    auto const* p = static_cast<uint8_t const*>(key);
+
+    uint64_t x{};
+    if (len > 16) {
+        x = hash_long(p, len);
+    } else if (len > 8) {
+        x = mix(r8(p) ^ secret[1], r8(p + len - 8) ^ secret[1]);
+    } else if (len >= 4) {
+        x = (r4(p) << 32U) | r4(p + len - 4);
+    } else if (len > 0) {
+        x = r3(p, len);
+    }
+    return mix(secret[1] ^ len, x);
 }
 
 [[nodiscard]] static inline auto hash(uint64_t x) -> uint64_t {
-    return detail::wyhash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
+    return detail::container_hash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
 }
 
-} // namespace detail::wyhash
+} // namespace detail::container_hash
 
 template <typename T, typename Enable = void>
 struct hash {
@@ -224,7 +226,7 @@ template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string<CharT> const& str) const noexcept -> uint64_t {
-        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
+        return detail::container_hash::hash(str.data(), sizeof(CharT) * str.size());
     }
 };
 
@@ -232,7 +234,7 @@ template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> uint64_t {
-        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
+        return detail::container_hash::hash(sv.data(), sizeof(CharT) * sv.size());
     }
 };
 
@@ -241,7 +243,7 @@ struct hash<T*> {
     using is_avalanching = void;
     auto operator()(T* ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr));
+        return detail::container_hash::hash(reinterpret_cast<uintptr_t>(ptr));
     }
 };
 
@@ -250,7 +252,7 @@ struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
     auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
+        return detail::container_hash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
     }
 };
 
@@ -259,7 +261,7 @@ struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
     auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
+        return detail::container_hash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
     }
 };
 
@@ -268,18 +270,18 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     using is_avalanching = void;
     auto operator()(Enum e) const noexcept -> uint64_t {
         using underlying = typename std::underlying_type_t<Enum>;
-        return detail::wyhash::hash(static_cast<underlying>(e));
+        return detail::container_hash::hash(static_cast<underlying>(e));
     }
 };
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                    \
-        template <>                                                      \
-        struct hash<T> {                                                 \
-            using is_avalanching = void;                                 \
-            auto operator()(T const& obj) const noexcept -> uint64_t {   \
-                return detail::wyhash::hash(static_cast<uint64_t>(obj)); \
-            }                                                            \
+#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                            \
+        template <>                                                              \
+        struct hash<T> {                                                         \
+            using is_avalanching = void;                                         \
+            auto operator()(T const& obj) const noexcept -> uint64_t {           \
+                return detail::container_hash::hash(static_cast<uint64_t>(obj)); \
+            }                                                                    \
         }
 
 #    if defined(__GNUC__) && !defined(__clang__)
@@ -469,8 +471,8 @@ private:
                 return m_hash(key);
             }
         } else {
-            // not is_avalanching => apply wyhash
-            return wyhash::hash(m_hash(key));
+            // not is_avalanching => apply container_hash
+            return container_hash::hash(m_hash(key));
         }
     }
 
