@@ -166,11 +166,11 @@ static constexpr auto secret = std::array{
     UINT64_C(0xa0761d6478bd642f), UINT64_C(0xe7037ed1a0b428db), UINT64_C(0x8ebc6af09c88c6e3), UINT64_C(0x589965cc75374cc3)};
 
 static inline auto hash_long(uint8_t const* p, size_t len) -> uint64_t {
-    uint64_t seed = secret[1];
+    uint64_t seed = secret[0];
     size_t i = len;
     if (i > 48) {
-        uint64_t see1 = secret[1];
-        uint64_t see2 = secret[1];
+        uint64_t see1 = secret[0];
+        uint64_t see2 = secret[0];
         do {
             seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
             see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
@@ -199,11 +199,11 @@ static inline auto hash_long(uint8_t const* p, size_t len) -> uint64_t {
     if (len > 16) {
         x = hash_long(p, len);
     } else if (len > 8) {
-        x = mix(r8(p) ^ secret[1], r8(p + len - 8) ^ secret[1]);
+        x = mix(r8(p) ^ secret[1], r8(p + len - 8) ^ secret[0]);
     } else if (len >= 4) {
-        x = (r4(p) << 32U) | r4(p + len - 4);
+        x = mix(((r4(p) << 32U) | r4(p + len - 4)) ^ secret[1], secret[0]);
     } else if (len > 0) {
-        x = r3(p, len);
+        x = mix(r3(p, len) ^ secret[1], secret[0]);
     }
     return mix(secret[1] ^ len, x);
 }
