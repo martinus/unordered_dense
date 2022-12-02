@@ -203,7 +203,8 @@ static inline auto hash_long(uint8_t const* p, size_t len) -> uint64_t {
     } else if (len >= 4) {
         x = mix(((r4(p) << 32U) | r4(p + len - 4)) ^ secret[1], secret[0]);
     } else if (len > 0) {
-        x = mix(r3(p, len) ^ secret[1], secret[0]);
+        // don't mix 3 bytes strongly, it's more important to be fast
+        x = r3(p, len);
     }
     return mix(secret[1] ^ len, x);
 }
