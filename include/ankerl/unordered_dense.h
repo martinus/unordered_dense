@@ -181,28 +181,27 @@ static inline auto hash_long(uint8_t const* p, size_t len) -> uint64_t {
         seed ^= see1 ^ see2;
     }
 
-    while (i > 16) {
+    // we have 0-48 bytes remaining
+    if (i > 16) {
         seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-        i -= 16;
-        p += 16;
     }
-
-    auto a = r8(p + i - 16);
-    auto b = r8(p + i - 8);
-    return mix(a ^ secret[1], b ^ seed);
+    if (i > 32) {
+        seed = mix(r8(p + 16) ^ secret[1], r8(p + 24) ^ seed);
+    }
+    return mix(r8(p + i - 16) ^ secret[1], r8(p + i - 8) ^ seed);
 }
 
 [[maybe_unused]] [[nodiscard]] static inline auto hash(void const* key, size_t len) -> uint64_t {
     auto const* p = static_cast<uint8_t const*>(key);
 
     uint64_t x{};
-    if (len > 16) {
+    if (ANKERL_UNORDERED_DENSE_UNLIKELY(len > 16)) {
         x = hash_long(p, len);
-    } else if (len > 8) {
+    } else if (ANKERL_UNORDERED_DENSE_UNLIKELY(len > 8)) {
         x = mix(r8(p) ^ secret[1], r8(p + len - 8) ^ secret[0]);
-    } else if (len >= 4) {
+    } else if (ANKERL_UNORDERED_DENSE_UNLIKELY(len >= 4)) {
         x = mix(((r4(p) << 32U) | r4(p + len - 4)) ^ secret[1], secret[0]);
-    } else if (len > 0) {
+    } else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0)) {
         // don't mix 3 bytes strongly, it's more important to be fast
         x = r3(p, len);
     }
