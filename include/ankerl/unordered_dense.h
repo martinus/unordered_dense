@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 2.0.1
+// Version 2.0.2
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -32,7 +32,7 @@
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 2 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 1 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 2 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
 #define ANKERL_UNORDERED_DENSE_VERSION_CONCAT1(major, minor, patch) v##major##_##minor##_##patch
@@ -380,6 +380,15 @@ constexpr bool is_neither_convertible_v = !std::is_convertible_v<From, To1> && !
 template <typename T>
 constexpr bool has_reserve = is_detected_v<detect_reserve, T>;
 
+// base type for map has mapped_type
+template <class T>
+struct base_table_type_map {
+    using mapped_type = T;
+};
+
+// base type for set doesn't have mapped_type
+struct base_table_type_set {};
+
 // This is it, the table. Doubles as map and set, and uses `void` for T when its used as a set.
 template <class Key,
           class T, // when void, treat it as a set.
@@ -387,7 +396,7 @@ template <class Key,
           class KeyEqual,
           class AllocatorOrContainer,
           class Bucket>
-class table {
+class table : public std::conditional_t<std::is_void_v<T>, base_table_type_set, base_table_type_map<T>> {
 public:
     using value_container_type = std::conditional_t<
         is_detected_v<detect_iterator, AllocatorOrContainer>,
@@ -404,7 +413,6 @@ private:
 
 public:
     using key_type = Key;
-    using mapped_type = T;
     using value_type = typename value_container_type::value_type;
     using size_type = typename value_container_type::size_type;
     using difference_type = typename value_container_type::difference_type;
