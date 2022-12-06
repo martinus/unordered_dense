@@ -63,6 +63,7 @@ test_sources = [
     'unit/replace.cpp',
     'unit/reserve_and_assign.cpp',
     'unit/reserve.cpp',
+    'unit/set_or_map_types.cpp',
     'unit/set.cpp',
     'unit/std_hash.cpp',
     'unit/swap.cpp',
