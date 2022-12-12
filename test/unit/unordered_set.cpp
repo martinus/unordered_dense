@@ -41,7 +41,7 @@ TEST_CASE("unordered_set_string") {
     REQUIRE(set.size() == 1);
 
     REQUIRE(set.begin() != set.end());
-    std::string& str = *set.begin();
+    std::string const& str = *set.begin();
     REQUIRE(str == std::string(static_cast<size_t>(2000), 'a'));
 
     auto it = set.begin();

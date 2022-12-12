@@ -1,8 +1,7 @@
 #include <ankerl/unordered_dense.h> // for map
 
-#include <app/name_of_type.h>       // for name_of_type
-#include <third-party/nanobench.h>  // for Rng
-#include <third-party/robin_hood.h> // for unordered_flat_map
+#include <app/name_of_type.h>      // for name_of_type
+#include <third-party/nanobench.h> // for Rng
 
 #include <doctest.h>  // for TestCase, skip, ResultBuilder
 #include <fmt/core.h> // for format, print
@@ -87,10 +86,14 @@ TEST_CASE("bench_find_random_uo" * doctest::test_suite("bench") * doctest::skip(
     bench<std::unordered_map<size_t, size_t>>();
 }
 
+#if 0
+
 // 10.55
 TEST_CASE("bench_find_random_rh" * doctest::test_suite("bench") * doctest::skip()) {
     bench<robin_hood::unordered_flat_map<size_t, size_t>>();
 }
+
+#endif
 
 // 8.87
 TEST_CASE("bench_find_random_udm" * doctest::test_suite("bench") * doctest::skip()) {

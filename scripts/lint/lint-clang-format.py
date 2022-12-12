@@ -16,7 +16,10 @@ globs = [
     f"{root_path}/test/**/*.h",
     f"{root_path}/test/**/*.cpp",
 ]
-exclusions = ["nanobench\.h", "FuzzedDataProvider\.h"]
+exclusions = [
+    "nanobench\.h",
+    "FuzzedDataProvider\.h",
+    '/third-party/']
 
 files = []
 for g in globs:

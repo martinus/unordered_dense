@@ -1,8 +1,7 @@
 #include <ankerl/unordered_dense.h> // for map, hash
 
-#include <app/geomean.h>            // for geomean
-#include <third-party/nanobench.h>  // for Rng, doNotOptimizeAway, Bench
-#include <third-party/robin_hood.h> // for unordered_node_map, unordered_fl...
+#include <app/geomean.h>           // for geomean
+#include <third-party/nanobench.h> // for Rng, doNotOptimizeAway, Bench
 
 #include <doctest.h>  // for TestCase, skip, ResultBuilder
 #include <fmt/core.h> // for print, format
@@ -168,6 +167,8 @@ void bench_all(ankerl::nanobench::Bench* bench, std::string_view name) {
 
 } // namespace
 
+#if 0
+
 // A relatively quick benchmark that should get a relatively good single number of how good the map
 // is. It calculates geometric mean of several benchmarks.
 TEST_CASE("bench_quick_overall_rhf" * doctest::test_suite("bench") * doctest::skip()) {
@@ -177,9 +178,9 @@ TEST_CASE("bench_quick_overall_rhf" * doctest::test_suite("bench") * doctest::sk
                                                                    "robin_hood::unordered_flat_map<std::string, size_t>");
     fmt::print("{} bench_quick_overall_rhf\n", geomean1(bench));
 
-#ifdef ROBIN_HOOD_COUNT_ENABLED
+#    ifdef ROBIN_HOOD_COUNT_ENABLED
     std::cout << robin_hood::counts() << std::endl;
-#endif
+#    endif
 }
 
 TEST_CASE("bench_quick_overall_rhn" * doctest::test_suite("bench") * doctest::skip()) {
@@ -189,10 +190,12 @@ TEST_CASE("bench_quick_overall_rhn" * doctest::test_suite("bench") * doctest::sk
                                                                    "robin_hood::unordered_node_map<std::string, size_t>");
     fmt::print("{} bench_quick_overall_rhn\n", geomean1(bench));
 
-#ifdef ROBIN_HOOD_COUNT_ENABLED
+#    ifdef ROBIN_HOOD_COUNT_ENABLED
     std::cout << robin_hood::counts() << std::endl;
-#endif
+#    endif
 }
+
+#endif
 
 TEST_CASE("bench_quick_overall_std" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
@@ -244,6 +247,8 @@ void test_big() {
     fmt::print("{} map.size()\n", map.size());
 }
 
+#if 0
+
 // 3346376 max RSS, 0:12.40
 TEST_CASE("memory_map_huge_rhf" * doctest::test_suite("bench") * doctest::skip()) {
     test_big<robin_hood::unordered_flat_map<uint64_t, size_t>>();
@@ -253,6 +258,8 @@ TEST_CASE("memory_map_huge_rhf" * doctest::test_suite("bench") * doctest::skip()
 TEST_CASE("memory_map_huge_rhn" * doctest::test_suite("bench") * doctest::skip()) {
     test_big<robin_hood::unordered_node_map<uint64_t, size_t>>();
 }
+
+#endif
 
 // 3296524 max RSS, 0:50.76
 TEST_CASE("memory_map_huge_uo" * doctest::test_suite("bench") * doctest::skip()) {
