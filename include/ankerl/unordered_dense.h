@@ -79,7 +79,15 @@
 #        if __has_include(<memory_resource>)
 #            undef ANKERL_UNORDERED_DENSE_PMR
 #            define ANKERL_UNORDERED_DENSE_PMR 1 // NOLINT(cppcoreguidelines-macro-usage)
-#            include <memory_resource>           // for polymorphic_allocator
+#            define ANKERL_UNORDERED_DENSE_PMR_ALLOCATOR \
+                std::pmr::polymorphic_allocator // NOLINT(cppcoreguidelines-macro-usage)
+#            include <memory_resource>          // for polymorphic_allocator
+#        elif __has_include(<experimental/memory_resource>)
+#            undef ANKERL_UNORDERED_DENSE_PMR
+#            define ANKERL_UNORDERED_DENSE_PMR 1 // NOLINT(cppcoreguidelines-macro-usage)
+#            define ANKERL_UNORDERED_DENSE_PMR_ALLOCATOR \
+                std::experimental::pmr::polymorphic_allocator // NOLINT(cppcoreguidelines-macro-usage)
+#            include <experimental/memory_resource>           // for polymorphic_allocator
 #        endif
 #    endif
 
@@ -1483,10 +1491,10 @@ template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class Bucket = bucket_type::standard>
-using map = detail::table<Key, T, Hash, KeyEqual, std::pmr::polymorphic_allocator<std::pair<Key, T>>, Bucket>;
+using map = detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR_ALLOCATOR<std::pair<Key, T>>, Bucket>;
 
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
-using set = detail::table<Key, void, Hash, KeyEqual, std::pmr::polymorphic_allocator<Key>, Bucket>;
+using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR_ALLOCATOR<Key>, Bucket>;
 
 } // namespace pmr
 
