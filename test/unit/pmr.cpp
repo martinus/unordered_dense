@@ -12,6 +12,7 @@
 
 #if ANKERL_UNORDERED_DENSE_PMR
 
+#    if __has_include(<memory_resource>)
 #    include <memory_resource>
 
 class logging_memory_resource : public std::pmr::memory_resource {
@@ -220,4 +221,5 @@ TEST_CASE("pmr_move_same_mr") {
 }
 #    endif
 
+#    endif
 #endif
