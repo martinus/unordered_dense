@@ -1,7 +1,6 @@
 #include <ankerl/unordered_dense.h> // for map, operator==
 
-#include <third-party/nanobench.h>  // for Rng, Bench
-#include <third-party/robin_hood.h> // for unordered_node_map, unordered_fl...
+#include <third-party/nanobench.h> // for Rng, Bench
 
 #include <doctest.h>  // for TestCase, skip, TEST_CASE, test_...
 #include <fmt/core.h> // for format
@@ -27,6 +26,8 @@ void bench(std::string_view name) {
     REQUIRE(a == b);
 }
 
+#if 0
+
 TEST_CASE("bench_copy_rhn" * doctest::test_suite("bench") * doctest::skip()) {
     bench<robin_hood::unordered_node_map<uint64_t, uint64_t>>("robin_hood::unordered_node_map");
 }
@@ -34,6 +35,8 @@ TEST_CASE("bench_copy_rhn" * doctest::test_suite("bench") * doctest::skip()) {
 TEST_CASE("bench_copy_rhf" * doctest::test_suite("bench") * doctest::skip()) {
     bench<robin_hood::unordered_flat_map<uint64_t, uint64_t>>("robin_hood::unordered_flat_map");
 }
+
+#endif
 
 TEST_CASE("bench_copy_udm" * doctest::test_suite("bench") * doctest::skip()) {
     bench<ankerl::unordered_dense::map<uint64_t, uint64_t>>("ankerl::unordered_dense::map");
