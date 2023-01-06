@@ -371,8 +371,10 @@ using detect_reserve = decltype(std::declval<T&>().reserve(size_t{}));
 template <typename Mapped>
 constexpr bool is_map_v = !std::is_void_v<Mapped>;
 
+// clang-format off
 template <typename Hash, typename KeyEqual>
-constexpr bool is_transparent_v = is_detected_v<detect_is_transparent, Hash> && is_detected_v<detect_is_transparent, KeyEqual>;
+constexpr bool is_transparent_v = is_detected_v<detect_is_transparent, Hash>&& is_detected_v<detect_is_transparent, KeyEqual>;
+// clang-format on
 
 template <typename From, typename To1, typename To2>
 constexpr bool is_neither_convertible_v = !std::is_convertible_v<From, To1> && !std::is_convertible_v<From, To2>;
