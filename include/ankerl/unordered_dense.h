@@ -372,7 +372,7 @@ template <typename Mapped>
 constexpr bool is_map_v = !std::is_void_v<Mapped>;
 
 template <typename Hash, typename KeyEqual>
-constexpr bool is_transparent_v = is_detected_v<detect_is_transparent, Hash>&& is_detected_v<detect_is_transparent, KeyEqual>;
+constexpr bool is_transparent_v = is_detected_v<detect_is_transparent, Hash> && is_detected_v<detect_is_transparent, KeyEqual>;
 
 template <typename From, typename To1, typename To2>
 constexpr bool is_neither_convertible_v = !std::is_convertible_v<From, To1> && !std::is_convertible_v<From, To2>;
@@ -842,8 +842,10 @@ public:
         : table(init, bucket_count, hash, KeyEqual(), alloc) {}
 
     ~table() {
-        auto ba = bucket_alloc(m_values.get_allocator());
-        bucket_alloc_traits::deallocate(ba, m_buckets, bucket_count());
+        if (nullptr != m_buckets) {
+            auto ba = bucket_alloc(m_values.get_allocator());
+            bucket_alloc_traits::deallocate(ba, m_buckets, bucket_count());
+        }
     }
 
     auto operator=(table const& other) -> table& {
