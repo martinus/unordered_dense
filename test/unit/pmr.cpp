@@ -122,11 +122,20 @@ TEST_CASE("pmr") {
 
 TEST_CASE("pmr_no_null") {
     auto mr = no_null_memory_resource();
+    { auto map = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr); }
     {
         auto map = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr);
         for (size_t i = 0; i < 1; ++i) {
             map[i] = i;
         }
+    }
+
+    {
+        auto map = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr);
+        for (size_t i = 0; i < 1; ++i) {
+            map[i] = i;
+        }
+        auto map2 = std::move(map);
     }
 }
 
