@@ -13,7 +13,7 @@
 #if ANKERL_UNORDERED_DENSE_PMR
 
 #    if __has_include(<memory_resource>)
-#    include <memory_resource>
+#        include <memory_resource>
 
 class logging_memory_resource : public std::pmr::memory_resource {
     auto do_allocate(std::size_t bytes, std::size_t alignment) -> void* override {
@@ -145,7 +145,7 @@ void show([[maybe_unused]] track_peak_memory_resource const& mr, [[maybe_unused]
 }
 
 // windows' vector has different allocation behavior
-#    ifndef _WIN32
+#        ifndef _WIN32
 TEST_CASE("pmr_copy") {
     auto mr1 = track_peak_memory_resource();
     auto map1 = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>(&mr1);
@@ -219,7 +219,7 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(mr1.num_deallocs() == 2);
     REQUIRE(mr1.num_is_equals() == 0);
 }
-#    endif
+#        endif
 
 #    endif
 #endif
