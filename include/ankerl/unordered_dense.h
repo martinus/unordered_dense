@@ -73,6 +73,9 @@
 #    include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
 #    include <utility>          // for forward, exchange, pair, as_const, piece...
 #    include <vector>           // for vector
+#ifndef __EXCEPTIONS
+#    include <cassert> // for assert
+#endif
 
 #    define ANKERL_UNORDERED_DENSE_PMR 0 // NOLINT(cppcoreguidelines-macro-usage)
 #    if defined(__has_include)
@@ -599,9 +602,14 @@ private:
     }
 
     void increase_size() {
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_max_bucket_capacity == max_bucket_count())) {
+#ifdef __EXCEPTIONS
+      if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_max_bucket_capacity == max_bucket_count())) {
             throw std::overflow_error("ankerl::unordered_dense: reached max bucket size, cannot increase size");
-        }
+      }
+#else
+      assert(ANKERL_UNORDERED_DENSE_LIKELY(m_max_bucket_capacity != max_bucket_count()) &&
+            "ankerl::unordered_dense: reached max bucket size, cannot increase size");
+#endif
         --m_shifts;
         deallocate_buckets();
         allocate_buckets_from_shift();
@@ -758,7 +766,11 @@ private:
         if (auto it = find(key); end() != it) {
             return it->second;
         }
+#ifdef __EXCEPTIONS
         throw std::out_of_range("ankerl::unordered_dense::map::at(): key not found");
+#else
+        assert(false && "ankerl::unordered_dense::map::at(): key not found");
+#endif
     }
 
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
@@ -997,10 +1009,14 @@ public:
     // nonstandard API:
     // Discards the internally held container and replaces it with the one passed. Erases non-unique elements.
     auto replace(value_container_type&& container) {
+#ifdef __EXCEPTIONS
         if (container.size() > max_size()) {
             throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
         }
-
+#else
+        assert((container.size() <= max_size()) &&
+            "ankerl::unordered_dense::map::replace(): too many elements");
+#endif
         auto shifts = calc_shifts_for_size(container.size());
         if (0 == m_num_buckets || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
             m_shifts = shifts;
