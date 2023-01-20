@@ -55,6 +55,15 @@
 #    define ANKERL_UNORDERED_DENSE_PACK(decl) __pragma(pack(push, 1)) decl __pragma(pack(pop))
 #endif
 
+#if defined(__GNUC__)
+#if defined(__EXCEPTIONS)
+#else
+#    define ANKERL_UNORDERED_DENSE_EXCEPTIONS
+#endif
+#else
+#    define ANKERL_UNORDERED_DENSE_EXCEPTIONS
+#endif
+
 #if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
@@ -73,7 +82,8 @@
 #    include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
 #    include <utility>          // for forward, exchange, pair, as_const, piece...
 #    include <vector>           // for vector
-#ifndef __EXCEPTIONS
+#if defined(ANKERL_UNORDERED_DENSE_EXCEPTIONS)
+#else
 #    include <cassert> // for assert
 #endif
 
@@ -602,7 +612,7 @@ private:
     }
 
     void increase_size() {
-#ifdef __EXCEPTIONS
+#if defined(ANKERL_UNORDERED_DENSE_EXCEPTIONS)
       if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_max_bucket_capacity == max_bucket_count())) {
             throw std::overflow_error("ankerl::unordered_dense: reached max bucket size, cannot increase size");
       }
@@ -766,7 +776,7 @@ private:
         if (auto it = find(key); end() != it) {
             return it->second;
         }
-#ifdef __EXCEPTIONS
+#if defined(ANKERL_UNORDERED_DENSE_EXCEPTIONS)
         throw std::out_of_range("ankerl::unordered_dense::map::at(): key not found");
 #else
         assert(false && "ankerl::unordered_dense::map::at(): key not found");
@@ -1009,7 +1019,7 @@ public:
     // nonstandard API:
     // Discards the internally held container and replaces it with the one passed. Erases non-unique elements.
     auto replace(value_container_type&& container) {
-#ifdef __EXCEPTIONS
+#if defined(ANKERL_UNORDERED_DENSE_EXCEPTIONS)
         if (container.size() > max_size()) {
             throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
         }
