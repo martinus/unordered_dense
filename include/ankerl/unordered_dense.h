@@ -155,23 +155,23 @@ static inline void mum(uint64_t* a, uint64_t* b) {
 #    elif defined(_MSC_VER) && defined(_M_X64)
     *a = _umul128(*a, *b, b);
 #    else
-    uint64_t ha = *a >> 32U;
-    uint64_t hb = *b >> 32U;
-    uint64_t la = static_cast<uint32_t>(*a);
-    uint64_t lb = static_cast<uint32_t>(*b);
-    uint64_t hi{};
-    uint64_t lo{};
-    uint64_t rh = ha * hb;
-    uint64_t rm0 = ha * lb;
-    uint64_t rm1 = hb * la;
-    uint64_t rl = la * lb;
-    uint64_t t = rl + (rm0 << 32U);
-    auto c = static_cast<uint64_t>(t < rl);
-    lo = t + (rm1 << 32U);
-    c += static_cast<uint64_t>(lo < t);
-    hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
-    *a = lo;
-    *b = hi;
+        uint64_t ha = *a >> 32U;
+        uint64_t hb = *b >> 32U;
+        uint64_t la = static_cast<uint32_t>(*a);
+        uint64_t lb = static_cast<uint32_t>(*b);
+        uint64_t hi{};
+        uint64_t lo{};
+        uint64_t rh = ha * hb;
+        uint64_t rm0 = ha * lb;
+        uint64_t rm1 = hb * la;
+        uint64_t rl = la * lb;
+        uint64_t t = rl + (rm0 << 32U);
+        auto c = static_cast<uint64_t>(t < rl);
+        lo = t + (rm1 << 32U);
+        c += static_cast<uint64_t>(lo < t);
+        hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
+        *a = lo;
+        *b = hi;
 #    endif
 }
 
@@ -787,7 +787,7 @@ private:
 
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
     auto do_at(K const& key) -> Q& {
-        if (ANKERL_UNORDERED_DENSE_LIKELY(auto it = find(key); end() != it)) {
+        if (auto it = find(key); ANKERL_UNORDERED_DENSE_LIKELY(end() != it)) {
             return it->second;
         }
         doThrow<std::out_of_range>("ankerl::unordered_dense::map::at(): key not found");
