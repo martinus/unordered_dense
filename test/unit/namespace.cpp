@@ -2,10 +2,12 @@
 
 #include <doctest.h>
 
-static_assert(std::is_same_v<ankerl::unordered_dense::v3_0_2::map<int, int>, ankerl::unordered_dense::map<int, int>>);
-static_assert(std::is_same_v<ankerl::unordered_dense::v3_0_2::hash<int>, ankerl::unordered_dense::hash<int>>);
+namespace versioned_namespace = ankerl::unordered_dense::v3_1_0;
+
+static_assert(std::is_same_v<versioned_namespace::map<int, int>, ankerl::unordered_dense::map<int, int>>);
+static_assert(std::is_same_v<versioned_namespace::hash<int>, ankerl::unordered_dense::hash<int>>);
 
 TEST_CASE("version_namespace") {
-    auto map = ankerl::unordered_dense::v3_0_2::map<int, int>{};
+    auto map = versioned_namespace::map<int, int>{};
     REQUIRE(map.empty());
 }

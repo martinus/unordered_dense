@@ -24,7 +24,7 @@ file_pattern_count = [
     (
         f"{root}/test/unit/namespace.cpp",
         r"unordered_dense::v(\d+)_(\d+)_(\d+)",
-        3
+        1
     )
 ]
 
