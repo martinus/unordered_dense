@@ -20,62 +20,65 @@ template <class M>
     return m;
 }
 
-TEST_CASE("copy_and_assign_maps") {
-    { auto a = create_map<map_t>(15); }
+TEST_CASE("copy_and_assign_maps_1") {
+    auto a = create_map<map_t>(15);
+}
 
-    { auto a = create_map<map_t>(100); }
+TEST_CASE("copy_and_assign_maps_2") {
+    auto a = create_map<map_t>(100);
+}
 
-    {
-        auto a = create_map<map_t>(1);
-        // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
-        auto b = a;
-        REQUIRE(a == b);
+TEST_CASE("copy_and_assign_maps_3") {
+    auto a = create_map<map_t>(1);
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+    auto b = a;
+    REQUIRE(a == b);
+}
+
+TEST_CASE("copy_and_assign_maps_4") {
+    map_t a;
+    REQUIRE(a.empty());
+    a.clear();
+    REQUIRE(a.empty());
+}
+
+TEST_CASE("copy_and_assign_maps_5") {
+    auto a = create_map<map_t>(100);
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+    auto b = a;
+    REQUIRE(b == a);
+}
+
+TEST_CASE("copy_and_assign_maps_6") {
+    map_t a;
+    a[123] = 321;
+    a.clear();
+    std::vector<map_t> maps(10, a);
+
+    for (auto const& map : maps) {
+        REQUIRE(map.empty());
     }
+}
 
-    {
-        map_t a;
-        REQUIRE(a.empty());
-        a.clear();
-        REQUIRE(a.empty());
-    }
+TEST_CASE("copy_and_assign_maps_7") {
+    std::vector<map_t> maps(10);
+    REQUIRE(maps.size() == 10U);
+}
 
-    {
-        auto a = create_map<map_t>(100);
-        // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
-        auto b = a;
-        REQUIRE(b == a);
-    }
-    {
-        map_t a;
-        a[123] = 321;
-        a.clear();
-        std::vector<map_t> maps(10, a);
+TEST_CASE("copy_and_assign_maps_8") {
+    map_t a;
+    std::vector<map_t> maps(12, a);
+    REQUIRE(maps.size() == 12U);
+}
 
-        for (auto const& map : maps) {
-            REQUIRE(map.empty());
-        }
-    }
+TEST_CASE("copy_and_assign_maps_9") {
+    map_t a;
+    a[123] = 321;
+    std::vector<map_t> maps(10, a);
+    a[123] = 1;
 
-    {
-        std::vector<map_t> maps(10);
-        REQUIRE(maps.size() == 10U);
-    }
-
-    {
-        map_t a;
-        std::vector<map_t> maps(12, a);
-        REQUIRE(maps.size() == 12U);
-    }
-
-    {
-        map_t a;
-        a[123] = 321;
-        std::vector<map_t> maps(10, a);
-        a[123] = 1;
-
-        for (auto const& map : maps) {
-            REQUIRE(map.size() == 1);
-            REQUIRE(map.find(123)->second == 321);
-        }
+    for (auto const& map : maps) {
+        REQUIRE(map.size() == 1);
+        REQUIRE(map.find(123)->second == 321);
     }
 }
