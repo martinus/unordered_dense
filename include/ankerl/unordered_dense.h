@@ -1,12 +1,12 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 3.0.2
+// Version 3.1.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2022 Martin Leitner-Ankerl <martin.ankerl@gmail.com>
+// Copyright (c) 2022-2023 Martin Leitner-Ankerl <martin.ankerl@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -31,8 +31,8 @@
 
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 3 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 2 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 1 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
 #define ANKERL_UNORDERED_DENSE_VERSION_CONCAT1(major, minor, patch) v##major##_##minor##_##patch
@@ -56,10 +56,10 @@
 #endif
 
 // exceptions
-#if !defined(__cpp_exceptions) && !defined(__EXCEPTIONS) && !defined(_CPPUNWIND)
-#    define ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS 0
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+#    define ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() 1
 #else
-#    define ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS 1
+#    define ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() 0
 #endif
 #ifdef _MSC_VER
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __declspec(noinline)
@@ -85,7 +85,7 @@
 #    include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
 #    include <utility>          // for forward, exchange, pair, as_const, piece...
 #    include <vector>           // for vector
-#    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS == 0
+#    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() == 0
 #        include <cstdlib> // for abort
 #    endif
 
@@ -122,22 +122,37 @@
 namespace ankerl::unordered_dense {
 inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 
-template <typename E, typename... Args>
-[[noreturn]]
-#    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS
+namespace detail {
+
+#    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()
+
 // make sure this is not inlined as it is slow and dramatically enlarges code, thus making other
 // inlinings more difficult. Throws are also generally the slow path.
-// NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
-ANKERL_UNORDERED_DENSE_NOINLINE void
-doThrow(Args&&... args) {
-    throw E(std::forward<Args>(args)...);
+[[noreturn]] inline ANKERL_UNORDERED_DENSE_NOINLINE void on_error_key_not_found() {
+    throw std::out_of_range("ankerl::unordered_dense::map::at(): key not found");
 }
+[[noreturn]] inline ANKERL_UNORDERED_DENSE_NOINLINE void on_error_bucket_overflow() {
+    throw std::overflow_error("ankerl::unordered_dense: reached max bucket size, cannot increase size");
+}
+[[noreturn]] inline ANKERL_UNORDERED_DENSE_NOINLINE void on_error_too_many_elements() {
+    throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
+}
+
 #    else
-// abort does not generate much code, so no need to avoid inlining.
-void doThrow(Args&&... /*unused*/) {
+
+[[noreturn]] inline void on_error_key_not_found() {
     abort();
 }
+[[noreturn]] inline void on_error_bucket_overflow() {
+    abort();
+}
+[[noreturn]] inline void on_error_too_many_elements() {
+    abort();
+}
+
 #    endif
+
+} // namespace detail
 
 // hash ///////////////////////////////////////////////////////////////////////
 
@@ -155,23 +170,23 @@ static inline void mum(uint64_t* a, uint64_t* b) {
 #    elif defined(_MSC_VER) && defined(_M_X64)
     *a = _umul128(*a, *b, b);
 #    else
-        uint64_t ha = *a >> 32U;
-        uint64_t hb = *b >> 32U;
-        uint64_t la = static_cast<uint32_t>(*a);
-        uint64_t lb = static_cast<uint32_t>(*b);
-        uint64_t hi{};
-        uint64_t lo{};
-        uint64_t rh = ha * hb;
-        uint64_t rm0 = ha * lb;
-        uint64_t rm1 = hb * la;
-        uint64_t rl = la * lb;
-        uint64_t t = rl + (rm0 << 32U);
-        auto c = static_cast<uint64_t>(t < rl);
-        lo = t + (rm1 << 32U);
-        c += static_cast<uint64_t>(lo < t);
-        hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
-        *a = lo;
-        *b = hi;
+    uint64_t ha = *a >> 32U;
+    uint64_t hb = *b >> 32U;
+    uint64_t la = static_cast<uint32_t>(*a);
+    uint64_t lb = static_cast<uint32_t>(*b);
+    uint64_t hi{};
+    uint64_t lo{};
+    uint64_t rh = ha * hb;
+    uint64_t rm0 = ha * lb;
+    uint64_t rm1 = hb * la;
+    uint64_t rl = la * lb;
+    uint64_t t = rl + (rm0 << 32U);
+    auto c = static_cast<uint64_t>(t < rl);
+    lo = t + (rm1 << 32U);
+    c += static_cast<uint64_t>(lo < t);
+    hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
+    *a = lo;
+    *b = hi;
 #    endif
 }
 
@@ -632,7 +647,7 @@ private:
 
     void increase_size() {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_max_bucket_capacity == max_bucket_count())) {
-            doThrow<std::overflow_error>("ankerl::unordered_dense: reached max bucket size, cannot increase size");
+            on_error_bucket_overflow();
         }
         --m_shifts;
         deallocate_buckets();
@@ -790,7 +805,7 @@ private:
         if (auto it = find(key); ANKERL_UNORDERED_DENSE_LIKELY(end() != it)) {
             return it->second;
         }
-        doThrow<std::out_of_range>("ankerl::unordered_dense::map::at(): key not found");
+        on_error_key_not_found();
     }
 
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
@@ -1030,7 +1045,7 @@ public:
     // Discards the internally held container and replaces it with the one passed. Erases non-unique elements.
     auto replace(value_container_type&& container) {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(container.size() > max_size())) {
-            doThrow<std::out_of_range>("ankerl::unordered_dense::map::replace(): too many elements");
+            on_error_too_many_elements();
         }
         auto shifts = calc_shifts_for_size(container.size());
         if (0 == m_num_buckets || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
@@ -1544,6 +1559,7 @@ using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR_
 namespace std { // NOLINT(cert-dcl58-cpp)
 
 template <class Key, class T, class Hash, class KeyEqual, class AllocatorOrContainer, class Bucket, class Pred>
+// NOLINTNEXTLINE(cert-dcl58-cpp)
 auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket>& map, Pred pred)
     -> size_t {
     using map_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket>;
