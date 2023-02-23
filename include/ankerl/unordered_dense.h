@@ -578,7 +578,7 @@ private:
     }
 
     [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
-        return std::min(max_bucket_count(), size_t{1} << (64U - shifts));
+        return (std::min)(max_bucket_count(), size_t{1} << (64U - shifts));
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
@@ -983,7 +983,7 @@ public:
     }
 
     [[nodiscard]] static constexpr auto max_size() noexcept -> size_t {
-        if constexpr (std::numeric_limits<value_idx_type>::max() == std::numeric_limits<size_t>::max()) {
+        if constexpr ((std::numeric_limits<value_idx_type>::max)() == (std::numeric_limits<size_t>::max)()) {
             return size_t{1} << (sizeof(value_idx_type) * 8 - 1);
         } else {
             return size_t{1} << (sizeof(value_idx_type) * 8);
@@ -1440,7 +1440,7 @@ public:
 
     void rehash(size_t count) {
         count = std::min(count, max_size());
-        auto shifts = calc_shifts_for_size(std::max(count, size()));
+        auto shifts = calc_shifts_for_size((std::max)(count, size()));
         if (shifts != m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
@@ -1451,12 +1451,12 @@ public:
     }
 
     void reserve(size_t capa) {
-        capa = std::min(capa, max_size());
+        capa = (std::min)(capa, max_size());
         if constexpr (has_reserve<value_container_type>) {
             // std::deque doesn't have reserve(). Make sure we only call when available
             m_values.reserve(capa);
         }
-        auto shifts = calc_shifts_for_size(std::max(capa, size()));
+        auto shifts = calc_shifts_for_size((std::max)(capa, size()));
         if (0 == m_num_buckets || shifts < m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
