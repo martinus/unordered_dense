@@ -72,6 +72,7 @@ test_sources = [
     'unit/unique_ptr.cpp',
     'unit/unordered_set.cpp',
     'unit/vectorofmaps.cpp',
+    'unit/windows_include.cpp',
 ]
 
 # additional compile options
