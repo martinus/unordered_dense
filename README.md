@@ -33,10 +33,11 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [3.4. Custom Bucket Tyeps](#34-custom-bucket-tyeps)
     - [3.4.1. `ankerl::unordered_dense::bucket_type::standard`](#341-ankerlunordered_densebucket_typestandard)
     - [3.4.2. `ankerl::unordered_dense::bucket_type::big`](#342-ankerlunordered_densebucket_typebig)
-- [4. Design](#4-design)
-  - [4.1. Inserts](#41-inserts)
-  - [4.2. Lookups](#42-lookups)
-  - [4.3. Removals](#43-removals)
+- [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
+- [5. Design](#5-design)
+  - [5.1. Inserts](#51-inserts)
+  - [5.2. Lookups](#52-lookups)
+  - [5.3. Removals](#53-removals)
 
 ## 1. Overview
 
