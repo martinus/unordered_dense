@@ -165,6 +165,6 @@ struct fmt::formatter<counter::obj> {
         return ctx.end();
     }
     static auto format(counter::obj const& o, fmt::format_context& ctx) -> decltype(ctx.out()) {
-        return format_to(ctx.out(), "{}", o.get());
+        return fmt::format_to(ctx.out(), "{}", o.get());
     }
 };
