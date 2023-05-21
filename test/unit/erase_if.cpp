@@ -16,9 +16,10 @@ TEST_CASE_SET("erase_if_set", counter::obj) {
         set.emplace(i, counts);
     }
     REQUIRE(set.size() == 1000);
-    std::erase_if(set, [](counter::obj const& obj) {
+    auto num_erased = std::erase_if(set, [](counter::obj const& obj) {
         return 0 == obj.get() % 3;
     });
+    REQUIRE(num_erased == 334);
 
     REQUIRE(set.size() == 666);
     for (size_t i = 0; i < 1000; ++i) {
@@ -37,10 +38,11 @@ TEST_CASE_MAP("erase_if_map", uint64_t, uint64_t) {
     }
 
     REQUIRE(map.size() == 1000);
-    std::erase_if(map, [](std::pair<uint64_t, uint64_t> const& x) {
+    auto num_erased = std::erase_if(map, [](std::pair<uint64_t, uint64_t> const& x) {
         return 0 == x.second % 2;
     });
 
+    REQUIRE(num_erased == 500);
     REQUIRE(map.size() == 500);
     for (size_t i = 0; i < 1000; ++i) {
         if (0 == i % 2) {

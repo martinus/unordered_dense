@@ -1907,7 +1907,7 @@ auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, All
         }
     }
 
-    return map.size() - old_size;
+    return old_size - map.size();
 }
 
 } // namespace std
