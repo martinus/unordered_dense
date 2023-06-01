@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="ankerl::unordered_dense::v4_0_1::detail::table&lt;*&gt;">
+    <DisplayString>{{size={m_values.size()}}}</DisplayString>
+    <Expand>
+      <ExpandedItem>m_values</ExpandedItem>
+    </Expand>
+  </Type>
+</AutoVisualizer>
