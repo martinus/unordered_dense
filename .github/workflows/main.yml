@@ -71,4 +71,4 @@ jobs:
         name: Windows_Meson_Testlog
         path: |
           builddir/meson-logs/testlog.txt
-          builddir/test/udm.exe
+          builddir/test/udm-test.exe

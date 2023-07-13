@@ -60,6 +60,7 @@ test_sources = [
     'unit/namespace.cpp',
     'unit/not_copyable.cpp',
     'unit/not_moveable.cpp',
+    'unit/pmr_move_with_allocators.cpp',
     'unit/pmr.cpp',
     'unit/rehash.cpp',
     'unit/replace.cpp',
@@ -141,7 +142,7 @@ endif
 #endif
 
 test_exe = executable(
-    'udm',
+    'udm-test',
     test_sources,
     include_directories: incdir,
     cpp_args: cpp_args,
