@@ -20,7 +20,7 @@ void handle(int sig) {
 
     // print out all the frames to stderr
     fmt::print(stderr, "Error: signal {}. See stacktrace with\n", sig);
-    fmt::print(stderr, "addr2line -Cafpie ./test/udm");
+    fmt::print(stderr, "addr2line -Cafpie ./test/udm-test");
     for (size_t i = 0; i < static_cast<size_t>(size); ++i) {
         fmt::print(stderr, " {}", ary[i]);
     }

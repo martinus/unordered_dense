@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 4.0.1
+// Version 4.0.2
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -32,7 +32,7 @@
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 4 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 1 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 2 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
 
@@ -906,8 +906,8 @@ private:
         auto ba = bucket_alloc(m_values.get_allocator());
         if (nullptr != m_buckets) {
             bucket_alloc_traits::deallocate(ba, m_buckets, bucket_count());
+            m_buckets = nullptr;
         }
-        m_buckets = nullptr;
         m_num_buckets = 0;
         m_max_bucket_capacity = 0;
     }
@@ -1221,7 +1221,14 @@ public:
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
-            m_buckets = std::exchange(other.m_buckets, nullptr);
+
+            // we can only reuse m_buckets over when both maps have the same allocator!
+            if (get_allocator() == other.get_allocator()) {
+                m_buckets = std::exchange(other.m_buckets, nullptr);
+            } else {
+                copy_buckets(other);
+            }
+
             m_num_buckets = std::exchange(other.m_num_buckets, 0);
             m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
             m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);

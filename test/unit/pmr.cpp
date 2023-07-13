@@ -195,9 +195,9 @@ TEST_CASE("pmr_move_different_mr") {
     show(mr1, "mr1");
     show(mr2, "mr2");
 
-    REQUIRE(mr1.num_allocs() == 2);
+    REQUIRE(mr1.num_allocs() == 3);
     REQUIRE(mr1.num_deallocs() == 1);
-    REQUIRE(mr1.num_is_equals() == 0);
+    REQUIRE(mr1.num_is_equals() == 1);
 
     REQUIRE(mr2.num_allocs() == 2);
     REQUIRE(mr2.num_deallocs() == 0);
