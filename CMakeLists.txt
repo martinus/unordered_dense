@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 project("unordered_dense"
-    VERSION 4.0.2
+    VERSION 4.0.3
     DESCRIPTION "A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion"
     HOMEPAGE_URL "https://github.com/martinus/unordered_dense")
 
