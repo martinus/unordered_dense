@@ -598,23 +598,17 @@ public:
         : m_blocks(vec_alloc(alloc)) {}
 
     segmented_vector(segmented_vector&& other, Allocator alloc)
-        : m_blocks(vec_alloc(alloc)) {
-        if (other.get_allocator() == alloc) {
-            *this = std::move(other);
-        } else {
-            // Oh my, allocator is different so we need to copy everything.
-            append_everything_from(std::move(other));
-        }
+        : segmented_vector(alloc) {
+        *this = std::move(other);
     }
-
-    segmented_vector(segmented_vector&& other) noexcept
-        : m_blocks(std::move(other.m_blocks))
-        , m_size(std::exchange(other.m_size, {})) {}
 
     segmented_vector(segmented_vector const& other, Allocator alloc)
         : m_blocks(vec_alloc(alloc)) {
         append_everything_from(other);
     }
+
+    segmented_vector(segmented_vector&& other) noexcept
+        : segmented_vector(std::move(other), get_allocator()) {}
 
     segmented_vector(segmented_vector const& other) {
         append_everything_from(other);
@@ -632,8 +626,12 @@ public:
     auto operator=(segmented_vector&& other) noexcept -> segmented_vector& {
         clear();
         dealloc();
-        m_blocks = std::move(other.m_blocks);
-        m_size = std::exchange(other.m_size, {});
+        if (other.get_allocator() == get_allocator()) {
+            m_blocks = std::move(other.m_blocks);
+            m_size = std::exchange(other.m_size, {});
+        } else {
+            append_everything_from(std::move(other));
+        }
         return *this;
     }
 
@@ -1169,15 +1167,8 @@ public:
         : table(std::move(other), other.m_values.get_allocator()) {}
 
     table(table&& other, allocator_type const& alloc) noexcept
-        : m_values(std::move(other.m_values), alloc)
-        , m_buckets(std::exchange(other.m_buckets, nullptr))
-        , m_num_buckets(std::exchange(other.m_num_buckets, 0))
-        , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
-        , m_max_load_factor(std::exchange(other.m_max_load_factor, default_max_load_factor))
-        , m_hash(std::exchange(other.m_hash, {}))
-        , m_equal(std::exchange(other.m_equal, {}))
-        , m_shifts(std::exchange(other.m_shifts, initial_shifts)) {
-        other.m_values.clear();
+        : m_values(alloc) {
+        *this = std::move(other);
     }
 
     table(std::initializer_list<value_type> ilist,
