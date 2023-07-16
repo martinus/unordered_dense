@@ -40,6 +40,58 @@ auto doTest() {
         Map m(return_hello_world<Map>(&pool), ANKERL_UNORDERED_DENSE_PMR::new_delete_resource());
         REQUIRE(m.contains(0));
     }
+
+    {
+        Map a(ANKERL_UNORDERED_DENSE_PMR::new_delete_resource());
+        a[0] = "hello";
+        Map b(&pool);
+        b[0] = "world";
+
+        // looping here causes lots of memory held up
+        // in the resources
+        for (int i = 0; i < 100; ++i) {
+            std::swap(a, b);
+            REQUIRE(b[0] == "hello");
+            REQUIRE(a[0] == "world");
+
+            std::swap(a, b);
+            REQUIRE(a[0] == "hello");
+            REQUIRE(b[0] == "world");
+        }
+    }
+
+    {
+        Map a(ANKERL_UNORDERED_DENSE_PMR::new_delete_resource());
+        a[0] = "hello";
+        Map b(&pool);
+        b[0] = "world";
+
+        // looping here causes lots of memory held up
+        // in the resources
+        for (int i = 0; i < 100; ++i) {
+            std::swap(a, b);
+            REQUIRE(b[0] == "hello");
+            REQUIRE(a[0] == "world");
+
+            std::swap(a, b);
+            REQUIRE(a[0] == "hello");
+            REQUIRE(b[0] == "world");
+        }
+    }
+
+    {
+        Map a(&pool);
+        a[0] = "world";
+
+        Map tmp(ANKERL_UNORDERED_DENSE_PMR::new_delete_resource());
+        tmp[0] = "nope";
+        tmp = std::move(a);
+        REQUIRE(tmp[0] == "world");
+        REQUIRE(a.empty());
+        a[0] = "hey";
+        REQUIRE(a.size() == 1);
+        REQUIRE(a[0] == "hey");
+    }
 }
 
 TEST_CASE("move_with_allocators") {

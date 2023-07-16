@@ -1214,21 +1214,30 @@ public:
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
+            other.m_values.clear();
 
-            // we can only reuse m_buckets over when both maps have the same allocator!
+            // we can only reuse m_buckets when both maps have the same allocator!
             if (get_allocator() == other.get_allocator()) {
                 m_buckets = std::exchange(other.m_buckets, nullptr);
+                m_num_buckets = std::exchange(other.m_num_buckets, 0);
+                m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
+                m_shifts = std::exchange(other.m_shifts, initial_shifts);
+                m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
+                m_hash = std::exchange(other.m_hash, {});
+                m_equal = std::exchange(other.m_equal, {});
             } else {
-                copy_buckets(other);
-            }
+                // set max_load_factor *before* copying the other's buckets, so we have the same
+                // behavior
+                m_max_load_factor = other.m_max_load_factor;
 
-            m_num_buckets = std::exchange(other.m_num_buckets, 0);
-            m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
-            m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
-            m_hash = std::exchange(other.m_hash, {});
-            m_equal = std::exchange(other.m_equal, {});
-            m_shifts = std::exchange(other.m_shifts, initial_shifts);
-            other.m_values.clear();
+                // copy_buckets sets m_buckets, m_num_buckets, m_max_bucket_capacity, m_shifts
+                copy_buckets(other);
+                // clear's the other's buckets so other is now already usable. 
+                other.clear_buckets();
+                m_hash = other.m_hash;
+                m_equal = other.m_equal;
+            }
+            // map "other" is now already usable, it's empty.
         }
         return *this;
     }
