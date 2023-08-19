@@ -17,22 +17,23 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
 - [1. Overview](#1-overview)
 - [2. Installation](#2-installation)
   - [2.1. Installing using cmake](#21-installing-using-cmake)
-- [3. Extensions](#3-extensions)
-  - [3.1. Hash](#31-hash)
-    - [3.1.1. Simple Hash](#311-simple-hash)
-    - [3.1.2. High Quality Hash](#312-high-quality-hash)
-    - [3.1.3. Specialize `ankerl::unordered_dense::hash`](#313-specialize-ankerlunordered_densehash)
-    - [3.1.4. Heterogeneous Overloads using `is_transparent`](#314-heterogeneous-overloads-using-is_transparent)
-    - [3.1.5. Automatic Fallback to `std::hash`](#315-automatic-fallback-to-stdhash)
-    - [3.1.6. Hash the Whole Memory](#316-hash-the-whole-memory)
-  - [3.2. Container API](#32-container-api)
-    - [3.2.1. `auto extract() && -> value_container_type`](#321-auto-extract----value_container_type)
-    - [3.2.2. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#322-nodiscard-auto-values-const-noexcept---value_container_type-const)
-    - [3.2.3. `auto replace(value_container_type&& container)`](#323-auto-replacevalue_container_type-container)
-  - [3.3. Custom Container Types](#33-custom-container-types)
-  - [3.4. Custom Bucket Tyeps](#34-custom-bucket-tyeps)
-    - [3.4.1. `ankerl::unordered_dense::bucket_type::standard`](#341-ankerlunordered_densebucket_typestandard)
-    - [3.4.2. `ankerl::unordered_dense::bucket_type::big`](#342-ankerlunordered_densebucket_typebig)
+- [3. Usage](#3-usage)
+  - [3.1. Modules](#31-modules)
+  - [3.2. Hash](#32-hash)
+    - [3.2.1. Simple Hash](#321-simple-hash)
+    - [3.2.2. High Quality Hash](#322-high-quality-hash)
+    - [3.2.3. Specialize `ankerl::unordered_dense::hash`](#323-specialize-ankerlunordered_densehash)
+    - [3.2.4. Heterogeneous Overloads using `is_transparent`](#324-heterogeneous-overloads-using-is_transparent)
+    - [3.2.5. Automatic Fallback to `std::hash`](#325-automatic-fallback-to-stdhash)
+    - [3.2.6. Hash the Whole Memory](#326-hash-the-whole-memory)
+  - [3.3. Container API](#33-container-api)
+    - [3.3.1. `auto extract() && -> value_container_type`](#331-auto-extract----value_container_type)
+    - [3.3.2. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#332-nodiscard-auto-values-const-noexcept---value_container_type-const)
+    - [3.3.3. `auto replace(value_container_type&& container)`](#333-auto-replacevalue_container_type-container)
+  - [3.4. Custom Container Types](#34-custom-container-types)
+  - [3.5. Custom Bucket Tyeps](#35-custom-bucket-tyeps)
+    - [3.5.1. `ankerl::unordered_dense::bucket_type::standard`](#351-ankerlunordered_densebucket_typestandard)
+    - [3.5.2. `ankerl::unordered_dense::bucket_type::big`](#352-ankerlunordered_densebucket_typebig)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
 - [5. Design](#5-design)
   - [5.1. Inserts](#51-inserts)
@@ -87,9 +88,32 @@ find_package(unordered_dense CONFIG REQUIRED)
 target_link_libraries(your_project_name unordered_dense::unordered_dense)
 ```
 
-## 3. Extensions
+## 3. Usage
 
-### 3.1. Hash
+### 3.1. Modules
+
+`ankerl::unordered_dense` supports c++20 modules. Simply compile `src/ankerl.unordered_dense.cpp` and use the resulting module, e.g. like so:
+
+```sh
+clang++ -std=c++20 -I include --precompile -x c++-module src/ankerl.unordered_dense.cpp
+clang++ -std=c++20 -c ankerl.unordered_dense.pcm
+```
+
+To use the module with e.g. in `module_test.cpp`, use 
+
+```cpp
+import ankerl.unordered_dense;
+```
+
+and compile with e.g.
+
+```sh
+clang++ -std=c++20 -fprebuilt-module-path=. ankerl.unordered_dense.o module_test.cpp -o main
+```
+
+A simple demo script can be found in `test/modules`.
+
+### 3.2. Hash
 
 `ankerl::unordered_dense::hash` is a fast and high quality hash, based on [wyhash](https://github.com/wangyi-fudan/wyhash). The `ankerl::unordered_dense` map/set differentiates between hashes of high quality (good [avalanching effect](https://en.wikipedia.org/wiki/Avalanche_effect)) and bad quality. Hashes with good quality contain a special marker:
 
@@ -101,7 +125,7 @@ This is the cases for the specializations `bool`, `char`, `signed char`, `unsign
 
 Hashes that do not contain such a marker are assumed to be of bad quality and receive an additional mixing step inside the map/set implementation.
 
-#### 3.1.1. Simple Hash
+#### 3.2.1. Simple Hash
 
 Consider a simple custom key type:
 
@@ -132,7 +156,7 @@ auto ids = ankerl::unordered_dense::set<id, custom_hash_simple>();
 
 Since `custom_hash_simple` doesn't have a `using is_avalanching = void;` marker it is considered to be of bad quality and additional mixing of `x.value` is automatically provided inside the set.
 
-#### 3.1.2. High Quality Hash
+#### 3.2.2. High Quality Hash
 
 Back to the `id` example, we can easily implement a higher quality hash:
 
@@ -149,7 +173,7 @@ struct custom_hash_avalanching {
 We know `wyhash::hash` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
 
 
-#### 3.1.3. Specialize `ankerl::unordered_dense::hash`
+#### 3.2.3. Specialize `ankerl::unordered_dense::hash`
 
 Instead of creating a new class you can also specialize `ankerl::unordered_dense::hash`:
 
@@ -164,7 +188,7 @@ struct ankerl::unordered_dense::hash<id> {
 };
 ```
 
-#### 3.1.4. Heterogeneous Overloads using `is_transparent`
+#### 3.2.4. Heterogeneous Overloads using `is_transparent`
 
 This map/set supports heterogeneous overloads as described in [P2363 Extending associative containers with the remaining heterogeneous overloads](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html) which is [targeted for C++26](https://wg21.link/p2077r2). This has overloads for `find`, `count`, `contains`, `equal_range` (see [P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)), `erase` (see [P2077R2](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2077r2.html)), and  `try_emplace`, `insert_or_assign`, `operator[]`, `at`, and `insert` & `emplace` for sets (see [P2363R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html)).
 
@@ -192,12 +216,12 @@ auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::e
 For more information see the examples in `test/unit/transparent.cpp`.
 
 
-#### 3.1.5. Automatic Fallback to `std::hash`
+#### 3.2.5. Automatic Fallback to `std::hash`
 
 When an implementation for `std::hash` of a custom type is available, this is automatically used and assumed to be of bad quality (thus `std::hash` is used, but an additional mixing step is performed).
 
 
-#### 3.1.6. Hash the Whole Memory
+#### 3.2.6. Hash the Whole Memory
 
 When the type [has a unique object representation](https://en.cppreference.com/w/cpp/types/has_unique_object_representations) (no padding, trivially copyable), one can just hash the object's memory. Consider a simple class
 
@@ -225,37 +249,37 @@ struct custom_hash_unique_object_representation {
 };
 ```
 
-### 3.2. Container API
+### 3.3. Container API
 
 In addition to the standard `std::unordered_map` API (see https://en.cppreference.com/w/cpp/container/unordered_map) we have additional API leveraging the fact that we're using a random access container internally:
 
-#### 3.2.1. `auto extract() && -> value_container_type`
+#### 3.3.1. `auto extract() && -> value_container_type`
 
 Extracts the internally used container. `*this` is emptied.
 
-#### 3.2.2. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
+#### 3.3.2. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
 
 Exposes the underlying values container.
 
-#### 3.2.3. `auto replace(value_container_type&& container)`
+#### 3.3.3. `auto replace(value_container_type&& container)`
 
 Discards the internally held container and replaces it with the one passed. Non-unique elements are
 removed, and the container will be partly reordered when non-unique elements are found.
 
-### 3.3. Custom Container Types
+### 3.4. Custom Container Types
 
 `unordered_dense` accepts a custom allocator, but you can also specify a custom container for that template argument. That way it is possible to replace the internally used `std::vector` with e.g. `std::deque` or any other container like `boost::interprocess::vector`. This supports fancy pointers (e.g. [offset_ptr](https://www.boost.org/doc/libs/1_80_0/doc/html/interprocess/offset_ptr.html)), so the container can be used with e.g. shared memory provided by `boost::interprocess`.
 
-### 3.4. Custom Bucket Tyeps
+### 3.5. Custom Bucket Tyeps
 
 The map/set supports two different bucket types. The default should be good for pretty much everyone.
 
-#### 3.4.1. `ankerl::unordered_dense::bucket_type::standard`
+#### 3.5.1. `ankerl::unordered_dense::bucket_type::standard`
 
 * Up to 2^32 = 4.29 billion elements.
 * 8 bytes overhead per bucket.
 
-#### 3.4.2. `ankerl::unordered_dense::bucket_type::big`
+#### 3.5.2. `ankerl::unordered_dense::bucket_type::big`
 
 * up to 2^63 = 9223372036854775808 elements.
 * 12 bytes overhead per bucket.
