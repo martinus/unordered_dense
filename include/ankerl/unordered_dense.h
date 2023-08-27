@@ -328,6 +328,35 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     }
 };
 
+template <typename... Args>
+struct hash<std::tuple<Args...>> {
+private:
+    template <std::size_t Idx>
+    [[nodiscard]] static auto hash_combine([[maybe_unused]] uint64_t seed, uint64_t value) noexcept -> uint64_t {
+        if constexpr (Idx == 0) {
+            // don't do anything for the first element, it's already a hash
+            return value;
+        } else {
+            // fnv-1a, should be good enough
+            return (seed ^ value) * UINT64_C(0x100000001b3);
+        }
+    }
+
+    template <std::size_t... Idx>
+    [[nodiscard]] static auto hash_tuple(std::tuple<Args...> const& tup, std::index_sequence<Idx...> /*unused*/) noexcept {
+        using tup_t = std::tuple<Args...>;
+        uint64_t seed = 0;
+        ((seed = hash_combine<Idx>(seed, hash<std::tuple_element_t<Idx, tup_t>>{}(std::get<Idx>(tup)))), ...);
+        return seed;
+    }
+
+public:
+    using is_avalanching = void;
+    auto operator()(std::tuple<Args...> const& tup) const noexcept -> uint64_t {
+        return hash_tuple(tup, std::index_sequence_for<Args...>{});
+    }
+};
+
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                    \
         template <>                                                      \
