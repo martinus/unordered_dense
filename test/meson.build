@@ -191,8 +191,9 @@ if compiler.get_id() == 'clang'
         '-fsanitize-undefined-trap-on-error',
         '-fsanitize=undefined,address,fuzzer',
         '-fno-sanitize=thread',
+        '-ftrivial-auto-var-init=pattern',
         '-g',
-        '-isystem', '/usr/lib64/clang/14.0.0/include/',
+        #'-isystem', '/usr/lib64/clang/14.0.0/include/',
     ]
     fuzz_link_args = [
         '-fsanitize=undefined,address,fuzzer',
