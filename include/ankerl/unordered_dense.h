@@ -1046,7 +1046,7 @@ private:
         while (true) {
             auto* bucket = &at(m_buckets, bucket_idx);
             if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
-                if (m_equal(key, m_values[bucket->m_value_idx].first)) {
+                if (m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
                     return {begin() + static_cast<difference_type>(bucket->m_value_idx), false};
                 }
             } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
@@ -1386,7 +1386,7 @@ public:
                     break;
                 }
                 if (dist_and_fingerprint == bucket.m_dist_and_fingerprint &&
-                    m_equal(key, m_values[bucket.m_value_idx].first)) {
+                    m_equal(key, get_key(m_values[bucket.m_value_idx]))) {
                     key_found = true;
                     break;
                 }
