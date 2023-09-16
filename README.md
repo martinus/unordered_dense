@@ -12,7 +12,7 @@ A fast & densely stored hashmap and hashset based on robin-hood backward shift d
 
 The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` are (almost) drop-in replacements of `std::unordered_map` and `std::unordered_set`. While they don't have as strong iterator / reference stability guaranties, they are typically *much* faster.
 
-Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::unordered_dense::segmented_set` with lower peak memory usage.
+Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::unordered_dense::segmented_set` with lower peak memory usage. and stable iterator/references on insert.
 
 - [1. Overview](#1-overview)
 - [2. Installation](#2-installation)
@@ -31,7 +31,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.3.2. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#332-nodiscard-auto-values-const-noexcept---value_container_type-const)
     - [3.3.3. `auto replace(value_container_type&& container)`](#333-auto-replacevalue_container_type-container)
   - [3.4. Custom Container Types](#34-custom-container-types)
-  - [3.5. Custom Bucket Tyeps](#35-custom-bucket-tyeps)
+  - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::standard`](#351-ankerlunordered_densebucket_typestandard)
     - [3.5.2. `ankerl::unordered_dense::bucket_type::big`](#352-ankerlunordered_densebucket_typebig)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
@@ -39,6 +39,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [5.1. Inserts](#51-inserts)
   - [5.2. Lookups](#52-lookups)
   - [5.3. Removals](#53-removals)
+- [6. Real World Usage](#6-real-world-usage)
 
 ## 1. Overview
 
@@ -55,8 +56,7 @@ There's no free lunch, so there are a few disadvantages:
 
 * Deletion speed is relatively slow. This needs two lookups: one for the element to delete, and one for the element that is moved onto the newly empty spot.
 * no `const Key` in `std::pair<Key, Value>`
-* Iterators are not stable on insert/erase
-
+* Iterators and references are not stable on insert or erase.
 
 ## 2. Installation
 
@@ -270,7 +270,7 @@ removed, and the container will be partly reordered when non-unique elements are
 
 `unordered_dense` accepts a custom allocator, but you can also specify a custom container for that template argument. That way it is possible to replace the internally used `std::vector` with e.g. `std::deque` or any other container like `boost::interprocess::vector`. This supports fancy pointers (e.g. [offset_ptr](https://www.boost.org/doc/libs/1_80_0/doc/html/interprocess/offset_ptr.html)), so the container can be used with e.g. shared memory provided by `boost::interprocess`.
 
-### 3.5. Custom Bucket Tyeps
+### 3.5. Custom Bucket Types
 
 The map/set supports two different bucket types. The default should be good for pretty much everyone.
 
@@ -340,3 +340,24 @@ Since all data is stored in a vector, removals are a bit more complicated:
 3. Update *two* locations in the bucket array: First remove the bucket for the removed element
 4. Then, update the `value_idx` of the moved element. This requires another lookup.
 
+
+## 6. Real World Usage
+
+On 2023-09-10 I did a quick search on github to see if this map is used in any popular open source projects. Here are some of the projects
+I found. Please send me a note if you want on that list!
+
+* [PruaSlicer](https://github.com/prusa3d/PrusaSlicer) -  G-code generator for 3D printers (RepRap, Makerbot, Ultimaker etc.) 
+* [Kismet](https://github.com/kismetwireless/kismet): Wi-Fi, Bluetooth, RF, and more. Kismet is a sniffer, WIDS, and wardriving tool for Wi-Fi, Bluetooth, Zigbee, RF, and more, which runs on Linux and macOS
+* [Rspamd](https://github.com/rspamd/rspamd) - Fast, free and open-source spam filtering system.
+* [kallisto](https://github.com/pachterlab/kallisto) -  Near-optimal RNA-Seq quantification
+* [Slang](https://github.com/shader-slang/slang) - Slang is a shading language that makes it easier to build and maintain large shader codebases in a modular and extensible fashion.
+* [CyberFSR2](https://github.com/PotatoOfDoom/CyberFSR2) - Drop-in DLSS replacement with FSR 2.0 for various games such as Cyberpunk 2077.
+* [ossia score](https://github.com/ossia/score) - A free, open-source, cross-platform intermedia sequencer for precise and flexible scripting of interactive scenarios. 
+* [HiveWE](https://github.com/stijnherfst/HiveWE) - A Warcraft III World Editor (WE) that focusses on speed and ease of use.
+* [opentxs](https://github.com/Open-Transactions/opentxs) - The Open-Transactions project is a collaborative effort to develop a robust, commercial-grade, fully-featured, free-software toolkit implementing the OTX protocol as well as a full-strength financial cryptography library, API, GUI, command-line interface, and prototype notary server.
+* [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) - High-Performance Rendering Framework on Stream Architectures
+* [Lethe](https://github.com/lethe-cfd/lethe) - Lethe (pronounced /ˈliːθiː/) is open-source computational fluid dynamics (CFD) software which uses high-order continuous Galerkin formulations to solve the incompressible Navier–Stokes equations (among others).
+* [PECOS](https://github.com/amzn/pecos) - PECOS is a versatile and modular machine learning (ML) framework for fast learning and inference on problems with large output spaces, such as extreme multi-label ranking (XMR) and large-scale retrieval.
+* [Operon](https://github.com/heal-research/operon) - A modern C++ framework for symbolic regression that uses genetic programming to explore a hypothesis space of possible mathematical expressions in order to find the best-fitting model for a given regression target.
+* [MashMap](https://github.com/marbl/MashMap) - A fast approximate aligner for long DNA sequences
+* [minigpt4.cpp](https://github.com/Maknee/minigpt4.cpp) - Port of MiniGPT4 in C++ (4bit, 5bit, 6bit, 8bit, 16bit CPU inference with GGML)
