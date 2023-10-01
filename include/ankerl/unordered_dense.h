@@ -269,12 +269,7 @@ inline void mum(uint64_t* a, uint64_t* b) {
 } // namespace detail::wyhash
 
 ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
-struct hash {
-    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> uint64_t {
-        return std::hash<T>{}(obj);
-    }
-};
+struct hash : public std::hash<T> {};
 
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
