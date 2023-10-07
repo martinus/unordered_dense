@@ -6,6 +6,8 @@ import subprocess
 
 
 cmd_and_dir = [
+    # needs honggfuzz installed
+    ['env', 'CXX=ccache hfuzz-clang++ -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/hfuzz-clang_cpp17_release'],
     ['env', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/clang_cpp17_release'],
     ['env', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'debug',   '-Dcpp_std=c++17', 'builddir/clang_cpp17_debug'],
     ['env', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/gcc_cpp17_release'],
@@ -68,7 +70,10 @@ for cmd_dir in cmd_and_dir:
     #if workdir.find("clang_cpp17_debug") != -1:
     #    run(['meson', 'test', '--wrap=\'valgrind --leak-check=full --error-exitcode=1\'', '-q', '--print-errorlogs', '-C', workdir])
     #else:
-    run(['meson', 'test', '-q', '--print-errorlogs', '-C', workdir])
+
+    if workdir.find("hfuzz") == -1:
+        # no testing for hfuzz
+        run(['meson', 'test', '-q', '--print-errorlogs', '-C', workdir])
 
     # coverage
     if workdir.find("coverage") != -1:

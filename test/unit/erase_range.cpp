@@ -25,7 +25,7 @@ TEST_CASE_MAP("erase_range", counter::obj, counter::obj) {
             REQUIRE(map.size() == num_elements);
 
             auto it_ret = map.erase(map.cbegin() + first_pos, map.cbegin() + last_pos);
-            REQUIRE(map.size() == num_elements - (last_pos - first_pos));
+            REQUIRE(map.size() == static_cast<size_t>(num_elements - (last_pos - first_pos)));
             REQUIRE(it_ret == map.begin() + first_pos);
         }
     }
