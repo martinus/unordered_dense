@@ -58,7 +58,7 @@ TEST_CASE_TEMPLATE(
         map.try_emplace(i, std::to_string(i));
     }
 
-    REQUIRE(map.size() == total);
+    REQUIRE(map.size() == static_cast<size_t>(total));
     for (int i = 0; i < total; ++i) {
         auto it = map.find(i);
         REQUIRE(it != map.end());
@@ -67,12 +67,12 @@ TEST_CASE_TEMPLATE(
     }
 
     map.erase(total + 123);
-    REQUIRE(map.size() == total);
+    REQUIRE(map.size() == static_cast<size_t>(total));
     map.erase(29);
-    REQUIRE(map.size() == total - 1);
+    REQUIRE(map.size() == static_cast<size_t>(total - 1));
 
     map.emplace(std::pair<int, std::string>(9999999, "hello"));
-    REQUIRE(map.size() == total);
+    REQUIRE(map.size() == static_cast<size_t>(total));
 }
 
 #endif // ANKERL_UNORDERED_DENSE_HAS_BOOST

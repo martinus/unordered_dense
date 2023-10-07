@@ -10,9 +10,6 @@ static_assert(
 static_assert(
     !ankerl::unordered_dense::detail::is_detected_v<ankerl::unordered_dense::detail::detect_iterator, std::allocator<int>>);
 
-TYPE_TO_STRING_MAP(
-    int, std::string, ankerl::unordered_dense::hash<int>, std::equal_to<int>, std::deque<std::pair<int, std::string>>);
-
 TEST_CASE_MAP("custom_container",
               int,
               std::string,

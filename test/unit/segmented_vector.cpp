@@ -4,6 +4,7 @@
 
 #include <app/doctest.h>
 
+#include <cstddef>
 #include <third-party/nanobench.h>
 
 #include <deque>
@@ -67,7 +68,7 @@ TEST_CASE("segmented_vector_iterate") {
         auto it = vec.begin();
         auto end = vec.end();
 
-        REQUIRE(std::distance(it, end) == vec.size());
+        REQUIRE(std::distance(it, end) == static_cast<std::ptrdiff_t>(vec.size()));
         size_t j = 0;
         while (it != end) {
             REQUIRE(it->get() == j);
