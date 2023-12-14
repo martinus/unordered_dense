@@ -56,7 +56,11 @@ TEST_CASE_MAP("bucket_micro",
     INFO(counts);
 
     auto map = map_t();
+    INFO("map_t::max_size()=" << map_t::max_size());
     for (size_t i = 0; i < map_t::max_size(); ++i) {
+        if (i == 255) {
+            INFO("i=" << i);
+        }
         auto const r = map.try_emplace({i, counts}, i, counts);
         REQUIRE(r.second);
 
