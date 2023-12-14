@@ -17,8 +17,8 @@ globs = [
     f"{root_path}/test/**/*.cpp",
 ]
 exclusions = [
-    "nanobench\.h",
-    "FuzzedDataProvider\.h",
+    "nanobench\\.h",
+    "FuzzedDataProvider\\.h",
     '/third-party/']
 
 files = []
