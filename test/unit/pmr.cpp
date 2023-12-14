@@ -223,7 +223,7 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(map1.find(3) != map1.end());
     show(mr1, "mr1");
 
-    REQUIRE(mr1.num_allocs() == 4);
+    REQUIRE(mr1.num_allocs() == 5); // 5 because of the initial allocation
     REQUIRE(mr1.num_deallocs() == 2);
     REQUIRE(mr1.num_is_equals() == 0);
 }

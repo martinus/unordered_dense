@@ -767,7 +767,7 @@ private:
         typename std::allocator_traits<typename value_container_type::allocator_type>::template rebind_alloc<Bucket>;
     using bucket_alloc_traits = std::allocator_traits<bucket_alloc>;
 
-    static constexpr uint8_t initial_shifts = 64 - 3; // 2^(64-m_shift) number of buckets
+    static constexpr uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets
     static constexpr float default_max_load_factor = 0.8F;
 
 public:
@@ -893,7 +893,12 @@ private:
 
     // assumes m_values has data, m_buckets=m_buckets_end=nullptr, m_shifts is INITIAL_SHIFTS
     void copy_buckets(table const& other) {
-        if (!empty()) {
+        // assumes m_values has already the correct data copied over.
+        if (empty()) {
+            // when empty, at least allocate an initial buckets and clear them.
+            allocate_buckets_from_shift();
+            clear_buckets();
+        } else {
             m_shifts = other.m_shifts;
             allocate_buckets_from_shift();
             std::memcpy(m_buckets, other.m_buckets, sizeof(Bucket) * bucket_count());
@@ -904,7 +909,7 @@ private:
      * True when no element can be added any more without increasing the size
      */
     [[nodiscard]] auto is_full() const -> bool {
-        return size() >= m_max_bucket_capacity;
+        return size() > m_max_bucket_capacity;
     }
 
     void deallocate_buckets() {
@@ -948,7 +953,9 @@ private:
     }
 
     void increase_size() {
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_max_bucket_capacity == max_bucket_count())) {
+        if (m_max_bucket_capacity == max_bucket_count()) {
+            // remove the value again, we can't add it!
+            m_values.pop_back();
             on_error_bucket_overflow();
         }
         --m_shifts;
@@ -1018,27 +1025,26 @@ private:
         return it_isinserted;
     }
 
-    template <typename K, typename... Args>
-    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, K&& key, Args&&... args)
+    template <typename... Args>
+    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, Args&&... args)
         -> std::pair<iterator, bool> {
 
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
-        m_values.emplace_back(std::piecewise_construct,
-                              std::forward_as_tuple(std::forward<K>(key)),
-                              std::forward_as_tuple(std::forward<Args>(args)...));
+        m_values.emplace_back(std::forward<Args>(args)...);
+
+        auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full())) {
+            increase_size();
+        } else {
+            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
+        }
 
         // place element and shift up until we find an empty spot
-        auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
-        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
 
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full())) {
-            increase_size();
-        }
-
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
@@ -1050,7 +1056,11 @@ private:
                     return {begin() + static_cast<difference_type>(bucket->m_value_idx), false};
                 }
             } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
-                return do_place_element(dist_and_fingerprint, bucket_idx, std::forward<K>(key), std::forward<Args>(args)...);
+                return do_place_element(dist_and_fingerprint,
+                                        bucket_idx,
+                                        std::piecewise_construct,
+                                        std::forward_as_tuple(std::forward<K>(key)),
+                                        std::forward_as_tuple(std::forward<Args>(args)...));
             }
             dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
@@ -1116,9 +1126,6 @@ private:
     }
 
 public:
-    table()
-        : table(0) {}
-
     explicit table(size_t bucket_count,
                    Hash const& hash = Hash(),
                    KeyEqual const& equal = KeyEqual(),
@@ -1128,8 +1135,14 @@ public:
         , m_equal(equal) {
         if (0 != bucket_count) {
             reserve(bucket_count);
+        } else {
+            allocate_buckets_from_shift();
+            clear_buckets();
         }
     }
+
+    table()
+        : table(0) {}
 
     table(size_t bucket_count, allocator_type const& alloc)
         : table(bucket_count, Hash(), KeyEqual(), alloc) {}
@@ -1230,6 +1243,8 @@ public:
                 m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
                 m_hash = std::exchange(other.m_hash, {});
                 m_equal = std::exchange(other.m_equal, {});
+                other.allocate_buckets_from_shift();
+                other.clear_buckets();
             } else {
                 // set max_load_factor *before* copying the other's buckets, so we have the same
                 // behavior
@@ -1453,10 +1468,6 @@ public:
               typename KE = KeyEqual,
               std::enable_if_t<!is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
     auto emplace(K&& key) -> std::pair<iterator, bool> {
-        if (is_full()) {
-            increase_size();
-        }
-
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
@@ -1472,19 +1483,11 @@ public:
         }
 
         // value is new, insert element first, so when exception happens we are in a valid state
-        m_values.emplace_back(std::forward<K>(key));
-        // now place the bucket and shift up until we find an empty spot
-        auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
-        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
-        return {begin() + static_cast<difference_type>(value_idx), true};
+        return do_place_element(dist_and_fingerprint, bucket_idx, std::forward<K>(key));
     }
 
     template <class... Args>
     auto emplace(Args&&... args) -> std::pair<iterator, bool> {
-        if (is_full()) {
-            increase_size();
-        }
-
         // we have to instantiate the value_type to be able to access the key.
         // 1. emplace_back the object so it is constructed. 2. If the key is already there, pop it later in the loop.
         auto& key = get_key(m_values.emplace_back(std::forward<Args>(args)...));
@@ -1504,8 +1507,13 @@ public:
 
         // value is new, place the bucket and shift up until we find an empty spot
         auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
-        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
-
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full())) {
+            // increase_size just rehashes all the data we have in m_values
+            increase_size();
+        } else {
+            // place element and shift up until we find an empty spot
+            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
+        }
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
 
