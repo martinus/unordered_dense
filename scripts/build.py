@@ -22,7 +22,7 @@ cmd_and_dir = [
     ['env', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'debug', '-Dcpp_std=c++20', 'builddir/gcc_cpp20_debug'],
 
     # coverage; use "ninja clean && ninja test && ninja coverage"
-    ['env', 'CXX=ccache clang++', 'meson', 'setup', '-Db_coverage=true', 'builddir/coverage'],
+    #['env', 'CXX=ccache clang++', 'meson', 'setup', '-Db_coverage=true', 'builddir/coverage'],
 
     # sanitizers
     # It is not possible to combine more than one of the -fsanitize=address, -fsanitize=thread, and -fsanitize=memory checkers in the same program.
