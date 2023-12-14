@@ -9,7 +9,9 @@
 #include <vector>
 
 #if __has_include("boost/unordered/unordered_flat_map.hpp")
-#    pragma clang diagnostic ignored "-Wold-style-cast"
+#    if defined(__clang__)
+#        pragma clang diagnostic ignored "-Wold-style-cast"
+#    endif
 #    include "boost/unordered/unordered_flat_map.hpp"
 #    define HAS_BOOST_UNORDERED_FLAT_MAP() 1 // NOLINT(cppcoreguidelines-macro-usage)
 #else
@@ -17,8 +19,10 @@
 #endif
 
 #if 0 && __has_include("absl/container/flat_hash_map.h")
-#    pragma clang diagnostic ignored "-Wdeprecated-builtins"
-#    pragma clang diagnostic ignored "-Wsign-conversion"
+#    if defined(__clang__)
+#        pragma clang diagnostic ignored "-Wdeprecated-builtins"
+#        pragma clang diagnostic ignored "-Wsign-conversion"
+#    endif
 #    include <absl/container/flat_hash_map.h>
 #    define HAS_ABSL() 1 // NOLINT(cppcoreguidelines-macro-usage)
 #else
