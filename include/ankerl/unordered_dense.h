@@ -328,6 +328,62 @@ struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     }
 };
 
+template <typename... Args>
+struct tuple_hash_helper {
+    template <typename Arg>
+    [[nodiscard]] constexpr static auto calc_buf_size() {
+        if constexpr (std::has_unique_object_representations_v<Arg>) {
+            return sizeof(Arg);
+        } else {
+            return sizeof(hash<Arg>{}(std::declval<Arg>()));
+        }
+    }
+
+    // Reads data from back to front. We do this so there's no need for bswap when multiple
+    // bytes are read (on little endian). This should be a tiny bit faster.
+    template <typename Arg>
+    [[nodiscard]] constexpr static auto put(std::byte* pos, Arg const& arg) -> std::byte* {
+        if constexpr (std::has_unique_object_representations_v<Arg>) {
+            pos -= sizeof(Arg);
+            std::memcpy(pos, &arg, sizeof(Arg));
+            return pos;
+        } else {
+            auto x = hash<Arg>{}(arg);
+            pos -= sizeof(x);
+            std::memcpy(pos, &x, sizeof(x));
+            return pos;
+        }
+    }
+
+    // Creates a buffer that holds all the data from each element of the tuple. If possible we memcpy the data directly. If
+    // not, we hash the object and use this for the array. Size of the array is known at compile time, and memcpy is optimized
+    // away, so filling the buffer is highly efficient. Finally, call wyhash with this buffer.
+    template <typename T, std::size_t... Idx>
+    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...>) noexcept -> uint64_t {
+        std::array<std::byte, (calc_buf_size<Args>() + ...)> tmp_buffer;
+        auto* buf_ptr = tmp_buffer.data() + tmp_buffer.size();
+        ((buf_ptr = put(buf_ptr, std::get<Idx>(t))), ...);
+        // at this point, buf_ptr==tmp_buffer.data()
+        return ankerl::unordered_dense::detail::wyhash::hash(tmp_buffer.data(), tmp_buffer.size());
+    }
+};
+
+template <typename... Args>
+struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
+    using is_avalanching = void;
+    auto operator()(std::tuple<Args...> const& t) const noexcept -> uint64_t {
+        return tuple_hash_helper<Args...>::calc_hash(t, std::index_sequence_for<Args...>{});
+    }
+};
+
+template <typename A, typename B>
+struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
+    using is_avalanching = void;
+    auto operator()(std::pair<A, B> const& t) const noexcept -> uint64_t {
+        return tuple_hash_helper<A, B>::calc_hash(t, std::index_sequence_for<A, B>{});
+    }
+};
+
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                    \
         template <>                                                      \

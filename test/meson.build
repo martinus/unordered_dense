@@ -73,6 +73,7 @@ test_sources = [
     'unit/swap.cpp',
     'unit/transparent.cpp',
     'unit/try_emplace.cpp',
+    'unit/tuple_hash.cpp',
     'unit/unique_ptr.cpp',
     'unit/unordered_set.cpp',
     'unit/vectorofmaps.cpp',
