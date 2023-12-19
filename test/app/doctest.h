@@ -22,6 +22,7 @@ namespace doctest {
 } // namespace doctest
 
 #include <deque>
+#include <sstream>
 
 template <class Key,
           class T,
