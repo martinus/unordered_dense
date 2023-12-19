@@ -175,6 +175,7 @@ test_exe = executable(
         # disable these two if you don't want them
         #dependency('boost'),
         #dependency('absl_container', default_options: ['warning_level=0', 'werror=false'])
+        # dependency('absl_hash', method: 'builtin', default_options: ['warning_level=0', 'werror=false'])
     ],
 )
 
