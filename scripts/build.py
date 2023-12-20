@@ -7,10 +7,10 @@ import subprocess
 
 cmd_and_dir = [
     # needs honggfuzz installed
-    ['env', 'CXX_LD=mold', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/gcc_cpp17_release'],
-    ['env', 'CXX_LD=mold', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/clang_cpp17_release'],
-    ['env', 'CXX_LD=mold', 'CXX=ccache hfuzz-clang++ -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/hfuzz-clang_cpp17_release'],
     ['env', 'CXX_LD=mold', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'debug',   '-Dcpp_std=c++17', 'builddir/clang_cpp17_debug'],
+    ['env', 'CXX_LD=mold', 'CXX=ccache clang++', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/clang_cpp17_release'],
+    ['env', 'CXX_LD=mold', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/gcc_cpp17_release'],
+    ['env', 'CXX_LD=mold', 'CXX=ccache hfuzz-clang++ -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION', 'meson', 'setup', '--buildtype', 'release', '-Dcpp_std=c++17', 'builddir/hfuzz-clang_cpp17_release'],
     ['env', 'CXX_LD=mold', 'CXX=ccache g++',     'meson', 'setup', '--buildtype', 'debug',   '-Dcpp_std=c++17', 'builddir/gcc_cpp17_debug'],
 
     # 32bit. Install lib32-clang
