@@ -45,13 +45,26 @@ TEST_CASE("tuple_hash_with_stringview") {
     REQUIRE(h1 != h2);
 }
 
-TEST_CASE("bench_tuple_hash" * doctest::test_suite("bench")) {
-    using T = std::tuple<char, int, uint16_t, std::byte, uint64_t>;
+// #include <absl/hash/hash.h>
 
-    auto h = uint64_t{};
-    auto t = std::tuple<char, int, uint16_t, std::byte, uint64_t>{};
-    ankerl::nanobench::Bench().run("ankerl hash", [&] {
-        h += ankerl::unordered_dense::hash<T>{}(t);
-        ++std::get<4>(t);
+TEST_CASE("bench_tuple_hash" * doctest::test_suite("bench")) {
+    using T = std::tuple<uint8_t, int, uint16_t, uint64_t>;
+
+    auto vecs = std::vector<T>(100);
+    auto rng = ankerl::nanobench::Rng(123);
+    for (auto& v : vecs) {
+        std::get<0>(v) = static_cast<uint8_t>(rng());
+        std::get<1>(v) = static_cast<int>(rng());
+        std::get<2>(v) = static_cast<uint16_t>(rng());
+        std::get<3>(v) = static_cast<uint64_t>(rng());
+    }
+
+    uint64_t h = 0;
+    ankerl::nanobench::Bench().batch(vecs.size()).run("ankerl hash", [&] {
+        for (auto const& v : vecs) {
+            h += ankerl::unordered_dense::hash<T>{}(v);
+            // h += absl::Hash<T>{}(v);
+        }
     });
+    ankerl::nanobench::doNotOptimizeAway(h);
 }

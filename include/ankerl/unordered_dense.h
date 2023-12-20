@@ -334,7 +334,7 @@ struct tuple_hash_helper {
     // If it isn't an integral we need to hash it.
     template <typename Arg>
     [[nodiscard]] constexpr static auto to64(Arg const& arg) -> uint64_t {
-        if constexpr (std::is_integral_v<Arg>) {
+        if constexpr (std::is_integral_v<Arg> || std::is_enum_v<Arg>) {
             return static_cast<uint64_t>(arg);
         } else {
             return hash<Arg>{}(arg);
