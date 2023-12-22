@@ -86,6 +86,7 @@
 #    include <iterator>         // for pair, distance
 #    include <limits>           // for numeric_limits
 #    include <memory>           // for allocator, allocator_traits, shared_ptr
+#    include <optional>         // for optional
 #    include <stdexcept>        // for out_of_range
 #    include <string>           // for basic_string
 #    include <string_view>      // for basic_string_view, hash
@@ -1008,7 +1009,8 @@ private:
         clear_and_fill_buckets_from_values();
     }
 
-    void do_erase(value_idx_type bucket_idx) {
+    template <typename Op>
+    void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).m_value_idx;
 
         // shift down until either empty or an element with correct spot is found
@@ -1019,6 +1021,7 @@ private:
             bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
         }
         at(m_buckets, bucket_idx) = {};
+        handle_erased_value(std::move(m_values[value_idx_to_remove]));
 
         // update m_values
         if (value_idx_to_remove != m_values.size() - 1) {
@@ -1039,8 +1042,8 @@ private:
         m_values.pop_back();
     }
 
-    template <typename K>
-    auto do_erase_key(K&& key) -> size_t {
+    template <typename K, typename Op>
+    auto do_erase_key(K&& key, Op handle_erased_value) -> size_t {
         if (empty()) {
             return 0;
         }
@@ -1056,7 +1059,7 @@ private:
         if (dist_and_fingerprint != at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
             return 0;
         }
-        do_erase(bucket_idx);
+        do_erase(bucket_idx, handle_erased_value);
         return 1;
     }
 
@@ -1619,13 +1622,35 @@ public:
             bucket_idx = next(bucket_idx);
         }
 
-        do_erase(bucket_idx);
+        do_erase(bucket_idx, [](value_type&& /*unused*/) {
+        });
         return begin() + static_cast<difference_type>(value_idx_to_remove);
+    }
+
+    auto extract(iterator it) -> value_type {
+        auto hash = mixed_hash(get_key(*it));
+        auto bucket_idx = bucket_idx_from_hash(hash);
+
+        auto const value_idx_to_remove = static_cast<value_idx_type>(it - cbegin());
+        while (at(m_buckets, bucket_idx).m_value_idx != value_idx_to_remove) {
+            bucket_idx = next(bucket_idx);
+        }
+
+        auto tmp = std::optional<value_type>{};
+        do_erase(bucket_idx, [&tmp](value_type&& val) {
+            tmp = std::move(val);
+        });
+        return std::move(tmp).value();
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
     auto erase(const_iterator it) -> iterator {
         return erase(begin() + (it - cbegin()));
+    }
+
+    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    auto extract(const_iterator it) -> value_type {
+        return extract(begin() + (it - cbegin()));
     }
 
     auto erase(const_iterator first, const_iterator last) -> iterator {
@@ -1653,12 +1678,31 @@ public:
     }
 
     auto erase(Key const& key) -> size_t {
-        return do_erase_key(key);
+        return do_erase_key(key, [](value_type&& /*unused*/) {
+        });
+    }
+
+    auto extract(Key const& key) -> std::optional<value_type> {
+        auto tmp = std::optional<value_type>{};
+        do_erase_key(key, [&tmp](value_type&& val) {
+            tmp = std::move(val);
+        });
+        return tmp;
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto erase(K&& key) -> size_t {
-        return do_erase_key(std::forward<K>(key));
+        return do_erase_key(std::forward<K>(key), [](value_type&& /*unused*/) {
+        });
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto extract(K&& key) -> std::optional<value_type> {
+        auto tmp = std::optional<value_type>{};
+        do_erase_key(std::forward<K>(key), [&tmp](value_type&& val) {
+            tmp = std::move(val);
+        });
+        return tmp;
     }
 
     void swap(table& other) noexcept(noexcept(std::is_nothrow_swappable_v<value_container_type> &&
