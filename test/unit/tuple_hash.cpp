@@ -47,7 +47,7 @@ TEST_CASE("tuple_hash_with_stringview") {
 
 // #include <absl/hash/hash.h>
 
-TEST_CASE("bench_tuple_hash" * doctest::test_suite("bench")) {
+TEST_CASE("bench_tuple_hash" * doctest::test_suite("bench") * doctest::skip()) {
     using T = std::tuple<uint8_t, int, uint16_t, uint64_t>;
 
     auto vecs = std::vector<T>(100);
