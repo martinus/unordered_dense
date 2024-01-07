@@ -3,6 +3,7 @@
 #include <fmt/core.h> // for format_context, format_parse_context, format_to
 
 #include <cstddef>     // for size_t
+#include <cstring>     // for memcmp
 #include <functional>  // for hash
 #include <iosfwd>      // for ostream
 #include <string>      // for allocator, string
