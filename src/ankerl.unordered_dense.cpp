@@ -13,6 +13,7 @@ module;
 #    include <initializer_list> // for initializer_list
 #    include <iterator>         // for pair, distance
 #    include <limits>           // for numeric_limits
+#    include <optional>         // for optional
 #    include <memory>           // for allocator, allocator_traits, shared_ptr
 #    include <optional>         // for optional
 #    include <stdexcept>        // for out_of_range
