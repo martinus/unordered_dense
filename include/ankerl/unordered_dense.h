@@ -810,7 +810,8 @@ public:
 private:
     using bucket_alloc =
         typename std::allocator_traits<typename value_container_type::allocator_type>::template rebind_alloc<Bucket>;
-    using bucket_alloc_traits = std::allocator_traits<bucket_alloc>;
+    using underlying_bucket_type =
+        std::conditional_t<IsSegmented, segmented_vector<Bucket, bucket_alloc>, std::vector<Bucket, bucket_alloc>>;
 
     static constexpr uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets
     static constexpr float default_max_load_factor = 0.8F;
@@ -839,9 +840,7 @@ private:
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
-    using bucket_pointer = typename std::allocator_traits<bucket_alloc>::pointer;
-    bucket_pointer m_buckets{};
-    size_t m_num_buckets = 0;
+    underlying_bucket_type m_buckets{};
     size_t m_max_bucket_capacity = 0;
     float m_max_load_factor = default_max_load_factor;
     Hash m_hash{};
@@ -849,14 +848,18 @@ private:
     uint8_t m_shifts = initial_shifts;
 
     [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
-        return ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1U == m_num_buckets)
+        return ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1U == bucket_count())
                    ? 0
                    : static_cast<value_idx_type>(bucket_idx + 1U);
     }
 
     // Helper to access bucket through pointer types
-    [[nodiscard]] static constexpr auto at(bucket_pointer bucket_ptr, size_t offset) -> Bucket& {
-        return *(bucket_ptr + static_cast<typename std::allocator_traits<bucket_alloc>::difference_type>(offset));
+    [[nodiscard]] static constexpr auto at(underlying_bucket_type& bucket, size_t offset) -> Bucket& {
+        return bucket[offset];
+    }
+
+    [[nodiscard]] static constexpr auto at(const underlying_bucket_type& bucket, size_t offset) -> const Bucket& {
+        return bucket[offset];
     }
 
     // use the dist_inc and dist_dec functions so that uint16_t types work without warning
@@ -946,7 +949,13 @@ private:
         } else {
             m_shifts = other.m_shifts;
             allocate_buckets_from_shift();
-            std::memcpy(m_buckets, other.m_buckets, sizeof(Bucket) * bucket_count());
+            if constexpr (IsSegmented) {
+                for (auto i = 0UL; i < bucket_count(); ++i) {
+                    at(m_buckets, i) = at(other.m_buckets, i);
+                }
+            } else {
+                std::memcpy(m_buckets.data(), other.m_buckets.data(), sizeof(Bucket) * bucket_count());
+            }
         }
     }
 
@@ -958,30 +967,36 @@ private:
     }
 
     void deallocate_buckets() {
-        auto ba = bucket_alloc(m_values.get_allocator());
-        if (nullptr != m_buckets) {
-            bucket_alloc_traits::deallocate(ba, m_buckets, bucket_count());
-            m_buckets = nullptr;
-        }
-        m_num_buckets = 0;
+        m_buckets.clear();
+        m_buckets.shrink_to_fit();
         m_max_bucket_capacity = 0;
     }
 
     void allocate_buckets_from_shift() {
-        auto ba = bucket_alloc(m_values.get_allocator());
-        m_num_buckets = calc_num_buckets(m_shifts);
-        m_buckets = bucket_alloc_traits::allocate(ba, m_num_buckets);
-        if (m_num_buckets == max_bucket_count()) {
+        auto num_buckets = calc_num_buckets(m_shifts);
+        if constexpr (IsSegmented) {
+            m_buckets.reserve(num_buckets);
+            for (size_t i = m_buckets.size(); i < num_buckets; ++i) {
+                m_buckets.emplace_back();
+            }
+        } else {
+            m_buckets.resize(num_buckets);
+        }
+        if (num_buckets == max_bucket_count()) {
             // reached the maximum, make sure we can use each bucket
             m_max_bucket_capacity = max_bucket_count();
         } else {
-            m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(m_num_buckets) * max_load_factor());
+            m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(num_buckets) * max_load_factor());
         }
     }
 
     void clear_buckets() {
-        if (m_buckets != nullptr) {
-            std::memset(&*m_buckets, 0, sizeof(Bucket) * bucket_count());
+        if constexpr (IsSegmented) {
+            for (auto&& e : m_buckets) {
+                std::memset(&e, 0, sizeof(e));
+            }
+        } else {
+            std::memset(m_buckets.data(), 0, sizeof(Bucket) * bucket_count());
         }
     }
 
@@ -1004,7 +1019,9 @@ private:
             on_error_bucket_overflow();
         }
         --m_shifts;
-        deallocate_buckets();
+        if constexpr (!IsSegmented) {
+            deallocate_buckets();
+        }
         allocate_buckets_from_shift();
         clear_and_fill_buckets_from_values();
     }
@@ -1178,6 +1195,7 @@ public:
                    KeyEqual const& equal = KeyEqual(),
                    allocator_type const& alloc_or_container = allocator_type())
         : m_values(alloc_or_container)
+        , m_buckets(alloc_or_container)
         , m_hash(hash)
         , m_equal(equal) {
         if (0 != bucket_count) {
@@ -1253,12 +1271,7 @@ public:
     table(std::initializer_list<value_type> init, size_type bucket_count, Hash const& hash, allocator_type const& alloc)
         : table(init, bucket_count, hash, KeyEqual(), alloc) {}
 
-    ~table() {
-        if (nullptr != m_buckets) {
-            auto ba = bucket_alloc(m_values.get_allocator());
-            bucket_alloc_traits::deallocate(ba, m_buckets, bucket_count());
-        }
-    }
+    ~table() {}
 
     auto operator=(table const& other) -> table& {
         if (&other != this) {
@@ -1283,8 +1296,8 @@ public:
 
             // we can only reuse m_buckets when both maps have the same allocator!
             if (get_allocator() == other.get_allocator()) {
-                m_buckets = std::exchange(other.m_buckets, nullptr);
-                m_num_buckets = std::exchange(other.m_num_buckets, 0);
+                m_buckets = std::move(other.m_buckets);
+                other.m_buckets.clear();
                 m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
                 m_shifts = std::exchange(other.m_shifts, initial_shifts);
                 m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
@@ -1421,7 +1434,7 @@ public:
             on_error_too_many_elements();
         }
         auto shifts = calc_shifts_for_size(container.size());
-        if (0 == m_num_buckets || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
+        if (0 == bucket_count() || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
             m_shifts = shifts;
             deallocate_buckets();
             allocate_buckets_from_shift();
@@ -1821,7 +1834,7 @@ public:
     // bucket interface ///////////////////////////////////////////////////////
 
     auto bucket_count() const noexcept -> size_t { // NOLINT(modernize-use-nodiscard)
-        return m_num_buckets;
+        return m_buckets.size();
     }
 
     static constexpr auto max_bucket_count() noexcept -> size_t { // NOLINT(modernize-use-nodiscard)
@@ -1840,7 +1853,7 @@ public:
 
     void max_load_factor(float ml) {
         m_max_load_factor = ml;
-        if (m_num_buckets != max_bucket_count()) {
+        if (bucket_count() != max_bucket_count()) {
             m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(bucket_count()) * max_load_factor());
         }
     }
@@ -1864,7 +1877,7 @@ public:
             m_values.reserve(capa);
         }
         auto shifts = calc_shifts_for_size((std::max)(capa, size()));
-        if (0 == m_num_buckets || shifts < m_shifts) {
+        if (0 == bucket_count() || shifts < m_shifts) {
             m_shifts = shifts;
             deallocate_buckets();
             allocate_buckets_from_shift();
