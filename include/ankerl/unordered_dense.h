@@ -277,6 +277,15 @@ struct hash {
     }
 };
 
+template <typename T>
+struct hash<T, typename std::hash<T>::is_avalanching> {
+    using is_avalanching = void;
+    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
+        -> uint64_t {
+        return std::hash<T>{}(obj);
+    }
+};
+
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
