@@ -46,7 +46,6 @@ CheckOptions:
   readability-identifier-naming.GlobalVariablePrefix: 'global_'
   readability-identifier-naming.MemberPrefix: 'm_'
   readability-identifier-naming.PrivateMemberPrefix: 'm_'
-  readability-identifier-naming.PrivateMemberPrefix: 'm_'
   readability-identifier-naming.ProtectedMemberPrefix: 'm_'
   readability-identifier-naming.PublicMemberPrefix: ''
   readability-identifier-naming.StaticConstantPrefix: 'static_'
