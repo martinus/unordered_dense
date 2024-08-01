@@ -1883,8 +1883,16 @@ public:
     }
 
     // nonstandard API: expose the underlying values container
-    [[nodiscard]] auto values() const noexcept -> value_container_type const& {
+    [[nodiscard]] auto values() const& noexcept -> value_container_type const& {
         return m_values;
+    }
+
+    [[nodiscard]] auto values() const&& noexcept -> value_container_type&& {
+        return std::move(const_cast<table*>(this)->m_values);
+    }
+
+    [[nodiscard]] auto values() && noexcept -> value_container_type&& {
+        return std::move(m_values);
     }
 
     // non-member functions ///////////////////////////////////////////////////
