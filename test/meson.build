@@ -76,6 +76,7 @@ test_sources = [
     'unit/tuple_hash.cpp',
     'unit/unique_ptr.cpp',
     'unit/unordered_set.cpp',
+    'unit/values.cpp',
     'unit/vectorofmaps.cpp',
     'unit/windows_include.cpp',
 ]
