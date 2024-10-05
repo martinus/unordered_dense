@@ -163,38 +163,59 @@ namespace detail {
 // hardcodes seed and the secret, reformats the code, and clang-tidy fixes.
 namespace detail::wyhash {
 
-inline void mum(uint64_t* a, uint64_t* b) {
+inline void rapid_mum(uint64_t* A, uint64_t* B) noexcept {
 #    if defined(__SIZEOF_INT128__)
-    __uint128_t r = *a;
-    r *= *b;
-    *a = static_cast<uint64_t>(r);
-    *b = static_cast<uint64_t>(r >> 64U);
-#    elif defined(_MSC_VER) && defined(_M_X64)
-    *a = _umul128(*a, *b, b);
+    __uint128_t r = *A;
+    r *= *B;
+#        ifdef RAPIDHASH_PROTECTED
+    *A ^= static_cast<uint64_t>(r);
+    *B ^= static_cast<uint64_t>(r >> 64);
+#        else
+    *A = static_cast<uint64_t>(r);
+    *B = static_cast<uint64_t>(r >> 64);
+#        endif
+#    elif defined(_MSC_VER) && (defined(_WIN64) || defined(_M_HYBRID_CHPE_ARM64))
+#        if defined(_M_X64)
+#            ifdef RAPIDHASH_PROTECTED
+    uint64_t a, b;
+    a = _umul128(*A, *B, &b);
+    *A ^= a;
+    *B ^= b;
+#            else
+    *A = _umul128(*A, *B, B);
+#            endif
+#        else
+#            ifdef RAPIDHASH_PROTECTED
+    uint64_t a, b;
+    b = __umulh(*A, *B);
+    a = *A * *B;
+    *A ^= a;
+    *B ^= b;
+#            else
+    uint64_t c = __umulh(*A, *B);
+    *A = *A * *B;
+    *B = c;
+#            endif
+#        endif
 #    else
-    uint64_t ha = *a >> 32U;
-    uint64_t hb = *b >> 32U;
-    uint64_t la = static_cast<uint32_t>(*a);
-    uint64_t lb = static_cast<uint32_t>(*b);
-    uint64_t hi{};
-    uint64_t lo{};
-    uint64_t rh = ha * hb;
-    uint64_t rm0 = ha * lb;
-    uint64_t rm1 = hb * la;
-    uint64_t rl = la * lb;
-    uint64_t t = rl + (rm0 << 32U);
-    auto c = static_cast<uint64_t>(t < rl);
-    lo = t + (rm1 << 32U);
-    c += static_cast<uint64_t>(lo < t);
-    hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
-    *a = lo;
-    *b = hi;
+    uint64_t ha = *A >> 32, hb = *B >> 32, la = static_cast<uint32_t>(*A), lb = static_cast<uint32_t>(*B), hi, lo;
+    uint64_t rh = ha * hb, rm0 = ha * lb, rm1 = hb * la, rl = la * lb, t = rl + (rm0 << 32), c = t < rl;
+    lo = t + (rm1 << 32);
+    c += lo < t;
+    hi = rh + (rm0 >> 32) + (rm1 >> 32) + c;
+#        ifdef RAPIDHASH_PROTECTED
+    *A ^= lo;
+    *B ^= hi;
+#        else
+    *A = lo;
+    *B = hi;
+#        endif
 #    endif
 }
 
 // multiply and xor mix function, aka MUM
-[[nodiscard]] inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
-    mum(&a, &b);
+inline uint64_t mix(uint64_t a, uint64_t b) noexcept {
+    rapid_mum(&a, &b);
     return a ^ b;
 }
 
@@ -216,51 +237,74 @@ inline void mum(uint64_t* a, uint64_t* b) {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, size_t len) -> uint64_t {
-    static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
-                                              UINT64_C(0xe7037ed1a0b428db),
-                                              UINT64_C(0x8ebc6af09c88c6e3),
-                                              UINT64_C(0x589965cc75374cc3)};
+inline uint64_t rapid_readSmall(const uint8_t* p, size_t k) noexcept {
+    return (static_cast<uint64_t>(p[0]) << 56U) | (static_cast<uint64_t>(p[k >> 1]) << 32U) | p[k - 1];
+}
 
-    auto const* p = static_cast<uint8_t const*>(key);
-    uint64_t seed = secret[0];
-    uint64_t a{};
-    uint64_t b{};
+// rapidhash
+inline uint64_t hash(void const* key, size_t len) noexcept {
+    constexpr uint64_t secret[3] = {0x2d358dccaa6c78a5ull, 0x8bb84b93962eacc9ull, 0x4b33a62ed433d4a3ull};
+    uint64_t seed = 0xbdd89aa982704029ull;
+
+    uint8_t const* p = reinterpret_cast<uint8_t const*>(key);
+    seed ^= mix(seed ^ secret[0], secret[1]) ^ len;
+    uint64_t a, b;
     if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 16)) {
         if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 4)) {
-            a = (r4(p) << 32U) | r4(p + ((len >> 3U) << 2U));
-            b = (r4(p + len - 4) << 32U) | r4(p + len - 4 - ((len >> 3U) << 2U));
+            const uint8_t* plast = p + len - 4;
+            a = (r4(p) << 32) | r4(plast);
+            const uint64_t delta = ((len & 24) >> (len >> 3));
+            b = ((r4(p + delta) << 32) | r4(plast - delta));
         } else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0)) {
-            a = r3(p, len);
+            a = rapid_readSmall(p, len);
             b = 0;
-        } else {
-            a = 0;
-            b = 0;
-        }
+        } else
+            a = b = 0;
     } else {
         size_t i = len;
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 48)) {
-            uint64_t see1 = seed;
-            uint64_t see2 = seed;
-            do {
-                seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-                see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
-                see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
+            uint64_t see1 = seed, see2 = seed;
+#    ifdef RAPIDHASH_UNROLLED
+            while (ANKERL_UNORDERED_DENSE_LIKELY(i >= 96)) {
+                seed = mix(r8(p) ^ secret[0], r8(p + 8) ^ seed);
+                see1 = mix(r8(p + 16) ^ secret[1], r8(p + 24) ^ see1);
+                see2 = mix(r8(p + 32) ^ secret[2], r8(p + 40) ^ see2);
+                seed = mix(r8(p + 48) ^ secret[0], r8(p + 56) ^ seed);
+                see1 = mix(r8(p + 64) ^ secret[1], r8(p + 72) ^ see1);
+                see2 = mix(r8(p + 80) ^ secret[2], r8(p + 88) ^ see2);
+                p += 96;
+                i -= 96;
+            }
+            if (ANKERL_UNORDERED_DENSE_UNLIKELY(i >= 48)) {
+                seed = mix(r8(p) ^ secret[0], r8(p + 8) ^ seed);
+                see1 = mix(r8(p + 16) ^ secret[1], r8(p + 24) ^ see1);
+                see2 = mix(r8(p + 32) ^ secret[2], r8(p + 40) ^ see2);
                 p += 48;
                 i -= 48;
-            } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 48));
+            }
+#    else
+            do {
+                seed = mix(r8(p) ^ secret[0], r8(p + 8) ^ seed);
+                see1 = mix(r8(p + 16) ^ secret[1], r8(p + 24) ^ see1);
+                see2 = mix(r8(p + 32) ^ secret[2], r8(p + 40) ^ see2);
+                p += 48;
+                i -= 48;
+            } while (ANKERL_UNORDERED_DENSE_LIKELY(i >= 48));
+#    endif
             seed ^= see1 ^ see2;
         }
-        while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16)) {
-            seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-            i -= 16;
-            p += 16;
+        if (i > 16) {
+            seed = mix(r8(p) ^ secret[2], r8(p + 8) ^ seed ^ secret[1]);
+            if (i > 32)
+                seed = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ seed);
         }
         a = r8(p + i - 16);
         b = r8(p + i - 8);
     }
-
-    return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
+    a ^= secret[1];
+    b ^= seed;
+    rapid_mum(&a, &b);
+    return mix(a ^ secret[0] ^ len, b ^ secret[1]);
 }
 
 [[nodiscard]] inline auto hash(uint64_t x) -> uint64_t {
@@ -280,8 +324,8 @@ struct hash {
 template <typename T>
 struct hash<T, typename std::hash<T>::is_avalanching> {
     using is_avalanching = void;
-    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> uint64_t {
+    auto operator()(T const& obj) const
+        noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>()))) -> uint64_t {
         return std::hash<T>{}(obj);
     }
 };
