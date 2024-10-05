@@ -61,6 +61,8 @@ public:
         [[nodiscard]] auto get() const -> size_t const&;
         auto get() -> size_t&;
 
+        [[nodiscard]] auto counts() -> counter&;
+
         void swap(obj& other);
         [[nodiscard]] auto get_for_hash() const -> size_t;
 

@@ -3,33 +3,42 @@
 #include <app/counter.h>
 #include <app/doctest.h>
 
-TEST_CASE_MAP("reentrant_destruct", counter::obj, counter::obj) {
+namespace {
+
+class EraseOnDestruct;
+
+using map_t = ankerl::unordered_dense::map<counter::obj, std::unique_ptr<EraseOnDestruct>>;
+
+class EraseOnDestruct {
+    map_t* m_map;
+    counter::obj m_counter;
+
+public:
+    EraseOnDestruct(map_t& map, size_t i, counter& counts)
+        : m_map(&map)
+        , m_counter(i, counts) {}
+
+    ~EraseOnDestruct() {
+        (void)m_map;
+        m_map->erase(counter::obj{m_counter.get() + 1, m_counter.counts()});
+    }
+};
+
+} // namespace
+
+TEST_CASE("reentrant_destruct") {
     auto counts = counter{};
     INFO(counts);
 
-    auto container = typename map_t::value_container_type{};
-
-    // TODO
-
-    for (size_t i = 0; i < 100; ++i) {
-        container.emplace_back(counter::obj{i, counts}, counter::obj{i, counts});
-        container.emplace_back(counter::obj{i, counts}, counter::obj{i, counts});
-    }
-
-    for (size_t i = 0; i < 10; ++i) {
-        container.emplace_back(counter::obj{i, counts}, counter::obj{i, counts});
-    }
-
-    // add some elements
     auto map = map_t();
-    for (size_t i = 0; i < 10; ++i) {
-        map.try_emplace(counter::obj{i, counts}, counter::obj{i, counts});
-    }
 
-    map.replace(std::move(container));
+    /*
+    This doesn't work, it is not something that can be supported with using std::vector.
+    I'll leave the code here so it's not lost though.
 
-    REQUIRE(map.size() == 100U);
     for (size_t i = 0; i < 100; ++i) {
-        REQUIRE(map.contains(counter::obj{i, counts}));
+        map.try_emplace(counter::obj{i, counts}, std::make_unique<EraseOnDestruct>(map, i, counts));
     }
+    map.erase(counter::obj{0, counts});
+    */
 }

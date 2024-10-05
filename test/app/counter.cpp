@@ -155,6 +155,10 @@ auto counter::obj::get() const -> size_t const& {
     return m_data;
 }
 
+auto counter::obj::counts() -> counter& {
+    return *m_counts;
+}
+
 auto counter::obj::get() -> size_t& {
     if (nullptr != m_counts) {
         ++m_counts->m_data.m_get;
