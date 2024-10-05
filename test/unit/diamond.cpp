@@ -3,7 +3,6 @@
 #include <app/doctest.h>
 
 #include <cstddef> // for size_t
-#include <vector>  // for vector
 
 // struct that provides both hash and equals operator
 struct hash_with_equal {

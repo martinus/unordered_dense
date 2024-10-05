@@ -62,6 +62,7 @@ test_sources = [
     'unit/not_moveable.cpp',
     'unit/pmr_move_with_allocators.cpp',
     'unit/pmr.cpp',
+    'unit/reentrant.cpp',
     'unit/rehash.cpp',
     'unit/replace.cpp',
     'unit/reserve_and_assign.cpp',
