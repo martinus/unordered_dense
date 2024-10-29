@@ -588,6 +588,12 @@ private:
             return *this;
         }
 
+        constexpr auto operator++(int) noexcept -> iter_t {
+            iter_t prev(*this);
+            this->operator++();
+            return prev;
+        }
+
         constexpr auto operator+(difference_type diff) noexcept -> iter_t {
             return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) + diff)};
         }
