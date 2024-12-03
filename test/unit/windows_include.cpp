@@ -43,12 +43,16 @@ TEST_CASE("unordered_dense_with_windows_h") {
         auto key = size_t{6};
         map.erase(counter::obj(key, counts));
     }
-    { map = map_t{}; }
+    {
+        map = map_t{};
+    }
     {
         auto m = map_t{};
         m.swap(map);
     }
-    { map.clear(); }
+    {
+        map.clear();
+    }
     {
         auto s = size_t{7};
         map.rehash(s);

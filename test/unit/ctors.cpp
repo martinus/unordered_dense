@@ -38,10 +38,18 @@ TEST_CASE_MAP("ctors_map", counter::obj, counter::obj) {
     auto counts = counter();
     INFO(counts);
 
-    { auto m = map_t{}; }
-    { auto m = map_t{0, alloc_t{}}; }
-    { auto m = map_t{0, hash_t{}, alloc_t{}}; }
-    { auto m = map_t{alloc_t{}}; }
+    {
+        auto m = map_t{};
+    }
+    {
+        auto m = map_t{0, alloc_t{}};
+    }
+    {
+        auto m = map_t{0, hash_t{}, alloc_t{}};
+    }
+    {
+        auto m = map_t{alloc_t{}};
+    }
     REQUIRE(counts.dtor() == 0);
 
     {

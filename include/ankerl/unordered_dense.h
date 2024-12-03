@@ -271,8 +271,8 @@ inline void mum(uint64_t* a, uint64_t* b) {
 
 ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
 struct hash {
-    auto operator()(T const& obj) const
-        noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>()))) -> uint64_t {
+    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
+        -> uint64_t {
         return std::hash<T>{}(obj);
     }
 };
@@ -280,8 +280,8 @@ struct hash {
 template <typename T>
 struct hash<T, typename std::hash<T>::is_avalanching> {
     using is_avalanching = void;
-    auto operator()(T const& obj) const
-        noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>()))) -> uint64_t {
+    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
+        -> uint64_t {
         return std::hash<T>{}(obj);
     }
 };
@@ -1113,9 +1113,8 @@ private:
     }
 
     template <typename... Args>
-    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint,
-                          value_idx_type bucket_idx,
-                          Args&&... args) -> std::pair<iterator, bool> {
+    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, Args&&... args)
+        -> std::pair<iterator, bool> {
 
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::forward<Args>(args)...);
