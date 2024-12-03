@@ -126,7 +126,9 @@ TEST_CASE_PMR_MAP("pmr", uint64_t, uint64_t) {
 
 TEST_CASE_PMR_MAP("pmr_no_null", uint64_t, uint64_t) {
     auto mr = no_null_memory_resource();
-    { auto map = map_t(&mr); }
+    {
+        auto map = map_t(&mr);
+    }
     {
         auto map = map_t(&mr);
         for (size_t i = 0; i < 1; ++i) {
