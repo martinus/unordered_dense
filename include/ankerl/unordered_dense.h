@@ -98,7 +98,7 @@
 #        include <cstdlib> // for abort
 #    endif
 
-#    if defined(__has_include)
+#    if defined(__has_include) && !defined(ANKERL_UNORDERED_DENSE_DISABLE_PMR)
 #        if __has_include(<memory_resource>)
 #            define ANKERL_UNORDERED_DENSE_PMR std::pmr // NOLINT(cppcoreguidelines-macro-usage)
 #            include <memory_resource>                  // for polymorphic_allocator
