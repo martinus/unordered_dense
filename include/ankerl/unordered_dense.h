@@ -109,8 +109,27 @@
 #        include <cstdlib> // for abort
 #    endif
 
+// <memory_resource> includes <mutex>, which fails to compile if
+// targeting GCC >= 13 with the (rewritten) win32 thread model, and
+// targeting Windows earlier than Vista (0x600).  GCC predefines
+// _REENTRANT when using the 'posix' model, and doesn't when using the
+// 'win32' model.
+#    if defined __MINGW64__ && defined __GNUC__ && __GNUC__ >= 13 && !defined _REENTRANT
+// _WIN32_WINNT is guaranteed to be defined here because of the
+// <cstdint> inclusion above.
+#        ifndef _WIN32_WINNT
+#            error "_WIN32_WINNT not defined"
+#        endif
+#        if _WIN32_WINNT < 0x600
+#            define ANKERL_MEMORY_RESOURCE_IS_BAD() 1 // NOLINT(cppcoreguidelines-macro-usage)
+#        endif
+#    endif
+#    ifndef ANKERL_MEMORY_RESOURCE_IS_BAD
+#        define ANKERL_MEMORY_RESOURCE_IS_BAD() 0 // NOLINT(cppcoreguidelines-macro-usage)
+#    endif
+
 #    if defined(__has_include) && !defined(ANKERL_UNORDERED_DENSE_DISABLE_PMR)
-#        if __has_include(<memory_resource>)
+#        if __has_include(<memory_resource>) && !ANKERL_MEMORY_RESOURCE_IS_BAD()
 #            define ANKERL_UNORDERED_DENSE_PMR std::pmr // NOLINT(cppcoreguidelines-macro-usage)
 #            include <memory_resource>                  // for polymorphic_allocator
 #        elif __has_include(<experimental/memory_resource>)
