@@ -7,6 +7,7 @@ test_sources = [
     'app/ui/progress_bar.cpp',
     'app/unordered_dense.cpp',
 
+    'bench/latency_distribution.cpp',
     'bench/swap.cpp',
     'bench/show_allocations.cpp',
     'bench/quick_overall_map.cpp',
