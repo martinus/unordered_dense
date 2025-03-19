@@ -656,6 +656,15 @@ private:
         return (capacity + num_elements_in_block - 1U) / num_elements_in_block;
     }
 
+    void resize_shrink(size_t new_size) {
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            for (size_t ix = new_size; ix < m_size; ++ix) {
+                operator[](ix).~T();
+            }
+        }
+        m_size = new_size;
+    }
+
 public:
     segmented_vector() = default;
 
@@ -765,6 +774,30 @@ public:
         m_blocks.reserve(calc_num_blocks_for_capacity(new_capacity));
         while (new_capacity > capacity()) {
             increase_capacity();
+        }
+    }
+
+    void resize(size_t const count) {
+        if (count < m_size) {
+            resize_shrink(count);
+        } else if (count > m_size) {
+            size_t const new_elems = count - m_size;
+            reserve(count);
+            for (size_t ix = 0; ix < new_elems; ++ix) {
+                emplace_back();
+            }
+        }
+    }
+
+    void resize(size_t const count, value_type const& value) {
+        if (count < m_size) {
+            resize_shrink(count);
+        } else if (count > m_size) {
+            size_t const new_elems = count - m_size;
+            reserve(count);
+            for (size_t ix = 0; ix < new_elems; ++ix) {
+                emplace_back(value);
+            }
         }
     }
 
