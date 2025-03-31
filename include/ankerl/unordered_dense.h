@@ -571,7 +571,7 @@ private:
 
     public:
         using difference_type = segmented_vector::difference_type;
-        using value_type = T;
+        using value_type = segmented_vector::value_type;
         using reference = typename std::conditional_t<IsConst, value_type const&, value_type&>;
         using pointer = typename std::conditional_t<IsConst, segmented_vector::const_pointer, segmented_vector::pointer>;
         using iterator_category = std::forward_iterator_tag;
