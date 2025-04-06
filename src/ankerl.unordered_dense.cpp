@@ -15,10 +15,7 @@ module;
 #include <ankerl/stl.h>
 #endif
 
-#if defined(_MSC_VER) && defined(_M_X64)
-#    include <intrin.h>
-#    pragma intrinsic(_umul128)
-#endif
+#define ANKERL_UNORDERED_DENSE_EXPORT export
 
 export module ankerl.unordered_dense;
 
@@ -26,8 +23,6 @@ export module ankerl.unordered_dense;
 import std;
 #endif
 
-#define ANKERL_UNORDERED_DENSE_EXPORT export
-#define ANKER_UNOREDERED_DENSE_DONT_INCLUDE_STL
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winclude-angled-in-module-purview"
 #include <ankerl/unordered_dense.h>

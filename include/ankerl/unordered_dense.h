@@ -71,13 +71,14 @@
 #endif
 
 #if !defined(ANKERL_UNORDERED_DENSE_EXPORT)
+#    define ANKERL_UNORDERED_DENSE_STL_INCLUDE
 #    define ANKERL_UNORDERED_DENSE_EXPORT
 #endif
 
 #if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
-#    if !defined(ANKERL_UNORDERED_DENSE_DONT_INCLUDE_STL)
+#    if defined(ANKERL_UNORDERED_DENSE_STL_INCLUDE)
 #        include "stl.h"
 #    endif
 
