@@ -70,51 +70,15 @@
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
 #endif
 
-// defined in unordered_dense.cpp
-#if defined(ANKERL_UNORDERED_DENSE_EXPORT)
-#    define ANKERL_UNORDERED_DENSE_DONT_INCLUDE
-#else
+#if !defined(ANKERL_UNORDERED_DENSE_EXPORT)
 #    define ANKERL_UNORDERED_DENSE_EXPORT
 #endif
 
 #if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
-#    if !defined(ANKERL_UNORDERED_DENSE_DONT_INCLUDE)
-#        include <array>            // for array
-#        include <cstdint>          // for uint64_t, uint32_t, std::uint8_t, UINT64_C
-#        include <cstring>          // for size_t, memcpy, memset
-#        include <functional>       // for equal_to, hash
-#        include <initializer_list> // for initializer_list
-#        include <iterator>         // for pair, distance
-#        include <limits>           // for numeric_limits
-#        include <memory>           // for allocator, allocator_traits, shared_ptr
-#        include <optional>         // for optional
-#        include <stdexcept>        // for out_of_range
-#        include <string>           // for basic_string
-#        include <string_view>      // for basic_string_view, hash
-#        include <tuple>            // for forward_as_tuple
-#        include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
-#        include <utility>          // for forward, exchange, pair, as_const, piece...
-#        include <vector>           // for vector
-#        if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() == 0
-#            include <cstdlib> // for abort
-#        endif
-
-#        if defined(__has_include)
-#            if __has_include(<memory_resource>)
-#                define ANKERL_UNORDERED_DENSE_PMR std::pmr // NOLINT(cppcoreguidelines-macro-usage)
-#                include <memory_resource>                  // for polymorphic_allocator
-#            elif __has_include(<experimental/memory_resource>)
-#                define ANKERL_UNORDERED_DENSE_PMR std::experimental::pmr // NOLINT(cppcoreguidelines-macro-usage)
-#                include <experimental/memory_resource>                   // for polymorphic_allocator
-#            endif
-#        endif
-
-#        if defined(_MSC_VER) && defined(_M_X64)
-#            include <intrin.h>
-#            pragma intrinsic(_umul128)
-#        endif
+#    if !defined(ANKERL_UNORDERED_DENSE_DONT_INCLUDE_STL)
+#        include "stl.h"
 #    endif
 
 #    if defined(__GNUC__) || defined(__INTEL_COMPILER) || defined(__clang__)
