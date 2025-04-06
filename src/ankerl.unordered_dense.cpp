@@ -28,4 +28,7 @@ import std;
 
 #define ANKERL_UNORDERED_DENSE_EXPORT export
 #define ANKER_UNOREDERED_DENSE_DONT_INCLUDE_STL
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winclude-angled-in-module-purview"
 #include <ankerl/unordered_dense.h>
+#pragma clang diagnostic pop
