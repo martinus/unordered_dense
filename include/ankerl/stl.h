@@ -45,9 +45,6 @@
 #include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
 #include <utility>          // for forward, exchange, pair, as_const, piece...
 #include <vector>           // for vector
-#if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() == 0
-#    include <cstdlib> // for abort
-#endif
 
 #if defined(__has_include)
 #    if __has_include(<memory_resource>)

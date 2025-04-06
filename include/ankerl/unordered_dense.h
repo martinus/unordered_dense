@@ -250,7 +250,7 @@ template <typename T>
 struct hash<T, typename std::hash<T>::is_avalanching> {
     using is_avalanching = void;
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> uint64_t {
+        -> std::uint64_t {
         return std::hash<T>{}(obj);
     }
 };
@@ -312,24 +312,24 @@ struct tuple_hash_helper {
     // Converts the value into 64bit. If it is an integral type, just cast it. Mixing is doing the rest.
     // If it isn't an integral we need to hash it.
     template <typename Arg>
-    [[nodiscard]] constexpr static auto to64(Arg const& arg) -> uint64_t {
+    [[nodiscard]] constexpr static auto to64(Arg const& arg) -> std::uint64_t {
         if constexpr (std::is_integral_v<Arg> || std::is_enum_v<Arg>) {
-            return static_cast<uint64_t>(arg);
+            return static_cast<std::uint64_t>(arg);
         } else {
             return hash<Arg>{}(arg);
         }
     }
 
-    [[nodiscard]] static auto mix64(uint64_t state, uint64_t v) -> uint64_t {
-        return detail::wyhash::mix(state + v, uint64_t{0x9ddfea08eb382d69});
+    [[nodiscard]] static auto mix64(std::uint64_t state, std::uint64_t v) -> std::uint64_t {
+        return detail::wyhash::mix(state + v, std::uint64_t{0x9ddfea08eb382d69});
     }
 
     // Creates a buffer that holds all the data from each element of the tuple. If possible we memcpy the data directly. If
     // not, we hash the object and use this for the array. Size of the array is known at compile time, and memcpy is optimized
     // away, so filling the buffer is highly efficient. Finally, call wyhash with this buffer.
     template <typename T, std::size_t... Idx>
-    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...>) noexcept -> uint64_t {
-        auto h = uint64_t{};
+    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...>) noexcept -> std::uint64_t {
+        auto h = std::uint64_t{};
         ((h = mix64(h, to64(std::get<Idx>(t)))), ...);
         return h;
     }
@@ -338,7 +338,7 @@ struct tuple_hash_helper {
 template <typename... Args>
 struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
     using is_avalanching = void;
-    auto operator()(std::tuple<Args...> const& t) const noexcept -> uint64_t {
+    auto operator()(std::tuple<Args...> const& t) const noexcept -> std::uint64_t {
         return tuple_hash_helper<Args...>::calc_hash(t, std::index_sequence_for<Args...>{});
     }
 };
@@ -346,7 +346,7 @@ struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
 template <typename A, typename B>
 struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
     using is_avalanching = void;
-    auto operator()(std::pair<A, B> const& t) const noexcept -> uint64_t {
+    auto operator()(std::pair<A, B> const& t) const noexcept -> std::uint64_t {
         return tuple_hash_helper<A, B>::calc_hash(t, std::index_sequence_for<A, B>{});
     }
 };
@@ -968,7 +968,7 @@ private:
             if constexpr (has_reserve<bucket_container_type>) {
                 m_buckets.reserve(num_buckets);
             }
-            for (size_t i = m_buckets.size(); i < num_buckets; ++i) {
+            for (std::size_t i = m_buckets.size(); i < num_buckets; ++i) {
                 m_buckets.emplace_back();
             }
         } else {
