@@ -29,7 +29,16 @@ export module ankerl.unordered_dense;
 import std;
 #endif
 
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winclude-angled-in-module-purview"
+#elif defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable:5244)
+#endif
 #include <ankerl/unordered_dense.h>
+#ifdef __clang__
 #pragma clang diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
