@@ -594,12 +594,37 @@ private:
             return prev;
         }
 
-        constexpr auto operator+(difference_type diff) noexcept -> iter_t {
+        constexpr auto operator--() noexcept -> iter_t& {
+            --m_idx;
+            return *this;
+        }
+
+        constexpr auto operator--(int) noexcept -> iter_t {
+            iter_t prev(*this);
+            this->operator--();
+            return prev;
+        }
+
+        [[nodiscard]] constexpr auto operator+(difference_type diff) const noexcept -> iter_t {
             return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) + diff)};
         }
 
+        constexpr auto operator+=(difference_type diff) noexcept -> iter_t& {
+            m_idx += diff;
+            return *this;
+        }
+
+        [[nodiscard]] constexpr auto operator-(difference_type diff) const noexcept -> iter_t {
+            return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) - diff)};
+        }
+
+        constexpr auto operator-=(difference_type diff) noexcept -> iter_t& {
+            m_idx -= diff;
+            return *this;
+        }
+
         template <bool OtherIsConst>
-        constexpr auto operator-(iter_t<OtherIsConst> const& other) noexcept -> difference_type {
+        [[nodiscard]] constexpr auto operator-(iter_t<OtherIsConst> const& other) const noexcept -> difference_type {
             return static_cast<difference_type>(m_idx) - static_cast<difference_type>(other.m_idx);
         }
 
@@ -612,13 +637,33 @@ private:
         }
 
         template <bool O>
-        constexpr auto operator==(iter_t<O> const& o) const noexcept -> bool {
+        [[nodiscard]] constexpr auto operator==(iter_t<O> const& o) const noexcept -> bool {
             return m_idx == o.m_idx;
         }
 
         template <bool O>
-        constexpr auto operator!=(iter_t<O> const& o) const noexcept -> bool {
+        [[nodiscard]] constexpr auto operator!=(iter_t<O> const& o) const noexcept -> bool {
             return !(*this == o);
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator<(iter_t<O> const& o) const noexcept -> bool {
+            return m_idx < o.m_idx;
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator>(iter_t<O> const& o) const noexcept -> bool {
+            return o < *this;
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator<=(iter_t<O> const& o) const noexcept -> bool {
+            return !(o < *this);
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator>=(iter_t<O> const& o) const noexcept -> bool {
+            return !(*this < o);
         }
     };
 
@@ -674,7 +719,7 @@ public:
     }
 
     segmented_vector(segmented_vector&& other) noexcept
-        : segmented_vector(std::move(other), get_allocator()) {}
+        : segmented_vector(std::move(other), other.get_allocator()) {}
 
     segmented_vector(segmented_vector const& other) {
         append_everything_from(other);
