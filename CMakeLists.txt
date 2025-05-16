@@ -24,7 +24,7 @@ target_include_directories(
 
 target_compile_features(unordered_dense INTERFACE cxx_std_17)
 
-if(_unordered_dense_is_toplevel_project)
+if(_unordered_dense_is_toplevel_project OR UNORDERED_DENSE_INSTALL)
     # locations are provided by GNUInstallDirs
     install(
         TARGETS unordered_dense
