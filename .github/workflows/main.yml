@@ -2,14 +2,18 @@ name: Build, Test, Lint
 
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # see https://github.com/mesonbuild/meson/blob/master/docs/markdown/Continuous-Integration.md
 jobs:
 
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
     - run: ./scripts/lint/lint-version.py
@@ -17,10 +21,10 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v5
     - run: sudo apt-get install -yq libboost-dev
     - uses: hendrikmuhs/ccache-action@v1.2
-    - uses: actions/setup-python@v4
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
     - run: pip install meson ninja
@@ -28,7 +32,7 @@ jobs:
       env:
         CXX: ccache c++
     - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: Linux_Meson_Testlog
@@ -37,8 +41,8 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
     - run: brew install gcc ccache meson ninja
@@ -46,7 +50,7 @@ jobs:
       env:
         CXX: ccache c++
     - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: MacOS_Meson_Testlog
@@ -55,17 +59,15 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
-    - uses: BSFishy/pip-action@v1
-      with:
-        packages: ninja meson
+    - run: pip install ninja meson
     - uses: ilammy/msvc-dev-cmd@v1
     - run: meson setup builddir
     - run: meson test -C builddir -v
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: Windows_Meson_Testlog
