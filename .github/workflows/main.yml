@@ -2,6 +2,9 @@ name: Build, Test, Lint
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -16,6 +19,7 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: ./scripts/lint/lint-version.py
 
   linux:
@@ -23,10 +27,11 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - run: sudo apt-get install -yq libboost-dev
-    - uses: hendrikmuhs/ccache-action@v1.2
+    - uses: hendrikmuhs/ccache-action@v1.2.19
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: pip install meson ninja
     - run: meson setup builddir/
       env:
@@ -37,6 +42,7 @@ jobs:
       with:
         name: Linux_Meson_Testlog
         path: builddir/meson-logs/testlog.txt
+        retention-days: 7
 
   macos:
     runs-on: macos-latest
@@ -45,6 +51,7 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: brew install gcc ccache meson ninja
     - run: meson setup builddir/
       env:
@@ -55,6 +62,7 @@ jobs:
       with:
         name: MacOS_Meson_Testlog
         path: builddir/meson-logs/testlog.txt
+        retention-days: 7
   
   windows:
     runs-on: windows-latest
@@ -63,6 +71,7 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: pip install ninja meson
     - uses: ilammy/msvc-dev-cmd@v1
     - run: meson setup builddir
@@ -74,3 +83,4 @@ jobs:
         path: |
           builddir/meson-logs/testlog.txt
           builddir/test/udm-test.exe
+        retention-days: 7
