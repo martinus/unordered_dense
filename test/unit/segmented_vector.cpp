@@ -189,6 +189,100 @@ TEST_CASE("segmented_vector_resize") {
     }
 }
 
+TEST_CASE("segmented_vector_resize_obj") {
+    auto counts = counts_for_allocator{};
+    counter obj_counts;
+    INFO(obj_counts);
+    {
+        auto vec = ankerl::unordered_dense::
+            segmented_vector<counter::obj, counting_allocator<counter::obj>, sizeof(counter::obj) * 4>(&counts);
+
+        REQUIRE(vec.size() == 0);
+        REQUIRE(vec.capacity() == 0);
+        REQUIRE(counts.size() < 2);
+
+        // noop resize
+        vec.resize(0);
+        REQUIRE(vec.size() == 0);
+        REQUIRE(vec.capacity() == 0);
+        REQUIRE(counts.size() < 2);
+
+        // size-increase resize
+        vec.resize(1100);
+        REQUIRE(vec.size() == 1100);
+        REQUIRE(vec.capacity() == 1100);
+        REQUIRE(counts.size() > 63);
+        counts.reset();
+        for (size_t ix = 0; ix < 1100; ++ix) {
+            REQUIRE(vec[ix] == counter::obj());
+        }
+
+        // size-decrease resize
+        vec.resize(500);
+        REQUIRE(vec.size() == 500);
+        REQUIRE(vec.capacity() == 1100);
+        REQUIRE(counts.size() == 0);
+
+        for (size_t ix = 0; ix < 500; ++ix) {
+            REQUIRE(vec[ix] == counter::obj());
+        }
+
+        // noop resize
+        vec.resize(500, counter::obj(123, obj_counts));
+        REQUIRE(vec.size() == 500);
+        REQUIRE(vec.capacity() == 1100);
+        REQUIRE(counts.size() == 0);
+
+        for (size_t ix = 0; ix < 500; ++ix) {
+            REQUIRE(vec[ix] == counter::obj());
+        }
+
+        // size-increase resize (no alloc)
+        vec.resize(1100, counter::obj(123, obj_counts));
+        REQUIRE(vec.size() == 1100);
+        REQUIRE(vec.capacity() == 1100);
+        REQUIRE(counts.size() == 0);
+
+        for (size_t ix = 0; ix < 500; ++ix) {
+            REQUIRE(vec[ix] == counter::obj());
+        }
+        for (size_t ix = 500; ix < 1100; ++ix) {
+            REQUIRE(vec[ix] == counter::obj(123, obj_counts));
+        }
+
+        // size-increase resize (alloc)
+        vec.resize(2000, counter::obj(42, obj_counts));
+        REQUIRE(vec.size() == 2000);
+        REQUIRE(vec.capacity() == 2000);
+        REQUIRE(counts.size() > 50);
+        counts.reset();
+
+        for (size_t ix = 0; ix < 500; ++ix) {
+            REQUIRE(vec[ix] == counter::obj());
+        }
+        for (size_t ix = 500; ix < 1100; ++ix) {
+            REQUIRE(vec[ix] == counter::obj(123, obj_counts));
+        }
+        for (size_t ix = 1100; ix < 2000; ++ix) {
+            REQUIRE(vec[ix] == counter::obj(42, obj_counts));
+        }
+
+        // size-decrease resize
+        vec.resize(800, counter::obj(99, obj_counts));
+        REQUIRE(vec.size() == 800);
+        REQUIRE(vec.capacity() == 2000);
+        REQUIRE(counts.size() == 0);
+
+        for (size_t ix = 0; ix < 500; ++ix) {
+            REQUIRE(vec[ix] == counter::obj());
+        }
+        for (size_t ix = 500; ix < 800; ++ix) {
+            REQUIRE(vec[ix] == counter::obj(123, obj_counts));
+        }
+    }
+    obj_counts.check_all_done();
+}
+
 using vec_t = ankerl::unordered_dense::segmented_vector<counter::obj>;
 static_assert(sizeof(vec_t) == sizeof(std::vector<counter::obj*>) + sizeof(size_t));
 
