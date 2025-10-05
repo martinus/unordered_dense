@@ -7,8 +7,7 @@
 
 #include <ankerl/unordered_dense.h>
 #include <app/counter.h>
-
-#include <doctest.h>
+#include <app/doctest.h>
 
 #include <initializer_list>
 

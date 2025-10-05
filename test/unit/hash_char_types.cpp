@@ -1,4 +1,4 @@
-#include <doctest.h>
+#include <app/doctest.h>
 
 TEST_CASE("hash_char_types") {
     // TODO(martinus) make hash generic?
