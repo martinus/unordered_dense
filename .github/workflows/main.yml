@@ -26,7 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
-    - run: sudo apt-get install -yq libboost-dev
+    - name: Cache APT packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libboost-dev ccache
+        version: 1.0
     - uses: hendrikmuhs/ccache-action@v1.2.19
     - uses: actions/setup-python@v6
       with:
