@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <numeric>
 #include <unordered_map>
 
 #include <x86intrin.h> // For RDTSC intrinsics
@@ -71,13 +72,12 @@ TEST_CASE("bench_latency" * doctest::test_suite("bench") * doctest::skip()) {
     setup_perf();
     // using map_t = ankerl::unordered_dense::map<uint64_t, uint64_t>;
     // using map_t = std::unordered_map<uint64_t, uint64_t>;
-    // using map_t = boost::unordered_flat_map<uint64_t, uint64_t>;
-    using map_t = boost::unordered_map<uint64_t, uint64_t>;
+    using map_t = boost::unordered_flat_map<uint64_t, uint64_t>;
+    // using map_t = boost::unordered_map<uint64_t, uint64_t>;
 
     static constexpr auto num_elements = size_t(16383);
     auto num_evaluations = size_t(1000000);
     auto measurements = std::vector<uint64_t>(num_evaluations);
-    auto best_measurements = std::vector<uint64_t>(1, std::numeric_limits<uint64_t>::max());
 
     // we just assume that both array only contain unique elements
 
@@ -86,7 +86,7 @@ TEST_CASE("bench_latency" * doctest::test_suite("bench") * doctest::skip()) {
     auto map = map_t();
 
     // do it several times, so we have some warmup
-    for (size_t retries = 0; retries < 2; ++retries) {
+    for (size_t retries = 0; retries < 3; ++retries) {
         for (size_t eval = 0; eval < num_evaluations; ++eval) {
             auto before = measure();
             map.emplace(rng() % num_elements, 0);
@@ -97,15 +97,17 @@ TEST_CASE("bench_latency" * doctest::test_suite("bench") * doctest::skip()) {
         }
 
         std::sort(measurements.begin(), measurements.end());
-        if (measurements.back() < best_measurements.back()) {
-            best_measurements = measurements;
-        }
-        test::print("min: {}, median: {}, max: {}\n",
-                    best_measurements.front(),
-                    best_measurements[best_measurements.size() / 2],
-                    best_measurements.back());
+
+        auto sum = std::accumulate(measurements.begin(), measurements.end(), size_t{});
+        test::print("min: {:7}, median: {:7}, max: {:7}, sum: {} | size: {}, load_factor: {}\n",
+                    measurements.front(),
+                    measurements[measurements.size() / 2],
+                    measurements.back(),
+                    sum,
+                    map.size(),
+                    map.load_factor());
     }
 
     auto fout = std::ofstream("times.dat");
-    fmt::print(fout, "{}", fmt::join(best_measurements, "\n"));
+    fmt::print(fout, "{}", fmt::join(measurements, "\n"));
 }
