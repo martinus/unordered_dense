@@ -70,6 +70,17 @@
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
 #endif
 
+#if defined(__clang__) && defined(__has_attribute)
+#    if __has_attribute(__no_sanitize__)
+#        define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK \
+            __attribute__((__no_sanitize__("unsigned-integer-overflow")))
+#    endif
+#endif
+
+#if !defined(ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK)
+#    define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK
+#endif
+
 // defined in unordered_dense.cpp
 #if !defined(ANKERL_UNORDERED_DENSE_EXPORT)
 #    define ANKERL_UNORDERED_DENSE_EXPORT
@@ -98,8 +109,27 @@
 #        include <cstdlib> // for abort
 #    endif
 
+// <memory_resource> includes <mutex>, which fails to compile if
+// targeting GCC >= 13 with the (rewritten) win32 thread model, and
+// targeting Windows earlier than Vista (0x600).  GCC predefines
+// _REENTRANT when using the 'posix' model, and doesn't when using the
+// 'win32' model.
+#    if defined __MINGW64__ && defined __GNUC__ && __GNUC__ >= 13 && !defined _REENTRANT
+// _WIN32_WINNT is guaranteed to be defined here because of the
+// <cstdint> inclusion above.
+#        ifndef _WIN32_WINNT
+#            error "_WIN32_WINNT not defined"
+#        endif
+#        if _WIN32_WINNT < 0x600
+#            define ANKERL_MEMORY_RESOURCE_IS_BAD() 1 // NOLINT(cppcoreguidelines-macro-usage)
+#        endif
+#    endif
+#    ifndef ANKERL_MEMORY_RESOURCE_IS_BAD
+#        define ANKERL_MEMORY_RESOURCE_IS_BAD() 0 // NOLINT(cppcoreguidelines-macro-usage)
+#    endif
+
 #    if defined(__has_include) && !defined(ANKERL_UNORDERED_DENSE_DISABLE_PMR)
-#        if __has_include(<memory_resource>)
+#        if __has_include(<memory_resource>) && !ANKERL_MEMORY_RESOURCE_IS_BAD()
 #            define ANKERL_UNORDERED_DENSE_PMR std::pmr // NOLINT(cppcoreguidelines-macro-usage)
 #            include <memory_resource>                  // for polymorphic_allocator
 #        elif __has_include(<experimental/memory_resource>)
@@ -351,7 +381,8 @@ struct tuple_hash_helper {
         }
     }
 
-    [[nodiscard]] static auto mix64(uint64_t state, uint64_t v) -> uint64_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK static auto mix64(uint64_t state, uint64_t v)
+        -> uint64_t {
         return detail::wyhash::mix(state + v, uint64_t{0x9ddfea08eb382d69});
     }
 
@@ -559,7 +590,7 @@ private:
 
     public:
         using difference_type = segmented_vector::difference_type;
-        using value_type = T;
+        using value_type = segmented_vector::value_type;
         using reference = typename std::conditional_t<IsConst, value_type const&, value_type&>;
         using pointer = typename std::conditional_t<IsConst, segmented_vector::const_pointer, segmented_vector::pointer>;
         using iterator_category = std::forward_iterator_tag;
@@ -594,12 +625,37 @@ private:
             return prev;
         }
 
-        constexpr auto operator+(difference_type diff) noexcept -> iter_t {
+        constexpr auto operator--() noexcept -> iter_t& {
+            --m_idx;
+            return *this;
+        }
+
+        constexpr auto operator--(int) noexcept -> iter_t {
+            iter_t prev(*this);
+            this->operator--();
+            return prev;
+        }
+
+        [[nodiscard]] constexpr auto operator+(difference_type diff) const noexcept -> iter_t {
             return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) + diff)};
         }
 
+        constexpr auto operator+=(difference_type diff) noexcept -> iter_t& {
+            m_idx += diff;
+            return *this;
+        }
+
+        [[nodiscard]] constexpr auto operator-(difference_type diff) const noexcept -> iter_t {
+            return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) - diff)};
+        }
+
+        constexpr auto operator-=(difference_type diff) noexcept -> iter_t& {
+            m_idx -= diff;
+            return *this;
+        }
+
         template <bool OtherIsConst>
-        constexpr auto operator-(iter_t<OtherIsConst> const& other) noexcept -> difference_type {
+        [[nodiscard]] constexpr auto operator-(iter_t<OtherIsConst> const& other) const noexcept -> difference_type {
             return static_cast<difference_type>(m_idx) - static_cast<difference_type>(other.m_idx);
         }
 
@@ -612,13 +668,33 @@ private:
         }
 
         template <bool O>
-        constexpr auto operator==(iter_t<O> const& o) const noexcept -> bool {
+        [[nodiscard]] constexpr auto operator==(iter_t<O> const& o) const noexcept -> bool {
             return m_idx == o.m_idx;
         }
 
         template <bool O>
-        constexpr auto operator!=(iter_t<O> const& o) const noexcept -> bool {
+        [[nodiscard]] constexpr auto operator!=(iter_t<O> const& o) const noexcept -> bool {
             return !(*this == o);
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator<(iter_t<O> const& o) const noexcept -> bool {
+            return m_idx < o.m_idx;
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator>(iter_t<O> const& o) const noexcept -> bool {
+            return o < *this;
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator<=(iter_t<O> const& o) const noexcept -> bool {
+            return !(o < *this);
+        }
+
+        template <bool O>
+        [[nodiscard]] constexpr auto operator>=(iter_t<O> const& o) const noexcept -> bool {
+            return !(*this < o);
         }
     };
 
@@ -656,6 +732,15 @@ private:
         return (capacity + num_elements_in_block - 1U) / num_elements_in_block;
     }
 
+    void resize_shrink(size_t new_size) {
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            for (size_t ix = new_size; ix < m_size; ++ix) {
+                operator[](ix).~T();
+            }
+        }
+        m_size = new_size;
+    }
+
 public:
     segmented_vector() = default;
 
@@ -674,7 +759,7 @@ public:
     }
 
     segmented_vector(segmented_vector&& other) noexcept
-        : segmented_vector(std::move(other), get_allocator()) {}
+        : segmented_vector(std::move(other), other.get_allocator()) {}
 
     segmented_vector(segmented_vector const& other) {
         append_everything_from(other);
@@ -765,6 +850,30 @@ public:
         m_blocks.reserve(calc_num_blocks_for_capacity(new_capacity));
         while (new_capacity > capacity()) {
             increase_capacity();
+        }
+    }
+
+    void resize(size_t const count) {
+        if (count < m_size) {
+            resize_shrink(count);
+        } else if (count > m_size) {
+            size_t const new_elems = count - m_size;
+            reserve(count);
+            for (size_t ix = 0; ix < new_elems; ++ix) {
+                emplace_back();
+            }
+        }
+    }
+
+    void resize(size_t const count, value_type const& value) {
+        if (count < m_size) {
+            resize_shrink(count);
+        } else if (count > m_size) {
+            size_t const new_elems = count - m_size;
+            reserve(count);
+            for (size_t ix = 0; ix < new_elems; ++ix) {
+                emplace_back(value);
+            }
         }
     }
 

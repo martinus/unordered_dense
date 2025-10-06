@@ -1,9 +1,9 @@
 #include <ankerl/unordered_dense.h> // for map, hash
 
+#include <app/doctest.h>           // for TestCase, skip, ResultBuilder
 #include <app/geomean.h>           // for geomean
 #include <third-party/nanobench.h> // for Rng, doNotOptimizeAway, Bench
 
-#include <doctest.h>  // for TestCase, skip, ResultBuilder
 #include <fmt/core.h> // for print, format
 
 #include <chrono>        // for duration, operator-, high_resolu...

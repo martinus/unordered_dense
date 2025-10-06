@@ -171,7 +171,7 @@ test_exe = executable(
 
         # see what's in the [provide] sections for the dependency names
         dependency('doctest'),
-        dependency('fmt', method: fmt_method),
+        dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
 
         # disable these two if you don't want them
         #dependency('boost'),

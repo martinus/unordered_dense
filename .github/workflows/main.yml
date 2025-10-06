@@ -2,73 +2,89 @@ name: Build, Test, Lint
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # see https://github.com/mesonbuild/meson/blob/master/docs/markdown/Continuous-Integration.md
 jobs:
 
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: ./scripts/lint/lint-version.py
 
   linux:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - run: sudo apt-get install -yq libboost-dev
-    - uses: hendrikmuhs/ccache-action@v1.2
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - name: Cache APT packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libboost-dev ccache
+        version: 1.0
+    - uses: hendrikmuhs/ccache-action@v1.2.19
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: pip install meson ninja
     - run: meson setup builddir/
       env:
         CXX: ccache c++
     - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: Linux_Meson_Testlog
         path: builddir/meson-logs/testlog.txt
+        retention-days: 7
 
   macos:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
+        cache: 'pip'
     - run: brew install gcc ccache meson ninja
     - run: meson setup builddir/
       env:
         CXX: ccache c++
     - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: MacOS_Meson_Testlog
         path: builddir/meson-logs/testlog.txt
+        retention-days: 7
   
   windows:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
-    - uses: BSFishy/pip-action@v1
-      with:
-        packages: ninja meson
+        cache: 'pip'
+    - run: pip install ninja meson
     - uses: ilammy/msvc-dev-cmd@v1
     - run: meson setup builddir
     - run: meson test -C builddir -v
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: Windows_Meson_Testlog
         path: |
           builddir/meson-logs/testlog.txt
           builddir/test/udm-test.exe
+        retention-days: 7
