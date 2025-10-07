@@ -379,7 +379,7 @@ struct hash<std::shared_ptr<T>> {
 };
 
 template <typename Enum>
-struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
+struct hash<Enum, typename std::enable_if_t<std::is_enum_v<Enum>>> {
     using is_avalanching = void;
     auto operator()(Enum e) const noexcept -> uint64_t {
         using underlying = typename std::underlying_type_t<Enum>;
@@ -409,7 +409,7 @@ struct tuple_hash_helper {
     // not, we hash the object and use this for the array. Size of the array is known at compile time, and memcpy is optimized
     // away, so filling the buffer is highly efficient. Finally, call wyhash with this buffer.
     template <typename T, std::size_t... Idx>
-    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...>) noexcept -> uint64_t {
+    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...> /*unused*/) noexcept -> uint64_t {
         auto h = uint64_t{};
         ((h = mix64(h, to64(std::get<Idx>(t)))), ...);
         return h;
@@ -616,7 +616,7 @@ private:
 
         iter_t() noexcept = default;
 
-        template <bool OtherIsConst, typename = typename std::enable_if<IsConst && !OtherIsConst>::type>
+        template <bool OtherIsConst, typename = typename std::enable_if_t<IsConst && !OtherIsConst>>
         // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
         constexpr iter_t(iter_t<OtherIsConst> const& other) noexcept
             : m_data(other.m_data)
@@ -626,7 +626,7 @@ private:
             : m_data(data)
             , m_idx(idx) {}
 
-        template <bool OtherIsConst, typename = typename std::enable_if<IsConst && !OtherIsConst>::type>
+        template <bool OtherIsConst, typename = typename std::enable_if_t<IsConst && !OtherIsConst>::type>
         constexpr auto operator=(iter_t<OtherIsConst> const& other) noexcept -> iter_t& {
             m_data = other.m_data;
             m_idx = other.m_idx;
@@ -725,7 +725,7 @@ private:
     }
 
     // Moves everything from other
-    void append_everything_from(segmented_vector&& other) {
+    void append_everything_from(segmented_vector&& other) { // NOLINT(cppcoreguidelines-rvalue-reference-param-not-moved)
         reserve(size() + other.size());
         for (auto&& o : other) {
             emplace_back(std::move(o));
@@ -1214,7 +1214,7 @@ private:
     }
 
     template <typename K, typename Op>
-    auto do_erase_key(K&& key, Op handle_erased_value) -> size_t {
+    auto do_erase_key(K&& key, Op handle_erased_value) -> size_t { // NOLINT(cppcoreguidelines-missing-std-forward)
         if (empty()) {
             return 0;
         }
@@ -1429,7 +1429,7 @@ public:
     table(std::initializer_list<value_type> init, size_type bucket_count, Hash const& hash, allocator_type const& alloc)
         : table(init, bucket_count, hash, KeyEqual(), alloc) {}
 
-    ~table() {}
+    ~table() = default;
 
     auto operator=(table const& other) -> table& {
         if (&other != this) {
@@ -1796,7 +1796,7 @@ public:
             bucket_idx = next(bucket_idx);
         }
 
-        do_erase(bucket_idx, [](value_type&& /*unused*/) {
+        do_erase(bucket_idx, [](value_type const& /*unused*/) {
         });
         return begin() + static_cast<difference_type>(value_idx_to_remove);
     }
@@ -1852,7 +1852,7 @@ public:
     }
 
     auto erase(Key const& key) -> size_t {
-        return do_erase_key(key, [](value_type&& /*unused*/) {
+        return do_erase_key(key, [](value_type const& /*unused*/) {
         });
     }
 
@@ -1866,7 +1866,7 @@ public:
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto erase(K&& key) -> size_t {
-        return do_erase_key(std::forward<K>(key), [](value_type&& /*unused*/) {
+        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) {
         });
     }
 
