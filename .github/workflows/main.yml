@@ -93,9 +93,62 @@ jobs:
         name: MacOS_Meson_Testlog
         path: builddir/meson-logs/testlog.txt
         retention-days: 7
+
+  mingw:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sys: [mingw64, mingw32]
+        include:
+          - sys: mingw64
+            arch_name: "64bit"
+            msystem: MINGW64
+            prefix: mingw-w64-x86_64
+          - sys: mingw32
+            arch_name: "32bit"
+            msystem: MINGW32
+            prefix: mingw-w64-i686
+    name: MinGW (${{ matrix.arch_name }})
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: msys2/setup-msys2@v2
+      with:
+        msystem: ${{ matrix.msystem }}
+        update: true
+        cache: true
+        install: >-
+          ca-certificates
+          ${{ matrix.prefix }}-ca-certificates
+          ${{ matrix.prefix }}-gcc
+          ${{ matrix.prefix }}-meson
+          ${{ matrix.prefix }}-ninja
+          ${{ matrix.prefix }}-python
+          ${{ matrix.prefix }}-python-pip
+    - run: meson setup builddir
+    - run: meson test -C builddir -v
+    - uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: MinGW_${{ matrix.arch_name }}_Testlog
+        path: builddir/meson-logs/testlog.txt
+        retention-days: 7
   
   windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]
+        include:
+          - arch: x64
+            arch_name: "64bit"
+          - arch: x86
+            arch_name: "32bit"
+    name: Windows (${{ matrix.arch_name }})
     steps:
     - uses: actions/checkout@v5
     - uses: actions/setup-python@v6
@@ -104,12 +157,14 @@ jobs:
         cache: 'pip'
     - run: pip install ninja meson
     - uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ matrix.arch }}
     - run: meson setup builddir
     - run: meson test -C builddir -v
     - uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: Windows_Meson_Testlog
+        name: Windows_${{ matrix.arch_name }}_Testlog
         path: |
           builddir/meson-logs/testlog.txt
           builddir/test/udm-test.exe
