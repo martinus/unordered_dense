@@ -74,6 +74,49 @@ jobs:
         path: builddir/meson-logs/testlog.txt
         retention-days: 7
 
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm64
+    if: false  # Disabled for now due to long queue times
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        cxx_standard: [17, 23]
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    name: Linux ARM64 (${{ matrix.compiler }}, C++${{ matrix.cxx_standard }})
+    steps:
+    - uses: actions/checkout@v5
+    - name: Cache APT packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libboost-dev ccache
+        version: 1.0
+    - uses: hendrikmuhs/ccache-action@v1.2.19
+      with:
+        key: arm64-${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.x'
+        cache: 'pip'
+    - run: pip install meson ninja
+    - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
+      env:
+        CC: ccache ${{ matrix.cc }}
+        CXX: ccache ${{ matrix.cxx }}
+    - run: meson test -C builddir/ -v
+    - uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: Linux_ARM64_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_Testlog
+        path: builddir/meson-logs/testlog.txt
+        retention-days: 7
+
   macos:
     runs-on: macos-latest
     steps:
