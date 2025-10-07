@@ -16,11 +16,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
+    # Not using clang-format linting because everybody has their own version of it. I'll just do it manually from time to time.
+    # - name: Cache APT packages
+    #   uses: awalsh128/cache-apt-pkgs-action@latest
+    #   with:
+    #     packages: clang-format
+    #     version: 1.0
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
         cache: 'pip'
     - run: ./scripts/lint/lint-version.py
+    # - run: ./scripts/lint/lint-clang-format.py
 
   linux:
     runs-on: ubuntu-latest
