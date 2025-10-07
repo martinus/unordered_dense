@@ -24,27 +24,53 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        cxx_standard: [17, 23]
+        arch: [64, 32]
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+          - arch: 64
+            arch_flags: ""
+            packages: "libboost-dev"
+          - arch: 32
+            arch_flags: "-m32"
+            packages: "libboost-dev gcc-multilib g++-multilib"
+    name: Linux (${{ matrix.compiler }}, C++${{ matrix.cxx_standard }}, ${{ matrix.arch }}bit)
     steps:
     - uses: actions/checkout@v5
     - name: Cache APT packages
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: libboost-dev ccache
+        packages: ${{ matrix.packages }} ccache
         version: 1.0
     - uses: hendrikmuhs/ccache-action@v1.2.19
+      with:
+        key: ${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}-${{ matrix.arch }}bit
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
         cache: 'pip'
     - run: pip install meson ninja
-    - run: meson setup builddir/
+    - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
       env:
-        CXX: ccache c++
+        CC: ccache ${{ matrix.cc }}
+        CXX: ccache ${{ matrix.cxx }}
+        CFLAGS: ${{ matrix.arch_flags }}
+        CXXFLAGS: ${{ matrix.arch_flags }}
+        LDFLAGS: ${{ matrix.arch_flags }}
     - run: meson test -C builddir/ -v
     - uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: Linux_Meson_Testlog
+        name: Linux_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_${{ matrix.arch }}bit_Testlog
         path: builddir/meson-logs/testlog.txt
         retention-days: 7
 
