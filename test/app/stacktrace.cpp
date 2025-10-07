@@ -1,4 +1,4 @@
-#if __GNUC__
+#if __GNUC__ && !defined(_WIN32)
 
 #    include <fmt/format.h>
 
