@@ -65,6 +65,10 @@ jobs:
         python-version: '3.x'
         cache: 'pip'
     - run: pip install meson ninja
+    - name: Print compiler versions
+      run: |
+        ${{ matrix.cc }} --version
+        ${{ matrix.cxx }} --version
     - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
       env:
         CC: ccache ${{ matrix.cc }}
@@ -109,6 +113,10 @@ jobs:
         python-version: '3.x'
         cache: 'pip'
     - run: pip install meson ninja
+    - name: Print compiler versions
+      run: |
+        clang --version
+        clang++ --version
     - run: meson setup builddir/ -Dcpp_std=c++17 -Db_sanitize=${{ matrix.sanitizer }}
       env:
         CC: ccache clang
@@ -152,6 +160,10 @@ jobs:
         python-version: '3.x'
         cache: 'pip'
     - run: pip install meson ninja
+    - name: Print compiler versions
+      run: |
+        ${{ matrix.cc }} --version
+        ${{ matrix.cxx }} --version
     - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
       env:
         CC: ccache ${{ matrix.cc }}
@@ -173,6 +185,8 @@ jobs:
         python-version: '3.x'
         cache: 'pip'
     - run: brew install gcc ccache meson ninja
+    - name: Print compiler versions
+      run: c++ --version
     - run: meson setup builddir/
       env:
         CXX: ccache c++
@@ -218,6 +232,8 @@ jobs:
           ${{ matrix.prefix }}-ninja
           ${{ matrix.prefix }}-python
           ${{ matrix.prefix }}-python-pip
+    - name: Print compiler version
+      run: g++ --version
     - run: meson setup builddir
     - run: meson test -C builddir -v
     - uses: actions/upload-artifact@v4
@@ -249,6 +265,8 @@ jobs:
     - uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: ${{ matrix.arch }}
+    - name: Print compiler version
+      run: cl
     - run: meson setup builddir
     - run: meson test -C builddir -v
     - uses: actions/upload-artifact@v4
