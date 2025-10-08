@@ -89,15 +89,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        compiler: [gcc, clang]
         sanitizer: [address, thread, undefined]
         include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
           - sanitizer: address
             sanitizer_flags: "-fsanitize=address -fno-omit-frame-pointer"
           - sanitizer: thread
             sanitizer_flags: "-fsanitize=thread"
           - sanitizer: undefined
             sanitizer_flags: "-fsanitize=undefined"
-    name: Linux Sanitizer (clang, ${{ matrix.sanitizer }})
+    name: Linux Sanitizer (${{ matrix.compiler }}, ${{ matrix.sanitizer }})
     steps:
     - uses: actions/checkout@v5
     - name: Cache APT packages
@@ -107,7 +114,7 @@ jobs:
         version: 1.0
     - uses: hendrikmuhs/ccache-action@v1.2.19
       with:
-        key: clang-sanitize-${{ matrix.sanitizer }}
+        key: ${{ matrix.compiler }}-sanitize-${{ matrix.sanitizer }}
     - uses: actions/setup-python@v6
       with:
         python-version: '3.x'
@@ -115,17 +122,17 @@ jobs:
     - run: pip install meson ninja
     - name: Print compiler versions
       run: |
-        clang --version
-        clang++ --version
+        ${{ matrix.cc }} --version
+        ${{ matrix.cxx }} --version
     - run: meson setup builddir/ -Dcpp_std=c++17 -Db_sanitize=${{ matrix.sanitizer }}
       env:
-        CC: ccache clang
-        CXX: ccache clang++
+        CC: ccache ${{ matrix.cc }}
+        CXX: ccache ${{ matrix.cxx }}
     - run: meson test -C builddir/ -v
     - uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: Linux_clang_sanitize_${{ matrix.sanitizer }}_Testlog
+        name: Linux_${{ matrix.compiler }}_sanitize_${{ matrix.sanitizer }}_Testlog
         path: builddir/meson-logs/testlog.txt
         retention-days: 7
 
