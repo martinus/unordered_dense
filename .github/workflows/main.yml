@@ -10,23 +10,125 @@ concurrency:
   cancel-in-progress: true
 
 # see https://github.com/mesonbuild/meson/blob/master/docs/markdown/Continuous-Integration.md
+# Note: I've moved MinGW & Windows to the top because they are the slowest
 jobs:
-
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - name: Cache APT packages
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: clang-tidy
-        version: 1.0
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.x'
-        cache: 'pip'
-    - run: ./scripts/lint/lint-version.py
-    - run: ./scripts/lint/lint-clang-tidy.py
+      - uses: actions/checkout@v5
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: clang-tidy
+          version: 1.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: ./scripts/lint/lint-version.py
+      - run: ./scripts/lint/lint-clang-tidy.py
+
+  mingw:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sys: [mingw64, mingw32]
+        include:
+          - sys: mingw64
+            arch_name: "64bit"
+            msystem: MINGW64
+            prefix: mingw-w64-x86_64
+          - sys: mingw32
+            arch_name: "32bit"
+            msystem: MINGW32
+            prefix: mingw-w64-i686
+    name: MinGW (${{ matrix.arch_name }})
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          cache: true
+          install: >-
+            ca-certificates
+            ${{ matrix.prefix }}-ca-certificates
+            ${{ matrix.prefix }}-gcc
+            ${{ matrix.prefix }}-meson
+            ${{ matrix.prefix }}-ninja
+            ${{ matrix.prefix }}-python
+            ${{ matrix.prefix }}-python-pip
+      - name: Print compiler version
+        run: g++ --version
+      - run: meson setup builddir
+      - run: meson test -C builddir -v
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: MinGW_${{ matrix.arch_name }}_Testlog
+          path: builddir/meson-logs/testlog.txt
+          retention-days: 7
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]
+        include:
+          - arch: x64
+            arch_name: "64bit"
+          - arch: x86
+            arch_name: "32bit"
+    name: Windows (${{ matrix.arch_name }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: pip install ninja meson
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Print compiler version
+        run: cl
+      - run: meson setup builddir
+      - run: meson test -C builddir -v
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Windows_${{ matrix.arch_name }}_Testlog
+          path: |
+            builddir/meson-logs/testlog.txt
+            builddir/test/udm-test.exe
+          retention-days: 7
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: brew install gcc ccache meson ninja
+      - name: Print compiler versions
+        run: c++ --version
+      - run: meson setup builddir/
+        env:
+          CXX: ccache c++
+      - run: meson test -C builddir/ -v
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: MacOS_Meson_Testlog
+          path: builddir/meson-logs/testlog.txt
+          retention-days: 7
 
   linux:
     runs-on: ubuntu-latest
@@ -51,38 +153,38 @@ jobs:
             packages: "libboost-dev gcc-multilib g++-multilib"
     name: Linux (${{ matrix.compiler }}, C++${{ matrix.cxx_standard }}, ${{ matrix.arch }}bit)
     steps:
-    - uses: actions/checkout@v5
-    - name: Cache APT packages
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: ${{ matrix.packages }} ccache
-        version: 1.0
-    - uses: hendrikmuhs/ccache-action@v1.2.19
-      with:
-        key: ${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}-${{ matrix.arch }}bit
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.x'
-        cache: 'pip'
-    - run: pip install meson ninja
-    - name: Print compiler versions
-      run: |
-        ${{ matrix.cc }} --version
-        ${{ matrix.cxx }} --version
-    - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
-      env:
-        CC: ccache ${{ matrix.cc }}
-        CXX: ccache ${{ matrix.cxx }}
-        CFLAGS: ${{ matrix.arch_flags }}
-        CXXFLAGS: ${{ matrix.arch_flags }}
-        LDFLAGS: ${{ matrix.arch_flags }}
-    - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: Linux_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_${{ matrix.arch }}bit_Testlog
-        path: builddir/meson-logs/testlog.txt
-        retention-days: 7
+      - uses: actions/checkout@v5
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ matrix.packages }} ccache
+          version: 1.0
+      - uses: hendrikmuhs/ccache-action@v1.2.19
+        with:
+          key: ${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}-${{ matrix.arch }}bit
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: pip install meson ninja
+      - name: Print compiler versions
+        run: |
+          ${{ matrix.cc }} --version
+          ${{ matrix.cxx }} --version
+      - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
+        env:
+          CC: ccache ${{ matrix.cc }}
+          CXX: ccache ${{ matrix.cxx }}
+          CFLAGS: ${{ matrix.arch_flags }}
+          CXXFLAGS: ${{ matrix.arch_flags }}
+          LDFLAGS: ${{ matrix.arch_flags }}
+      - run: meson test -C builddir/ -v
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Linux_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_${{ matrix.arch }}bit_Testlog
+          path: builddir/meson-logs/testlog.txt
+          retention-days: 7
 
   linux-sanitizers:
     runs-on: ubuntu-latest
@@ -106,39 +208,39 @@ jobs:
             sanitizer_flags: "-fsanitize=undefined"
     name: Linux Sanitizer (${{ matrix.compiler }}, ${{ matrix.sanitizer }})
     steps:
-    - uses: actions/checkout@v5
-    - name: Cache APT packages
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: libboost-dev libfmt-dev ccache
-        version: 1.0
-    - uses: hendrikmuhs/ccache-action@v1.2.19
-      with:
-        key: ${{ matrix.compiler }}-sanitize-${{ matrix.sanitizer }}
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.x'
-        cache: 'pip'
-    - run: pip install meson ninja
-    - name: Print compiler versions
-      run: |
-        ${{ matrix.cc }} --version
-        ${{ matrix.cxx }} --version
-    - run: meson setup builddir/ -Dcpp_std=c++17 -Db_sanitize=${{ matrix.sanitizer }}
-      env:
-        CC: ccache ${{ matrix.cc }}
-        CXX: ccache ${{ matrix.cxx }}
-    - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: Linux_${{ matrix.compiler }}_sanitize_${{ matrix.sanitizer }}_Testlog
-        path: builddir/meson-logs/testlog.txt
-        retention-days: 7
+      - uses: actions/checkout@v5
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libboost-dev libfmt-dev ccache
+          version: 1.0
+      - uses: hendrikmuhs/ccache-action@v1.2.19
+        with:
+          key: ${{ matrix.compiler }}-sanitize-${{ matrix.sanitizer }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: pip install meson ninja
+      - name: Print compiler versions
+        run: |
+          ${{ matrix.cc }} --version
+          ${{ matrix.cxx }} --version
+      - run: meson setup builddir/ -Dcpp_std=c++17 -Db_sanitize=${{ matrix.sanitizer }}
+        env:
+          CC: ccache ${{ matrix.cc }}
+          CXX: ccache ${{ matrix.cxx }}
+      - run: meson test -C builddir/ -v
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Linux_${{ matrix.compiler }}_sanitize_${{ matrix.sanitizer }}_Testlog
+          path: builddir/meson-logs/testlog.txt
+          retention-days: 7
 
   linux-arm64:
     runs-on: ubuntu-24.04-arm64
-    if: false  # Disabled for now due to long queue times
+    if: false # Disabled for now due to long queue times
     strategy:
       fail-fast: false
       matrix:
@@ -153,134 +255,32 @@ jobs:
             cxx: clang++
     name: Linux ARM64 (${{ matrix.compiler }}, C++${{ matrix.cxx_standard }})
     steps:
-    - uses: actions/checkout@v5
-    - name: Cache APT packages
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: libboost-dev libfmt-dev ccache
-        version: 1.0
-    - uses: hendrikmuhs/ccache-action@v1.2.19
-      with:
-        key: arm64-${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.x'
-        cache: 'pip'
-    - run: pip install meson ninja
-    - name: Print compiler versions
-      run: |
-        ${{ matrix.cc }} --version
-        ${{ matrix.cxx }} --version
-    - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
-      env:
-        CC: ccache ${{ matrix.cc }}
-        CXX: ccache ${{ matrix.cxx }}
-    - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: Linux_ARM64_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_Testlog
-        path: builddir/meson-logs/testlog.txt
-        retention-days: 7
-
-  macos:
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@v5
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.x'
-        cache: 'pip'
-    - run: brew install gcc ccache meson ninja
-    - name: Print compiler versions
-      run: c++ --version
-    - run: meson setup builddir/
-      env:
-        CXX: ccache c++
-    - run: meson test -C builddir/ -v
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: MacOS_Meson_Testlog
-        path: builddir/meson-logs/testlog.txt
-        retention-days: 7
-
-  mingw:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        sys: [mingw64, mingw32]
-        include:
-          - sys: mingw64
-            arch_name: "64bit"
-            msystem: MINGW64
-            prefix: mingw-w64-x86_64
-          - sys: mingw32
-            arch_name: "32bit"
-            msystem: MINGW32
-            prefix: mingw-w64-i686
-    name: MinGW (${{ matrix.arch_name }})
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-    - uses: actions/checkout@v5
-    - uses: msys2/setup-msys2@v2
-      with:
-        msystem: ${{ matrix.msystem }}
-        update: true
-        cache: true
-        install: >-
-          ca-certificates
-          ${{ matrix.prefix }}-ca-certificates
-          ${{ matrix.prefix }}-gcc
-          ${{ matrix.prefix }}-meson
-          ${{ matrix.prefix }}-ninja
-          ${{ matrix.prefix }}-python
-          ${{ matrix.prefix }}-python-pip
-    - name: Print compiler version
-      run: g++ --version
-    - run: meson setup builddir
-    - run: meson test -C builddir -v
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: MinGW_${{ matrix.arch_name }}_Testlog
-        path: builddir/meson-logs/testlog.txt
-        retention-days: 7
-  
-  windows:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x64, x86]
-        include:
-          - arch: x64
-            arch_name: "64bit"
-          - arch: x86
-            arch_name: "32bit"
-    name: Windows (${{ matrix.arch_name }})
-    steps:
-    - uses: actions/checkout@v5
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.x'
-        cache: 'pip'
-    - run: pip install ninja meson
-    - uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: ${{ matrix.arch }}
-    - name: Print compiler version
-      run: cl
-    - run: meson setup builddir
-    - run: meson test -C builddir -v
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: Windows_${{ matrix.arch_name }}_Testlog
-        path: |
-          builddir/meson-logs/testlog.txt
-          builddir/test/udm-test.exe
-        retention-days: 7
+      - uses: actions/checkout@v5
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libboost-dev libfmt-dev ccache
+          version: 1.0
+      - uses: hendrikmuhs/ccache-action@v1.2.19
+        with:
+          key: arm64-${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: pip install meson ninja
+      - name: Print compiler versions
+        run: |
+          ${{ matrix.cc }} --version
+          ${{ matrix.cxx }} --version
+      - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
+        env:
+          CC: ccache ${{ matrix.cc }}
+          CXX: ccache ${{ matrix.cxx }}
+      - run: meson test -C builddir/ -v
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Linux_ARM64_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_Testlog
+          path: builddir/meson-logs/testlog.txt
+          retention-days: 7
