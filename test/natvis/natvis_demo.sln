@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35806.99
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "natvis_demo", "natvis_demo.vcxproj", "{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Debug|x64.ActiveCfg = Debug|x64
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Debug|x64.Build.0 = Debug|x64
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Debug|x86.ActiveCfg = Debug|Win32
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Debug|x86.Build.0 = Debug|Win32
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Release|x64.ActiveCfg = Release|x64
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Release|x64.Build.0 = Release|x64
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Release|x86.ActiveCfg = Release|Win32
+		{0FC2E957-E173-46A4-BF05-C0F3A03EA1BD}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B926FE15-ACE7-450F-A24C-C0A1CD6BB2C2}
+	EndGlobalSection
+EndGlobal
