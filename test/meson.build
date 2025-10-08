@@ -16,6 +16,7 @@ test_sources = [
 
     'fuzz/run.cpp',
 
+    'unit/array_of_maps.cpp',
     'unit/assign_to_move.cpp',
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
