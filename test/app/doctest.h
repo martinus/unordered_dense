@@ -58,7 +58,7 @@ class deque_set : public ankerl::unordered_dense::detail::
     using base_t::base_t;
 };
 
-// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage,misc-use-anonymous-namespace)
 #define TEST_CASE_MAP(name, ...)                                            \
     TEST_CASE_TEMPLATE(name,                                                \
                        map_t,                                               \
