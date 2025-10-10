@@ -10,9 +10,9 @@
 
 A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion for C++17 and later.
 
-The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` are (almost) drop-in replacements of `std::unordered_map` and `std::unordered_set`. While they don't have as strong iterator / reference stability guaranties, they are typically *much* faster.
+The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` are (almost) drop-in replacements of `std::unordered_map` and `std::unordered_set`. While they don't have as strong iterator / reference stability guarantees, they are typically *much* faster.
 
-Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::unordered_dense::segmented_set` with lower peak memory usage. and stable references (iterators are NOT stable) on insert.
+Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::unordered_dense::segmented_set` with lower peak memory usage, and stable references (iterators are NOT stable) on insert.
 
 - [1. Overview](#1-overview)
 - [2. Installation](#2-installation)
@@ -29,7 +29,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [3.3. Container API](#33-container-api)
     - [3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`](#331-auto-replace_keyiterator-it-k-new_key---stdpairiterator-bool)
     - [3.3.2. `auto extract() && -> value_container_type`](#332-auto-extract----value_container_type)
-    - [3.3.3. `extract()` single Elements](#333-extract-single-elements)
+    - [3.3.3. `extract()` Single Elements](#333-extract-single-elements)
     - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
     - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
   - [3.4. Custom Container Types](#34-custom-container-types)
@@ -51,7 +51,7 @@ The chosen design has a few advantages over `std::unordered_map`:
 * Very fast insertion & lookup speed, in the same ballpark as [`absl::flat_hash_map`](https://abseil.io/docs/cpp/guides/container`)
 * Low memory usage
 * Full support for `std::allocators`, and [polymorphic allocators](https://en.cppreference.com/w/cpp/memory/polymorphic_allocator). There are `ankerl::unordered_dense::pmr` typedefs available
-* Customizeable storage type: with a template parameter you can e.g. switch from `std::vector` to `boost::interprocess::vector` or any other compatible random-access container.
+* Customizable storage type: with a template parameter you can e.g. switch from `std::vector` to `boost::interprocess::vector` or any other compatible random-access container.
 * Better debugging: the underlying data can be easily seen in any debugger that can show an `std::vector`.
 
 There's no free lunch, so there are a few disadvantages:
@@ -101,7 +101,7 @@ clang++ -std=c++20 -I include --precompile -x c++-module src/ankerl.unordered_de
 clang++ -std=c++20 -c ankerl.unordered_dense.pcm
 ```
 
-To use the module with e.g. in `module_test.cpp`, use 
+To use the module, for example in `module_test.cpp`, use 
 
 ```cpp
 import ankerl.unordered_dense;
@@ -117,15 +117,15 @@ A simple demo script can be found in `test/modules`.
 
 ### 3.2. Hash
 
-`ankerl::unordered_dense::hash` is a fast and high quality hash, based on [wyhash](https://github.com/wangyi-fudan/wyhash). The `ankerl::unordered_dense` map/set differentiates between hashes of high quality (good [avalanching effect](https://en.wikipedia.org/wiki/Avalanche_effect)) and bad quality. Hashes with good quality contain a special marker:
+`ankerl::unordered_dense::hash` is a fast and high quality hash, based on [wyhash](https://github.com/wangyi-fudan/wyhash). The `ankerl::unordered_dense` map/set differentiates between high quality hashes (good [avalanching effect](https://en.wikipedia.org/wiki/Avalanche_effect)) and low quality hashes. High quality hashes contain a special marker:
 
 ```cpp
 using is_avalanching = void;
 ```
 
-This is the cases for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, and `std::basic_string_view<C>`.
+This is the case for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, and `std::basic_string_view<C>`.
 
-Hashes that do not contain such a marker are assumed to be of bad quality and receive an additional mixing step inside the map/set implementation.
+Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation.
 
 #### 3.2.1. Simple Hash
 
@@ -150,13 +150,13 @@ struct custom_hash_simple {
     }
 };
 ```
-This can be used e.g. with 
+This can be used, for example, with 
 
 ```cpp
 auto ids = ankerl::unordered_dense::set<id, custom_hash_simple>();
 ```
 
-Since `custom_hash_simple` doesn't have a `using is_avalanching = void;` marker it is considered to be of bad quality and additional mixing of `x.value` is automatically provided inside the set.
+Since `custom_hash_simple` doesn't have a `using is_avalanching = void;` marker, it is considered to be of low quality and additional mixing of `x.value` is automatically provided inside the set.
 
 #### 3.2.2. High Quality Hash
 
@@ -194,9 +194,9 @@ struct ankerl::unordered_dense::hash<id> {
 
 This map/set supports heterogeneous overloads as described in [P2363 Extending associative containers with the remaining heterogeneous overloads](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html) which is [targeted for C++26](https://wg21.link/p2077r2). This has overloads for `find`, `count`, `contains`, `equal_range` (see [P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)), `erase` (see [P2077R2](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2077r2.html)), and  `try_emplace`, `insert_or_assign`, `operator[]`, `at`, and `insert` & `emplace` for sets (see [P2363R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html)).
 
-For heterogeneous overloads to take affect, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
+For heterogeneous overloads to take effect, both `hasher` and `key_equal` need to have the attribute `is_transparent` set.
 
-Here is an example implementation that's usable with any string types that is convertible to `std::string_view` (e.g. `char const*` and `std::string`):
+Here is an example implementation that's usable with any string type that is convertible to `std::string_view` (e.g. `char const*` and `std::string`):
 
 ```cpp
 struct string_hash {
@@ -220,7 +220,7 @@ For more information see the examples in `test/unit/transparent.cpp`.
 
 #### 3.2.5. Automatic Fallback to `std::hash`
 
-When an implementation for `std::hash` of a custom type is available, this is automatically used and assumed to be of bad quality (thus `std::hash` is used, but an additional mixing step is performed).
+When an implementation for `std::hash` of a custom type is available, it is automatically used and assumed to be of low quality (thus `std::hash` is used, but an additional mixing step is performed).
 
 
 #### 3.2.6. Hash the Whole Memory
@@ -253,7 +253,7 @@ struct custom_hash_unique_object_representation {
 
 ### 3.3. Container API
 
-In addition to the standard `std::unordered_map` API (see https://en.cppreference.com/w/cpp/container/unordered_map) we have additional API that is somewhat similar to the node API, but leverages the fact that we're using a random access container internally:
+In addition to the standard `std::unordered_map` API (see https://en.cppreference.com/w/cpp/container/unordered_map), we have additional API that is somewhat similar to the node API, but leverages the fact that we're using a random access container internally:
 
 #### 3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`
 
@@ -265,9 +265,9 @@ Note that this can also be used as an optimization for `unordered_dense::set` wh
 
 Extracts the internally used container. `*this` is emptied.
 
-#### 3.3.3. `extract()` single Elements
+#### 3.3.3. `extract()` Single Elements
 
-Similar to `erase()` I have an API call `extract()`. It behaves exactly the same as `erase`, except that the return value is the moved element that is removed from the container:
+Similar to `erase()`, there is an API call `extract()`. It behaves exactly the same as `erase`, except that the return value is the moved element that is removed from the container:
 
 * `auto extract(const_iterator it) -> value_type`
 * `auto extract(Key const& key) -> std::optional<value_type>`
@@ -299,7 +299,7 @@ The map/set supports two different bucket types. The default should be good for 
 
 #### 3.5.2. `ankerl::unordered_dense::bucket_type::big`
 
-* up to 2^63 = 9223372036854775808 elements.
+* Up to 2^63 = 9,223,372,036,854,775,808 elements.
 * 12 bytes overhead per bucket.
 
 ## 4. `segmented_map` and `segmented_set`
@@ -308,15 +308,15 @@ The map/set supports two different bucket types. The default should be good for 
 
 * Much smoother memory usage, memory usage increases continuously.
 * No high peak memory usage.
-* Faster insertion because elements never need to be moved to new allocated blocks
+* Faster insertion because elements never need to be moved to newly allocated blocks
 * Slightly slower indexing compared to `std::vector` because an additional indirection is needed.
 
-Here is a comparison against `absl::flat_hash_map` and the `ankerl::unordered_dense::map` when inserting 10 million entries
+Here is a comparison against `absl::flat_hash_map` and `ankerl::unordered_dense::map` when inserting 10 million entries:
 ![allocated memory](doc/allocated_memory.png)
 
-Abseil is fastest for this simple inserting test, taking a bit over 0.8 seconds. It's peak memory usage is about 430 MB. Note how the memory usage goes down after the last peak; when it goes down to ~290MB it has finished rehashing and could free the previously used memory block.
+Abseil is fastest for this simple insertion test, taking a bit over 0.8 seconds. Its peak memory usage is about 430 MB. Note how the memory usage goes down after the last peak; when it goes down to ~290MB it has finished rehashing and could free the previously used memory block.
 
-`ankerl::unordered_dense::segmented_map` doesn't have these peaks, and instead has a smooth increase of memory usage. Note there are still sudden drops & increases in memory because the indexing data structure needs still needs to increase by a fixed factor. But due to holding the data in a separate container we are able to first free the old data structure, and then allocate a new, bigger indexing structure; thus we do not have peaks.
+`ankerl::unordered_dense::segmented_map` doesn't have these peaks, and instead has a smooth increase in memory usage. Note there are still sudden drops & increases in memory because the indexing data structure still needs to increase by a fixed factor. But due to holding the data in a separate container, we are able to first free the old data structure, and then allocate a new, bigger indexing structure; thus we do not have peaks.
 
 ## 5. Design
 
@@ -326,8 +326,7 @@ The map/set has two data structures:
 
 ### 5.1. Inserts
 
-Whenever an element is added it is `emplace_back` to the vector. The key is hashed, and an entry (bucket) is added at the
-corresponding location in the bucket array. The bucket has this structure:
+Whenever an element is added, it is `emplace_back`ed to the vector. The key is hashed, and an entry (bucket) is added at the corresponding location in the bucket array. The bucket has this structure:
 
 ```cpp
 struct Bucket {
@@ -346,25 +345,23 @@ deletion.
 
 ### 5.2. Lookups
 
-The key is hashed and the bucket array is searched if it has an entry at that location with that fingerprint. When found,
-the key in the data vector is compared, and when equal the value is returned.
+The key is hashed and the bucket array is searched to see if it has an entry at that location with that fingerprint. When found, the key in the data vector is compared, and when equal, the value is returned.
 
 ### 5.3. Removals
 
 Since all data is stored in a vector, removals are a bit more complicated:
 
-1. First, lookup the element to delete in the index array.
+1. First, look up the element to delete in the index array.
 2. When found, replace that element in the vector with the last element in the vector. 
-3. Update *two* locations in the bucket array: First remove the bucket for the removed element
+3. Update *two* locations in the bucket array: First, remove the bucket for the removed element.
 4. Then, update the `value_idx` of the moved element. This requires another lookup.
 
 
 ## 6. Real World Usage
 
-On 2023-09-10 I did a quick search on github to see if this map is used in any popular open source projects. Here are some of the projects
-I found. Please send me a note if you want on that list!
+On 2023-09-10 I did a quick search on GitHub to see if this map is used in any popular open source projects. Here are some of the projects I found. Please send me a note if you want to be on that list!
 
-* [PruaSlicer](https://github.com/prusa3d/PrusaSlicer) -  G-code generator for 3D printers (RepRap, Makerbot, Ultimaker etc.) 
+* [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) -  G-code generator for 3D printers (RepRap, Makerbot, Ultimaker etc.) 
 * [Kismet](https://github.com/kismetwireless/kismet): Wi-Fi, Bluetooth, RF, and more. Kismet is a sniffer, WIDS, and wardriving tool for Wi-Fi, Bluetooth, Zigbee, RF, and more, which runs on Linux and macOS
 * [Rspamd](https://github.com/rspamd/rspamd) - Fast, free and open-source spam filtering system.
 * [kallisto](https://github.com/pachterlab/kallisto) -  Near-optimal RNA-Seq quantification
