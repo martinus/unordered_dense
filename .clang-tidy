@@ -12,6 +12,8 @@ Checks: >-
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   -fuchsia-default-arguments-declarations,
   -fuchsia-overloaded-operator,
+  -fuchsia-default-arguments-calls,
+  -llvmlibc-implementation-in-namespace,
   -modernize-use-constraints,
   -fuchsia-trailing-return,
   -llvmlibc-callee-namespace,

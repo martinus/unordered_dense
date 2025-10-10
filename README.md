@@ -27,10 +27,11 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.2.5. Automatic Fallback to `std::hash`](#325-automatic-fallback-to-stdhash)
     - [3.2.6. Hash the Whole Memory](#326-hash-the-whole-memory)
   - [3.3. Container API](#33-container-api)
-    - [3.3.1. `auto extract() && -> value_container_type`](#331-auto-extract----value_container_type)
-    - [3.3.2. `extract()` single Elements](#332-extract-single-elements)
-    - [3.3.3. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#333-nodiscard-auto-values-const-noexcept---value_container_type-const)
-    - [3.3.4. `auto replace(value_container_type&& container)`](#334-auto-replacevalue_container_type-container)
+    - [3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`](#331-auto-replace_keyiterator-it-k-new_key---stdpairiterator-bool)
+    - [3.3.2. `auto extract() && -> value_container_type`](#332-auto-extract----value_container_type)
+    - [3.3.3. `extract()` single Elements](#333-extract-single-elements)
+    - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
+    - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
   - [3.4. Custom Container Types](#34-custom-container-types)
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::standard`](#351-ankerlunordered_densebucket_typestandard)
@@ -254,11 +255,17 @@ struct custom_hash_unique_object_representation {
 
 In addition to the standard `std::unordered_map` API (see https://en.cppreference.com/w/cpp/container/unordered_map) we have additional API that is somewhat similar to the node API, but leverages the fact that we're using a random access container internally:
 
-#### 3.3.1. `auto extract() && -> value_container_type`
+#### 3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`
+
+Updates the key of an element in-place without changing its position in the underlying container. This operation maintains iterator and reference stability - all existing iterators and references remain valid after the update.
+
+Note that this can also be used as an optimization for `unordered_dense::set` when you want to `erase` one element and then `insert` a new element, this should be quite a bit faster.
+
+#### 3.3.2. `auto extract() && -> value_container_type`
 
 Extracts the internally used container. `*this` is emptied.
 
-#### 3.3.2. `extract()` single Elements
+#### 3.3.3. `extract()` single Elements
 
 Similar to `erase()` I have an API call `extract()`. It behaves exactly the same as `erase`, except that the return value is the moved element that is removed from the container:
 
@@ -268,11 +275,11 @@ Similar to `erase()` I have an API call `extract()`. It behaves exactly the same
 
 Note that the `extract(key)` API returns an `std::optional<value_type>` that is empty when the key is not found.
 
-#### 3.3.3. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
+#### 3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
 
 Exposes the underlying values container.
 
-#### 3.3.4. `auto replace(value_container_type&& container)`
+#### 3.3.5. `auto replace(value_container_type&& container)`
 
 Discards the internally held container and replaces it with the one passed. Non-unique elements are
 removed, and the container will be partly reordered when non-unique elements are found.
