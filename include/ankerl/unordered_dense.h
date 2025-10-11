@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 4.6.0
+// Version 4.7.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -31,7 +31,7 @@
 
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 4 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 6 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 7 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
 #define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
@@ -1079,6 +1079,18 @@ private:
         at(m_buckets, place) = bucket;
     }
 
+    auto erase_and_shift_down(value_idx_type bucket_idx) -> value_idx_type {
+        // shift down until either empty or an element with correct spot is found
+        auto next_bucket_idx = next(bucket_idx);
+        while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2) {
+            auto& next_bucket = at(m_buckets, next_bucket_idx);
+            at(m_buckets, bucket_idx) = {dist_dec(next_bucket.m_dist_and_fingerprint), next_bucket.m_value_idx};
+            bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
+        }
+        at(m_buckets, bucket_idx) = {};
+        return bucket_idx;
+    }
+
     [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
         return (std::min)(max_bucket_count(), size_t{1} << (64U - shifts));
     }
@@ -1183,15 +1195,7 @@ private:
     template <typename Op>
     void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).m_value_idx;
-
-        // shift down until either empty or an element with correct spot is found
-        auto next_bucket_idx = next(bucket_idx);
-        while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2) {
-            at(m_buckets, bucket_idx) = {dist_dec(at(m_buckets, next_bucket_idx).m_dist_and_fingerprint),
-                                         at(m_buckets, next_bucket_idx).m_value_idx};
-            bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
-        }
-        at(m_buckets, bucket_idx) = {};
+        bucket_idx = erase_and_shift_down(bucket_idx);
         handle_erased_value(std::move(m_values[value_idx_to_remove]));
 
         // update m_values
@@ -1785,6 +1789,62 @@ public:
                          bool> = true>
     auto try_emplace(const_iterator /*hint*/, K&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...).first;
+    }
+
+    // Replaces the key at the given iterator with new_key. This does not change any other data in the underlying table, so
+    // all iterators and references remain valid. However, this operation can fail if new_key already exists in the table.
+    // In that case, returns {iterator to the already existing new_key, false} and no change is made.
+    //
+    // In the case of a set, this effectively removes the old key and inserts the new key at the same spot, which is more
+    // efficient than removing the old key and inserting the new key because it avoids repositioning the last element.
+    template <typename K>
+    auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool> {
+        auto const new_key_hash = mixed_hash(new_key);
+        auto const new_key_dist_and_fingerprint = dist_and_fingerprint_from_hash(new_key_hash);
+        auto const new_key_bucket_idx = bucket_idx_from_hash(new_key_hash);
+
+        // first, check if new_key already exists and return if so
+        auto dist_and_fingerprint = new_key_dist_and_fingerprint;
+        auto bucket_idx = new_key_bucket_idx;
+        while (dist_and_fingerprint <= at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+            auto const& bucket = at(m_buckets, bucket_idx);
+            if (dist_and_fingerprint == bucket.m_dist_and_fingerprint &&
+                m_equal(new_key, get_key(m_values[bucket.m_value_idx]))) {
+                return {begin() + static_cast<difference_type>(bucket.m_value_idx), false};
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+
+        // const_cast is needed because iterator for the set is always const, so adding another get_key overload is not
+        // feasible.
+        auto& target_key = const_cast<key_type&>(get_key(*it));
+        auto const old_key_hash = mixed_hash(target_key);
+        auto const old_key_bucket_idx = bucket_idx_from_hash(old_key_hash);
+
+        // Replace the key before doing any bucket changes. If it throws, no harm done, we are still in a valid state as we
+        // have not modified any buckets yet.
+        target_key = std::forward<K>(new_key);
+
+        auto const value_idx = static_cast<value_idx_type>(it - begin());
+
+        // Find the bucket containing our value_idx. It's guaranteed we find it, so no other stopping condition needed.
+        bucket_idx = old_key_bucket_idx;
+        while (at(m_buckets, bucket_idx).m_value_idx != value_idx) {
+            bucket_idx = next(bucket_idx);
+        }
+        erase_and_shift_down(bucket_idx);
+
+        // place the new bucket
+        dist_and_fingerprint = new_key_dist_and_fingerprint;
+        bucket_idx = new_key_bucket_idx;
+        while (dist_and_fingerprint < at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+        place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
+
+        return {it, true};
     }
 
     auto erase(iterator it) -> iterator {

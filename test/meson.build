@@ -65,6 +65,7 @@ test_sources = [
     'unit/pmr.cpp',
     'unit/reentrant.cpp',
     'unit/rehash.cpp',
+    'unit/replace_key.cpp',
     'unit/replace.cpp',
     'unit/reserve_and_assign.cpp',
     'unit/reserve.cpp',
