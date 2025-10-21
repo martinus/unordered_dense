@@ -1,39 +1,49 @@
 module;
 
-// see https://github.com/fmtlib/fmt/blob/master/src/fmt.cc
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+#    define ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() 1 // NOLINT(cppcoreguidelines-macro-usage)
+#else
+#    define ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() 0 // NOLINT(cppcoreguidelines-macro-usage)
+#endif
 
-// Put all implementation-provided headers into the global module fragment
-// to prevent attachment to this module.
+#if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() == 0
+#    include <cstdlib> // for abort and UINT64_C
+#endif
 
-#include <array>            // for array
-#include <cstdint>          // for uint64_t, uint32_t, uint8_t, UINT64_C
-#include <cstring>          // for size_t, memcpy, memset
-#include <functional>       // for equal_to, hash
-#include <initializer_list> // for initializer_list
-#include <iterator>         // for pair, distance
-#include <limits>           // for numeric_limits
-#include <memory>           // for allocator, allocator_traits, shared_ptr
-#include <stdexcept>        // for out_of_range
-#include <string>           // for basic_string
-#include <string_view>      // for basic_string_view, hash
-#include <tuple>            // for forward_as_tuple
-#include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
-#include <utility>          // for forward, exchange, pair, as_const, piece...
-#include <vector>           // for vector
-#if defined(__has_include)
-#    if __has_include(<memory_resource>)
-#        include <memory_resource> // for polymorphic_allocator
-#    elif __has_include(<experimental/memory_resource>)
-#        include <experimental/memory_resource> // for polymorphic_allocator
+#if !defined(ANKERL_UNORDERED_DENSE_STD_MODULE)
+#    if defined(__cpp_modules) && __cpp_modules >= 201907L && defined(__cpp_lib_modules) && __cpp_lib_modules >= 202207L
+#        define ANKERL_UNORDERED_DENSE_STD_MODULE 1
+#    else
+#        define ANKERL_UNORDERED_DENSE_STD_MODULE 0
 #    endif
+#else
+#error "BBBBBBBBBBBBB"
 #endif
-#if defined(_MSC_VER) && defined(_M_X64)
-#    include <intrin.h>
-#    pragma intrinsic(_umul128)
+
+#if ANKERL_UNORDERED_DENSE_STD_MODULE
+import std;
 #endif
+
+#include <ankerl/unordered_dense.h>
 
 export module ankerl.unordered_dense;
 
-#define ANKERL_UNORDERED_DENSE_EXPORT export
+export namespace ankerl::unordered_dense {
+  using ankerl::unordered_dense::hash;
 
-#include "ankerl/unordered_dense.h"
+  using ankerl::unordered_dense::map;
+  using ankerl::unordered_dense::segmented_map;
+  using ankerl::unordered_dense::set;
+  using ankerl::unordered_dense::segmented_set;
+
+  namespace pmr {
+    using ankerl::unordered_dense::pmr::map;
+    using ankerl::unordered_dense::pmr::segmented_map;
+    using ankerl::unordered_dense::pmr::set;
+    using ankerl::unordered_dense::pmr::segmented_set;
+  }
+}
+
+export namespace std {
+  using std::erase_if;
+}
