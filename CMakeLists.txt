@@ -1,8 +1,19 @@
-cmake_minimum_required(VERSION 3.12)
+option(ANKERL_ENABLE_MODULES "Enable C++ modules" FALSE)
+option(ANKERL_ENABLE_EXAMPLE "Enable example" FALSE)
+
+set(CMAKE_VER 3.12)
+set(CMAKE_CXX_STANDARD 17)
+if(ANKERL_ENABLE_MODULES)
+    set(CMAKE_VER 4.0)
+    set(CMAKE_CXX_STANDARD 20)
+endif()
+
+cmake_minimum_required(VERSION ${CMAKE_VER})
 project("unordered_dense"
     VERSION 4.7.0
     DESCRIPTION "A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion"
-    HOMEPAGE_URL "https://github.com/martinus/unordered_dense")
+    HOMEPAGE_URL "https://github.com/martinus/unordered_dense"
+    LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -15,14 +26,35 @@ endif()
 
 add_library(unordered_dense INTERFACE)
 add_library(unordered_dense::unordered_dense ALIAS unordered_dense)
+if(ANKERL_ENABLE_MODULES)
+    add_library(unordered_dense_module STATIC)
+    target_sources(unordered_dense_module
+      PUBLIC
+          FILE_SET modules TYPE CXX_MODULES FILES
+          src/ankerl.unordered_dense.cpp
+    )
+    target_link_libraries(unordered_dense_module PUBLIC unordered_dense::unordered_dense)
+    add_library(unordered_dense::unordered_dense_module ALIAS unordered_dense_module)
+endif()
 
 target_include_directories(
     unordered_dense
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_compile_features(unordered_dense INTERFACE ${CXXSTANDARD})
 
-target_compile_features(unordered_dense INTERFACE cxx_std_17)
+if(ANKERL_ENABLE_EXAMPLE)
+    add_executable(example example/main.cpp)
+    target_compile_features(example PRIVATE ${CXXSTANDARD})
+    target_link_libraries(example PRIVATE unordered_dense::unordered_dense)
+
+    if(ANKERL_ENABLE_MODULES)
+        target_link_libraries(example PRIVATE unordered_dense::unordered_dense_module)
+        set_target_properties(example
+                              PROPERTIES COMPILE_DEFINITIONS MODULES)
+    endif()
+endif()
 
 if(_unordered_dense_is_toplevel_project)
     # locations are provided by GNUInstallDirs
