@@ -86,7 +86,7 @@
 #else
 
 #    if !defined(ANKERL_UNORDERED_DENSE_STD_MODULE)
-#        if defined(__cpp_modules) && __cpp_modules >= 201907L && defined(__cpp_lib_modules) && __cpp_lib_modules >= 202207L
+#        if defined(ANKERL_UNORDERED_DENSE_IN_MODULE) && defined(__cpp_modules) && __cpp_modules >= 201907L && defined(__cpp_lib_modules) && __cpp_lib_modules >= 202207L
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #            define ANKERL_UNORDERED_DENSE_STD_MODULE 1
 #        else

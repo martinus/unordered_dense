@@ -12,18 +12,20 @@ module;
 
 #if !defined(ANKERL_UNORDERED_DENSE_STD_MODULE)
 #    if defined(__cpp_modules) && __cpp_modules >= 201907L && defined(__cpp_lib_modules) && __cpp_lib_modules >= 202207L
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #        define ANKERL_UNORDERED_DENSE_STD_MODULE 1
 #    else
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #        define ANKERL_UNORDERED_DENSE_STD_MODULE 0
 #    endif
-#else
-#error "BBBBBBBBBBBBB"
 #endif
 
 #if ANKERL_UNORDERED_DENSE_STD_MODULE
 import std;
 #endif
 
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#define ANKERL_UNORDERED_DENSE_IN_MODULE
 #include <ankerl/unordered_dense.h>
 
 export module ankerl.unordered_dense;
