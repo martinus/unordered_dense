@@ -34,6 +34,7 @@ jobs:
       fail-fast: false
       matrix:
         sys: [mingw64, mingw32]
+        cxx_standard: [17, 23]
         include:
           - sys: mingw64
             arch_name: "64bit"
@@ -43,7 +44,7 @@ jobs:
             arch_name: "32bit"
             msystem: MINGW32
             prefix: mingw-w64-i686
-    name: MinGW (${{ matrix.arch_name }})
+    name: MinGW (C++${{ matrix.cxx_standard }}, ${{ matrix.arch_name }})
     defaults:
       run:
         shell: msys2 {0}
@@ -64,12 +65,12 @@ jobs:
             ${{ matrix.prefix }}-python-pip
       - name: Print compiler version
         run: g++ --version
-      - run: meson setup builddir
+      - run: meson setup builddir -Dcpp_std=c++${{ matrix.cxx_standard }}
       - run: meson test -C builddir -v
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: MinGW_${{ matrix.arch_name }}_Testlog
+          name: MinGW_${{ matrix.arch_name }}_cpp${{ matrix.cxx_standard }}_Testlog
           path: builddir/meson-logs/testlog.txt
           retention-days: 7
 
@@ -79,12 +80,13 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x64, x86]
+        cxx_standard: [17, latest]
         include:
           - arch: x64
             arch_name: "64bit"
           - arch: x86
             arch_name: "32bit"
-    name: Windows (${{ matrix.arch_name }})
+    name: Windows (C++${{ matrix.cxx_standard }}, ${{ matrix.arch_name }})
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -97,12 +99,12 @@ jobs:
           arch: ${{ matrix.arch }}
       - name: Print compiler version
         run: cl
-      - run: meson setup builddir
+      - run: meson setup builddir -Dcpp_std=c++${{ matrix.cxx_standard }}
       - run: meson test -C builddir -v
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: Windows_${{ matrix.arch_name }}_Testlog
+          name: Windows_${{ matrix.arch_name }}_cpp${{ matrix.cxx_standard }}_Testlog
           path: |
             builddir/meson-logs/testlog.txt
             builddir/test/udm-test.exe
@@ -110,8 +112,15 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    strategy:
+      matrix:
+        cxx_standard: [17, 23]
+    name: macOS (C++${{ matrix.cxx_standard }}, arm64bit)
     steps:
       - uses: actions/checkout@v5
+      - uses: hendrikmuhs/ccache-action@v1.2.19
+        with:
+          key: clang-cpp${{ matrix.cxx_standard }}-arm64bit
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
@@ -119,14 +128,14 @@ jobs:
       - run: brew install gcc ccache meson ninja
       - name: Print compiler versions
         run: c++ --version
-      - run: meson setup builddir/
+      - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
         env:
           CXX: ccache c++
       - run: meson test -C builddir/ -v
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: MacOS_Meson_Testlog
+          name: MacOS_cpp${{ matrix.cxx_standard }}_Meson_Testlog
           path: builddir/meson-logs/testlog.txt
           retention-days: 7
 
