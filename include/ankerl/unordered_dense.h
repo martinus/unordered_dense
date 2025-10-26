@@ -81,66 +81,22 @@
 #    define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK
 #endif
 
-// defined in unordered_dense.cpp
-#if !defined(ANKERL_UNORDERED_DENSE_EXPORT)
-#    define ANKERL_UNORDERED_DENSE_EXPORT
-#endif
-
 #if ANKERL_UNORDERED_DENSE_CPP_VERSION < 201703L
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
-#    include <array>            // for array
-#    include <cstdint>          // for uint64_t, uint32_t, uint8_t, UINT64_C
-#    include <cstring>          // for size_t, memcpy, memset
-#    include <functional>       // for equal_to, hash
-#    include <initializer_list> // for initializer_list
-#    include <iterator>         // for pair, distance
-#    include <limits>           // for numeric_limits
-#    include <memory>           // for allocator, allocator_traits, shared_ptr
-#    include <optional>         // for optional
-#    include <stdexcept>        // for out_of_range
-#    include <string>           // for basic_string
-#    include <string_view>      // for basic_string_view, hash
-#    include <tuple>            // for forward_as_tuple
-#    include <type_traits>      // for enable_if_t, declval, conditional_t, ena...
-#    include <utility>          // for forward, exchange, pair, as_const, piece...
-#    include <vector>           // for vector
-#    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() == 0
-#        include <cstdlib> // for abort
-#    endif
 
-// <memory_resource> includes <mutex>, which fails to compile if
-// targeting GCC >= 13 with the (rewritten) win32 thread model, and
-// targeting Windows earlier than Vista (0x600).  GCC predefines
-// _REENTRANT when using the 'posix' model, and doesn't when using the
-// 'win32' model.
-#    if defined __MINGW64__ && defined __GNUC__ && __GNUC__ >= 13 && !defined _REENTRANT
-// _WIN32_WINNT is guaranteed to be defined here because of the
-// <cstdint> inclusion above.
-#        ifndef _WIN32_WINNT
-#            error "_WIN32_WINNT not defined"
-#        endif
-#        if _WIN32_WINNT < 0x600
-#            define ANKERL_MEMORY_RESOURCE_IS_BAD() 1 // NOLINT(cppcoreguidelines-macro-usage)
-#        endif
-#    endif
-#    ifndef ANKERL_MEMORY_RESOURCE_IS_BAD
-#        define ANKERL_MEMORY_RESOURCE_IS_BAD() 0 // NOLINT(cppcoreguidelines-macro-usage)
-#    endif
-
-#    if defined(__has_include) && !defined(ANKERL_UNORDERED_DENSE_DISABLE_PMR)
-#        if __has_include(<memory_resource>) && !ANKERL_MEMORY_RESOURCE_IS_BAD()
-#            define ANKERL_UNORDERED_DENSE_PMR std::pmr // NOLINT(cppcoreguidelines-macro-usage)
-#            include <memory_resource>                  // for polymorphic_allocator
-#        elif __has_include(<experimental/memory_resource>)
-#            define ANKERL_UNORDERED_DENSE_PMR std::experimental::pmr // NOLINT(cppcoreguidelines-macro-usage)
-#            include <experimental/memory_resource>                   // for polymorphic_allocator
+#    if !defined(ANKERL_UNORDERED_DENSE_STD_MODULE)
+#        if defined(__cpp_modules) && __cpp_modules >= 201907L && defined(__cpp_lib_modules) && __cpp_lib_modules >= 202207L
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#            define ANKERL_UNORDERED_DENSE_STD_MODULE 1
+#        else
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#            define ANKERL_UNORDERED_DENSE_STD_MODULE 0
 #        endif
 #    endif
 
-#    if defined(_MSC_VER) && defined(_M_X64)
-#        include <intrin.h>
-#        pragma intrinsic(_umul128)
+#    if !ANKERL_UNORDERED_DENSE_STD_MODULE
+#        include "stl.h"
 #    endif
 
 #    if __has_cpp_attribute(likely) && __has_cpp_attribute(unlikely) && ANKERL_UNORDERED_DENSE_CPP_VERSION >= 202002L
@@ -204,29 +160,29 @@ namespace detail {
 // hardcodes seed and the secret, reformats the code, and clang-tidy fixes.
 namespace detail::wyhash {
 
-inline void mum(uint64_t* a, uint64_t* b) {
+inline void mum(std::uint64_t* a, std::uint64_t* b) {
 #    if defined(__SIZEOF_INT128__)
     __uint128_t r = *a;
     r *= *b;
-    *a = static_cast<uint64_t>(r);
-    *b = static_cast<uint64_t>(r >> 64U);
+    *a = static_cast<std::uint64_t>(r);
+    *b = static_cast<std::uint64_t>(r >> 64U);
 #    elif defined(_MSC_VER) && defined(_M_X64)
     *a = _umul128(*a, *b, b);
 #    else
-    uint64_t ha = *a >> 32U;
-    uint64_t hb = *b >> 32U;
-    uint64_t la = static_cast<uint32_t>(*a);
-    uint64_t lb = static_cast<uint32_t>(*b);
-    uint64_t hi{};
-    uint64_t lo{};
-    uint64_t rh = ha * hb;
-    uint64_t rm0 = ha * lb;
-    uint64_t rm1 = hb * la;
-    uint64_t rl = la * lb;
-    uint64_t t = rl + (rm0 << 32U);
-    auto c = static_cast<uint64_t>(t < rl);
+    std::uint64_t ha = *a >> 32U;
+    std::uint64_t hb = *b >> 32U;
+    std::uint64_t la = static_cast<std::uint32_t>(*a);
+    std::uint64_t lb = static_cast<std::uint32_t>(*b);
+    std::uint64_t hi{};
+    std::uint64_t lo{};
+    std::uint64_t rh = ha * hb;
+    std::uint64_t rm0 = ha * lb;
+    std::uint64_t rm1 = hb * la;
+    std::uint64_t rl = la * lb;
+    std::uint64_t t = rl + (rm0 << 32U);
+    auto c = static_cast<std::uint64_t>(t < rl);
     lo = t + (rm1 << 32U);
-    c += static_cast<uint64_t>(lo < t);
+    c += static_cast<std::uint64_t>(lo < t);
     hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
     *a = lo;
     *b = hi;
@@ -234,39 +190,39 @@ inline void mum(uint64_t* a, uint64_t* b) {
 }
 
 // multiply and xor mix function, aka MUM
-[[nodiscard]] inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
+[[nodiscard]] inline auto mix(std::uint64_t a, std::uint64_t b) -> std::uint64_t {
     mum(&a, &b);
     return a ^ b;
 }
 
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
-[[nodiscard]] inline auto r8(const uint8_t* p) -> uint64_t {
-    uint64_t v{};
+[[nodiscard]] inline auto r8(const std::uint8_t* p) -> std::uint64_t {
+    std::uint64_t v{};
     std::memcpy(&v, p, 8U);
     return v;
 }
 
-[[nodiscard]] inline auto r4(const uint8_t* p) -> uint64_t {
-    uint32_t v{};
+[[nodiscard]] inline auto r4(const std::uint8_t* p) -> std::uint64_t {
+    std::uint32_t v{};
     std::memcpy(&v, p, 4);
     return v;
 }
 
 // reads 1, 2, or 3 bytes
-[[nodiscard]] inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
-    return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
+[[nodiscard]] inline auto r3(const std::uint8_t* p, std::size_t k) -> std::uint64_t {
+    return (static_cast<std::uint64_t>(p[0]) << 16U) | (static_cast<std::uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
-[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, size_t len) -> uint64_t {
+[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t len) -> std::uint64_t {
     static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
                                               UINT64_C(0xe7037ed1a0b428db),
                                               UINT64_C(0x8ebc6af09c88c6e3),
                                               UINT64_C(0x589965cc75374cc3)};
 
     auto const* p = static_cast<uint8_t const*>(key);
-    uint64_t seed = secret[0];
-    uint64_t a{};
-    uint64_t b{};
+    std::uint64_t seed = secret[0];
+    std::uint64_t a{};
+    std::uint64_t b{};
     if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 16))
         ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
             if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 4))
@@ -285,11 +241,11 @@ inline void mum(uint64_t* a, uint64_t* b) {
             }
         }
     else {
-        size_t i = len;
+        std::size_t i = len;
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 48))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-                uint64_t see1 = seed;
-                uint64_t see2 = seed;
+                std::uint64_t see1 = seed;
+                std::uint64_t see2 = seed;
                 do {
                     seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
                     see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
@@ -312,16 +268,16 @@ inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
-[[nodiscard]] inline auto hash(uint64_t x) -> uint64_t {
+[[nodiscard]] inline auto hash(std::uint64_t x) -> std::uint64_t {
     return detail::wyhash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
 }
 
 } // namespace detail::wyhash
 
-ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
+template <typename T, typename Enable = void>
 struct hash {
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> uint64_t {
+        -> std::uint64_t {
         return std::hash<T>{}(obj);
     }
 };
@@ -330,7 +286,7 @@ template <typename T>
 struct hash<T, typename std::hash<T>::is_avalanching> {
     using is_avalanching = void;
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
-        -> uint64_t {
+        -> std::uint64_t {
         return std::hash<T>{}(obj);
     }
 };
@@ -338,7 +294,7 @@ struct hash<T, typename std::hash<T>::is_avalanching> {
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
-    auto operator()(std::basic_string<CharT> const& str) const noexcept -> uint64_t {
+    auto operator()(std::basic_string<CharT> const& str) const noexcept -> std::uint64_t {
         return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
     }
 };
@@ -346,7 +302,7 @@ struct hash<std::basic_string<CharT>> {
 template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
-    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> uint64_t {
+    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> std::uint64_t {
         return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
     }
 };
@@ -354,34 +310,34 @@ struct hash<std::basic_string_view<CharT>> {
 template <class T>
 struct hash<T*> {
     using is_avalanching = void;
-    auto operator()(T* ptr) const noexcept -> uint64_t {
+    auto operator()(T* ptr) const noexcept -> std::uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr));
+        return detail::wyhash::hash(reinterpret_cast<std::uintptr_t>(ptr));
     }
 };
 
 template <class T>
 struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
-    auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> uint64_t {
+    auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> std::uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
+        return detail::wyhash::hash(reinterpret_cast<std::uintptr_t>(ptr.get()));
     }
 };
 
 template <class T>
 struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
-    auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> uint64_t {
+    auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> std::uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
+        return detail::wyhash::hash(reinterpret_cast<std::uintptr_t>(ptr.get()));
     }
 };
 
 template <typename Enum>
 struct hash<Enum, typename std::enable_if_t<std::is_enum_v<Enum>>> {
     using is_avalanching = void;
-    auto operator()(Enum e) const noexcept -> uint64_t {
+    auto operator()(Enum e) const noexcept -> std::uint64_t {
         using underlying = std::underlying_type_t<Enum>;
         return detail::wyhash::hash(static_cast<underlying>(e));
     }
@@ -392,25 +348,25 @@ struct tuple_hash_helper {
     // Converts the value into 64bit. If it is an integral type, just cast it. Mixing is doing the rest.
     // If it isn't an integral we need to hash it.
     template <typename Arg>
-    [[nodiscard]] constexpr static auto to64(Arg const& arg) -> uint64_t {
+    [[nodiscard]] constexpr static auto to64(Arg const& arg) -> std::uint64_t {
         if constexpr (std::is_integral_v<Arg> || std::is_enum_v<Arg>) {
-            return static_cast<uint64_t>(arg);
+            return static_cast<std::uint64_t>(arg);
         } else {
             return hash<Arg>{}(arg);
         }
     }
 
-    [[nodiscard]] ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK static auto mix64(uint64_t state, uint64_t v)
-        -> uint64_t {
-        return detail::wyhash::mix(state + v, uint64_t{0x9ddfea08eb382d69});
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK static auto mix64(std::uint64_t state, std::uint64_t v)
+        -> std::uint64_t {
+        return detail::wyhash::mix(state + v, std::uint64_t{0x9ddfea08eb382d69});
     }
 
     // Creates a buffer that holds all the data from each element of the tuple. If possible we memcpy the data directly. If
     // not, we hash the object and use this for the array. Size of the array is known at compile time, and memcpy is optimized
     // away, so filling the buffer is highly efficient. Finally, call wyhash with this buffer.
     template <typename T, std::size_t... Idx>
-    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...> /*unused*/) noexcept -> uint64_t {
-        auto h = uint64_t{};
+    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...> /*unused*/) noexcept -> std::uint64_t {
+        auto h = std::uint64_t{};
         ((h = mix64(h, to64(std::get<Idx>(t)))), ...);
         return h;
     }
@@ -419,7 +375,7 @@ struct tuple_hash_helper {
 template <typename... Args>
 struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
     using is_avalanching = void;
-    auto operator()(std::tuple<Args...> const& t) const noexcept -> uint64_t {
+    auto operator()(std::tuple<Args...> const& t) const noexcept -> std::uint64_t {
         return tuple_hash_helper<Args...>::calc_hash(t, std::index_sequence_for<Args...>{});
     }
 };
@@ -427,7 +383,7 @@ struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
 template <typename A, typename B>
 struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
     using is_avalanching = void;
-    auto operator()(std::pair<A, B> const& t) const noexcept -> uint64_t {
+    auto operator()(std::pair<A, B> const& t) const noexcept -> std::uint64_t {
         return tuple_hash_helper<A, B>::calc_hash(t, std::index_sequence_for<A, B>{});
     }
 };
@@ -437,8 +393,8 @@ struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
         template <>                                                      \
         struct hash<T> {                                                 \
             using is_avalanching = void;                                 \
-            auto operator()(T const& obj) const noexcept -> uint64_t {   \
-                return detail::wyhash::hash(static_cast<uint64_t>(obj)); \
+            auto operator()(T const& obj) const noexcept -> std::uint64_t {   \
+                return detail::wyhash::hash(static_cast<std::uint64_t>(obj)); \
             }                                                            \
         }
 
@@ -475,19 +431,19 @@ ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long long);
 namespace bucket_type {
 
 struct standard {
-    static constexpr uint32_t dist_inc = 1U << 8U;             // skip 1 byte fingerprint
-    static constexpr uint32_t fingerprint_mask = dist_inc - 1; // mask for 1 byte of fingerprint
+    static constexpr std::uint32_t dist_inc = 1U << 8U;             // skip 1 byte fingerprint
+    static constexpr std::uint32_t fingerprint_mask = dist_inc - 1; // mask for 1 byte of fingerprint
 
-    uint32_t m_dist_and_fingerprint; // upper 3 byte: distance to original bucket. lower byte: fingerprint from hash
-    uint32_t m_value_idx;            // index into the m_values vector.
+    std::uint32_t m_dist_and_fingerprint; // upper 3 byte: distance to original bucket. lower byte: fingerprint from hash
+    std::uint32_t m_value_idx;            // index into the m_values vector.
 };
 
 ANKERL_UNORDERED_DENSE_PACK(struct big {
-    static constexpr uint32_t dist_inc = 1U << 8U;             // skip 1 byte fingerprint
-    static constexpr uint32_t fingerprint_mask = dist_inc - 1; // mask for 1 byte of fingerprint
+    static constexpr std::uint32_t dist_inc = 1U << 8U;             // skip 1 byte fingerprint
+    static constexpr std::uint32_t fingerprint_mask = dist_inc - 1; // mask for 1 byte of fingerprint
 
-    uint32_t m_dist_and_fingerprint; // upper 3 byte: distance to original bucket. lower byte: fingerprint from hash
-    size_t m_value_idx;              // index into the m_values vector.
+    std::uint32_t m_dist_and_fingerprint; // upper 3 byte: distance to original bucket. lower byte: fingerprint from hash
+    std::size_t m_value_idx;              // index into the m_values vector.
 });
 
 } // namespace bucket_type
@@ -525,7 +481,7 @@ template <typename T>
 using detect_iterator = typename T::iterator;
 
 template <typename T>
-using detect_reserve = decltype(std::declval<T&>().reserve(size_t{}));
+using detect_reserve = decltype(std::declval<T&>().reserve(std::size_t{}));
 
 // enable_if helpers
 
@@ -559,7 +515,7 @@ struct base_table_type_set {};
 // It allocates blocks of equal size and puts them into the m_blocks vector. That means it can grow simply by adding a new
 // block to the back of m_blocks, and doesn't double its size like an std::vector. The disadvantage is that memory is not
 // linear and thus there is one more indirection necessary for indexing.
-template <typename T, typename Allocator = std::allocator<T>, size_t MaxSegmentSizeBytes = 4096>
+template <typename T, typename Allocator = std::allocator<T>, std::size_t MaxSegmentSizeBytes = 4096>
 class segmented_vector {
     template <bool IsConst>
     class iter_t;
@@ -579,11 +535,11 @@ public:
 private:
     using vec_alloc = typename std::allocator_traits<Allocator>::template rebind_alloc<pointer>;
     std::vector<pointer, vec_alloc> m_blocks{};
-    size_t m_size{};
+    std::size_t m_size{};
 
     // Calculates the maximum number for x in  (s << x) <= max_val
-    static constexpr auto num_bits_closest(size_t max_val, size_t s) -> size_t {
-        auto f = size_t{0};
+    static constexpr auto num_bits_closest(std::size_t max_val, std::size_t s) -> std::size_t {
+        auto f = std::size_t{0};
         while (s << (f + 1) <= max_val) {
             ++f;
         }
@@ -602,7 +558,7 @@ private:
     class iter_t {
         using ptr_t = std::conditional_t<IsConst, segmented_vector::const_pointer const*, segmented_vector::pointer*>;
         ptr_t m_data{};
-        size_t m_idx{};
+        std::size_t m_idx{};
 
         template <bool B>
         friend class iter_t;
@@ -622,7 +578,7 @@ private:
             : m_data(other.m_data)
             , m_idx(other.m_idx) {}
 
-        constexpr iter_t(ptr_t data, size_t idx) noexcept
+        constexpr iter_t(ptr_t data, std::size_t idx) noexcept
             : m_data(data)
             , m_idx(idx) {}
 
@@ -656,7 +612,7 @@ private:
         }
 
         [[nodiscard]] constexpr auto operator+(difference_type diff) const noexcept -> iter_t {
-            return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) + diff)};
+            return {m_data, static_cast<std::size_t>(static_cast<difference_type>(m_idx) + diff)};
         }
 
         constexpr auto operator+=(difference_type diff) noexcept -> iter_t& {
@@ -747,7 +703,7 @@ private:
         }
     }
 
-    [[nodiscard]] static constexpr auto calc_num_blocks_for_capacity(size_t capacity) {
+    [[nodiscard]] static constexpr auto calc_num_blocks_for_capacity(std::size_t capacity) {
         return (capacity + num_elements_in_block - 1U) / num_elements_in_block;
     }
 
@@ -812,20 +768,20 @@ public:
         dealloc();
     }
 
-    [[nodiscard]] constexpr auto size() const -> size_t {
+    [[nodiscard]] constexpr auto size() const -> std::size_t {
         return m_size;
     }
 
-    [[nodiscard]] constexpr auto capacity() const -> size_t {
+    [[nodiscard]] constexpr auto capacity() const -> std::size_t {
         return m_blocks.size() * num_elements_in_block;
     }
 
     // Indexing is highly performance critical
-    [[nodiscard]] constexpr auto operator[](size_t i) const noexcept -> T const& {
+    [[nodiscard]] constexpr auto operator[](std::size_t i) const noexcept -> T const& {
         return m_blocks[i >> num_bits][i & mask];
     }
 
-    [[nodiscard]] constexpr auto operator[](size_t i) noexcept -> T& {
+    [[nodiscard]] constexpr auto operator[](std::size_t i) noexcept -> T& {
         return m_blocks[i >> num_bits][i & mask];
     }
 
@@ -865,7 +821,7 @@ public:
         return 0 == m_size;
     }
 
-    void reserve(size_t new_capacity) {
+    void reserve(std::size_t new_capacity) {
         m_blocks.reserve(calc_num_blocks_for_capacity(new_capacity));
         while (new_capacity > capacity()) {
             increase_capacity();
@@ -913,7 +869,7 @@ public:
 
     void clear() {
         if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (size_t i = 0, s = size(); i < s; ++i) {
+            for (std::size_t i = 0, s = size(); i < s; ++i) {
                 operator[](i).~T();
             }
         }
@@ -962,7 +918,7 @@ private:
                                                      default_bucket_container_type,
                                                      BucketContainer>;
 
-    static constexpr uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets
+    static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets
     static constexpr float default_max_load_factor = 0.8F;
 
 public:
@@ -990,11 +946,11 @@ private:
 
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
     bucket_container_type m_buckets{};
-    size_t m_max_bucket_capacity = 0;
+    std::size_t m_max_bucket_capacity = 0;
     float m_max_load_factor = default_max_load_factor;
     Hash m_hash{};
     KeyEqual m_equal{};
-    uint8_t m_shifts = initial_shifts;
+    std::uint8_t m_shifts = initial_shifts;
 
     [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1U == bucket_count()))
@@ -1006,15 +962,15 @@ private:
     }
 
     // Helper to access bucket through pointer types
-    [[nodiscard]] static constexpr auto at(bucket_container_type& bucket, size_t offset) -> Bucket& {
+    [[nodiscard]] static constexpr auto at(bucket_container_type& bucket, std::size_t offset) -> Bucket& {
         return bucket[offset];
     }
 
-    [[nodiscard]] static constexpr auto at(const bucket_container_type& bucket, size_t offset) -> const Bucket& {
+    [[nodiscard]] static constexpr auto at(const bucket_container_type& bucket, std::size_t offset) -> const Bucket& {
         return bucket[offset];
     }
 
-    // use the dist_inc and dist_dec functions so that uint16_t types work without warning
+    // use the dist_inc and dist_dec functions so that std::uint16_t types work without warning
     [[nodiscard]] static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
         return static_cast<dist_and_fingerprint_type>(x + Bucket::dist_inc);
     }
@@ -1025,10 +981,10 @@ private:
 
     // The goal of mixed_hash is to always produce a high quality 64bit hash.
     template <typename K>
-    [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
+    [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> std::uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             // we know that the hash is good because is_avalanching.
-            if constexpr (sizeof(decltype(m_hash(key))) < sizeof(uint64_t)) {
+            if constexpr (sizeof(decltype(m_hash(key))) < sizeof(std::uint64_t)) {
                 // 32bit hash and is_avalanching => multiply with a constant to avalanche bits upwards
                 return m_hash(key) * UINT64_C(0x9ddfea08eb382d69);
             } else {
@@ -1041,11 +997,11 @@ private:
         }
     }
 
-    [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> dist_and_fingerprint_type {
+    [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(std::uint64_t hash) const -> dist_and_fingerprint_type {
         return Bucket::dist_inc | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::fingerprint_mask);
     }
 
-    [[nodiscard]] constexpr auto bucket_idx_from_hash(uint64_t hash) const -> value_idx_type {
+    [[nodiscard]] constexpr auto bucket_idx_from_hash(std::uint64_t hash) const -> value_idx_type {
         return static_cast<value_idx_type>(hash >> m_shifts);
     }
 
@@ -1090,13 +1046,13 @@ private:
         at(m_buckets, bucket_idx) = {};
     }
 
-    [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
-        return (std::min)(max_bucket_count(), size_t{1} << (64U - shifts));
+    [[nodiscard]] static constexpr auto calc_num_buckets(std::uint8_t shifts) -> std::size_t {
+        return (std::min)(max_bucket_count(), std::size_t{1} << (64U - shifts));
     }
 
-    [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
+    [[nodiscard]] constexpr auto calc_shifts_for_size(std::size_t s) const -> std::uint8_t {
         auto shifts = initial_shifts;
-        while (shifts > 0 && static_cast<size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
+        while (shifts > 0 && static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
             --shifts;
         }
         return shifts;
@@ -1141,7 +1097,7 @@ private:
             if constexpr (has_reserve<bucket_container_type>) {
                 m_buckets.reserve(num_buckets);
             }
-            for (size_t i = m_buckets.size(); i < num_buckets; ++i) {
+            for (std::size_t i = m_buckets.size(); i < num_buckets; ++i) {
                 m_buckets.emplace_back();
             }
         } else {
@@ -1215,7 +1171,7 @@ private:
     }
 
     template <typename K, typename Op>
-    auto do_erase_key(K&& key, Op handle_erased_value) -> size_t { // NOLINT(cppcoreguidelines-missing-std-forward)
+    auto do_erase_key(K&& key, Op handle_erased_value) -> std::size_t { // NOLINT(cppcoreguidelines-missing-std-forward)
         if (empty()) {
             return 0;
         }
@@ -1349,7 +1305,7 @@ private:
     }
 
 public:
-    explicit table(size_t bucket_count,
+    explicit table(std::size_t bucket_count,
                    Hash const& hash = Hash(),
                    KeyEqual const& equal = KeyEqual(),
                    allocator_type const& alloc_or_container = allocator_type())
@@ -1368,10 +1324,10 @@ public:
     table()
         : table(0) {}
 
-    table(size_t bucket_count, allocator_type const& alloc)
+    table(std::size_t bucket_count, allocator_type const& alloc)
         : table(bucket_count, Hash(), KeyEqual(), alloc) {}
 
-    table(size_t bucket_count, Hash const& hash, allocator_type const& alloc)
+    table(std::size_t bucket_count, Hash const& hash, allocator_type const& alloc)
         : table(bucket_count, hash, KeyEqual(), alloc) {}
 
     explicit table(allocator_type const& alloc)
@@ -1416,7 +1372,7 @@ public:
     }
 
     table(std::initializer_list<value_type> ilist,
-          size_t bucket_count = 0,
+          std::size_t bucket_count = 0,
           Hash const& hash = Hash(),
           KeyEqual const& equal = KeyEqual(),
           allocator_type const& alloc = allocator_type())
@@ -1523,15 +1479,15 @@ public:
         return m_values.empty();
     }
 
-    [[nodiscard]] auto size() const noexcept -> size_t {
+    [[nodiscard]] auto size() const noexcept -> std::size_t {
         return m_values.size();
     }
 
-    [[nodiscard]] static constexpr auto max_size() noexcept -> size_t {
-        if constexpr ((std::numeric_limits<value_idx_type>::max)() == (std::numeric_limits<size_t>::max)()) {
-            return size_t{1} << (sizeof(value_idx_type) * 8 - 1);
+    [[nodiscard]] static constexpr auto max_size() noexcept -> std::size_t {
+        if constexpr ((std::numeric_limits<value_idx_type>::max)() == (std::numeric_limits<std::size_t>::max)()) {
+            return std::size_t{1} << (sizeof(value_idx_type) * 8 - 1);
         } else {
-            return size_t{1} << (sizeof(value_idx_type) * 8);
+            return std::size_t{1} << (sizeof(value_idx_type) * 8);
         }
     }
 
@@ -1905,7 +1861,7 @@ public:
         return begin() + idx_first;
     }
 
-    auto erase(Key const& key) -> size_t {
+    auto erase(Key const& key) -> std::size_t {
         return do_erase_key(key, [](value_type const& /*unused*/) {
         });
     }
@@ -1919,7 +1875,7 @@ public:
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto erase(K&& key) -> size_t {
+    auto erase(K&& key) -> std::size_t {
         return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) {
         });
     }
@@ -1988,12 +1944,12 @@ public:
         return try_emplace(std::forward<K>(key)).first->second;
     }
 
-    auto count(Key const& key) const -> size_t {
+    auto count(Key const& key) const -> std::size_t {
         return find(key) == end() ? 0 : 1;
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto count(K const& key) const -> size_t {
+    auto count(K const& key) const -> std::size_t {
         return find(key) == end() ? 0 : 1;
     }
 
@@ -2048,11 +2004,11 @@ public:
 
     // bucket interface ///////////////////////////////////////////////////////
 
-    auto bucket_count() const noexcept -> size_t { // NOLINT(modernize-use-nodiscard)
+    auto bucket_count() const noexcept -> std::size_t { // NOLINT(modernize-use-nodiscard)
         return m_buckets.size();
     }
 
-    static constexpr auto max_bucket_count() noexcept -> size_t { // NOLINT(modernize-use-nodiscard)
+    static constexpr auto max_bucket_count() noexcept -> std::size_t { // NOLINT(modernize-use-nodiscard)
         return max_size();
     }
 
@@ -2073,7 +2029,7 @@ public:
         }
     }
 
-    void rehash(size_t count) {
+    void rehash(std::size_t count) {
         count = (std::min)(count, max_size());
         auto shifts = calc_shifts_for_size((std::max)(count, size()));
         if (shifts != m_shifts) {
@@ -2085,7 +2041,7 @@ public:
         }
     }
 
-    void reserve(size_t capa) {
+    void reserve(std::size_t capa) {
         capa = (std::min)(capa, max_size());
         if constexpr (has_reserve<value_container_type>) {
             // std::deque doesn't have reserve(). Make sure we only call when available
@@ -2148,7 +2104,7 @@ public:
 
 } // namespace detail
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
@@ -2157,7 +2113,7 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class BucketContainer = detail::default_container_t>
 using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
@@ -2166,7 +2122,7 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class BucketContainer = detail::default_container_t>
 using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, true>;
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class AllocatorOrContainer = std::allocator<Key>,
@@ -2174,7 +2130,7 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class BucketContainer = detail::default_container_t>
 using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class AllocatorOrContainer = std::allocator<Key>,
@@ -2186,7 +2142,7 @@ using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContai
 
 namespace pmr {
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
@@ -2200,7 +2156,7 @@ using map = detail::table<Key,
                           detail::default_container_t,
                           false>;
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
@@ -2214,7 +2170,7 @@ using segmented_map = detail::table<Key,
                                     detail::default_container_t,
                                     true>;
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class Bucket = bucket_type::standard>
@@ -2227,7 +2183,7 @@ using set = detail::table<Key,
                           detail::default_container_t,
                           false>;
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class Bucket = bucket_type::standard>
@@ -2256,7 +2212,7 @@ using segmented_set = detail::table<Key,
 
 namespace std { // NOLINT(cert-dcl58-cpp)
 
-ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
+template <class Key,
                                         class T,
                                         class Hash,
                                         class KeyEqual,
@@ -2269,7 +2225,7 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
 auto erase_if(
     ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, IsSegmented>&
         map,
-    Pred pred) -> size_t {
+    Pred pred) -> std::size_t {
     using map_t = ankerl::unordered_dense::detail::
         table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, IsSegmented>;
 
