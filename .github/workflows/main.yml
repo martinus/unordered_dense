@@ -112,7 +112,7 @@ jobs:
 
   windows-module:
     runs-on: windows-latest
-    name: Windows (C++23 with modules, 64bit)
+    name: Windows Modules (C++20, 64bit)
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -123,10 +123,14 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '4.x'
       - name: Print compiler version
         run: cl
       - run: cmake -G Ninja -DANKERL_ENABLE_EXAMPLE=TRUE -DANKERL_ENABLE_MODULES=TRUE -B build
-      - run: cmake --verbose --build build
+      - run: cmake --build build --verbose
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -223,34 +227,35 @@ jobs:
 
   linux-modules:
     runs-on: ubuntu-latest
-    name: Linux (clang, C++23 with modules, 64bit)
+    name: Linux Modules (clang, C++20, 64bit)
     steps:
       - uses: actions/checkout@v5
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: ${{ matrix.packages }} ccache
+          packages: libboost-dev libfmt-dev
           version: 1.0
-      - uses: hendrikmuhs/ccache-action@v1.2.19
-        with:
-          key: clang-cpp23-modules-64bit
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
           cache: "pip"
       - run: pip install ninja
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '4.x'
       - name: Print compiler versions
         run: |
           clang --version
           clang++ --version
       - run: cmake -G Ninja -DANKERL_ENABLE_EXAMPLE=TRUE -DANKERL_ENABLE_MODULES=TRUE -B build
         env:
-          CC: ccache clang
-          CXX: ccache clang++
+          CC: clang
+          CXX: clang++
           CFLAGS: -m64
           CXXFLAGS: -m64
           LDFLAGS: -m64
-      - run: cmake --verbose --build build
+      - run: cmake --build build --verbose
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
