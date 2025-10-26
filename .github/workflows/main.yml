@@ -110,6 +110,32 @@ jobs:
             builddir/test/udm-test.exe
           retention-days: 7
 
+  windows-module:
+    runs-on: windows-latest
+    name: Windows (C++23 with modules, 64bit)
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: pip install ninja
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Print compiler version
+        run: cl
+      - run: cmake -G Ninja -DANKERL_ENABLE_EXAMPLE=TRUE -DANKERL_ENABLE_MODULES=TRUE -B build
+      - run: cmake --verbose --build build
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Windows_64bit_cpp23-modules_Testlog
+          path: |
+            builddir/meson-logs/testlog.txt
+            builddir/test/udm-test.exe
+          retention-days: 7
+
   macos:
     runs-on: macos-latest
     strategy:
@@ -192,6 +218,43 @@ jobs:
         if: failure()
         with:
           name: Linux_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_${{ matrix.arch }}bit_Testlog
+          path: builddir/meson-logs/testlog.txt
+          retention-days: 7
+
+  linux-modules:
+    runs-on: ubuntu-latest
+    name: Linux (clang, C++23 with modules, 64bit)
+    steps:
+      - uses: actions/checkout@v5
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ matrix.packages }} ccache
+          version: 1.0
+      - uses: hendrikmuhs/ccache-action@v1.2.19
+        with:
+          key: clang-cpp23-modules-64bit
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          cache: "pip"
+      - run: pip install ninja
+      - name: Print compiler versions
+        run: |
+          clang --version
+          clang++ --version
+      - run: cmake -G Ninja -DANKERL_ENABLE_EXAMPLE=TRUE -DANKERL_ENABLE_MODULES=TRUE -B build
+        env:
+          CC: ccache clang
+          CXX: ccache clang++
+          CFLAGS: -m64
+          CXXFLAGS: -m64
+          LDFLAGS: -m64
+      - run: cmake --verbose --build build
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Linux_clang_cpp23-modules_64bit_Testlog
           path: builddir/meson-logs/testlog.txt
           retention-days: 7
 
