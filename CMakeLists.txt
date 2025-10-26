@@ -51,8 +51,9 @@ if(ANKERL_ENABLE_EXAMPLE)
 
     if(ANKERL_ENABLE_MODULES)
         target_link_libraries(example PRIVATE unordered_dense::unordered_dense_module)
+        # force no std module as cmake support is experimental
         set_target_properties(example
-                              PROPERTIES COMPILE_DEFINITIONS MODULES)
+                              PROPERTIES COMPILE_DEFINITIONS MODULES ANKERL_UNOREDERED_DENSE_STD_MODULE=0)
     endif()
 endif()
 
