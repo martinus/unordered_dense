@@ -1,59 +1,45 @@
 #!/usr/bin/env python3
-
-import os
-import pathlib
+from pathlib import Path
 import re
 
-
-root = os.path.abspath(pathlib.Path(__file__).parent.parent.parent)
-
-# filename, pattern, number of occurrences
-file_pattern_count = [
-    (f"{root}/CMakeLists.txt", r"^\s+VERSION (\d+)\.(\d+)\.(\d+)\n", 1),
-    (f"{root}/include/ankerl/stl.h", r"Version (\d+)\.(\d+)\.(\d+)\n", 1),
-    (f"{root}/include/ankerl/unordered_dense.h", r"Version (\d+)\.(\d+)\.(\d+)\n", 1),
-    (f"{root}/meson.build", r"version: '(\d+)\.(\d+)\.(\d+)'", 1),
-    (f"{root}/test/unit/namespace.cpp", r"unordered_dense::v(\d+)_(\d+)_(\d+)", 1),
+# fmt: off
+ROOT = Path(__file__).resolve().parents[2]
+HEADER = ROOT / "include" / "ankerl" / "unordered_dense.h"
+CHECKS = [
+    (HEADER, r"Version (\d+)\.(\d+)\.(\d+)", 1),
+    (ROOT / "CMakeLists.txt", r"^\s+VERSION (\d+)\.(\d+)\.(\d+)", 1),
+    (ROOT / "include" / "ankerl" / "stl.h", r"Version (\d+)\.(\d+)\.(\d+)", 1),
+    (ROOT / "meson.build", r"version:\s*'?(\d+)\.(\d+)\.(\d+)'?", 1),
+    (ROOT / "test" / "unit" / "namespace.cpp", r"unordered_dense::v(\d+)_(\d+)_(\d+)", 1),
 ]
+# fmt: on
 
-# let's parse the reference from svector.h
-major = "??"
-minor = "??"
-patch = "??"
-with open(f"{root}/include/ankerl/unordered_dense.h", "r") as f:
-    for line in f:
-        r = re.search(r"#define ANKERL_UNORDERED_DENSE_VERSION_([A-Z]+) (\d+)", line)
-        if not r:
-            continue
 
-        if "MAJOR" == r.group(1):
-            major = r.group(2)
-        elif "MINOR" == r.group(1):
-            minor = r.group(2)
-        elif "PATCH" == r.group(1):
-            patch = r.group(2)
-        else:
-            "match but with something else!"
-            exit(1)
+def read_version_from_header(p: Path) -> str:
+    m = re.findall(
+        r"#define\s+ANKERL_UNORDERED_DENSE_VERSION_(MAJOR|MINOR|PATCH)\s+(\d+)",
+        p.read_text(),
+    )
+    d = dict(m)
+    return f"{d['MAJOR']}.{d['MINOR']}.{d['PATCH']}"
 
-is_ok = True
-for filename, pattern, count in file_pattern_count:
-    num_found = 0
-    with open(filename, "r") as f:
-        for line in f:
-            r = re.search(pattern, line)
-            if r:
-                num_found += 1
-                if major != r.group(1) or minor != r.group(2) or patch != r.group(3):
-                    is_ok = False
-                    print(
-                        f"ERROR in {filename}: got '{line.strip()}' but version should be '{major}.{minor}.{patch}'"
-                    )
-    if num_found != count:
-        is_ok = False
-        print(
-            f"ERROR in {filename}: expected {count} occurrences but found it {num_found} times"
+
+def main():
+    ref = read_version_from_header(HEADER)
+    errs = []
+    for path, pattern, count in CHECKS:
+        matches = list(re.finditer(pattern, path.read_text(), re.M))
+        if (n := len(matches)) != count:
+            errs.append(f"ERROR: {path}: expected {count} matches, found {n}")
+        errs.extend(
+            f"ERROR: {path}: found version {found}, expected {ref}"
+            for m in matches
+            if (found := ".".join(m.groups())) != ref
         )
 
-if not is_ok:
-    exit(1)
+    print("\n".join(errs))
+    raise SystemExit(1 if errs else 0)
+
+
+if __name__ == "__main__":
+    main()

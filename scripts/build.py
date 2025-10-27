@@ -54,7 +54,7 @@ def run(cmd):
     if result.returncode != 0:
         exit(result.returncode)
 
-run('scripts/lint/lint-all.py')
+run('scripts/lint/all.py')
 
 for cmd_dir in cmd_and_dir:
     workdir = cmd_dir[-1]
