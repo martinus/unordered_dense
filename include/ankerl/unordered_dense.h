@@ -351,7 +351,8 @@ struct tuple_hash_helper {
         }
     }
 
-    [[nodiscard]] ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK static auto mix64(std::uint64_t state, std::uint64_t v)
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK static auto mix64(std::uint64_t state,
+                                                                                                std::uint64_t v)
         -> std::uint64_t {
         return detail::wyhash::mix(state + v, std::uint64_t{0x9ddfea08eb382d69});
     }
@@ -384,13 +385,13 @@ struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
 };
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                    \
-        template <>                                                      \
-        struct hash<T> {                                                 \
-            using is_avalanching = void;                                 \
+#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                         \
+        template <>                                                           \
+        struct hash<T> {                                                      \
+            using is_avalanching = void;                                      \
             auto operator()(T const& obj) const noexcept -> std::uint64_t {   \
                 return detail::wyhash::hash(static_cast<std::uint64_t>(obj)); \
-            }                                                            \
+            }                                                                 \
         }
 
 #    if defined(__GNUC__) && !defined(__clang__)
@@ -2100,37 +2101,37 @@ public:
 } // namespace detail
 
 template <class Key,
-                                        class T,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-                                        class Bucket = bucket_type::standard,
-                                        class BucketContainer = detail::default_container_t>
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
+          class Bucket = bucket_type::standard,
+          class BucketContainer = detail::default_container_t>
 using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
 
 template <class Key,
-                                        class T,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-                                        class Bucket = bucket_type::standard,
-                                        class BucketContainer = detail::default_container_t>
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
+          class Bucket = bucket_type::standard,
+          class BucketContainer = detail::default_container_t>
 using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, true>;
 
 template <class Key,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class AllocatorOrContainer = std::allocator<Key>,
-                                        class Bucket = bucket_type::standard,
-                                        class BucketContainer = detail::default_container_t>
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<Key>,
+          class Bucket = bucket_type::standard,
+          class BucketContainer = detail::default_container_t>
 using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
 
 template <class Key,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class AllocatorOrContainer = std::allocator<Key>,
-                                        class Bucket = bucket_type::standard,
-                                        class BucketContainer = detail::default_container_t>
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<Key>,
+          class Bucket = bucket_type::standard,
+          class BucketContainer = detail::default_container_t>
 using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, true>;
 
 #    if defined(ANKERL_UNORDERED_DENSE_PMR)
@@ -2138,10 +2139,10 @@ using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContai
 namespace pmr {
 
 template <class Key,
-                                        class T,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class Bucket = bucket_type::standard>
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Bucket = bucket_type::standard>
 using map = detail::table<Key,
                           T,
                           Hash,
@@ -2152,10 +2153,10 @@ using map = detail::table<Key,
                           false>;
 
 template <class Key,
-                                        class T,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class Bucket = bucket_type::standard>
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Bucket = bucket_type::standard>
 using segmented_map = detail::table<Key,
                                     T,
                                     Hash,
@@ -2165,10 +2166,7 @@ using segmented_map = detail::table<Key,
                                     detail::default_container_t,
                                     true>;
 
-template <class Key,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class Bucket = bucket_type::standard>
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
 using set = detail::table<Key,
                           void,
                           Hash,
@@ -2178,10 +2176,7 @@ using set = detail::table<Key,
                           detail::default_container_t,
                           false>;
 
-template <class Key,
-                                        class Hash = hash<Key>,
-                                        class KeyEqual = std::equal_to<Key>,
-                                        class Bucket = bucket_type::standard>
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
 using segmented_set = detail::table<Key,
                                     void,
                                     Hash,
@@ -2208,14 +2203,14 @@ using segmented_set = detail::table<Key,
 namespace std { // NOLINT(cert-dcl58-cpp)
 
 template <class Key,
-                                        class T,
-                                        class Hash,
-                                        class KeyEqual,
-                                        class AllocatorOrContainer,
-                                        class Bucket,
-                                        class Pred,
-                                        class BucketContainer,
-                                        bool IsSegmented>
+          class T,
+          class Hash,
+          class KeyEqual,
+          class AllocatorOrContainer,
+          class Bucket,
+          class Pred,
+          class BucketContainer,
+          bool IsSegmented>
 // NOLINTNEXTLINE(cert-dcl58-cpp)
 auto erase_if(
     ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, IsSegmented>&
