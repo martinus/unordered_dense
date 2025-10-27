@@ -24,7 +24,7 @@ struct custom_hash_avalanching {
     using is_avalanching = void;
 
     auto operator()(id const& x) const noexcept -> uint64_t {
-        return ankerl::unordered_dense::detail::wyhash::hash(x.value);
+        return ankerl::unordered_dense::detail::hashing::hash(x.value);
     }
 };
 
@@ -42,7 +42,7 @@ struct custom_hash_unique_object_representation {
 
     [[nodiscard]] auto operator()(point const& f) const noexcept -> uint64_t {
         static_assert(std::has_unique_object_representations_v<point>);
-        return ankerl::unordered_dense::detail::wyhash::hash(&f, sizeof(f));
+        return ankerl::unordered_dense::detail::hashing::hash(&f, sizeof(f));
     }
 };
 
@@ -53,7 +53,7 @@ struct ankerl::unordered_dense::hash<id> {
     using is_avalanching = void;
 
     [[nodiscard]] auto operator()(id const& x) const noexcept -> uint64_t {
-        return detail::wyhash::hash(x.value);
+        return detail::hashing::hash(x.value);
     }
 };
 
