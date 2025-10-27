@@ -1,44 +1,37 @@
 #!/usr/bin/env python3
-"""Run clang-tidy only on unordered_dense.h"""
-
 import argparse
-import subprocess
+import shutil
+from subprocess import run
 import sys
-from pathlib import Path
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run clang-tidy on unordered_dense.h (via include_only.cpp)"
+    p = argparse.ArgumentParser(
+        description=(
+            "Run clang-tidy on unordered_dense.h (via test/unit/include_only.cpp)"
+        )
     )
-    parser.add_argument(
-        "--std",
-        default="c++17",
-        help="C++ standard to use (default: c++17)",
-    )
-    args = parser.parse_args()
+    p.add_argument("--std", default="c++17", help="C++ standard (default: c++17)")
+    args = p.parse_args()
 
-    # Define paths
-    source_file = Path("test/unit/include_only.cpp")
-
-    cmd = [
-        "clang-tidy",
-        str(source_file),
-        "--header-filter=.*unordered_dense\\.h",
-        "--warnings-as-errors=*",
-        "--",
-        f"-std={args.std}",
-        "-I",
-        "include",
-    ]
-
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        sys.exit(e.returncode)
-    except FileNotFoundError:
+    if not (clang_tidy := shutil.which("clang-tidy")):
         print("Error: clang-tidy not found in PATH", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(1)
+
+    # Exit with clang-tidy's exit code.
+    ec = run(
+        [
+            clang_tidy,
+            "test/unit/include_only.cpp",
+            "--header-filter=.*unordered_dense\\.h",
+            "--warnings-as-errors=*",
+            "--",
+            f"-std={args.std}",
+            "-I",
+            "include",
+        ]
+    ).returncode
+    raise SystemExit(ec)
 
 
 if __name__ == "__main__":

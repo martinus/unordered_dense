@@ -99,7 +99,7 @@ All lint scripts are in `scripts/lint/`. They MUST pass before submitting change
 
 ```bash
 # Run ALL linters (recommended)
-./scripts/lint/lint-all.py
+./scripts/lint/all.py
 
 # Individual linters
 ./scripts/lint/lint-version.py        # Check version consistency across files
@@ -149,7 +149,7 @@ All lint scripts are in `scripts/lint/`. They MUST pass before submitting change
 
 ### Common CI Failures & Fixes
 
-1. **Linting failures**: Run `./scripts/lint/lint-all.py` locally first
+1. **Linting failures**: Run `./scripts/lint/all.py` locally first
 2. **32-bit failures**: Don't use `size_t` in hashes without consideration
 3. **Sanitizer failures**: Check for undefined behavior, use-after-free, data races
 4. **Windows/MSVC**: Check for MSVC-specific warnings (see `test/meson.build`)
@@ -216,7 +216,7 @@ unordered_dense/
 
 5. **Lint**: Verify all linters pass
    ```bash
-   ./scripts/lint/lint-all.py
+   ./scripts/lint/all.py
    ```
 
 6. **Multi-config** (optional): Test across configurations
@@ -300,4 +300,4 @@ unordered_dense/
 - You need information not covered here
 - The repository structure has changed significantly
 
-When in doubt, run `./scripts/lint/lint-all.py` and `meson test -C builddir/<config> -v` to verify your changes.
+When in doubt, run `./scripts/lint/all.py` and `meson test -C builddir/<config> -v` to verify your changes.

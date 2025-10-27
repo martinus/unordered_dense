@@ -1,50 +1,38 @@
 #!/usr/bin/env python3
-
-from glob import glob
 from pathlib import Path
-from subprocess import run
-from os import path
-import subprocess
-import sys
-from time import time
 import re
+import shutil
+from subprocess import run
+import sys
 
-root_path = path.abspath(Path(__file__).parent.parent.parent)
+ROOT = Path(__file__).resolve().parents[2]
+PATTERNS = ["include/**/*.h", "test/**/*.h", "test/**/*.cpp"]
+EXCLUDE_RE = re.compile(r"nanobench\.h|FuzzedDataProvider\.h|/third-party/")
 
-globs = [
-    f"{root_path}/include/**/*.h",
-    f"{root_path}/test/**/*.h",
-    f"{root_path}/test/**/*.cpp",
-]
-exclusions = [
-    "nanobench\\.h",
-    "FuzzedDataProvider\\.h",
-    '/third-party/']
 
-files = []
-for g in globs:
-    r = glob(g, recursive=True)
-    files.extend(r)
+def collect_files(root: Path):
+    return [
+        f
+        for p in PATTERNS
+        for f in root.glob(p)
+        if f.is_file() and not EXCLUDE_RE.search(str(f))
+    ]
 
-# filter out exclusions
-for exclusion in exclusions:
-    l = filter(lambda file: re.search(exclusion, file) == None, files)
-    files = list(l)
 
-if len(files) == 0:
-    print("could not find any files!")
-    sys.exit(1)
+def main():
+    files = collect_files(ROOT)
+    if not files:
+        print("could not find any files!")
+        raise SystemExit(1)
 
-command = ['clang-format', '--dry-run', '-Werror'] + files
-p = subprocess.Popen(command,
-                     stdout=subprocess.PIPE,
-                     stderr=None,
-                     stdin=subprocess.PIPE,
-                     universal_newlines=True)
+    if not (clang_format := shutil.which("clang-format")):
+        print("clang-format not found in PATH")
+        raise SystemExit(2)
 
-stdout, stderr = p.communicate()
+    ec = run([clang_format, "--dry-run", "-Werror"] + files).returncode
+    print(f"clang-format checked {len(files)} files")
+    SystemExit(ec)
 
-print(f"clang-format checked {len(files)} files")
 
-if p.returncode != 0:
-    sys.exit(p.returncode)
+if __name__ == "__main__":
+    main()
