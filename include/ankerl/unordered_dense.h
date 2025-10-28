@@ -191,33 +191,36 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 // This is a modified ChibiHash version 2: https://github.com/N-R-K/ChibiHash
 // hash results will change on different endian machines!
 
-[[nodiscard]] auto constexpr rotl(std::uint64_t value, unsigned shift) -> std::uint64_t {
-    const unsigned width = 64;
-    const unsigned mask = width - 1;
-    if ((shift &= mask) == 0) { // NOLINT(bugprone-assignment-in-if-condition)
-        return value;
-    }
-    return (value << shift) | (value >> (width - shift));
+[[nodiscard]] auto constexpr rotl(std::uint64_t x, unsigned n) -> std::uint64_t {
+    n &= 63U;
+    return (x << n) | (x >> ((-n) & 63U));
 }
 
 [[nodiscard]] inline auto r4(const std::uint8_t* p) -> std::uint64_t {
-    return static_cast<std::uint64_t>(p[0]) << 0U | static_cast<std::uint64_t>(p[1]) << 8U |
-           static_cast<std::uint64_t>(p[2]) << 16U | static_cast<std::uint64_t>(p[3]) << 24U;
+    // return static_cast<std::uint64_t>(p[0]) << 0U | static_cast<std::uint64_t>(p[1]) << 8U |
+    //        static_cast<std::uint64_t>(p[2]) << 16U | static_cast<std::uint64_t>(p[3]) << 24U;
+    std::uint32_t v{};
+    std::memcpy(&v, p, 4);
+    return v;
 }
 
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
 [[nodiscard]] inline auto r8(const std::uint8_t* p) -> std::uint64_t {
-    return r4(p) | (r4(p + 4) << 32U);
+    // return r4(p) | (r4(p + 4) << 32U);
+    std::uint64_t v{};
+    std::memcpy(&v, p, 8U);
+    return v;
 }
 
-[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t len) -> std::uint64_t {
-    auto const* p = static_cast<std::uint8_t const*>(key);
-    auto l = static_cast<std::ptrdiff_t>(len);
+[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t l) -> std::uint64_t {
+    static constexpr auto seed = UINT64_C(0xa0761d6478bd642f);
 
-    static constexpr std::uint64_t seed = UINT64_C(0xa0761d6478bd642f);
-    static constexpr std::uint64_t k = UINT64_C(0x2B7E151628AED2A7); // digits of e
-    static constexpr std::uint64_t seed2 = rotl(seed - k, 15) + rotl(seed - k, 47);
-    std::array<std::uint64_t, 4> h = {seed, seed + k, seed2, seed2 + (k * k ^ k)};
+    static constexpr auto k = UINT64_C(0x2B7E151628AED2A7); // digits of e
+    static constexpr auto seed2 = rotl(seed - k, 15) + rotl(seed - k, 47);
+    auto h0 = seed;
+    auto h1 = seed + k;
+    auto h2 = seed2;
+    auto h3 = seed2 + ((k * k) ^ k);
 
     // depending on your system unrolling might (or might not) make things
     // a tad bit faster on large strings. on my system, it actually makes
@@ -227,39 +230,49 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
     // but depending on your needs, you may want to uncomment the pragma
     // below to unroll the loop.
     // #    pragma GCC unroll 2
-    for (; l >= 32; l -= 32) {
-        for (unsigned i = 0; i < 4; ++i, p += 8) {
-            auto stripe = r8(p);
-            h[i] = (stripe + h[i]) * k;
-            h[(i + 1) & 3U] += rotl(stripe, 27);
-        }
-    }
+    auto const* p = static_cast<std::uint8_t const*>(key);
 
-    for (; l >= 8; l -= 8, p += 8) {
-        h[0] ^= r4(p + 0);
-        h[0] *= k;
-        h[1] ^= r4(p + 4);
-        h[1] *= k;
+    if (ANKERL_UNORDERED_DENSE_UNLIKELY(l >= 32)) {
+        do {
+            auto const stripe0 = r8(p);
+            auto const stripe1 = r8(p + 8);
+            auto const stripe2 = r8(p + 16);
+            auto const stripe3 = r8(p + 24);
+
+            h0 = (stripe0 + h0) * k + rotl(stripe3, 27);
+            h1 = (stripe1 + h1 + rotl(stripe0, 27)) * k;
+            h2 = (stripe2 + h2 + rotl(stripe1, 27)) * k;
+            h3 = (stripe3 + h3 + rotl(stripe2, 27)) * k;
+
+            l -= 32;
+            p += 32;
+        } while (ANKERL_UNORDERED_DENSE_LIKELY(l >= 32));
+    }
+    while (ANKERL_UNORDERED_DENSE_LIKELY(l >= 8)) {
+        h0 = (h0 ^ r4(p + 0)) * k;
+        h1 = (h1 ^ r4(p + 4)) * k;
+        l -= 8;
+        p += 8;
     }
 
     if (l >= 4) {
-        h[2] ^= r4(p);
-        h[3] ^= r4(p + l - 4);
+        h2 ^= r4(p);
+        h3 ^= r4(p + l - 4);
     } else if (l > 0) {
-        h[2] ^= p[0];
-        h[3] ^= p[l / 2] | (static_cast<std::uint64_t>(p[l - 1]) << 8U);
+        h2 ^= p[0];
+        h3 ^= p[l >> 1U] | (static_cast<std::uint64_t>(p[l - 1]) << 8U);
     }
 
-    h[0] += rotl(h[2] * k, 31) ^ (h[2] >> 31U);
-    h[1] += rotl(h[3] * k, 31) ^ (h[3] >> 31U);
-    h[0] *= k;
-    h[0] ^= h[0] >> 31U;
-    h[1] += h[0];
+    h0 += rotl(h2 * k, 31) ^ (h2 >> 31U);
+    h1 += rotl(h3 * k, 31) ^ (h3 >> 31U);
+    h0 *= k;
+    h0 ^= h0 >> 31U;
+    h1 += h0;
 
-    auto x = static_cast<std::uint64_t>(len) * k;
+    auto x = static_cast<std::uint64_t>(l) * k;
     x ^= rotl(x, 29);
     x += seed;
-    x ^= h[1];
+    x ^= h1;
 
     x ^= rotl(x, 15) ^ rotl(x, 42);
     x *= k;
