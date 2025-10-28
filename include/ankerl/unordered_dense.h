@@ -182,6 +182,35 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 #    endif
 }
 
+inline void umul128(std::uint64_t const u, std::uint64_t const v, std::uint64_t* const rl, std::uint64_t* const rh) {
+#    if defined(__SIZEOF_INT128__)
+    __uint128_t r = u;
+    r *= v;
+    *rl = static_cast<std::uint64_t>(r);
+    *rh = static_cast<std::uint64_t>(r >> 64U);
+#    elif defined(_MSC_VER) && defined(_M_X64)
+    *rl = _umul128(u, v, rh);
+#    else
+    std::uint64_t ha = u >> 32U;
+    std::uint64_t hb = v >> 32U;
+    std::uint64_t la = static_cast<std::uint32_t>(u);
+    std::uint64_t lb = static_cast<std::uint32_t>(v);
+    std::uint64_t hi{};
+    std::uint64_t lo{};
+    std::uint64_t rh = ha * hb;
+    std::uint64_t rm0 = ha * lb;
+    std::uint64_t rm1 = hb * la;
+    std::uint64_t rl = la * lb;
+    std::uint64_t t = rl + (rm0 << 32U);
+    auto c = static_cast<std::uint64_t>(t < rl);
+    lo = t + (rm1 << 32U);
+    c += static_cast<std::uint64_t>(lo < t);
+    hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
+    *rl = lo;
+    *rh = hi;
+#    endif
+}
+
 // multiply and xor mix function, aka MUM
 [[nodiscard]] inline auto mix(std::uint64_t a, std::uint64_t b) -> std::uint64_t {
     mum(&a, &b);
@@ -194,6 +223,11 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 [[nodiscard]] auto constexpr rotl(std::uint64_t x, unsigned n) -> std::uint64_t {
     n &= 63U;
     return (x << n) | (x >> ((-n) & 63U));
+}
+
+// reads 1, 2, or 3 bytes
+[[nodiscard]] inline auto r3(const std::uint8_t* p, std::size_t k) -> std::uint64_t {
+    return (static_cast<std::uint64_t>(p[0]) << 16U) | (static_cast<std::uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
 [[nodiscard]] inline auto r4(const std::uint8_t* p) -> std::uint64_t {
@@ -213,72 +247,59 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 }
 
 [[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t l) -> std::uint64_t {
-    static constexpr auto seed = UINT64_C(0xa0761d6478bd642f);
+    static constexpr auto use_seed = UINT64_C(0);
 
-    static constexpr auto k = UINT64_C(0x2B7E151628AED2A7); // digits of e
-    static constexpr auto seed2 = rotl(seed - k, 15) + rotl(seed - k, 47);
-    auto h0 = seed;
-    auto h1 = seed + k;
-    auto h2 = seed2;
-    auto h3 = seed2 + ((k * k) ^ k);
+    // The seeds are initialized to mantissa bits of PI.
+    auto seed1 = UINT64_C(0x243F6A8885A308D3) ^ l;
+    auto seed2 = UINT64_C(0x452821E638D01377) ^ l;
 
-    // depending on your system unrolling might (or might not) make things
-    // a tad bit faster on large strings. on my system, it actually makes
-    // things slower.
-    // generally speaking, the cost of bigger code size is usually not
-    // worth the trade-off since larger code-size will hinder inlinability
-    // but depending on your needs, you may want to uncomment the pragma
-    // below to unroll the loop.
-    // #    pragma GCC unroll 2
-    auto const* p = static_cast<std::uint8_t const*>(key);
+    auto val01 = UINT64_C(0xAAAAAAAAAAAAAAAA); ///< `10` bit-pairs.
+    auto val10 = UINT64_C(0x5555555555555555); ///< `01` bit-pairs.
+    umul128(seed2 ^ (use_seed & val10), seed1 ^ (use_seed & val01), &seed1, &seed2);
 
-    if (ANKERL_UNORDERED_DENSE_UNLIKELY(l >= 32)) {
-        do {
-            auto const stripe0 = r8(p);
-            auto const stripe1 = r8(p + 8);
-            auto const stripe2 = r8(p + 16);
-            auto const stripe3 = r8(p + 24);
+    auto const* msg = static_cast<const uint8_t*>(key);
 
-            h0 = (stripe0 + h0) * k + rotl(stripe3, 27);
-            h1 = (stripe1 + h1 + rotl(stripe0, 27)) * k;
-            h2 = (stripe2 + h2 + rotl(stripe1, 27)) * k;
-            h3 = (stripe3 + h3 + rotl(stripe2, 27)) * k;
+    if (ANKERL_UNORDERED_DENSE_UNLIKELY(l > 16))
+        ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+            val01 ^= seed1;
+            val10 ^= seed2;
 
-            l -= 32;
-            p += 32;
-        } while (ANKERL_UNORDERED_DENSE_LIKELY(l >= 32));
+            do {
+                umul128(r8(msg) ^ seed1, r8(msg + 8) ^ seed2, &seed1, &seed2);
+
+                l -= 16;
+                msg += 16;
+
+                seed1 += val01;
+                seed2 += val10;
+
+            } while (ANKERL_UNORDERED_DENSE_LIKELY(l > 16));
+        }
+
+    std::uint64_t a = 0;
+    std::uint64_t b = 0;
+    if (ANKERL_UNORDERED_DENSE_LIKELY(l >= 4)) {
+        const uint8_t* const msg4 = msg + l - 4;
+        const size_t mo = l >> 3U;
+
+        a = r4(msg) << 32U | r4(msg4);
+        b = r4(msg + (mo * 4)) << 32U | r4(msg4 - (mo * 4));
+    } else {
+        // a = r3(msg, l);
+        if (l != 0) {
+            a = msg[0];
+            if (l != 1) {
+                a |= static_cast<std::uint64_t>(msg[1]) << 8;
+                if (l != 2) {
+                    a |= static_cast<std::uint64_t>(msg[2]) << 16;
+                }
+            }
+        }
     }
-    while (ANKERL_UNORDERED_DENSE_LIKELY(l >= 8)) {
-        h0 = (h0 ^ r4(p + 0)) * k;
-        h1 = (h1 ^ r4(p + 4)) * k;
-        l -= 8;
-        p += 8;
-    }
+    umul128(a ^ seed1, b ^ seed2, &seed1, &seed2);
+    umul128(val01 ^ seed1, seed2, &a, &b);
 
-    if (l >= 4) {
-        h2 ^= r4(p);
-        h3 ^= r4(p + l - 4);
-    } else if (l > 0) {
-        h2 ^= p[0];
-        h3 ^= p[l >> 1U] | (static_cast<std::uint64_t>(p[l - 1]) << 8U);
-    }
-
-    h0 += rotl(h2 * k, 31) ^ (h2 >> 31U);
-    h1 += rotl(h3 * k, 31) ^ (h3 >> 31U);
-    h0 *= k;
-    h0 ^= h0 >> 31U;
-    h1 += h0;
-
-    auto x = static_cast<std::uint64_t>(l) * k;
-    x ^= rotl(x, 29);
-    x += seed;
-    x ^= h1;
-
-    x ^= rotl(x, 15) ^ rotl(x, 42);
-    x *= k;
-    x ^= rotl(x, 13) ^ rotl(x, 31);
-
-    return x;
+    return (a ^ b);
 }
 
 [[nodiscard]] inline auto hash(std::uint64_t x) -> std::uint64_t {
