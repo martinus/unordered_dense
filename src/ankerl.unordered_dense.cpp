@@ -11,6 +11,7 @@ module;
 #endif
 
 #if ANKERL_UNORDERED_DENSE_STD_MODULE
+#    include <cstdint> // for UINT64_C
 import std;
 #endif
 
