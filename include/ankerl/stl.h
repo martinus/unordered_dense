@@ -1,12 +1,12 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
-// Version 4.8.0
+// Version 4.8.1
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2022-2024 Martin Leitner-Ankerl <martin.ankerl@gmail.com>
+// Copyright (c) 2022 Martin Leitner-Ankerl <martin.ankerl@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
