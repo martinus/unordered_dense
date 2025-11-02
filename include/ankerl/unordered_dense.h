@@ -1802,7 +1802,7 @@ public:
             bucket_idx = next(bucket_idx);
         }
 
-        do_erase(bucket_idx, [](value_type const& /*unused*/) {
+        do_erase(bucket_idx, [](value_type const& /*unused*/) -> void {
         });
         return begin() + static_cast<difference_type>(value_idx_to_remove);
     }
@@ -1817,7 +1817,7 @@ public:
         }
 
         auto tmp = std::optional<value_type>{};
-        do_erase(bucket_idx, [&tmp](value_type&& val) {
+        do_erase(bucket_idx, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return std::move(tmp).value();
@@ -1858,13 +1858,13 @@ public:
     }
 
     auto erase(Key const& key) -> std::size_t {
-        return do_erase_key(key, [](value_type const& /*unused*/) {
+        return do_erase_key(key, [](value_type const& /*unused*/) -> void {
         });
     }
 
     auto extract(Key const& key) -> std::optional<value_type> {
         auto tmp = std::optional<value_type>{};
-        do_erase_key(key, [&tmp](value_type&& val) {
+        do_erase_key(key, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return tmp;
@@ -1872,14 +1872,14 @@ public:
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto erase(K&& key) -> std::size_t {
-        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) {
+        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) -> void {
         });
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto extract(K&& key) -> std::optional<value_type> {
         auto tmp = std::optional<value_type>{};
-        do_erase_key(std::forward<K>(key), [&tmp](value_type&& val) {
+        do_erase_key(std::forward<K>(key), [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return tmp;
