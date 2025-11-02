@@ -2,6 +2,7 @@
 
 #include <app/doctest.h>           // for TestCase, skip, ResultBuilder
 #include <app/geomean.h>           // for geomean
+#include <app/print.h>             // for print
 #include <third-party/nanobench.h> // for Rng, doNotOptimizeAway, Bench
 
 #include <fmt/core.h> // for print, format
@@ -10,6 +11,7 @@
 #include <cstdint>       // for uint64_t
 #include <cstring>       // for size_t, memcpy
 #include <deque>         // for deque
+#include <random>        // std::geometric_distribution
 #include <string>        // for string, basic_string, operator==
 #include <string_view>   // for string_view, literals
 #include <unordered_map> // for unordered_map, operator!=
@@ -18,6 +20,19 @@
 using namespace std::literals;
 
 namespace {
+
+template <typename Out>
+[[nodiscard]] auto uniform_product_distribution(ankerl::nanobench::Rng* rng, uint64_t min_inclusive, uint64_t max_inclusive)
+    -> uint64_t {
+    auto const val = (*rng)();
+    // product is skewed towards smaller numbers, in range 0-0xFFFFFFFE00000001
+    auto const product = (val & 0xffffffffU) * (val >> 32U);
+    // we use just the upper 32bit of the product, this should be enough randomness quality.
+    // Thus the product is in the range 0-0xFFFFFFFE
+    auto const product32 = product >> 32U;
+
+    return static_cast<Out>((((max_inclusive - min_inclusive + 1) * product32) >> 32U) + min_inclusive);
+}
 
 template <typename K>
 inline auto init_key() -> K {
@@ -31,6 +46,7 @@ inline void randomize_key(ankerl::nanobench::Rng* rng, int n, T* key) {
     *key = static_cast<T>(limited);
 }
 
+// TODO(martinus): this needs to be much more real-word like, like random lengths
 template <>
 [[nodiscard]] inline auto init_key<std::string>() -> std::string {
     std::string str;
@@ -39,6 +55,9 @@ template <>
 }
 
 inline void randomize_key(ankerl::nanobench::Rng* rng, int n, std::string* key) {
+    auto len = uniform_product_distribution<size_t>(rng, 8, 1000);
+    key->resize(len);
+    // test::print("{}\n", key->size());
     uint64_t k{};
     randomize_key(rng, n, &k);
     std::memcpy(key->data(), &k, sizeof(k));
@@ -60,7 +79,7 @@ void bench_random_insert_erase(ankerl::nanobench::Bench* bench, std::string_view
                 verifier += map.erase(key);
             }
         }
-        CHECK(verifier == 1994641U);
+        CHECK(verifier == 1701892U);
         CHECK(map.size() == 9987U);
     });
 }
@@ -197,6 +216,14 @@ TEST_CASE("bench_quick_overall_rhn" * doctest::test_suite("bench") * doctest::sk
 }
 
 #endif
+
+TEST_CASE("generate_uniform_product_distribution") {
+    auto rng = ankerl::nanobench::Rng();
+    for (int i = 0; i < 10000000; ++i) {
+        auto const num = uniform_product_distribution<size_t>(&rng, 1, 1000);
+        fmt::print("{}\n", num);
+    }
+}
 
 using hash_t = ankerl::unordered_dense::hash<uint64_t>;
 using eq_t = std::equal_to<uint64_t>;

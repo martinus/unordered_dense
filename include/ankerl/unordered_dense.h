@@ -44,13 +44,37 @@
     ANKERL_UNORDERED_DENSE_VERSION_CONCAT( \
         ANKERL_UNORDERED_DENSE_VERSION_MAJOR, ANKERL_UNORDERED_DENSE_VERSION_MINOR, ANKERL_UNORDERED_DENSE_VERSION_PATCH)
 
-#if defined(_MSVC_LANG)
+/**
+ * @brief Detect the active C++ language standard macro.
+ *
+ * This macro normalizes the compiler-provided C++ language standard
+ * indicator into a single macro: `ANKERL_UNORDERED_DENSE_CPP_VERSION`.
+ *
+ * The implementation prefers `_MSVC_LANG` when compiling with MSVC
+ * because MSVC historically sets `_MSVC_LANG` to the effective language
+ * standard for the compilation unit, while `__cplusplus` may not reflect
+ * the selected standard under some MSVC modes.
+ *
+ * @details
+ * - If `_MSVC_LANG` is defined (MSVC), `ANKERL_UNORDERED_DENSE_CPP_VERSION`
+ *   is set to that value.
+ * - Otherwise `ANKERL_UNORDERED_DENSE_CPP_VERSION` is set to `__cplusplus`.
+ *
+ * @note This macro value is used throughout the header to gate C++17+
+ *       features and to provide compatibility checks (for example the
+ *       compile-time requirement of C++17).
+ *
+ * @see https://en.cppreference.com/w/cpp/preprocessor/replace
+ * @li _MSVC_LANG: Microsoft-specific language version macro
+ * @li __cplusplus: Standard macro indicating the C++ language version
+ */
+#ifdef _MSVC_LANG
 #    define ANKERL_UNORDERED_DENSE_CPP_VERSION _MSVC_LANG
 #else
 #    define ANKERL_UNORDERED_DENSE_CPP_VERSION __cplusplus
 #endif
 
-#if defined(__GNUC__)
+#ifdef __GNUC__
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #    define ANKERL_UNORDERED_DENSE_PACK(decl) decl __attribute__((__packed__))
 #elif defined(_MSC_VER)
@@ -77,7 +101,7 @@
 #    endif
 #endif
 
-#if !defined(ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK)
+#ifndef ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK
 #    define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK
 #endif
 
@@ -85,7 +109,7 @@
 #    error ankerl::unordered_dense requires C++17 or higher
 #else
 
-#    if !defined(ANKERL_UNORDERED_DENSE_STD_MODULE)
+#    ifndef ANKERL_UNORDERED_DENSE_STD_MODULE
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #        define ANKERL_UNORDERED_DENSE_STD_MODULE 0
 #    endif
@@ -154,7 +178,7 @@ namespace detail {
 namespace detail::hashing {
 
 inline void mum(std::uint64_t* a, std::uint64_t* b) {
-#    if defined(__SIZEOF_INT128__)
+#    ifdef __SIZEOF_INT128__
     __uint128_t r = *a;
     r *= *b;
     *a = static_cast<std::uint64_t>(r);
@@ -162,17 +186,17 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 #    elif defined(_MSC_VER) && defined(_M_X64)
     *a = _umul128(*a, *b, b);
 #    else
-    std::uint64_t ha = *a >> 32U;
-    std::uint64_t hb = *b >> 32U;
-    std::uint64_t la = static_cast<std::uint32_t>(*a);
-    std::uint64_t lb = static_cast<std::uint32_t>(*b);
+    std::uint64_t const ha = *a >> 32U;
+    std::uint64_t const hb = *b >> 32U;
+    std::uint64_t const la = static_cast<std::uint32_t>(*a);
+    std::uint64_t const lb = static_cast<std::uint32_t>(*b);
     std::uint64_t hi{};
     std::uint64_t lo{};
-    std::uint64_t rh = ha * hb;
-    std::uint64_t rm0 = ha * lb;
-    std::uint64_t rm1 = hb * la;
-    std::uint64_t rl = la * lb;
-    std::uint64_t t = rl + (rm0 << 32U);
+    std::uint64_t const rh = ha * hb;
+    std::uint64_t const rm0 = ha * lb;
+    std::uint64_t const rm1 = hb * la;
+    std::uint64_t const rl = la * lb;
+    std::uint64_t const t = rl + (rm0 << 32U);
     auto c = static_cast<std::uint64_t>(t < rl);
     lo = t + (rm1 << 32U);
     c += static_cast<std::uint64_t>(lo < t);
@@ -183,7 +207,7 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 }
 
 inline void umul128(std::uint64_t const u, std::uint64_t const v, std::uint64_t* const rl, std::uint64_t* const rh) {
-#    if defined(__SIZEOF_INT128__)
+#    ifdef __SIZEOF_INT128__
     __uint128_t r = u;
     r *= v;
     *rl = static_cast<std::uint64_t>(r);
@@ -191,21 +215,21 @@ inline void umul128(std::uint64_t const u, std::uint64_t const v, std::uint64_t*
 #    elif defined(_MSC_VER) && defined(_M_X64)
     *rl = _umul128(u, v, rh);
 #    else
-    std::uint64_t ha = u >> 32U;
-    std::uint64_t hb = v >> 32U;
-    std::uint64_t la = static_cast<std::uint32_t>(u);
-    std::uint64_t lb = static_cast<std::uint32_t>(v);
+    std::uint64_t const ha = u >> 32U;
+    std::uint64_t const hb = v >> 32U;
+    std::uint64_t const la = static_cast<std::uint32_t>(u);
+    std::uint64_t const lb = static_cast<std::uint32_t>(v);
     std::uint64_t hi{};
     std::uint64_t lo{};
-    std::uint64_t rh = ha * hb;
-    std::uint64_t rm0 = ha * lb;
-    std::uint64_t rm1 = hb * la;
-    std::uint64_t rl = la * lb;
-    std::uint64_t t = rl + (rm0 << 32U);
-    auto c = static_cast<std::uint64_t>(t < rl);
+    std::uint64_t const right = ha * hb;
+    std::uint64_t const rm0 = ha * lb;
+    std::uint64_t const rm1 = hb * la;
+    std::uint64_t const rleft = la * lb;
+    std::uint64_t const t = rleft + (rm0 << 32U);
+    auto c = static_cast<std::uint64_t>(t < rleft);
     lo = t + (rm1 << 32U);
     c += static_cast<std::uint64_t>(lo < t);
-    hi = rh + (rm0 >> 32U) + (rm1 >> 32U) + c;
+    hi = right + (rm0 >> 32U) + (rm1 >> 32U) + c;
     *rl = lo;
     *rh = hi;
 #    endif
@@ -246,60 +270,59 @@ inline void umul128(std::uint64_t const u, std::uint64_t const v, std::uint64_t*
     return v;
 }
 
-[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t l) -> std::uint64_t {
-    static constexpr auto use_seed = UINT64_C(0);
+[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t len) -> std::uint64_t {
+    static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
+                                              UINT64_C(0xe7037ed1a0b428db),
+                                              UINT64_C(0x8ebc6af09c88c6e3),
+                                              UINT64_C(0x589965cc75374cc3)};
 
-    // The seeds are initialized to mantissa bits of PI.
-    auto seed1 = UINT64_C(0x243F6A8885A308D3) ^ l;
-    auto seed2 = UINT64_C(0x452821E638D01377) ^ l;
-
-    auto val01 = UINT64_C(0xAAAAAAAAAAAAAAAA); ///< `10` bit-pairs.
-    auto val10 = UINT64_C(0x5555555555555555); ///< `01` bit-pairs.
-    umul128(seed2 ^ (use_seed & val10), seed1 ^ (use_seed & val01), &seed1, &seed2);
-
-    auto const* msg = static_cast<const uint8_t*>(key);
-
-    if (ANKERL_UNORDERED_DENSE_UNLIKELY(l > 16))
-        ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-            val01 ^= seed1;
-            val10 ^= seed2;
-
-            do {
-                umul128(r8(msg) ^ seed1, r8(msg + 8) ^ seed2, &seed1, &seed2);
-
-                l -= 16;
-                msg += 16;
-
-                seed1 += val01;
-                seed2 += val10;
-
-            } while (ANKERL_UNORDERED_DENSE_LIKELY(l > 16));
-        }
-
-    std::uint64_t a = 0;
-    std::uint64_t b = 0;
-    if (ANKERL_UNORDERED_DENSE_LIKELY(l >= 4)) {
-        const uint8_t* const msg4 = msg + l - 4;
-        const size_t mo = l >> 3U;
-
-        a = r4(msg) << 32U | r4(msg4);
-        b = r4(msg + (mo * 4)) << 32U | r4(msg4 - (mo * 4));
-    } else {
-        // a = r3(msg, l);
-        if (l != 0) {
-            a = msg[0];
-            if (l != 1) {
-                a |= static_cast<std::uint64_t>(msg[1]) << 8;
-                if (l != 2) {
-                    a |= static_cast<std::uint64_t>(msg[2]) << 16;
+    auto const* p = static_cast<uint8_t const*>(key);
+    std::uint64_t seed = secret[0];
+    std::uint64_t a{};
+    std::uint64_t b{};
+    if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 16))
+        ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
+            if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 4))
+                ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
+                    a = (r4(p) << 32U) | r4(p + ((len >> 3U) << 2U));
+                    b = (r4(p + len - 4) << 32U) | r4(p + len - 4 - ((len >> 3U) << 2U));
                 }
+            else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0))
+                ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
+                    a = r3(p, len);
+                    b = 0;
+                }
+            else {
+                a = 0;
+                b = 0;
             }
         }
+    else {
+        std::size_t i = len;
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 48))
+            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+                std::uint64_t see1 = seed;
+                std::uint64_t see2 = seed;
+                do {
+                    seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+                    see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
+                    see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
+                    p += 48;
+                    i -= 48;
+                } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 48));
+                seed ^= see1 ^ see2;
+            }
+        while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16))
+            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+                seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+                i -= 16;
+                p += 16;
+            }
+        a = r8(p + i - 16);
+        b = r8(p + i - 8);
     }
-    umul128(a ^ seed1, b ^ seed2, &seed1, &seed2);
-    umul128(val01 ^ seed1, seed2, &a, &b);
 
-    return (a ^ b);
+    return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
 [[nodiscard]] inline auto hash(std::uint64_t x) -> std::uint64_t {
@@ -1114,12 +1137,28 @@ private:
     }
 
     /**
-     * True when no element can be added any more without increasing the size
+     * @return True when no element can be added any more without increasing the size
      */
     [[nodiscard]] auto is_full() const -> bool {
         return size() > m_max_bucket_capacity;
     }
 
+    /**
+     * @brief Deallocate all bucket storage and reset bucket capacity tracking.
+     *
+     * This clears the internal bucket container and requests that its capacity be
+     * reduced to fit its new size (typically zero). The function also resets the
+     * cached maximum bucket capacity (@c m_max_bucket_capacity) to zero. After
+     * calling this function the table has no usable bucket storage until
+     * @c allocate_buckets_from_shift() (or an equivalent) is called again.
+     *
+     * @note This only affects the bucket metadata storage. The element container
+     *       (@c m_values) is left untouched; callers must ensure elements are in
+     *       a consistent state if needed before or after calling this.
+     *
+     * @post m_buckets.empty() || m_buckets.capacity() == m_buckets.size()
+     * @post m_max_bucket_capacity == 0
+     */
     void deallocate_buckets() {
         m_buckets.clear();
         m_buckets.shrink_to_fit();
@@ -1182,6 +1221,38 @@ private:
         clear_and_fill_buckets_from_values();
     }
 
+    /**
+     * @brief Erase an element located in the bucket table and update value storage.
+     *
+     * This helper removes the entry stored in the bucket at index @p bucket_idx.
+     * It performs the following steps:
+     * \li Read the index of the value to remove from the bucket table.
+     * \li Remove the bucket entry and shift subsequent buckets down to fill the hole
+     *     (using robin-hood backward shift deletion implemented in erase_and_shift_down()).
+     * \li Invoke @p handle_erased_value with the removed value moved-out of the
+     *     internal values container (the call receives an rvalue reference via std::move).
+     * \li If the removed value was not the last element in the dense values container,
+     *     move the last value into the vacated slot and update the corresponding bucket's
+     *     m_value_idx to point to the new location.
+     * \li Pop the last element from the values container.
+     *
+     * Template parameter:
+     * \li Op: Callable type invoked with the removed value (typically to destroy or
+     *     return it to the caller). The callable will be invoked as
+     *     `handle_erased_value(std::move(value))`.
+     *
+     * Parameters:
+     * \param bucket_idx Index of the bucket containing the element to erase.
+     * \param handle_erased_value Callable that takes the removed value by rvalue and
+     *        performs any required handling (destruction, move-out, user callback).
+     *
+     * Postconditions:
+     * \li The element is removed from the container and the bucket table is consistent
+     *     (buckets shifted and value indices updated).
+     * \li The dense values container has one fewer element.
+     * \li If handle_erased_value throws an exception, the container state remains
+     *     consistent because the value is already moved out of the dense storage.
+     */
     template <typename Op>
     void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).m_value_idx;
@@ -1255,6 +1326,34 @@ private:
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
 
+    /**
+     * @brief Try to emplace a new element constructed from the provided key and
+     *        constructor arguments if the key does not already exist in the table.
+     *
+     * The function computes a mixed 64-bit hash for @p key, derives a small
+     * fingerprint and the initial bucket index, then probes linearly using the
+     * robin-hood displacement semantics until either an existing element with
+     * the same key is found or the correct insertion point is reached.
+     *
+     * @tparam K Type of the key to insert. May be an lvalue or rvalue reference
+     *           and will be forwarded into the stored value.
+     * @tparam Args Types of the arguments forwarded to construct the mapped
+     *              element (or element itself for sets).
+     * @param[in] key The key used to locate or construct the element. It is
+     *                forwarded into the emplacement call if insertion is
+     *                necessary.
+     * @param[in] args Constructor arguments forwarded to construct the stored
+     *                 value (for maps: the mapped value; for sets: the value
+     *                 itself).
+     * @return std::pair<iterator,bool> A pair where the first element is an
+     *         iterator to the existing or newly inserted element and the
+     *         second element is true if a new element was inserted, false if
+     *         an element with the same key already existed.
+     *
+     * @note Exception safety: this function does not modify the container
+     *       before attempting emplacement. If construction of the new
+     *       element throws, the container remains unchanged.
+     */
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         auto hash = mixed_hash(key);
@@ -1492,18 +1591,46 @@ public:
         return m_values.begin();
     }
 
+    /**
+     * @brief Return a const iterator to the beginning of the container.
+     *
+     * This iterator points to the first stored element and can be used to
+     * traverse the container without allowing modification of the elements.
+     *
+     * @return const_iterator Iterator to the first element (const).
+     */
     auto cbegin() const noexcept -> const_iterator {
         return m_values.cbegin();
     }
 
+    /**
+     * @brief Return an iterator to the element following the last element.
+     *
+     * This iterator acts as a sentinel; dereferencing it is undefined. Use
+     * it to compare against other iterators when iterating.
+     *
+     * @return iterator Iterator to one-past-the-end element.
+     */
     auto end() noexcept -> iterator {
         return m_values.end();
     }
 
+    /**
+     * @brief Return a const iterator to the element following the last element.
+     *
+     * @return const_iterator Const iterator one-past-the-end.
+     */
     auto cend() const noexcept -> const_iterator {
         return m_values.cend();
     }
 
+    /**
+     * @brief Return a const iterator to the element following the last element.
+     *
+     * Same as cend(), provided for API compatibility.
+     *
+     * @return const_iterator Const iterator one-past-the-end.
+     */
     auto end() const noexcept -> const_iterator {
         return m_values.end();
     }
@@ -1518,6 +1645,24 @@ public:
         return m_values.size();
     }
 
+    /**
+     * @brief Return the maximum number of elements the container can hold.
+     *
+     * This value is derived from the number of bits available in
+     * `value_idx_type`, which is the type used to index elements in the
+     * dense value storage. The returned size is a power of two based on the
+     * bit-width of `value_idx_type`.
+     *
+     * @note If `value_idx_type` has the same maximum value as `std::size_t`,
+     *       we reserve one bit to avoid returning the full `std::size_t` range
+     *       (which could be problematic on platforms where that would collide
+     *       with sentinel values or similar internal uses). In that case the
+     *       maximum is 2^(bits-1). Otherwise the maximum is 2^(bits).
+     *
+     * @return std::size_t The upper bound on the number of elements that can
+     *                     be stored. This is always a power of two and is
+     *                     computed from sizeof(value_idx_type).
+     */
     [[nodiscard]] static constexpr auto max_size() noexcept -> std::size_t {
         if constexpr ((std::numeric_limits<value_idx_type>::max)() == (std::numeric_limits<std::size_t>::max)()) {
             return std::size_t{1} << (sizeof(value_idx_type) * 8 - 1);
@@ -1528,37 +1673,110 @@ public:
 
     // modifiers //////////////////////////////////////////////////////////////
 
+    /**
+     * @brief Remove all elements from the container.
+     *
+     * Clears the dense values container and resets the bucket metadata so the
+     * table becomes empty. This does not change the container's allocator.
+     *
+     * @post size() == 0
+     */
     void clear() {
         m_values.clear();
         clear_buckets();
     }
 
+    /**
+     * @brief Insert a value into the container.
+     *
+     * If an element with an equivalent key already exists, the container is
+     * not modified and the iterator to the existing element is returned with
+     * second == false. Otherwise a new element is constructed and inserted.
+     *
+     * @param[in] value The value to insert (lvalue reference).
+     * @return std::pair<iterator,bool> Pair of iterator to element and bool
+     *         indicating whether insertion took place (true means inserted).
+     */
     auto insert(value_type const& value) -> std::pair<iterator, bool> {
         return emplace(value);
     }
 
+    /**
+     * @brief Insert a value into the container by moving it.
+     *
+     * Works like the lvalue overload but moves @p value into the container
+     * which may avoid a copy.
+     *
+     * @param[in] value The value to insert (rvalue reference).
+     * @return std::pair<iterator,bool> Pair of iterator to element and bool
+     *         indicating whether insertion took place.
+     */
     auto insert(value_type&& value) -> std::pair<iterator, bool> {
         return emplace(std::move(value));
     }
 
+    /**
+     * @brief Perfect-forwarding insert.
+     *
+     * This overload accepts any argument that can be used to construct the
+     * container's value_type, forwarding the argument into emplacement.
+     *
+     * @tparam P Type of the argument that will be forwarded to construct the
+     *           value_type.
+     * @param[in] value Argument forwarded to construct a value_type in-place.
+     * @return std::pair<iterator,bool> Iterator to element and insertion flag.
+     */
     template <class P, std::enable_if_t<std::is_constructible_v<value_type, P&&>, bool> = true>
     auto insert(P&& value) -> std::pair<iterator, bool> {
         return emplace(std::forward<P>(value));
     }
 
+    /**
+     * @brief Insert with a hint iterator (hint ignored).
+     *
+     * The hint is currently unused; this overload exists for compatibility
+     * with standard associative container APIs.
+     *
+     * @param[in] value Value to insert.
+     * @return iterator Iterator to the inserted or existing element.
+     */
     auto insert(const_iterator /*hint*/, value_type const& value) -> iterator {
         return insert(value).first;
     }
 
+    /**
+     * @brief Insert with a hint iterator (rvalue overload, hint ignored).
+     *
+     * @param[in] value Value to insert (rvalue).
+     * @return iterator Iterator to the inserted or existing element.
+     */
     auto insert(const_iterator /*hint*/, value_type&& value) -> iterator {
         return insert(std::move(value)).first;
     }
 
+    /**
+     * @brief Insert with a hint iterator and perfect-forwarding argument.
+     *
+     * @tparam P Type used to construct value_type.
+     * @param[in] value Argument forwarded to construct the value.
+     * @return iterator Iterator to the inserted or existing element.
+     */
     template <class P, std::enable_if_t<std::is_constructible_v<value_type, P&&>, bool> = true>
     auto insert(const_iterator /*hint*/, P&& value) -> iterator {
         return insert(std::forward<P>(value)).first;
     }
 
+    /**
+     * @brief Insert a range of elements into the container.
+     *
+     * Iteratively inserts elements from the iterator range [first, last).
+     * Duplicate keys are ignored according to the single-element insert
+     * semantics.
+     *
+     * @tparam InputIt Input iterator type providing value_type elements.
+     * @param[in] first Iterator to the first element in the range.
+     * @param[in] last Iterator past the last element in the range.
+     */
     template <class InputIt>
     void insert(InputIt first, InputIt last) {
         while (first != last) {
@@ -1567,18 +1785,45 @@ public:
         }
     }
 
+    /**
+     * @brief Insert elements from an initializer_list.
+     *
+     * Elements in the initializer list will be inserted in order. Duplicate
+     * keys are ignored.
+     *
+     * @param[in] ilist Initializer list of values to insert.
+     */
     void insert(std::initializer_list<value_type> ilist) {
         insert(ilist.begin(), ilist.end());
     }
 
-    // nonstandard API: *this is emptied.
-    // Also see "A Standard flat_map" https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p0429r9.pdf
+    /**
+     * @brief Extract the internal value container by moving it out.
+     *
+     * This is a non-standard API: calling this on an rvalue table will
+     * transfer ownership of the internal dense container to the caller and
+     * leave the table in an empty state. It avoids element-by-element moves
+     * and can be useful for zero-copy transfer of the container's storage.
+     *
+     * @note This function is only available on rvalues (&&) and will
+     *       effectively empty *this.
+     * @return value_container_type The internal container moved out.
+     * @see "A Standard flat_map" for related proposals.
+     */
     auto extract() && -> value_container_type {
         return std::move(m_values);
     }
 
-    // nonstandard API:
-    // Discards the internally held container and replaces it with the one passed. Erases non-unique elements.
+    /**
+     * @brief Replace the internal value container with @p container.
+     *
+     * This non-standard API discards the currently held dense container and
+     * replaces it with the one provided. Duplicate keys present in
+     * @p container will be removed during insertion into the bucket table.
+     *
+     * @param[in] container The new container to adopt (moved).
+     * @return void
+     */
     auto replace(value_container_type&& container) {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(container.size() > max_size()))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
@@ -1779,12 +2024,46 @@ public:
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...).first;
     }
 
-    // Replaces the key at the given iterator with new_key. This does not change any other data in the underlying table, so
-    // all iterators and references remain valid. However, this operation can fail if new_key already exists in the table.
-    // In that case, returns {iterator to the already existing new_key, false} and no change is made.
-    //
-    // In the case of a set, this effectively removes the old key and inserts the new key at the same spot, which is more
-    // efficient than removing the old key and inserting the new key because it avoids repositioning the last element.
+    /**
+     * @brief Replace the key stored at the location referenced by the given iterator.
+     *
+     * Replaces the key for the element referenced by @p it with @p new_key without
+     * changing any other stored data (for maps, the associated mapped value is
+     * preserved). Because the underlying bucket metadata is updated to reflect the
+     * new key, all existing iterators and references to stored elements remain
+     * valid after a successful replacement.
+     *
+     * @tparam K Type of @p new_key. Perfect-forwarded into the stored key.
+     *
+     * @param[in] it Iterator pointing to the element whose key will be replaced.
+     * @param[in] new_key The new key to store at the position of @p it. This is
+     *                    forwarded into the stored element and may throw if the
+     *                    key's assignment or move constructor throws.
+     *
+     * @return std::pair<iterator,bool>
+     *         first: iterator to the element with the replaced key (if
+     *           successful) or to the already-existing element with the same
+     *           key (if replacement failed because the key already exists).
+     *         second: true if the key was replaced, false if @p new_key was
+     *           already present in the table and no modification was performed.
+     *
+     * @note If @p new_key is already present in the table this function returns
+     *       an iterator to the existing element with that key and leaves the
+     *       table unchanged.
+     *
+     * @note For sets (table instantiated with T = void) this operation is more
+     *       efficient than separately erasing and inserting because it avoids
+     *       moving the last element in the dense values container.
+     *
+     * Average-case: O(d) where d is the probe sequence length for
+     * the new and old keys; worst-case bounded by the table's
+     * probe length.
+     *
+     * Provides the strong exception guarantee with respect to bucket
+     * metadata: the key assignment (copy/move) occurs before any
+     * bucket changes, so if the assignment throws the container
+     * remains unchanged.
+     */
     template <typename K>
     auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool> {
         auto const new_key_hash = mixed_hash(new_key);
@@ -1841,7 +2120,7 @@ public:
             bucket_idx = next(bucket_idx);
         }
 
-        do_erase(bucket_idx, [](value_type const& /*unused*/) {
+        do_erase(bucket_idx, [](value_type const& /*unused*/) -> void {
         });
         return begin() + static_cast<difference_type>(value_idx_to_remove);
     }
@@ -1856,7 +2135,7 @@ public:
         }
 
         auto tmp = std::optional<value_type>{};
-        do_erase(bucket_idx, [&tmp](value_type&& val) {
+        do_erase(bucket_idx, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return std::move(tmp).value();
@@ -1897,13 +2176,13 @@ public:
     }
 
     auto erase(Key const& key) -> std::size_t {
-        return do_erase_key(key, [](value_type const& /*unused*/) {
+        return do_erase_key(key, [](value_type const& /*unused*/) -> void {
         });
     }
 
     auto extract(Key const& key) -> std::optional<value_type> {
         auto tmp = std::optional<value_type>{};
-        do_erase_key(key, [&tmp](value_type&& val) {
+        do_erase_key(key, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return tmp;
@@ -1911,14 +2190,14 @@ public:
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto erase(K&& key) -> std::size_t {
-        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) {
+        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) -> void {
         });
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto extract(K&& key) -> std::optional<value_type> {
         auto tmp = std::optional<value_type>{};
-        do_erase_key(std::forward<K>(key), [&tmp](value_type&& val) {
+        do_erase_key(std::forward<K>(key), [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return tmp;
@@ -2173,7 +2452,7 @@ template <class Key,
           class BucketContainer = detail::default_container_t>
 using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, true>;
 
-#    if defined(ANKERL_UNORDERED_DENSE_PMR)
+#    ifdef ANKERL_UNORDERED_DENSE_PMR
 
 namespace pmr {
 
