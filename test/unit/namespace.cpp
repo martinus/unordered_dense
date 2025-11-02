@@ -1,7 +1,7 @@
 #include <ankerl/unordered_dense.h>
 #include <app/doctest.h>
 
-namespace versioned_namespace = ankerl::unordered_dense::v4_8_0;
+namespace versioned_namespace = ankerl::unordered_dense::v4_8_1;
 
 static_assert(std::is_same_v<versioned_namespace::map<int, int>, ankerl::unordered_dense::map<int, int>>);
 static_assert(std::is_same_v<versioned_namespace::hash<int>, ankerl::unordered_dense::hash<int>>);
