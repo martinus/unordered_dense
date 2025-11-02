@@ -214,7 +214,7 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
                                               UINT64_C(0x8ebc6af09c88c6e3),
                                               UINT64_C(0x589965cc75374cc3)};
 
-    auto const* p = static_cast<uint8_t const*>(key);
+    auto const* p = static_cast<std::uint8_t const*>(key);
     std::uint64_t seed = secret[0];
     std::uint64_t a{};
     std::uint64_t b{};
@@ -617,7 +617,7 @@ private:
         }
 
         [[nodiscard]] constexpr auto operator-(difference_type diff) const noexcept -> iter_t {
-            return {m_data, static_cast<size_t>(static_cast<difference_type>(m_idx) - diff)};
+            return {m_data, static_cast<std::size_t>(static_cast<difference_type>(m_idx) - diff)};
         }
 
         constexpr auto operator-=(difference_type diff) noexcept -> iter_t& {
@@ -703,9 +703,9 @@ private:
         return (capacity + num_elements_in_block - 1U) / num_elements_in_block;
     }
 
-    void resize_shrink(size_t new_size) {
+    void resize_shrink(std::size_t new_size) {
         if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (size_t ix = new_size; ix < m_size; ++ix) {
+            for (std::size_t ix = new_size; ix < m_size; ++ix) {
                 operator[](ix).~T();
             }
         }
@@ -824,25 +824,25 @@ public:
         }
     }
 
-    void resize(size_t const count) {
+    void resize(std::size_t const count) {
         if (count < m_size) {
             resize_shrink(count);
         } else if (count > m_size) {
-            size_t const new_elems = count - m_size;
+            std::size_t const new_elems = count - m_size;
             reserve(count);
-            for (size_t ix = 0; ix < new_elems; ++ix) {
+            for (std::size_t ix = 0; ix < new_elems; ++ix) {
                 emplace_back();
             }
         }
     }
 
-    void resize(size_t const count, value_type const& value) {
+    void resize(std::size_t const count, value_type const& value) {
         if (count < m_size) {
             resize_shrink(count);
         } else if (count > m_size) {
-            size_t const new_elems = count - m_size;
+            std::size_t const new_elems = count - m_size;
             reserve(count);
-            for (size_t ix = 0; ix < new_elems; ++ix) {
+            for (std::size_t ix = 0; ix < new_elems; ++ix) {
                 emplace_back(value);
             }
         }
