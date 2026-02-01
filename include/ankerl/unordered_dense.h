@@ -334,7 +334,7 @@ struct hash<Enum, typename std::enable_if_t<std::is_enum_v<Enum>>> {
     using is_avalanching = void;
     auto operator()(Enum e) const noexcept -> std::uint64_t {
         using underlying = std::underlying_type_t<Enum>;
-        return detail::wyhash::hash(static_cast<underlying>(e));
+        return detail::wyhash::hash(static_cast<std::uint64_t>(static_cast<underlying>(e)));
     }
 };
 
