@@ -1490,8 +1490,10 @@ public:
     // modifiers //////////////////////////////////////////////////////////////
 
     void clear() {
-        m_values.clear();
-        clear_buckets();
+        if (!empty()) {
+            m_values.clear();
+            clear_buckets();
+        }
     }
 
     auto insert(value_type const& value) -> std::pair<iterator, bool> {
