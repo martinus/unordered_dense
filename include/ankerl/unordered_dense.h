@@ -1136,7 +1136,7 @@ private:
             on_error_bucket_overflow();
         }
         --m_shifts;
-        if constexpr (!IsSegmented || std::is_same_v<BucketContainer, default_container_t>) {
+        if constexpr (!IsSegmented && std::is_same_v<BucketContainer, default_container_t>) {
             deallocate_buckets();
         }
         allocate_buckets_from_shift();
