@@ -70,6 +70,13 @@
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
 #endif
 
+// data prefetch hint, a no-op when not supported
+#if defined(__GNUC__) || defined(__clang__)
+#    define ANKERL_UNORDERED_DENSE_PREFETCH(addr) __builtin_prefetch(addr) // NOLINT(cppcoreguidelines-macro-usage)
+#else
+#    define ANKERL_UNORDERED_DENSE_PREFETCH(addr) static_cast<void>(addr) // NOLINT(cppcoreguidelines-macro-usage)
+#endif
+
 #if defined(__clang__) && defined(__has_attribute)
 #    if __has_attribute(__no_sanitize__)
 #        define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK \
@@ -212,7 +219,10 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
     static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
                                               UINT64_C(0xe7037ed1a0b428db),
                                               UINT64_C(0x8ebc6af09c88c6e3),
-                                              UINT64_C(0x589965cc75374cc3)};
+                                              UINT64_C(0x589965cc75374cc3),
+                                              UINT64_C(0x2d358dccaa6c78a5),
+                                              UINT64_C(0x8bb84b93962eacc9),
+                                              UINT64_C(0x4b33a62ed433d4a3)};
 
     auto const* p = static_cast<std::uint8_t const*>(key);
     std::uint64_t seed = secret[0];
@@ -241,13 +251,30 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
                 std::uint64_t see1 = seed;
                 std::uint64_t see2 = seed;
-                do {
+                if (i > 96) {
+                    // 6 independent lanes: twice the instruction level parallelism of the 48 byte loop below
+                    std::uint64_t see3 = seed;
+                    std::uint64_t see4 = seed;
+                    std::uint64_t see5 = seed;
+                    do {
+                        seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+                        see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
+                        see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
+                        see3 = mix(r8(p + 48) ^ secret[4], r8(p + 56) ^ see3);
+                        see4 = mix(r8(p + 64) ^ secret[5], r8(p + 72) ^ see4);
+                        see5 = mix(r8(p + 80) ^ secret[6], r8(p + 88) ^ see5);
+                        p += 96;
+                        i -= 96;
+                    } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 96));
+                    seed ^= see3 ^ see4 ^ see5;
+                }
+                while (i > 48) {
                     seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
                     see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
                     see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
                     p += 48;
                     i -= 48;
-                } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 48));
+                }
                 seed ^= see1 ^ see2;
             }
         while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16))
@@ -943,18 +970,14 @@ private:
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
     bucket_container_type m_buckets{};
     std::size_t m_max_bucket_capacity = 0;
+    value_idx_type m_bucket_mask = 0; // bucket_count() - 1; works because bucket_count() is always a power of two
     float m_max_load_factor = default_max_load_factor;
     Hash m_hash{};
     KeyEqual m_equal{};
     std::uint8_t m_shifts = initial_shifts;
 
     [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1U == bucket_count()))
-            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-                return 0;
-            }
-
-        return static_cast<value_idx_type>(bucket_idx + 1U);
+        return static_cast<value_idx_type>((bucket_idx + 1U) & m_bucket_mask);
     }
 
     // Helper to access bucket through pointer types
@@ -1023,21 +1046,26 @@ private:
     }
 
     void place_and_shift_up(Bucket bucket, value_idx_type place) {
+        // cache mask in a local so the bucket stores can't alias it
+        auto const mask = m_bucket_mask;
         while (0 != at(m_buckets, place).m_dist_and_fingerprint) {
             bucket = std::exchange(at(m_buckets, place), bucket);
             bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
-            place = next(place);
+            place = static_cast<value_idx_type>((place + 1U) & mask);
         }
         at(m_buckets, place) = bucket;
     }
 
     void erase_and_shift_down(value_idx_type bucket_idx) {
+        // cache mask in a local so the bucket stores can't alias it
+        auto const mask = m_bucket_mask;
+
         // shift down until either empty or an element with correct spot is found
-        auto next_bucket_idx = next(bucket_idx);
+        auto next_bucket_idx = static_cast<value_idx_type>((bucket_idx + 1U) & mask);
         while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2) {
             auto& next_bucket = at(m_buckets, next_bucket_idx);
             at(m_buckets, bucket_idx) = {dist_dec(next_bucket.m_dist_and_fingerprint), next_bucket.m_value_idx};
-            bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
+            bucket_idx = std::exchange(next_bucket_idx, static_cast<value_idx_type>((next_bucket_idx + 1U) & mask));
         }
         at(m_buckets, bucket_idx) = {};
     }
@@ -1085,10 +1113,12 @@ private:
         m_buckets.clear();
         m_buckets.shrink_to_fit();
         m_max_bucket_capacity = 0;
+        m_bucket_mask = 0;
     }
 
     void allocate_buckets_from_shift() {
         auto num_buckets = calc_num_buckets(m_shifts);
+        m_bucket_mask = static_cast<value_idx_type>(num_buckets - 1);
         if constexpr (IsSegmented || !std::is_same_v<BucketContainer, default_container_t>) {
             if constexpr (has_reserve<bucket_container_type>) {
                 m_buckets.reserve(num_buckets);
@@ -1146,6 +1176,11 @@ private:
     template <typename Op>
     void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).m_value_idx;
+
+        // both values are needed after the shift down; start fetching them now to overlap the latencies
+        ANKERL_UNORDERED_DENSE_PREFETCH(&m_values[value_idx_to_remove]);
+        ANKERL_UNORDERED_DENSE_PREFETCH(&m_values.back());
+
         erase_and_shift_down(bucket_idx);
         handle_erased_value(std::move(m_values[value_idx_to_remove]));
 
@@ -1410,6 +1445,7 @@ public:
                 m_buckets = std::move(other.m_buckets);
                 other.m_buckets.clear();
                 m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
+                m_bucket_mask = std::exchange(other.m_bucket_mask, 0);
                 m_shifts = std::exchange(other.m_shifts, initial_shifts);
                 m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
                 m_hash = std::exchange(other.m_hash, {});
