@@ -2,7 +2,7 @@
 
 #include <app/doctest.h>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include <cstddef>     // for size_t
 #include <cstdint>     // for uint64_t

@@ -4,7 +4,7 @@
 #include <app/geomean.h>           // for geomean
 #include <third-party/nanobench.h> // for Rng, doNotOptimizeAway, Bench
 
-#include <fmt/core.h> // for print, format
+#include <fmt/format.h> // for print, format
 
 #include <chrono>        // for duration, operator-, high_resolu...
 #include <cstdint>       // for uint64_t

@@ -3,7 +3,7 @@
 #include <app/counting_allocator.h>
 
 #include <app/doctest.h> // for TestCase, skip, ResultBuilder
-#include <fmt/core.h>    // for format, print
+#include <fmt/format.h> // for format, print
 
 #include <unordered_map>
 #include <vector>
