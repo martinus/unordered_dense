@@ -276,6 +276,16 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
                     i -= 48;
                 }
                 seed ^= see1 ^ see2;
+                while (i > 16) {
+                    seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+                    i -= 16;
+                    p += 16;
+                }
+
+                // the tail lane only depends on the input, not on seed, so it can execute in parallel
+                // with the lane loops above, and a single dependent mix finishes the hash
+                auto tail = mix(r8(p + i - 16) ^ secret[2], r8(p + i - 8) ^ secret[3]);
+                return mix(secret[1] ^ len, seed ^ tail);
             }
         while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
