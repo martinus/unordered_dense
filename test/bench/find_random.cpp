@@ -4,7 +4,7 @@
 #include <third-party/nanobench.h> // for Rng
 
 #include <app/doctest.h> // for TestCase, skip, ResultBuilder
-#include <fmt/core.h>    // for format, print
+#include <fmt/format.h> // for format, print
 
 #include <algorithm>     // for fill_n
 #include <array>         // for array
