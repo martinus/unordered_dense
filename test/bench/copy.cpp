@@ -3,7 +3,7 @@
 #include <third-party/nanobench.h> // for Rng, Bench
 
 #include <app/doctest.h> // for TestCase, skip, TEST_CASE, test_...
-#include <fmt/core.h>    // for format
+#include <fmt/format.h> // for format
 
 #include <cstddef>       // for size_t
 #include <cstdint>       // for uint64_t
