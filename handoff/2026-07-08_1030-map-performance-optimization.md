@@ -64,6 +64,7 @@ Same-binary back-to-back runs vary by ±8 % and the machine drifts >10 % over mi
 | E4 | `__builtin_prefetch(&m_values[bucket->m_value_idx])` at the top of `do_find` | warm the value line while the fingerprint check resolves | find64 119.5 vs 126.4 (5:0), findstr 350 vs 362 (4:0) | hardware speculation already issues the load; the prefetch adds address-computation work and wrong-path traffic |
 | E5 | Replace wyhash with rapidhash v3 (cloned upstream, benchmarked head-to-head) | newer hash claims wins | wyhash-here is **faster** ≥24 B: at 200 B latency 15.1 vs 21.9 (rapidhash) / 18.1 (rapidhashMicro) ns | this codebase's wyhash already has a 6-lane 96 B loop + independent tail lane (commit `dac9766`); rapidhash's remainder is a serial dependent-mix chain |
 | E6 | (from prior session, re-verified reasoning) larger/different `max_load_factor` default | fewer buckets → better cache | not re-run | at the bench's map sizes (10 k, 50 k) the power-of-two bucket count is identical for lf 0.8 vs 0.9 — no effect, only longer probes |
+| E8 | Runtime CPU dispatch of `wyhash::hash(void*, size_t)` to a `target("bmi2")` clone (`mulx`), tried both magic-static fn-pointer and glibc-style constant-init atomic pointer | hash is uop-bound; `mulx` avoids `mul`'s rax/rdx shuffling | ceiling (whole build `-mbmi2`, no dispatch): findstr −2.0 % (5:1); magic-static dispatch: +1.7 % *worse* (6:2 against); atomic-ptr dispatch: −0.7 % tie (4:4 findstr, 4:2 iestr) | `mulx` is worth only ~3–5 % on this VM's cores even in isolation (verified: 38 `mulx` in disasm), ≈2 % in map context, and any dispatch indirection costs ~1.3 cycles/call which eats it; real `ifunc` would be zero-cost but is an ELF/glibc-only portability minefield (no Mach-O/MinGW, ASan + `__builtin_cpu_supports`-before-ctors hazards) — not worth ~0 % measured |
 
 ### Analysis dead-ends (rejected by reasoning, not measured — challenge these if you have a new angle)
 
@@ -75,11 +76,11 @@ Same-binary back-to-back runs vary by ±8 % and the machine drifts >10 % over mi
 
 ## Untried ideas for a next session
 
-1. **GCC vs clang codegen diff** on the hot paths (`meson setup` with `CXX=g++`, then compare the same micro A/B). Never looked at gcc output; if gcc wins a sub-benchmark, the asm diff may reveal a source-level tweak that helps clang too.
+1. **GCC vs clang codegen diff** on the hot paths — now with hard evidence that it's worth doing: g++ 13 compiles the micro harness's `find64` to **2.5× fewer instructions** (193 M vs 477 M Ir, 26 vs 119 ms wall) with correct results, i.e. genuinely better codegen of the find loop, not a benchmark shortcut. (Caveat: gcc *also* found an algebraic shortcut for `it64` — incremental sum maintenance, 3.4 M vs 72 M Ir — so validate each workload's Ir before trusting a gcc wall-time number.) Diff the gcc vs clang asm of the find64 loop; whatever gcc does (likely unrolling/interleaving independent finds) may be reproducible in clang via source structure.
 2. **PGO/BOLT-style layout experiment** — not shippable in a header, but would quantify how much of the remaining gap is branch/layout, i.e. whether more source-level branch-hint work (`LIKELY`/`UNLIKELY` placement) has any headroom at all.
 3. `do_try_emplace`'s probe loop still re-loads `m_buckets` data pointer per iteration in some instantiations (stores through `Bucket*` may alias) — inspect asm; a local `mask`/data-pointer copy like `place_and_shift_up` does *might* shave a cycle. (Checked for `do_find` only: clang hoists fine there.)
 4. The 48-to-96-byte hash gap: inputs of 49–96 bytes run the 3-lane 48 B loop twice; a dedicated 2×48 B unroll with a flatter fold might help mid-size strings (not the 200 B bench, but `bench_quick_overall` isn't everything).
-5. Revisit anything above if the environment changes: a machine with real `perf`, or a build with `-march=x86-64-v3` (then `mulx` halves hash register-shuffle uops, and E1/E5 conclusions may flip).
+5. Revisit anything above if the environment changes: a machine with real `perf`, or different cores. Note the `-march`/`mulx` speculation has since been **measured** (E8): on this VM `mulx` is only ~3–5 % on the hash, ~2 % in map context — much smaller than hoped. On other microarchitectures the `mul` vs `mulx` gap may differ; re-measure the E8 ceiling (`CXXFLAGS="-O3 -DNDEBUG -std=c++17 -mbmi2" scripts/microbench/ab.sh build` builds *both* binaries with mulx — instead compile one manually) before re-attempting dispatch.
 
 ## Commands
 
@@ -116,6 +117,8 @@ State up front that a previous optimization session had already run on this exac
 
 ### 7. If I could add one unrequested, industry-leading feature, what would it be?
 Runtime ISA dispatch for the hash: compile `wyhash::hash` additionally with `__attribute__((target("bmi2,avx2")))` and select via ifunc/`cpuid` once at startup. No other header-only hash map does this; it would give every user of the default toolchain flags (~everyone) the `mulx` hash for free — on this session's numbers, plausibly ~10–20 % on string-heavy workloads, bigger than anything else left on the table. Needs care (MSVC fallback, constexpr paths, binary-size), but it's a contained, testable feature.
+
+**Update (same day, follow-up session): tried and rejected — see E8.** The plausible "~10–20 %" turned out to be ~3–5 % hash-only / ~2 % in map context on this VM, and safe dispatch indirection consumes it entirely. The idea only makes sense revisited with (a) a CPU where `mul` is much worse than `mulx`, or (b) an AVX2-*vectorized* hash algorithm (different output values) rather than a recompile of the scalar one.
 
 ## Appendix — micro harness and A/B pair runner
 

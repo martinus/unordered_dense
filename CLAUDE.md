@@ -55,6 +55,7 @@ Measured on a shared x86-64 VM with clang 18, default `-march` (baseline x86-64,
 - A branchless `do_find` fast path for scalar keys (unconditional key compare + conditional-move result): the speculative value load doubles cache misses on the ~50% miss lookups.
 - Explicit `__builtin_prefetch` of `m_values[bucket->m_value_idx]` in `do_find`, and computing the moved element's hash early + prefetching its home bucket in `do_erase`: out-of-order execution already hides these latencies.
 - Replacing wyhash with rapidhash (v3, 2025): the wyhash implementation here is *faster* for inputs ≥ 24 bytes in both latency and throughput; rapidhash only won at ≤ 16 bytes, and that trick (two plain 8-byte reads instead of building `a`/`b` from four 4-byte reads) has been adopted.
+- Runtime CPU dispatch of the byte-buffer hash to a `target("bmi2")` (`mulx`) clone: the measured ceiling (whole build with `-mbmi2`) is only ~2 % on the string benchmarks, and the per-call cost of even the cheapest safe dispatch (constant-initialized function pointer, relaxed atomic load + indirect call) eats it — net ~0 %. Details in `handoff/2026-07-08_1030-map-performance-optimization.md` (E8).
 
 ## Testing
 
