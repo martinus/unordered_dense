@@ -46,6 +46,15 @@ Benchmarking practices:
 - nanobench prints per-benchmark `err%`; rerun if it's high (> ~3%). A warning about CPU governor/turbo is normal on non-tuned machines — it just means more noise.
 - Other useful benchmarks in `test/bench/` (e.g. `bench_copy`, `bench_game_of_life`, find variants) can be run the same way via `-tc=<name>`; run all with `-ns -ts=bench`. List all test cases with `-ltc`.
 
+## Optimization dead ends (verified with interleaved A/B runs; re-test before assuming they still hold)
+
+Measured on a shared x86-64 VM with clang 18, default `-march` (baseline x86-64, so no BMI2/AVX2 in generated code). The `bench_quick_overall_udm` hot paths are close to machine limits: a lookup is hash + two dependent cache accesses (~10 ns map-side), and hashing the 200-byte string keys (~42 cycles each) is ~45% of the wall time of the string sub-benchmarks. Ideas that consistently **regressed** and were reverted:
+
+- Force-inlining `wyhash::hash` into the map (icache/register pressure outweighs saved call overhead).
+- A branchless `do_find` fast path for scalar keys (unconditional key compare + conditional-move result): the speculative value load doubles cache misses on the ~50% miss lookups.
+- Explicit `__builtin_prefetch` of `m_values[bucket->m_value_idx]` in `do_find`, and computing the moved element's hash early + prefetching its home bucket in `do_erase`: out-of-order execution already hides these latencies.
+- Replacing wyhash with rapidhash (v3, 2025): the wyhash implementation here is *faster* for inputs ≥ 24 bytes in both latency and throughput; rapidhash only won at ≤ 16 bytes, and that trick (two plain 8-byte reads instead of building `a`/`b` from four 4-byte reads) has been adopted.
+
 ## Testing
 
 Any change to `include/ankerl/unordered_dense.h` must pass the unit tests:
