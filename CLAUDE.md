@@ -45,6 +45,7 @@ Benchmarking practices:
 - Beware code-layout luck: any edit (even to never-executed code) can shift alignment and move individual sub-benchmarks by ±3%. Judge micro-optimizations by mechanism plus a focused microbenchmark, and confirm on the paired geomean, not on a single sub-benchmark delta.
 - nanobench prints per-benchmark `err%`; rerun if it's high (> ~3%). A warning about CPU governor/turbo is normal on non-tuned machines — it just means more noise.
 - Other useful benchmarks in `test/bench/` (e.g. `bench_copy`, `bench_game_of_life`, find variants) can be run the same way via `-tc=<name>`; run all with `-ns -ts=bench`. List all test cases with `-ltc`.
+- For fast iteration on a single sub-benchmark, use `scripts/microbench/` (see its README): `ab.sh build [<git-ref>]` compiles a baseline binary from a git ref and a candidate from the working tree in seconds (no meson), and `ab.sh run <workload>` does the interleaved paired comparison automatically, with result checksums guarding against broken changes.
 
 ## Optimization dead ends (verified with interleaved A/B runs; re-test before assuming they still hold)
 

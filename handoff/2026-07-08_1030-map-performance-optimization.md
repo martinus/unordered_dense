@@ -44,8 +44,7 @@ Same-binary back-to-back runs vary by ±8 % and the machine drifts >10 % over mi
 1. Build release: `CXX=clang++ meson setup --buildtype release builddir/clang_release && ninja -C builddir/clang_release` (see CLAUDE.md "sandboxed/offline" note if the wrap downloads 403; `git clone` of doctest/fmt into `subprojects/` works even when tarball downloads are blocked; doctest ships its own meson.build, fmt needs a minimal one).
 2. **Keep a baseline binary**: copy `builddir/clang_release/test/udm-test` elsewhere before rebuilding.
 3. **Interleave A/B pairs** (A B A B A B, ≥5–6 pairs) and count wins; only believe a change that wins (almost) every pair. Mean deltas <2 % without a pair sweep are noise.
-4. For per-sub-benchmark iteration, use a standalone micro harness (full source in the appendix) that replicates each workload exactly, takes min-of-N in-process reps, and compiles in seconds:
-   `clang++ -O3 -DNDEBUG -std=c++17 -Iinclude -Itest micro.cpp nanobench_impl.cpp -o micro`
+4. For per-sub-benchmark iteration, use the committed tools in `scripts/microbench/` (see its README and the appendix): `ab.sh build [<git-ref>]` compiles baseline + candidate binaries in seconds without meson, `ab.sh run <workload>` does the interleaved paired comparison, and the harness verifies result checksums so a correctness-breaking change fails instead of being timed.
 5. `perf` is **not available** in this container; `valgrind` (callgrind/cachegrind) is. Callgrind instruction counts *overstate* ILP-friendly code (the hash) and *understate* cache-miss-bound code — always confirm with wall-time experiments (e.g. the trivial-hash substitution above).
 6. Judge micro-optimizations by mechanism + focused microbenchmark; any edit can shift code layout and move individual sub-benchmarks ±3 %.
 
@@ -110,7 +109,7 @@ The benchmark score is now bounded by things outside the header's control: ~45 %
 Not "breaks" but "silently invalidated": the dead-end table is empirical, tied to clang 18 + this VM. A toolchain bump (clang 19/20 changing inlining or `mul` register allocation) or moving CI benchmarks to different hardware could make E1/E2/E4 profitable and E7 neutral. The CLAUDE.md note says "re-test before assuming they still hold" for exactly this reason. Concrete invariant to watch: `do_find`'s speculative-load safety argument (empty buckets have `m_value_idx == 0`, table non-empty ⇒ `m_values[0]` valid) is *not currently relied on* because E3 was reverted — but if someone reintroduces a speculative compare, they must re-derive it.
 
 ### 5. Were there any tools, scripts, or hooks that would have reduced my churn this session if they had existed when we started?
-Yes: (a) a checked-in **standalone micro harness + A/B pair-runner** — I rebuilt both from scratch (appendix); they'd have saved ~an hour and made results comparable across sessions; worth committing (`test/bench/` or `scripts/`). (b) **Working `perf`** in the container — callgrind's Ir counts misled twice (hash looked like 62 % of find-str by instructions; wall-time substitution showed 45 %, and cache-miss effects were invisible). A container with `perf_event_paranoid` relaxed would eliminate a whole class of guesswork. (c) A pinned "known-good baseline binary" artifact from the previous session — I had to reconstruct the baseline from git history.
+Yes: (a) a checked-in **standalone micro harness + A/B pair-runner** — I rebuilt both from scratch; they would have saved ~an hour. This has since been addressed: they are committed at `scripts/microbench/`. (b) **Working `perf`** in the container — callgrind's Ir counts misled twice (hash looked like 62 % of find-str by instructions; wall-time substitution showed 45 %, and cache-miss effects were invisible). A container with `perf_event_paranoid` relaxed would eliminate a whole class of guesswork. (c) A pinned "known-good baseline binary" artifact from the previous session — I had to reconstruct the baseline from git history.
 
 ### 6. What could the user have done differently to make this session smoother?
 State up front that a previous optimization session had already run on this exact metric and landed its wins (I discovered it from git log after setting up; knowing it immediately would have set expectations and directed me to the untried areas faster). Also, a decision in advance on whether bench-neutral-but-real-world improvements (like the short-key hash) are in scope would have removed hesitation — I guessed "yes" based on "you can change anything".
@@ -118,184 +117,11 @@ State up front that a previous optimization session had already run on this exac
 ### 7. If I could add one unrequested, industry-leading feature, what would it be?
 Runtime ISA dispatch for the hash: compile `wyhash::hash` additionally with `__attribute__((target("bmi2,avx2")))` and select via ifunc/`cpuid` once at startup. No other header-only hash map does this; it would give every user of the default toolchain flags (~everyone) the `mulx` hash for free — on this session's numbers, plausibly ~10–20 % on string-heavy workloads, bigger than anything else left on the table. Needs care (MSVC fallback, constexpr paths, binary-size), but it's a contained, testable feature.
 
-## Appendix A — micro harness (`micro.cpp`)
+## Appendix — micro harness and A/B pair runner
 
-Replicates each sub-benchmark exactly (same rng seeds and checksums as `test/bench/quick_overall_map.cpp`), prints min-of-reps milliseconds only. Build:
-`clang++ -O3 -DNDEBUG -std=c++17 -I<repo>/include -I<repo>/test micro.cpp nanobench_impl.cpp -o micro`
-where `nanobench_impl.cpp` is:
-```cpp
-#define ANKERL_NANOBENCH_IMPLEMENT
-#include <third-party/nanobench.h>
-```
+Both tools are now **committed** at `scripts/microbench/` (see its README):
 
-```cpp
-// standalone microbenchmark mirroring bench_quick_overall_udm workloads
-#include <ankerl/unordered_dense.h>
-#include <third-party/nanobench.h>
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <string>
+- `scripts/microbench/micro.cpp` — the six workloads with result-checksum verification, prints min-of-reps ms
+- `scripts/microbench/ab.sh` — `ab.sh build [<git-ref>]` compiles baseline (from git ref) + candidate (working tree) binaries in seconds without meson; `ab.sh run <workload> [pairs] [reps]` does the interleaved paired comparison and win counting; `ab.sh all` covers all six workloads
 
-using namespace std;
-
-template <typename K>
-inline auto init_key() -> K {
-    return {};
-}
-
-template <typename T>
-inline void randomize_key(ankerl::nanobench::Rng* rng, int n, T* key) {
-    auto limited = (((*rng)() >> 32U) * static_cast<uint64_t>(n)) >> 32U;
-    *key = static_cast<T>(limited);
-}
-
-template <>
-[[nodiscard]] inline auto init_key<std::string>() -> std::string {
-    std::string str;
-    str.resize(200);
-    return str;
-}
-
-inline void randomize_key(ankerl::nanobench::Rng* rng, int n, std::string* key) {
-    uint64_t k{};
-    randomize_key(rng, n, &k);
-    std::memcpy(key->data(), &k, sizeof(k));
-}
-
-template <typename Map>
-uint64_t insert_erase() {
-    ankerl::nanobench::Rng rng(123);
-    size_t verifier{};
-    Map map;
-    auto key = init_key<typename Map::key_type>();
-    for (int n = 1; n < 20000; ++n) {
-        for (int i = 0; i < 200; ++i) {
-            randomize_key(&rng, n, &key);
-            map[key];
-            randomize_key(&rng, n, &key);
-            verifier += map.erase(key);
-        }
-    }
-    return verifier + map.size(); // expect 1994641 + 9987
-}
-
-template <typename Map>
-uint64_t find_50() {
-    uint64_t const seed = 123123;
-    ankerl::nanobench::Rng numbers_insert_rng(seed);
-    size_t numbers_insert_rng_calls = 0;
-    ankerl::nanobench::Rng numbers_search_rng(seed);
-    size_t numbers_search_rng_calls = 0;
-    ankerl::nanobench::Rng insertion_rng(123);
-    size_t checksum = 0;
-    Map map;
-    auto key = init_key<typename Map::key_type>();
-    for (size_t i = 0; i < 100000; ++i) {
-        randomize_key(&numbers_insert_rng, 1000000, &key);
-        ++numbers_insert_rng_calls;
-        if (insertion_rng() & 1U) {
-            map[key] = i;
-        }
-        for (size_t search = 0; search < 100; ++search) {
-            randomize_key(&numbers_search_rng, 1000000, &key);
-            ++numbers_search_rng_calls;
-            auto it = map.find(key);
-            if (it != map.end()) {
-                checksum += it->second;
-            }
-            if (numbers_insert_rng_calls == numbers_search_rng_calls) {
-                numbers_search_rng = ankerl::nanobench::Rng(seed);
-                numbers_search_rng_calls = 0;
-            }
-        }
-    }
-    return checksum;
-}
-
-template <typename Map>
-uint64_t iterate() {
-    size_t const num_elements = 5000;
-    auto key = init_key<typename Map::key_type>();
-    ankerl::nanobench::Rng rng(555);
-    Map map;
-    size_t result = 0;
-    for (size_t n = 0; n < num_elements; ++n) {
-        randomize_key(&rng, 1000000, &key);
-        map[key] = n;
-        for (auto const& key_val : map) {
-            result += key_val.second;
-        }
-    }
-    rng = ankerl::nanobench::Rng(555);
-    do {
-        randomize_key(&rng, 1000000, &key);
-        map.erase(key);
-        for (auto const& key_val : map) {
-            result += key_val.second;
-        }
-    } while (!map.empty());
-    return result; // expect 62282755409
-}
-
-using map_u64 = ankerl::unordered_dense::map<uint64_t, size_t>;
-using map_str = ankerl::unordered_dense::map<std::string, size_t, ankerl::unordered_dense::hash<std::string>>;
-
-int main(int argc, char** argv) {
-    if (argc < 2) {
-        printf("usage: %s [ie64|iestr|find64|findstr|it64|itstr] [reps]\n", argv[0]);
-        return 1;
-    }
-    int reps = argc > 2 ? atoi(argv[2]) : 1;
-    uint64_t sink = 0;
-    double best = 1e30;
-    for (int r = 0; r < reps; ++r) {
-        auto t0 = chrono::steady_clock::now();
-        if (0 == strcmp(argv[1], "ie64")) {
-            sink += insert_erase<map_u64>();
-        } else if (0 == strcmp(argv[1], "iestr")) {
-            sink += insert_erase<map_str>();
-        } else if (0 == strcmp(argv[1], "find64")) {
-            sink += find_50<map_u64>();
-        } else if (0 == strcmp(argv[1], "findstr")) {
-            sink += find_50<map_str>();
-        } else if (0 == strcmp(argv[1], "it64")) {
-            sink += iterate<map_u64>();
-        } else if (0 == strcmp(argv[1], "itstr")) {
-            sink += iterate<map_str>();
-        }
-        auto t1 = chrono::steady_clock::now();
-        double ms = chrono::duration<double, milli>(t1 - t0).count();
-        if (ms < best) {
-            best = ms;
-        }
-    }
-    (void)sink;
-    printf("%.1f\n", best);
-    return 0;
-}
-```
-
-## Appendix B — A/B pair runner (`ab.sh`)
-
-```bash
-#!/bin/bash
-# ab.sh <binA> <binB> <workload> [pairs] [reps]
-# alternates A/B, prints paired results and win count
-A=$1; B=$2; W=$3; PAIRS=${4:-6}; REPS=${5:-3}
-awins=0; bwins=0
-asum=0; bsum=0
-for i in $(seq 1 "$PAIRS"); do
-    ra=$("$A" "$W" "$REPS")
-    rb=$("$B" "$W" "$REPS")
-    echo "pair $i: A=$ra B=$rb"
-    if (( $(echo "$ra < $rb" | bc -l) )); then awins=$((awins+1)); else bwins=$((bwins+1)); fi
-    asum=$(echo "$asum + $ra" | bc -l)
-    bsum=$(echo "$bsum + $rb" | bc -l)
-done
-echo "A wins: $awins   B wins: $bwins"
-echo "A mean: $(echo "scale=1; $asum / $PAIRS" | bc -l)   B mean: $(echo "scale=1; $bsum / $PAIRS" | bc -l)"
-```
-
-Usage: build baseline and candidate `micro` binaries (stash/checkout the header between builds), then e.g. `./ab.sh ./micro_base ./micro_cand findstr 6 3`.
+Typical loop: edit the header → `scripts/microbench/ab.sh build main` → `scripts/microbench/ab.sh run findstr` → confirm survivors on the paired full benchmark and unit tests.
