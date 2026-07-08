@@ -230,12 +230,16 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
     std::uint64_t b{};
     if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 16))
         ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
-            if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 4))
+            if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 8))
                 ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
-                    a = (r4(p) << 32U) | r4(p + ((len >> 3U) << 2U));
-                    b = (r4(p + len - 4) << 32U) | r4(p + len - 4 - ((len >> 3U) << 2U));
+                    // two (potentially overlapping) 8 byte reads cover the whole input
+                    a = r8(p);
+                    b = r8(p + len - 8);
                 }
-            else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0))
+            else if (len >= 4) {
+                a = r4(p);
+                b = r4(p + len - 4);
+            } else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0))
                 ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
                     a = r3(p, len);
                     b = 0;
