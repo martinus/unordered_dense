@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <!--unordered_dense::set-->
+  <Type Name="ankerl::unordered_dense::v4_5_0::detail::table&lt;*, void, *,*,*,*,*,0&gt;">
+    <DisplayString>{{ size={m_values.size()} }}</DisplayString>
+    <Expand>
+      <CustomListItems Optional="true">
+        <Variable Name="idx" InitialValue="0" />
+        <Loop>
+          <Break Condition="idx == m_values.size()"/>
+          <Item>m_values[idx]</Item>
+          <Exec>++idx</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <!--unordered_dense::segmented_set-->
+  <Type Name="ankerl::unordered_dense::v4_5_0::detail::table&lt;*, void, *,*,*,*,*,1&gt;">
+    <DisplayString>{{ size={m_values.m_size}, blocks={m_values.m_blocks.size()}}}</DisplayString>
+    <Expand>
+      <CustomListItems Optional="true">
+        <Variable Name="idx1" InitialValue="0" />
+        <Variable Name="idx2" InitialValue="0" />
+        <Variable Name="num_vals" InitialValue="0" />
+        <Variable Name="alt_bound" InitialValue="0" />
+        <Loop>
+          <Break Condition="idx1 == m_values.m_blocks.size()"/>
+          <Exec>alt_bound = m_values.m_size - idx1*m_values.num_elements_in_block</Exec>
+          <Exec>num_vals = m_values.num_elements_in_block &gt; alt_bound ? alt_bound : m_values.num_elements_in_block</Exec>
+
+          <Loop Condition="idx2 &lt; num_vals">
+            <Item Name="[{idx1*m_values.num_elements_in_block + idx2}] ({idx1}x{idx2})">m_values.m_blocks[0][idx2]</Item>
+            <Exec>++idx2</Exec>
+          </Loop>
+          <Exec>++idx1</Exec>
+          <Exec>idx2=0</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+
+  <!--unordered_dense::map-->
+  <Type Name="ankerl::unordered_dense::v4_5_0::detail::table&lt;*,*,*,*,*,*,*,0&gt;">
+    <DisplayString>{{ size={m_values.size()} }}</DisplayString>
+    <Expand>
+      <CustomListItems Optional="true">
+        <Variable Name="idx" InitialValue="0" />
+        <Loop>
+          <Break Condition="idx == m_values.size()"/>
+          <Item Name="[{idx}] {m_values[idx].first}">m_values[idx].second</Item>
+          <Exec>++idx</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <!--unordered_dense::segmented_map-->
+  <Type Name="ankerl::unordered_dense::v4_5_0::detail::table&lt;*,*,*,*,*,*,*,1&gt;">
+    <DisplayString>{{ size={m_values.m_size}, blocks={m_values.m_blocks.size()}}}</DisplayString>
+    <Expand>
+      <CustomListItems Optional="true">
+        <Variable Name="idx1" InitialValue="0" />
+        <Variable Name="idx2" InitialValue="0" />
+        <Variable Name="num_vals" InitialValue="0" />
+        <Variable Name="alt_bound" InitialValue="0" />
+        <Loop>
+          <Break Condition="idx1 == m_values.m_blocks.size()"/>
+          <Exec>alt_bound = m_values.m_size - idx1*m_values.num_elements_in_block</Exec>
+          <Exec>num_vals = m_values.num_elements_in_block &gt; alt_bound ? alt_bound : m_values.num_elements_in_block</Exec>
+
+          <Loop Condition="idx2 &lt; num_vals">
+            <Item Name="[{idx1*m_values.num_elements_in_block + idx2}] ({idx1}x{idx2}) {m_values.m_blocks[idx1][idx2].first}">m_values.m_blocks[0][idx2].second</Item>
+            <Exec>++idx2</Exec>
+          </Loop>
+          <Exec>++idx1</Exec>
+          <Exec>idx2=0</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <Type Name="ankerl::unordered_dense::v4_5_0::segmented_vector&lt;*&gt;">
+    <DisplayString>{{ size={m_size} }}</DisplayString>
+    <Expand>
+      <Item Name="m_blocks">m_blocks</Item>
+      <!--Item Name="num_bits">num_bits</Item-->
+      <Item Name="num_elements_in_block">num_elements_in_block</Item>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>
