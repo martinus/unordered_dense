@@ -3,6 +3,8 @@
 
     scripts/fuzz_afl.py run                     # all four targets, one core each, until Ctrl-C
     scripts/fuzz_afl.py run fuzz_api            # one target on every core, until Ctrl-C
+    scripts/fuzz_afl.py sweep                   # each target in turn, moving on when it goes quiet
+    scripts/fuzz_afl.py sweep --idle 15m        # ... giving each one longer to prove it is done
     scripts/fuzz_afl.py minimize                # fold the findings in and shrink, then git diff
 
 Stopping is safe at any point: afl-fuzz writes every input it keeps to disk as it finds it, so
@@ -124,6 +126,41 @@ class Instance:
         except subprocess.TimeoutExpired:
             self.process.kill()
 
+    def read_stats(self) -> dict[str, str]:
+        """afl-fuzz rewrites this every few seconds; missing or half written reads as nothing."""
+        try:
+            text = self.stats.read_text()
+        except OSError:
+            return {}
+        fields = {}
+        for line in text.splitlines():
+            key, _, value = line.partition(":")
+            fields[key.strip()] = value.strip()
+        return fields
+
+
+def start_instance(target: str, index: int, sanitized_instance: int, out: Path) -> Instance:
+    """Start one backgrounded afl-fuzz with its UI off and its output in a log file.
+
+    Instance 0 is the main one and does the deterministic passes; the rest explore at random and
+    share whatever any of them finds through the output directory. The sanitizers cost around 7x,
+    so exactly one instance carries them and the others cover ground -- a crash any of them finds
+    is saved to the same place, so replay it under builddir/afl/test/<target> for the report.
+    """
+    name = "main" if index == 0 else f"s{index}"
+    build = BUILD_AFL if index == sanitized_instance else BUILD_AFL_FAST
+    log = out / f"afl-{index}.log"
+    with log.open("wb") as handle:
+        process = subprocess.Popen(
+            ["afl-fuzz", "-M" if index == 0 else "-S", name,
+             "-i", f"data/fuzz/{target}", "-o", str(out),
+             "--", f"./{build}/test/{target}"],
+            env=afl_env(AFL_NO_UI="1"),
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+        )
+    return Instance(process, log, out / name / "fuzzer_stats")
+
 
 def cmd_run(targets: list[str]):
     if shutil.which("afl-fuzz") is None:
@@ -163,27 +200,9 @@ def cmd_run(targets: list[str]):
         out = FINDINGS / target
         out.mkdir(parents=True, exist_ok=True)
         for i in range(per_target):
-            # One main instance per target does the deterministic passes, the rest explore at
-            # random and share whatever any of them finds through the output directory.
-            name = "main" if i == 0 else f"s{i}"
             if target == watched and i == 0:
                 continue  # this one is started last, in the foreground
-
-            # The sanitizers cost around 7x here, so exactly one instance per target carries them
-            # and the others cover ground. A crash any of them finds is saved to the same place;
-            # replay it under builddir/afl/test/<target> to get the ASan report.
-            build = BUILD_AFL if i == sanitized_instance else BUILD_AFL_FAST
-            log = out / f"afl-{i}.log"
-            with log.open("wb") as handle:
-                process = subprocess.Popen(
-                    ["afl-fuzz", "-M" if i == 0 else "-S", name,
-                     "-i", f"data/fuzz/{target}", "-o", str(out),
-                     "--", f"./{build}/test/{target}"],
-                    env=afl_env(AFL_NO_UI="1"),
-                    stdout=handle,
-                    stderr=subprocess.STDOUT,
-                )
-            instances.append(Instance(process, log, out / name / "fuzzer_stats"))
+            instances.append(start_instance(target, i, sanitized_instance, out))
 
     wait_until_started(instances)
 
@@ -213,6 +232,94 @@ def cmd_run(targets: list[str]):
 
     print()
     print(f"stopped. Fold the findings in with: scripts/fuzz_afl.py minimize {' '.join(targets)}")
+
+
+def clock(seconds: float) -> str:
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+
+
+def queue_size(out: Path) -> int:
+    """How many inputs the instances have kept between them, counted off the disk.
+
+    Deliberately not fuzzer_stats' corpus_count. afl-fuzz rewrites that file on its own schedule,
+    so both it and last_find can sit unchanged for a minute at a time -- long enough for a target
+    that is still finding things to look like it has gone quiet. A queue entry, on the other hand,
+    is written the moment it is found.
+    """
+    return sum(1 for _ in out.glob("*/queue/id:*"))
+
+
+def total_execs(instances: list[Instance]) -> int:
+    return sum(int(i.read_stats().get("execs_done", 0) or 0) for i in instances)
+
+
+def sweep_one(target: str, idle_seconds: int) -> str:
+    """Fuzz one target on every core until it has gone idle_seconds without a new find.
+
+    No AFL UI here, unlike run: the screen only shows one instance, and something has to watch all
+    of them to know whether any is still finding anything. A status line every half minute is also
+    what is wanted from a sweep left running unattended.
+    """
+    out = FINDINGS / target
+    out.mkdir(parents=True, exist_ok=True)
+    count = cores()
+    instances = [start_instance(target, i, 1 if count > 1 else 0, out) for i in range(count)]
+    started = time.time()
+    try:
+        wait_until_started(instances)
+
+        # The clock starts now rather than from anything on disk, so a resumed output directory
+        # full of earlier findings cannot make a target look stale before it has had a chance.
+        found = queue_size(out)
+        last_find = time.time()
+        next_report = time.time() + 30
+        while True:
+            time.sleep(5)
+            alive = [i for i in instances if i.process.poll() is None]
+            if not alive:
+                return f"{target}: every instance exited, see {out}/afl-*.log"
+
+            now = queue_size(out)
+            if now > found:
+                found, last_find = now, time.time()
+            idle = time.time() - last_find
+            if idle >= idle_seconds:
+                return (f"{target}: quiet for {clock(idle)}, stopping after "
+                        f"{clock(time.time() - started)} with {found} inputs")
+
+            if time.time() >= next_report:
+                next_report = time.time() + 30
+                # Averaged over the whole run rather than differenced between two reports: this
+                # reads execs_done out of fuzzer_stats, which afl-fuzz can leave untouched for a
+                # minute at a time, and a difference of two identical samples would report a busy
+                # target as doing nothing. Zero means no instance has flushed its stats yet, which
+                # is worth saying rather than dressing up as 0.0k.
+                at, execs = time.time(), total_execs(alive)
+                rate = f"{execs / max(at - started, 1e-9) / 1000:.1f}k exec/s" if execs else "exec/s not reported yet"
+                print(f"  {target:<18} {clock(at - started)} elapsed  queue {found:<6} {rate}  "
+                      f"idle {clock(idle)}/{clock(idle_seconds)}  ({len(alive)} instances)",
+                      flush=True)
+    finally:
+        for instance in instances:
+            instance.stop()
+
+
+def cmd_sweep(targets: list[str], idle_seconds: int):
+    ensure_built(BUILD_AFL, "afl-clang-fast++", [], targets)
+    ensure_built(BUILD_AFL_FAST, "afl-clang-fast++", ["-Dfuzz_sanitizers=false"], targets)
+
+    plural = "target" if len(targets) == 1 else "targets"
+    print(f"sweeping {len(targets)} {plural} on {cores()} cores each, one at a time")
+    print(f"moving on when a target goes {clock(idle_seconds)} without a new find, Ctrl-C to stop")
+    print()
+
+    for target in targets:
+        print(f"{target}:", flush=True)
+        print(f"  -> {sweep_one(target, idle_seconds)}", flush=True)
+
+    print()
+    print(f"crashes, if any: find {FINDINGS} -path '*/crashes/id:*'")
+    print(f"fold the findings in with: scripts/fuzz_afl.py minimize {' '.join(targets)}")
 
 
 def stage_by_content(sources: list[Path], dest: Path) -> int:
@@ -312,20 +419,36 @@ def cmd_minimize(targets: list[str]):
     print("    git add data/fuzz && git commit")
 
 
+def duration(text: str) -> int:
+    """Seconds, written the way a fuzzing session is talked about: 300, 5m, 1h30m."""
+    parts = re.findall(r"(\d+)([hms]?)", text.strip().lower())
+    if not parts or "".join(n + u for n, u in parts) != text.strip().lower():
+        raise argparse.ArgumentTypeError(f"not a duration: {text} (try 300, 5m, 1h30m)")
+    seconds = sum(int(n) * {"h": 3600, "m": 60, "s": 1, "": 1}[u] for n, u in parts)
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError("duration must be more than zero")
+    return seconds
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n", 1)[0],
         epilog="Stopping is safe at any point: afl-fuzz writes every input it keeps to disk as it "
-               "finds it, so Ctrl-C loses nothing, and run resumes from where the last one stopped.",
+               "finds it, so Ctrl-C loses nothing, and run and sweep resume rather than restart.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    for name, help_text in (("run", "fuzz until Ctrl-C"),
+    for name, help_text in (("run", "fuzz every target at once, until Ctrl-C"),
+                            ("sweep", "fuzz each target in turn until it stops finding anything"),
                             ("minimize", "fold the findings into data/fuzz and shrink it")):
         command = commands.add_parser(name, help=help_text)
         # Not argparse choices: with nargs="*" that also validates the empty default, and the
         # error it produces for a typo names the whole list rather than the word that was wrong.
         command.add_argument("targets", nargs="*", default=[],
                              help=f"which targets to work on (default: all of {', '.join(ALL_TARGETS)})")
+        if name == "sweep":
+            command.add_argument("--idle", type=duration, default="5m", metavar="DURATION",
+                                 help="move on once a target has gone this long without a new "
+                                      "find (default: 5m)")
 
     args = parser.parse_args()
     os.chdir(ROOT)
@@ -335,6 +458,8 @@ def main():
     targets = args.targets or list(ALL_TARGETS)
     if args.command == "run":
         cmd_run(targets)
+    elif args.command == "sweep":
+        cmd_sweep(targets, args.idle)
     else:
         cmd_minimize(targets)
 

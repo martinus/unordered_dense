@@ -102,12 +102,24 @@ easy to get subtly wrong:
 ```sh
 scripts/fuzz_afl.py run              # every core, all four targets, until Ctrl-C
 scripts/fuzz_afl.py run fuzz_api     # every core on one target
+scripts/fuzz_afl.py sweep            # each target in turn, moving on when it goes quiet
+scripts/fuzz_afl.py sweep --idle 15m # ... giving each one longer to prove it is done
 scripts/fuzz_afl.py minimize         # fold the findings into data/fuzz, shrunk, with coverage
 ```
 
 It builds what it needs, gives the first target's main instance the terminal so there is a status
 screen to watch (the rest log to `fuzz-findings/<target>/afl-*.log`), resumes rather than restarting,
 and stops everything on Ctrl-C. Committing what it produces is left to you.
+
+`run` fuzzes every target at once, splitting the cores between them. `sweep` is for leaving alone:
+it gives one target every core, moves on once that target has gone `--idle` (5m by default) without
+a new find, and prints a status line every half minute instead of AFL's screen. "Without a new find"
+is counted off the queue directories rather than from `fuzzer_stats`, because afl-fuzz rewrites that
+file on its own schedule and both `last_find` and `corpus_count` in it can sit unchanged for a
+minute at a time -- long enough to call a target done while it is still finding things.
+
+Note that AFL binds each instance to a free core, so a `sweep` on a machine that is already busy
+fails at startup with `No more free CPU cores` rather than sharing.
 
 Minimizing a corpus takes both tools, because neither subsumes the other: `afl-cmin` covers the same
 AFL edges with far fewer files but is blind to libFuzzer's finer features, and `-merge=1` onto its
