@@ -112,11 +112,12 @@ screen to watch (the rest log to `fuzz-findings/<target>/afl-*.log`), resumes ra
 and stops everything on Ctrl-C. Committing what it produces is left to you.
 
 `run` fuzzes every target at once, splitting the cores between them. `sweep` is for leaving alone:
-it gives one target every core, moves on once that target has gone `--idle` (5m by default) without
-a new find, and prints a status line every half minute instead of AFL's screen. "Without a new find"
-is counted off the queue directories rather than from `fuzzer_stats`, because afl-fuzz rewrites that
-file on its own schedule and both `last_find` and `corpus_count` in it can sit unchanged for a
-minute at a time -- long enough to call a target done while it is still finding things.
+it gives one target every core and moves on once that target has gone `--idle` without a new find,
+which defaults to 5 minutes. The main instance keeps the terminal and its status screen, the same
+as `run` — its `last new find` counter is what the moving on is based on. The deciding is done off
+the queue directories rather than from `fuzzer_stats`, because afl-fuzz rewrites that file on its
+own schedule and both `last_find` and `corpus_count` in it can sit unchanged for a minute at a
+time -- long enough to call a target done while it is still finding things.
 
 Note that AFL binds each instance to a free core, so a `sweep` on a machine that is already busy
 fails at startup with `No more free CPU cores` rather than sharing.

@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -249,58 +250,68 @@ def queue_size(out: Path) -> int:
     return sum(1 for _ in out.glob("*/queue/id:*"))
 
 
-def total_execs(instances: list[Instance]) -> int:
-    return sum(int(i.read_stats().get("execs_done", 0) or 0) for i in instances)
-
 
 def sweep_one(target: str, idle_seconds: int) -> str:
     """Fuzz one target on every core until it has gone idle_seconds without a new find.
 
-    No AFL UI here, unlike run: the screen only shows one instance, and something has to watch all
-    of them to know whether any is still finding anything. A status line every half minute is also
-    what is wanted from a sweep left running unattended.
+    The main instance keeps the terminal and its status screen, the same as run: its "last new
+    find" counter is the thing to watch here, since it is what decides when this moves on. The
+    deciding is done by a thread instead, because the screen belongs to afl-fuzz -- it watches
+    every instance rather than only the one on display, and stops them all when they have all gone
+    quiet, which ends the foreground wait below.
     """
     out = FINDINGS / target
     out.mkdir(parents=True, exist_ok=True)
     count = cores()
-    instances = [start_instance(target, i, 1 if count > 1 else 0, out) for i in range(count)]
+    sanitized_instance = 1 if count > 1 else 0
+    others = [start_instance(target, i, sanitized_instance, out) for i in range(1, count)]
     started = time.time()
+    outcome: dict[str, str] = {}
+    foreground = None
     try:
-        wait_until_started(instances)
+        wait_until_started(others)
 
-        # The clock starts now rather than from anything on disk, so a resumed output directory
-        # full of earlier findings cannot make a target look stale before it has had a chance.
-        found = queue_size(out)
-        last_find = time.time()
-        next_report = time.time() + 30
-        while True:
-            time.sleep(5)
-            alive = [i for i in instances if i.process.poll() is None]
-            if not alive:
-                return f"{target}: every instance exited, see {out}/afl-*.log"
+        build = BUILD_AFL if sanitized_instance == 0 else BUILD_AFL_FAST
+        foreground = subprocess.Popen(
+            ["afl-fuzz", "-M", "main", "-i", f"data/fuzz/{target}", "-o", str(out),
+             "--", f"./{build}/test/{target}"],
+            env=afl_env(),
+        )
+        done = threading.Event()
 
-            now = queue_size(out)
-            if now > found:
-                found, last_find = now, time.time()
-            idle = time.time() - last_find
-            if idle >= idle_seconds:
-                return (f"{target}: quiet for {clock(idle)}, stopping after "
-                        f"{clock(time.time() - started)} with {found} inputs")
+        def watch():
+            # The clock starts now rather than from anything on disk, so a resumed output
+            # directory full of earlier findings cannot make a target look stale before it has
+            # had a chance.
+            found = queue_size(out)
+            last_find = time.time()
+            while not done.wait(5):
+                now = queue_size(out)
+                if now > found:
+                    found, last_find = now, time.time()
+                idle = time.time() - last_find
+                if idle >= idle_seconds:
+                    outcome["text"] = (f"{target}: quiet for {clock(idle)}, stopping after "
+                                       f"{clock(time.time() - started)} with {found} inputs")
+                    foreground.terminate()  # ends the wait below, and the finally stops the rest
+                    return
 
-            if time.time() >= next_report:
-                next_report = time.time() + 30
-                # Averaged over the whole run rather than differenced between two reports: this
-                # reads execs_done out of fuzzer_stats, which afl-fuzz can leave untouched for a
-                # minute at a time, and a difference of two identical samples would report a busy
-                # target as doing nothing. Zero means no instance has flushed its stats yet, which
-                # is worth saying rather than dressing up as 0.0k.
-                at, execs = time.time(), total_execs(alive)
-                rate = f"{execs / max(at - started, 1e-9) / 1000:.1f}k exec/s" if execs else "exec/s not reported yet"
-                print(f"  {target:<18} {clock(at - started)} elapsed  queue {found:<6} {rate}  "
-                      f"idle {clock(idle)}/{clock(idle_seconds)}  ({len(alive)} instances)",
-                      flush=True)
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        foreground.wait()
+        done.set()
+        watcher.join(timeout=15)
+        return outcome.get(
+            "text", f"{target}: the main instance exited on its own after "
+                    f"{clock(time.time() - started)}, with {queue_size(out)} inputs")
     finally:
-        for instance in instances:
+        if foreground is not None and foreground.poll() is None:
+            foreground.terminate()
+            try:
+                foreground.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                foreground.kill()
+        for instance in others:
             instance.stop()
 
 
