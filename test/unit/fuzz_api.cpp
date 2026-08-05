@@ -284,7 +284,15 @@ void do_fuzz_api(fuzz::provider p) {
 }
 
 FUZZ_TEST_CASE(fuzz_api, p) {
-    do_fuzz_api<ankerl::unordered_dense::map<counter::obj, counter::obj>>(p.copy());
-    do_fuzz_api<ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>>(p.copy());
-    do_fuzz_api<deque_map<counter::obj, counter::obj>>(p.copy());
+    switch (p.bounded<size_t>(3)) {
+    case 0:
+        do_fuzz_api<ankerl::unordered_dense::map<counter::obj, counter::obj>>(p.copy());
+        break;
+    case 1:
+        do_fuzz_api<ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>>(p.copy());
+        break;
+    default:
+        do_fuzz_api<deque_map<counter::obj, counter::obj>>(p.copy());
+        break;
+    }
 }
