@@ -40,14 +40,12 @@ void do_string(fuzz::provider p) {
 
 } // namespace
 
-TEST_CASE("fuzz_string" * doctest::test_suite("fuzz")) {
-    fuzz::run([](fuzz::provider p) {
-        do_string<ankerl::unordered_dense::map<std::string, std::string>>(p.copy());
-        do_string<ankerl::unordered_dense::segmented_map<std::string, std::string>>(p.copy());
-        do_string<ankerl::unordered_dense::map<std::string,
-                                               std::string,
-                                               ankerl::unordered_dense::hash<std::string>,
-                                               std::equal_to<std::string>,
-                                               std::deque<std::pair<std::string, std::string>>>>(p.copy());
-    });
+FUZZ_TEST_CASE(fuzz_string, p) {
+    do_string<ankerl::unordered_dense::map<std::string, std::string>>(p.copy());
+    do_string<ankerl::unordered_dense::segmented_map<std::string, std::string>>(p.copy());
+    do_string<ankerl::unordered_dense::map<std::string,
+                                           std::string,
+                                           ankerl::unordered_dense::hash<std::string>,
+                                           std::equal_to<std::string>,
+                                           std::deque<std::pair<std::string, std::string>>>>(p.copy());
 }

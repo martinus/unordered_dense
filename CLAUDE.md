@@ -65,6 +65,29 @@ meson test -C builddir/clang_release unit --verbose
 ./builddir/clang_release/test/udm-test
 ```
 
+## Fuzzing
+
+The `fuzz` test suite replays the committed corpora in `data/fuzz/<target>` on every test run, which
+only ever re-finds what has already been found. The libFuzzer targets are what go looking. They are
+clang only and not built by default:
+
+```sh
+CXX=clang++ meson setup builddir/fuzz
+ninja -C builddir/fuzz test/fuzz_api          # or fuzz_insert_erase, fuzz_replace_map, fuzz_string
+./builddir/fuzz/test/fuzz_api -max_total_time=60 scratch-dir data/fuzz/fuzz_api
+```
+
+libFuzzer writes new inputs into the *first* corpus directory it is given, so keep `data/fuzz/...`
+second and it stays read-only. Passing it alone — `./test/fuzz_api data/fuzz/fuzz_api` — quietly
+fills the committed corpus with hundreds of generated files; to just replay it, run the `fuzz` test
+suite (`./builddir/dev/test/udm-test -ts=fuzz`), which is what CI does. `scripts/fuzz_run.sh <target>` drives one across all cores, and
+`scripts/fuzz_merge.sh <target>` merges a scratch corpus back down to the inputs that add coverage.
+One body serves both modes: `FUZZ_TEST_CASE` in `test/fuzz/run.h` expands to the doctest replay case
+normally, and to libFuzzer's entry point under `-DFUZZ`.
+
+`.github/workflows/fuzz.yml` runs every target nightly, uploads any crash, and uploads the
+coverage-increasing inputs it found; committing those stays a human decision.
+
 ## CI
 
 `.github/workflows/main.yml` builds every leg the same way, so any of them reproduces locally:

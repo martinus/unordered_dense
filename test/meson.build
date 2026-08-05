@@ -196,3 +196,42 @@ test(
     test_exe,
     verbose: true)
 
+# libFuzzer targets. The unit suite replays data/fuzz/<name> on every build, which by construction
+# only finds what has already been found; these are the binaries that go looking. They are clang
+# only (-fsanitize=fuzzer), and not built by default because nothing in a normal build or test run
+# needs them -- ask for one by name:
+#
+#     ninja -C builddir test/fuzz_api
+#     ./builddir/test/fuzz_api -max_total_time=60 corpus-scratch data/fuzz/fuzz_api
+#
+# or use scripts/fuzz_run.sh, which drives them across all cores.
+if compiler.get_id() == 'clang'
+    fuzz_sanitizers = '-fsanitize=fuzzer,address,undefined'
+    foreach fuzz_target : ['fuzz_api', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
+        executable(
+            fuzz_target,
+            ['unit/' + fuzz_target + '.cpp', 'app/counter.cpp'],
+            include_directories: incdir,
+            # FUZZ swaps the doctest test case for libFuzzer's entry point, see fuzz/run.h.
+            # FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION is what turns REQUIRE into an abort the
+            # fuzzer can see, see app/doctest.h.
+            # DOCTEST_CONFIG_DISABLE keeps doctest's per-TU registration out of a binary that has
+            # no doctest main to link against. The only assertion these targets use is REQUIRE,
+            # which app/doctest.h turns into an abort() the fuzzer can see.
+            cpp_args: cpp_args + [
+                '-DFUZZ',
+                '-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION',
+                '-DDOCTEST_CONFIG_DISABLE',
+                fuzz_sanitizers,
+                '-g',
+            ],
+            link_args: link_args + [fuzz_sanitizers],
+            dependencies: [
+                dependency('threads'),
+                dependency('doctest'),
+                dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
+            ],
+            build_by_default: false)
+    endforeach
+endif
+
