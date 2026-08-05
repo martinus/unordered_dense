@@ -43,7 +43,10 @@ def main():
             res = fut.result()
             results.append(res)
             rc |= res["returncode"]
-            print(f"  {res['duration']:0.2f}s {"⛔" if res['returncode'] else "✅"} {res['name']}")
+            # Not a nested same-quote f-string: that is Python 3.12 syntax, and this file has to
+            # parse on whatever the contributor has.
+            mark = "⛔" if res["returncode"] else "✅"
+            print(f"  {res['duration']:0.2f}s {mark} {res['name']}")
 
 
     # Print failures first (with captured output), then a brief timing summary.
