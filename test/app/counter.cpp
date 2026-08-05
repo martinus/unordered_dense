@@ -2,55 +2,62 @@
 
 #include <app/print.h> // for print
 
-#include <cstdlib>       // for abort
-#include <ostream>       // for ostream
-#include <stdexcept>     // for runtime_error
-#include <unordered_set> // for unordered_set
-#include <utility>       // for swap, pair
+#include <cstdlib>   // for abort
+#include <ostream>   // for ostream
+#include <stdexcept> // for runtime_error
+#include <utility>   // for swap, pair
 
-static inline constexpr bool counter_enable_unordered_set = true;
+static inline constexpr bool counter_enable_liveness_checks = true;
 
-auto singleton_constructed_objects() -> std::unordered_set<counter::obj const*>& {
-    static std::unordered_set<counter::obj const*> static_data{};
+// Liveness used to be a global std::unordered_set of the addresses of live objects, consulted by every operation.
+// That works, but it hashes and probes on pointer values, so which buckets get touched depends on where the objects
+// happen to land. The fuzz targets run thousands of inputs inside one process, where the heap state differs from one
+// input to the next, so the same input took different paths through that set and produced different coverage each
+// time. AFL++ reports it as "instability detected during calibration" and wastes effort re-calibrating; libFuzzer
+// does not report it but gets the same noisy signal. Measured on fuzz_api: hundreds of instability warnings per
+// minute, against zero for fuzz_insert_erase, the one target that does not use counter::obj.
+//
+// So each object carries its own liveness instead, and only the number alive is global -- a counter that is never
+// keyed by an address and never probed.
+auto singleton_num_alive() -> size_t& {
+    static size_t static_data{};
     return static_data;
+}
+
+auto counter::obj::is_alive() const -> bool {
+    return this == m_alive;
 }
 
 counter::obj::obj()
     : m_data(0)
-    , m_counts(nullptr) {
-    if constexpr (counter_enable_unordered_set) {
-        if (!singleton_constructed_objects().emplace(this).second) {
-            test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
-            std::abort();
-        }
+    , m_counts(nullptr)
+    , m_alive(this) {
+    if constexpr (counter_enable_liveness_checks) {
+        ++singleton_num_alive();
     }
     ++static_default_ctor;
 }
 
 counter::obj::obj(const size_t& data, counter& counts)
     : m_data(data)
-    , m_counts(&counts) {
-    if constexpr (counter_enable_unordered_set) {
-        if (!singleton_constructed_objects().emplace(this).second) {
-            test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
-            std::abort();
-        }
+    , m_counts(&counts)
+    , m_alive(this) {
+    if constexpr (counter_enable_liveness_checks) {
+        ++singleton_num_alive();
     }
     ++m_counts->m_data.m_ctor;
 }
 
 counter::obj::obj(const counter::obj& o)
     : m_data(o.m_data)
-    , m_counts(o.m_counts) {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(&o)) {
+    , m_counts(o.m_counts)
+    , m_alive(this) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!o.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
-        if (!singleton_constructed_objects().emplace(this).second) {
-            test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
-            std::abort();
-        }
+        ++singleton_num_alive();
     }
     if (nullptr != m_counts) {
         ++m_counts->m_data.m_copy_ctor;
@@ -59,16 +66,14 @@ counter::obj::obj(const counter::obj& o)
 
 counter::obj::obj(counter::obj&& o) noexcept
     : m_data(o.m_data)
-    , m_counts(o.m_counts) {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(&o)) {
+    , m_counts(o.m_counts)
+    , m_alive(this) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!o.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
-        if (!singleton_constructed_objects().emplace(this).second) {
-            test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
-            std::abort();
-        }
+        ++singleton_num_alive();
     }
     if (nullptr != m_counts) {
         ++m_counts->m_data.m_move_ctor;
@@ -76,11 +81,14 @@ counter::obj::obj(counter::obj&& o) noexcept
 }
 
 counter::obj::~obj() {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().erase(this)) {
+    if constexpr (counter_enable_liveness_checks) {
+        // Catches destroying an object twice, and destroying something that was never constructed.
+        if (!is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
+        m_alive = nullptr;
+        --singleton_num_alive();
     }
     if (nullptr != m_counts) {
         ++m_counts->m_data.m_dtor;
@@ -90,8 +98,8 @@ counter::obj::~obj() {
 }
 
 auto counter::obj::operator==(obj const& o) const -> bool {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(this) || 1 != singleton_constructed_objects().count(&o)) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!is_alive() || !o.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
@@ -103,8 +111,8 @@ auto counter::obj::operator==(obj const& o) const -> bool {
 }
 
 auto counter::obj::operator<(obj const& o) const -> bool {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(this) || 1 != singleton_constructed_objects().count(&o)) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!is_alive() || !o.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
@@ -117,8 +125,8 @@ auto counter::obj::operator<(obj const& o) const -> bool {
 
 // NOLINTNEXTLINE(bugprone-unhandled-self-assignment,cert-oop54-cpp)
 auto counter::obj::operator=(obj const& o) -> counter::obj& {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(this) || 1 != singleton_constructed_objects().count(&o)) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!is_alive() || !o.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
@@ -132,8 +140,8 @@ auto counter::obj::operator=(obj const& o) -> counter::obj& {
 }
 
 auto counter::obj::operator=(obj&& o) noexcept -> counter::obj& {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(this) || 1 != singleton_constructed_objects().count(&o)) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!is_alive() || !o.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
@@ -167,8 +175,8 @@ auto counter::obj::get() -> size_t& {
 }
 
 void counter::obj::swap(obj& other) {
-    if constexpr (counter_enable_unordered_set) {
-        if (1 != singleton_constructed_objects().count(this) || 1 != singleton_constructed_objects().count(&other)) {
+    if constexpr (counter_enable_liveness_checks) {
+        if (!is_alive() || !other.is_alive()) {
             test::print("ERROR at {}({}): {}\n", __FILE__, __LINE__, __func__);
             std::abort();
         }
@@ -194,10 +202,10 @@ counter::counter() {
 }
 
 void counter::check_all_done() const {
-    if constexpr (counter_enable_unordered_set) {
+    if constexpr (counter_enable_liveness_checks) {
         // check that all are destructed
-        if (!singleton_constructed_objects().empty()) {
-            test::print("ERROR at ~counter(): got {} objects still alive!", singleton_constructed_objects().size());
+        if (0 != singleton_num_alive()) {
+            test::print("ERROR at ~counter(): got {} objects still alive!", singleton_num_alive());
             std::abort();
         }
 

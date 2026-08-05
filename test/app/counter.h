@@ -67,8 +67,17 @@ public:
         [[nodiscard]] auto get_for_hash() const -> size_t;
 
     private:
+        // True between this object's constructor and its destructor. Every operation checks it, so using a destroyed
+        // object, or destroying one twice, aborts instead of quietly reading whatever is in that memory.
+        [[nodiscard]] auto is_alive() const -> bool;
+
         size_t m_data;
         counter* m_counts;
+
+        // Liveness lives in the object rather than in a global set of live addresses, because that set made the
+        // fuzz targets nondeterministic: its probe paths depend on where objects happen to land, so the same input
+        // produced different coverage from one run to the next. See counter.cpp.
+        obj const* m_alive;
     };
 
     counter();
