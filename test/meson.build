@@ -206,17 +206,26 @@ test(
 #
 # or use scripts/fuzz_run.sh, which drives them across all cores.
 if compiler.get_id() == 'clang'
-    # fuzzer-no-link when compiling and fuzzer when linking, which is how libFuzzer documents it:
-    # the driver is a link-time thing. Passing plain -fsanitize=fuzzer to the compile step too is
-    # what AFL++ reads as "add libAFLDriver.a to this command", and it adds it to compile commands
-    # as well, where clang sees an archive among its inputs and -Werror turns the resulting
-    # deprecation warning into a failed build.
+    # -fsanitize=fuzzer is a link-time thing: it asks for the driver, the main() that feeds
+    # LLVMFuzzerTestOneInput. The instrumentation it needs is a separate, compile-time request,
+    # which is what fuzzer-no-link is for. Passing plain -fsanitize=fuzzer to the compile step as
+    # well is what AFL++ reads as "add libAFLDriver.a to this command", and it duly adds an archive
+    # to a -c command line, where -Werror turns clang's complaint about it into a failed build.
+    #
+    # Under afl-clang-fast++ the compile-time half has to go entirely. It instruments on its own,
+    # and its runtime implements only the trace-pc-guard half of SanitizerCoverage; asking for
+    # libFuzzer's instrumentation on top leaves references to __sanitizer_cov_8bit_counters_init,
+    # __sanitizer_cov_pcs_init and __sancov_lowest_stack that nothing on the link line defines.
+    # Whether it happens depends on the clang version -- AFL's own pass rewrites the coverage it
+    # can, and what it leaves behind differs -- so this links on some machines and not others.
+    # The link-time -fsanitize=fuzzer stays: AFL++ substitutes libAFLDriver.a for it.
+    is_afl = compiler.get_define('__AFL_COMPILER') != ''
+
+    fuzz_compile_sanitizers = is_afl ? [] : ['-fsanitize=fuzzer-no-link']
+    fuzz_link_sanitizers = ['-fsanitize=fuzzer']
     if get_option('fuzz_sanitizers')
-        fuzz_compile_sanitizers = '-fsanitize=fuzzer-no-link,address,undefined'
-        fuzz_link_sanitizers = '-fsanitize=fuzzer,address,undefined'
-    else
-        fuzz_compile_sanitizers = '-fsanitize=fuzzer-no-link'
-        fuzz_link_sanitizers = '-fsanitize=fuzzer'
+        fuzz_compile_sanitizers += '-fsanitize=address,undefined'
+        fuzz_link_sanitizers += '-fsanitize=address,undefined'
     endif
     foreach fuzz_target : ['fuzz_api', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
         executable(
@@ -233,7 +242,6 @@ if compiler.get_id() == 'clang'
                 '-DFUZZ',
                 '-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION',
                 '-DDOCTEST_CONFIG_DISABLE',
-                fuzz_compile_sanitizers,
                 '-g',
                 # Optimized whatever the buildtype says, because these targets exist to be run
                 # millions of times. meson's default buildtype is debug, so a plain `meson setup`
@@ -242,8 +250,8 @@ if compiler.get_id() == 'clang'
                 # Target arguments come after the buildtype's, so this wins. Debugging a crash
                 # does not need this build -- the unit suite replays the corpus at -O0.
                 '-O2',
-            ],
-            link_args: link_args + [fuzz_link_sanitizers],
+            ] + fuzz_compile_sanitizers,
+            link_args: link_args + fuzz_link_sanitizers,
             dependencies: [
                 dependency('threads'),
                 dependency('doctest'),
