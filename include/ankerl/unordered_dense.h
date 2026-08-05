@@ -1949,8 +1949,18 @@ public:
 
     void swap(table& other) noexcept(std::is_nothrow_swappable_v<value_container_type> &&
                                      std::is_nothrow_swappable_v<Hash> && std::is_nothrow_swappable_v<KeyEqual>) {
+        // There is no free swap() for table, so "swap(other, *this)" used to resolve to the generic std::swap: three
+        // move assignments, each of which hands the moved-from table a freshly allocated set of buckets. That is three
+        // allocations for an operation that needs none, and three ways to throw out of a noexcept function.
         using std::swap;
-        swap(other, *this);
+        swap(m_values, other.m_values);
+        swap(m_buckets, other.m_buckets);
+        swap(m_max_bucket_capacity, other.m_max_bucket_capacity);
+        swap(m_bucket_mask, other.m_bucket_mask);
+        swap(m_max_load_factor, other.m_max_load_factor);
+        swap(m_hash, other.m_hash);
+        swap(m_equal, other.m_equal);
+        swap(m_shifts, other.m_shifts);
     }
 
     // lookup /////////////////////////////////////////////////////////////////
@@ -2161,6 +2171,12 @@ public:
 
     friend auto operator!=(table const& a, table const& b) -> bool {
         return !(a == b);
+    }
+
+    // Standard containers provide this, and generic code written as "using std::swap; swap(a, b);" needs it to find
+    // the member. Without it that call lands on the generic std::swap and moves three times.
+    friend void swap(table& a, table& b) noexcept(noexcept(a.swap(b))) {
+        a.swap(b);
     }
 };
 
