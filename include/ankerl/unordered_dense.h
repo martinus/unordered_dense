@@ -1233,19 +1233,19 @@ private:
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values.back());
 
         erase_and_shift_down(bucket_idx);
+        auto&& erased_value = std::move(m_values[value_idx_to_remove]);
 
-        // erase() hands the value to a callback that cannot throw, and pays nothing for the guard below. extract()
-        // moves the value out into the caller's storage, and that move is the one that can throw.
-        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() &&
-                      !noexcept(handle_erased_value(std::move(m_values[value_idx_to_remove])))) {
+        // erase() hands the value to a callback that cannot throw, so the branch below is not even instantiated for it.
+        // extract() moves the value out into the caller's storage, and that move is the one that can throw.
+        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() && !noexcept(handle_erased_value(std::move(erased_value)))) {
             try {
-                handle_erased_value(std::move(m_values[value_idx_to_remove]));
+                handle_erased_value(std::move(erased_value));
             } catch (...) {
                 finish_erase(value_idx_to_remove);
                 throw;
             }
         } else {
-            handle_erased_value(std::move(m_values[value_idx_to_remove]));
+            handle_erased_value(std::move(erased_value));
         }
 
         finish_erase(value_idx_to_remove);
@@ -1900,6 +1900,8 @@ public:
             bucket_idx = next(bucket_idx);
         }
 
+        // The noexcept here and on the other two erase callbacks is what keeps erase() out of do_erase()'s exception
+        // guard: a call expression is noexcept only if the callee says so, an empty body is not enough.
         do_erase(bucket_idx, [](value_type const& /*unused*/) noexcept -> void {
         });
         return begin() + static_cast<difference_type>(value_idx_to_remove);

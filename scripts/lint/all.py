@@ -47,6 +47,12 @@ def main():
             # parse on whatever the contributor has.
             mark = "⛔" if res["returncode"] else "✅"
             print(f"  {res['duration']:0.2f}s {mark} {res['name']}")
+            # A linter that passes still has something to say: lint-clang-format.py reports that it
+            # skipped, because the pinned clang-format is not installed. Folding that into a bare
+            # tick would make a linter that checked nothing look exactly like one that passed.
+            if not res["returncode"] and res["stdout"].strip():
+                for line in res["stdout"].strip().split("\n"):
+                    print(f"      {line}")
 
 
     # Print failures first (with captured output), then a brief timing summary.
