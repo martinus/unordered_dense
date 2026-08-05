@@ -1203,6 +1203,27 @@ private:
         clear_and_fill_buckets_from_values();
     }
 
+    // Closes the hole that the erased value left in m_values, by moving the last value into it and repointing that
+    // value's bucket. Runs after the erased value has been handed over, and has to run even when handing it over threw:
+    // by that point the bucket is already gone, so leaving the value in place would mean size() counts an element that
+    // nothing can find.
+    void finish_erase(value_idx_type value_idx_to_remove) {
+        if (value_idx_to_remove != m_values.size() - 1) {
+            // no luck, we'll have to replace the value with the last one and update the index accordingly
+            auto& val = m_values[value_idx_to_remove];
+            val = std::move(m_values.back());
+
+            // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
+            auto bucket_idx = bucket_idx_from_hash(mixed_hash(get_key(val)));
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
+            while (values_idx_back != at(m_buckets, bucket_idx).m_value_idx) {
+                bucket_idx = next(bucket_idx);
+            }
+            at(m_buckets, bucket_idx).m_value_idx = value_idx_to_remove;
+        }
+        m_values.pop_back();
+    }
+
     template <typename Op>
     void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).m_value_idx;
@@ -1212,23 +1233,22 @@ private:
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values.back());
 
         erase_and_shift_down(bucket_idx);
-        handle_erased_value(std::move(m_values[value_idx_to_remove]));
 
-        // update m_values
-        if (value_idx_to_remove != m_values.size() - 1) {
-            // no luck, we'll have to replace the value with the last one and update the index accordingly
-            auto& val = m_values[value_idx_to_remove];
-            val = std::move(m_values.back());
-
-            // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
-            bucket_idx = bucket_idx_from_hash(mixed_hash(get_key(val)));
-            auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
-            while (values_idx_back != at(m_buckets, bucket_idx).m_value_idx) {
-                bucket_idx = next(bucket_idx);
+        // erase() hands the value to a callback that cannot throw, and pays nothing for the guard below. extract()
+        // moves the value out into the caller's storage, and that move is the one that can throw.
+        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() &&
+                      !noexcept(handle_erased_value(std::move(m_values[value_idx_to_remove])))) {
+            try {
+                handle_erased_value(std::move(m_values[value_idx_to_remove]));
+            } catch (...) {
+                finish_erase(value_idx_to_remove);
+                throw;
             }
-            at(m_buckets, bucket_idx).m_value_idx = value_idx_to_remove;
+        } else {
+            handle_erased_value(std::move(m_values[value_idx_to_remove]));
         }
-        m_values.pop_back();
+
+        finish_erase(value_idx_to_remove);
     }
 
     template <typename K, typename Op>
@@ -1880,7 +1900,7 @@ public:
             bucket_idx = next(bucket_idx);
         }
 
-        do_erase(bucket_idx, [](value_type const& /*unused*/) -> void {
+        do_erase(bucket_idx, [](value_type const& /*unused*/) noexcept -> void {
         });
         return begin() + static_cast<difference_type>(value_idx_to_remove);
     }
@@ -1936,7 +1956,7 @@ public:
     }
 
     auto erase(Key const& key) -> std::size_t {
-        return do_erase_key(key, [](value_type const& /*unused*/) -> void {
+        return do_erase_key(key, [](value_type const& /*unused*/) noexcept -> void {
         });
     }
 
@@ -1950,7 +1970,7 @@ public:
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     auto erase(K&& key) -> std::size_t {
-        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) -> void {
+        return do_erase_key(std::forward<K>(key), [](value_type const& /*unused*/) noexcept -> void {
         });
     }
 
