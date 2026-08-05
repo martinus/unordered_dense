@@ -60,6 +60,7 @@ test_sources = [
     'unit/move_to_moved.cpp',
     'unit/multiple_apis.cpp',
     'unit/namespace.cpp',
+    'unit/noexcept_contract.cpp',
     'unit/not_copyable.cpp',
     'unit/not_moveable.cpp',
     'unit/pmr_move_with_allocators.cpp',

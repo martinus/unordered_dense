@@ -1446,9 +1446,12 @@ public:
         return *this;
     }
 
-    auto operator=(table&& other) noexcept(noexcept(std::is_nothrow_move_assignable_v<value_container_type> &&
-                                                    std::is_nothrow_move_assignable_v<Hash> &&
-                                                    std::is_nothrow_move_assignable_v<KeyEqual>)) -> table& {
+    // The condition used to be wrapped in another noexcept(), which asks whether evaluating a bool expression can
+    // throw. It cannot, so the specification was noexcept(true) whatever the traits said, and a type with a throwing
+    // move assignment terminated instead of propagating.
+    auto operator=(table&& other) noexcept(std::is_nothrow_move_assignable_v<value_container_type> &&
+                                           std::is_nothrow_move_assignable_v<Hash> &&
+                                           std::is_nothrow_move_assignable_v<KeyEqual>) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = std::move(other.m_values);
@@ -1944,8 +1947,8 @@ public:
         return tmp;
     }
 
-    void swap(table& other) noexcept(noexcept(std::is_nothrow_swappable_v<value_container_type> &&
-                                              std::is_nothrow_swappable_v<Hash> && std::is_nothrow_swappable_v<KeyEqual>)) {
+    void swap(table& other) noexcept(std::is_nothrow_swappable_v<value_container_type> &&
+                                     std::is_nothrow_swappable_v<Hash> && std::is_nothrow_swappable_v<KeyEqual>) {
         using std::swap;
         swap(other, *this);
     }
