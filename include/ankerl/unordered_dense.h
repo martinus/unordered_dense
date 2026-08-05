@@ -2078,7 +2078,11 @@ public:
     }
 
     void max_load_factor(float ml) {
-        m_max_load_factor = ml;
+        // A load factor above 1 is meaningful for a container that chains, and std::unordered_map takes one. Open
+        // addressing cannot use it: m_max_bucket_capacity would exceed bucket_count(), is_full() would never fire, the
+        // table would fill completely, and place_and_shift_up() would then probe forever for an empty bucket that does
+        // not exist. Exactly 1 is fine, because is_full() is checked after the value is appended.
+        m_max_load_factor = (std::min)(ml, 1.0F);
         if (bucket_count() != max_bucket_count()) {
             m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(bucket_count()) * max_load_factor());
         }
