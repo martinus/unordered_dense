@@ -247,7 +247,15 @@ def queue_size(out: Path) -> int:
     that is still finding things to look like it has gone quiet. A queue entry, on the other hand,
     is written the moment it is found.
     """
-    return sum(1 for _ in out.glob("*/queue/id:*"))
+    total = 0
+    try:
+        for _ in out.glob("*/queue/id:*"):
+            total += 1
+    except OSError:
+        # afl-fuzz is writing into these directories while this walks them. A short count only
+        # ever delays the decision, because only an increase counts as a find.
+        pass
+    return total
 
 
 
@@ -278,36 +286,56 @@ def sweep_one(target: str, idle_seconds: int) -> str:
             env=afl_env(),
         )
         done = threading.Event()
+        progress = (out / "sweep.log").open("w", buffering=1)
 
         def watch():
-            # The clock starts now rather than from anything on disk, so a resumed output
-            # directory full of earlier findings cannot make a target look stale before it has
-            # had a chance.
-            found = queue_size(out)
-            last_find = time.time()
-            # Five seconds between looks, except for an --idle small enough that five seconds of
-            # rounding would be most of it. Looking is a scan of the queue directories, which is
-            # not free once a long session has filled them.
-            poll = min(5.0, max(1.0, idle_seconds / 10))
-            while not done.wait(poll):
-                now = queue_size(out)
-                if now > found:
-                    found, last_find = now, time.time()
-                idle = time.time() - last_find
-                if idle >= idle_seconds:
-                    outcome["text"] = (f"{target}: quiet for {clock(idle)}, stopping after "
-                                       f"{clock(time.time() - started)} with {found} inputs")
-                    foreground.terminate()  # ends the wait below, and the finally stops the rest
-                    return
+            # Anything raised in here used to end the thread and nothing else, which left the
+            # sweep fuzzing one target for as long as it was allowed to: no decision was being
+            # made any more and there was nothing on screen to say so.
+            try:
+                # The clock starts now rather than from anything on disk, so a resumed output
+                # directory full of earlier findings cannot make a target look stale before it
+                # has had a chance.
+                found = queue_size(out)
+                last_find = time.time()
+                # Five seconds between looks, except for an --idle small enough that five seconds
+                # of rounding would be most of it. Looking is a scan of the queue directories,
+                # which is not free once a long session has filled them.
+                poll = min(5.0, max(1.0, idle_seconds / 10))
+                while not done.wait(poll):
+                    now = queue_size(out)
+                    if now > found:
+                        found, last_find = now, time.time()
+                    idle = time.time() - last_find
+                    # afl-fuzz owns the terminal, and its screen counts finds for the one instance
+                    # it is showing while this counts them across all of them -- so on a machine
+                    # with many cores the screen can sit at a long "last new find" while a
+                    # secondary keeps resetting this clock. Without somewhere to look, that is
+                    # indistinguishable from a sweep that has stopped deciding.
+                    progress.write(f"{time.strftime('%H:%M:%S')}  queue {found}  "
+                                   f"idle {clock(idle)}/{clock(idle_seconds)}\n")
+                    if idle >= idle_seconds:
+                        outcome["text"] = (f"{target}: quiet for {clock(idle)}, stopping after "
+                                           f"{clock(time.time() - started)} with {found} inputs")
+                        foreground.terminate()  # ends the wait below; the finally stops the rest
+                        return
+            except Exception as error:  # noqa: BLE001 -- whatever it is, do not fuzz forever
+                outcome["text"] = f"{target}: stopped watching it after {error!r}"
+                progress.write(f"watching failed: {error!r}\n")
+                foreground.terminate()
 
         watcher = threading.Thread(target=watch, daemon=True)
         watcher.start()
         foreground.wait()
         done.set()
         watcher.join(timeout=15)
-        return outcome.get(
-            "text", f"{target}: the main instance exited on its own after "
-                    f"{clock(time.time() - started)}, with {queue_size(out)} inputs")
+        progress.close()
+        # Not outcome.get(..., default): that default is an f-string, so it would scan the queue
+        # directories on every target whether or not the watcher had already decided anything.
+        if "text" in outcome:
+            return outcome["text"]
+        return (f"{target}: the main instance exited on its own after "
+                f"{clock(time.time() - started)}, with {queue_size(out)} inputs")
     finally:
         if foreground is not None and foreground.poll() is None:
             foreground.terminate()
@@ -329,7 +357,10 @@ def cmd_sweep(targets: list[str], idle_seconds: int):
     print()
 
     for target in targets:
-        print(f"{target}:", flush=True)
+        # Said before the screen takes over, because once it does this is the only way to see what
+        # the sweep makes of the target -- afl-fuzz's own counters are for one instance.
+        print(f"{target}: watch the decision with tail -f {FINDINGS / target / 'sweep.log'}",
+              flush=True)
         print(f"  -> {sweep_one(target, idle_seconds)}", flush=True)
 
     print()
