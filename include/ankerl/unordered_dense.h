@@ -1587,7 +1587,14 @@ public:
     // nonstandard API: *this is emptied.
     // Also see "A Standard flat_map" https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p0429r9.pdf
     auto extract() && -> value_container_type {
-        return std::move(m_values);
+        auto values = std::move(m_values);
+
+        // Moving the values out does not empty the buckets, and they index into the container that just left. Emptying
+        // them here is what makes "*this is emptied" true: without it the table looks empty -- size() is 0, find()
+        // returns end() -- and then the next insert probes a bucket pointing at an element that is no longer there.
+        m_values.clear();
+        clear_buckets();
+        return values;
     }
 
     // nonstandard API:

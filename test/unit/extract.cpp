@@ -27,6 +27,32 @@ TEST_CASE_MAP("extract", counter::obj, counter::obj) {
     }
 }
 
+// extract() documents that *this is emptied, and size() and find() agree with that, so a map that has been extracted
+// from has to actually be usable again. It wasn't: the buckets still indexed into the container that had just left.
+TEST_CASE_MAP("extract_leaves_a_usable_map", int, int) {
+    auto map = map_t();
+    for (int i = 0; i < 100; ++i) {
+        map[i] = i;
+    }
+
+    auto container = std::move(map).extract();
+    REQUIRE(container.size() == 100U);
+    REQUIRE(map.empty());
+    REQUIRE(map.size() == 0U);
+    REQUIRE(map.find(0) == map.end());
+
+    // refill it with keys that hash to the buckets the extracted elements used
+    for (int i = 0; i < 200; ++i) {
+        map[i] = i + 1;
+    }
+    REQUIRE(map.size() == 200U);
+    for (int i = 0; i < 200; ++i) {
+        auto it = map.find(i);
+        REQUIRE(it != map.end());
+        REQUIRE(it->second == i + 1);
+    }
+}
+
 TEST_CASE_MAP("extract_element", counter::obj, counter::obj) {
     auto counts = counter();
     INFO(counts);
