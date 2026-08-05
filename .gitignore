@@ -12,3 +12,5 @@ compile_commands.json
 *.pcm
 a.out
 *.o
+# local fuzzing output, see scripts/fuzz_afl.sh
+fuzz-findings/

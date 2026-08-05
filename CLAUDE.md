@@ -96,6 +96,19 @@ ninja -C builddir/afl test/fuzz_api
 afl-fuzz -i data/fuzz/fuzz_api -o out -- ./builddir/afl/test/fuzz_api   # -i is never written to
 ```
 
+`scripts/fuzz_afl.sh` does all of that for you, which is worth using because the steps above are
+easy to get subtly wrong:
+
+```sh
+scripts/fuzz_afl.sh run              # every core, all four targets, until Ctrl-C
+scripts/fuzz_afl.sh run fuzz_api     # every core on one target
+scripts/fuzz_afl.sh minimize         # fold the findings into data/fuzz, shrunk, with coverage
+```
+
+It builds what it needs, gives the first target's main instance the terminal so there is a status
+screen to watch (the rest log to `fuzz-findings/<target>/afl-*.log`), resumes rather than restarting,
+and stops everything on Ctrl-C. Committing what it produces is left to you.
+
 Minimizing a corpus takes both tools, because neither subsumes the other: `afl-cmin` covers the same
 AFL edges with far fewer files but is blind to libFuzzer's finer features, and `-merge=1` onto its
 output adds back exactly the files carrying a feature it dropped. Note the `@@` — `afl-cmin` pipes
