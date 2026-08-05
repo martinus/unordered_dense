@@ -75,9 +75,13 @@ meson test -C builddir --print-errorlogs
 ```
 
 `--force-fallback-for=fmt` is what makes every runner build against the vendored fmt instead of
-whatever the machine happens to have installed. Linters (`scripts/lint/lint-*.py`) run in the
-`lint` job, against a pinned `clang-tidy-18` — `lint-clang-format.py` is deliberately *not* run
-there yet, the tree does not satisfy it.
+whatever the machine happens to have installed.
+
+Linters (`scripts/lint/lint-*.py`, all of them via `scripts/lint/all.py`) run in the `lint` job.
+Two of them pin their tool, because both tools gain checks or change their output between
+releases: `clang-tidy-18` and `clang-format` 21 (`pip install clang-format==21.1.8`).
+`lint-clang-format.py` *skips* rather than fails when it cannot find version 21, so a local run
+with a different clang-format says so instead of reporting the tree as broken.
 
 ## Notes for sandboxed / offline environments
 

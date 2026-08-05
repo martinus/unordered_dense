@@ -1947,8 +1947,8 @@ public:
         return tmp;
     }
 
-    void swap(table& other) noexcept(std::is_nothrow_swappable_v<value_container_type> &&
-                                     std::is_nothrow_swappable_v<Hash> && std::is_nothrow_swappable_v<KeyEqual>) {
+    void swap(table& other) noexcept(std::is_nothrow_swappable_v<value_container_type> && std::is_nothrow_swappable_v<Hash> &&
+                                     std::is_nothrow_swappable_v<KeyEqual>) {
         // There is no free swap() for table, so "swap(other, *this)" used to resolve to the generic std::swap: three
         // move assignments, each of which hands the moved-from table a freshly allocated set of buckets. That is three
         // allocations for an operation that needs none, and three ways to throw out of a noexcept function.

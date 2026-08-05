@@ -43,11 +43,13 @@ jobs:
       # reasons that have nothing to do with a change. 18 is what ubuntu-latest happened to
       # give us before this was pinned.
       - run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
-      - run: ./scripts/lint/lint-version.py
-      # Checks that the header uses std:: qualified names, without which the C++ module build
-      # breaks. It lives in scripts/lint but no job ran it.
-      - run: ./scripts/lint/lint-stdint-types-modules.py
-      - run: ./scripts/lint/lint-clang-tidy.py
+      # clang-format is pinned for the same reason and installed from pip, because there is no
+      # clang-format 21 in the runner image's apt. The script skips a version that is not the
+      # pinned one, so an unpinned install here would quietly check nothing.
+      - run: pip install clang-format==21.1.8
+      # all.py runs every scripts/lint/lint-*.py there is. Naming them one by one here is how
+      # lint-stdint-types-modules.py came to exist without any job running it.
+      - run: ./scripts/lint/all.py
         env:
           UNORDERED_DENSE_CLANG_TIDY: clang-tidy-18
 
