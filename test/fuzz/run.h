@@ -32,7 +32,7 @@ void evaluate_corpus(std::function<void(provider)> const& op);
  */
 template <typename Op>
 void run(Op const& op) {
-#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION) && !defined(FUZZ)
+#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     size_t len = 0;
     uint8_t const* buf = nullptr;
     while (true) {

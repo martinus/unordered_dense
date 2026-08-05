@@ -51,9 +51,8 @@ def find_clang_format():
         "clang-format",
     ]
     for candidate in candidates:
-        if candidate and (path := shutil.which(candidate)):
-            if major_version_of(path) == PINNED_MAJOR:
-                return path
+        if candidate and (path := shutil.which(candidate)) and major_version_of(path) == PINNED_MAJOR:
+            return path
     return None
 
 
