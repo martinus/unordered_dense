@@ -14,6 +14,29 @@ TEST_CASE_MAP("load_factor", int, int) {
     }
 }
 
+// Nothing checked that a max_load_factor the caller sets is still the one the table grows by: making
+// allocate_buckets_from_shift() ignore max_load_factor() and hardcode the 0.8 default passed the whole suite. The
+// setting is honoured, it just had no test, so it could have been lost in a refactoring without anything noticing.
+TEST_CASE_MAP("max_load_factor_is_honoured_through_growth", int, int) {
+    for (float requested : {0.25F, 0.5F, 0.9F}) {
+        auto m = map_t();
+        m.max_load_factor(requested);
+        REQUIRE(m.max_load_factor() == requested);
+
+        // Enough inserts to grow the table many times over, so this covers the sizing of every new bucket array and
+        // not just the first one.
+        for (int i = 0; i < 20000; ++i) {
+            m.emplace(i, i);
+            REQUIRE(m.load_factor() <= requested);
+        }
+
+        // The same thing said in terms of what was allocated: a table holding n elements at load factor f needs at
+        // least n / f buckets.
+        REQUIRE(static_cast<float>(m.bucket_count()) >= static_cast<float>(m.size()) / requested);
+        REQUIRE(m.max_load_factor() == requested);
+    }
+}
+
 // A load factor above 1 used to be accepted and then hang: the table filled completely and the next insert probed
 // forever for an empty bucket. It is clamped now, so this test finishes rather than spinning.
 TEST_CASE_MAP("max_load_factor_above_one_is_clamped", int, int) {
