@@ -175,7 +175,13 @@ test_exe = executable(
         dependency('threads'), # add dependency for threads (-lpthread, see https://mesonbuild.com/howtox.html),
 
         # see what's in the [provide] sections for the dependency names
-        dependency('doctest'),
+        # As a system include, so that -Werror applies to this project's code and not to
+        # doctest's. Its DOCTEST_ANONYMOUS uses __COUNTER__, which C2y standardises and clang 22
+        # therefore warns about under -Wc2y-extensions, and the diagnostic is reported against
+        # whichever test file used INFO() or REQUIRE(). Warnings in code this project actually
+        # wrote are unaffected, including expressions handed to those macros: clang suppresses
+        # what a system macro expands to, not what is passed into it.
+        dependency('doctest', include_type: 'system'),
         dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
 
         # disable these two if you don't want them
@@ -254,7 +260,7 @@ if compiler.get_id() == 'clang'
             link_args: link_args + fuzz_link_sanitizers,
             dependencies: [
                 dependency('threads'),
-                dependency('doctest'),
+                dependency('doctest', include_type: 'system'), # see above
                 dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
             ],
             build_by_default: false)
