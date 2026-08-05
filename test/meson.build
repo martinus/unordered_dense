@@ -206,7 +206,13 @@ test(
 #
 # or use scripts/fuzz_run.sh, which drives them across all cores.
 if compiler.get_id() == 'clang'
-    fuzz_sanitizers = '-fsanitize=fuzzer,address,undefined'
+    # fuzzer-no-link when compiling and fuzzer when linking, which is how libFuzzer documents it:
+    # the driver is a link-time thing. Passing plain -fsanitize=fuzzer to the compile step too is
+    # what AFL++ reads as "add libAFLDriver.a to this command", and it adds it to compile commands
+    # as well, where clang sees an archive among its inputs and -Werror turns the resulting
+    # deprecation warning into a failed build.
+    fuzz_compile_sanitizers = '-fsanitize=fuzzer-no-link,address,undefined'
+    fuzz_link_sanitizers = '-fsanitize=fuzzer,address,undefined'
     foreach fuzz_target : ['fuzz_api', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
         executable(
             fuzz_target,
@@ -222,10 +228,10 @@ if compiler.get_id() == 'clang'
                 '-DFUZZ',
                 '-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION',
                 '-DDOCTEST_CONFIG_DISABLE',
-                fuzz_sanitizers,
+                fuzz_compile_sanitizers,
                 '-g',
             ],
-            link_args: link_args + [fuzz_sanitizers],
+            link_args: link_args + [fuzz_link_sanitizers],
             dependencies: [
                 dependency('threads'),
                 dependency('doctest'),
