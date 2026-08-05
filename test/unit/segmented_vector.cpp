@@ -7,7 +7,10 @@
 #include <cstddef>
 #include <third-party/nanobench.h>
 
+#include <algorithm>
 #include <deque>
+#include <iterator>
+#include <type_traits>
 
 TEST_CASE("segmented_vector") {
     counter counts;
@@ -317,4 +320,43 @@ TEST_CASE("bench_segmented_vector" * doctest::test_suite("bench") * doctest::ski
     ankerl::nanobench::Bench().minEpochTime(100ms).batch(sv.size()).run("shuffle std::vector", [&] {
         rng.shuffle(v);
     });
+}
+// The iterator indexes, so every random access operation is a single step -- but it used to
+// advertise forward_iterator_tag, which sent std::distance walking element by element and made
+// every algorithm that requires random access ill-formed over it.
+TEST_CASE("segmented_vector_iterator_is_random_access") {
+    using int_vec_t = ankerl::unordered_dense::segmented_vector<int>;
+
+    static_assert(
+        std::is_same_v<std::iterator_traits<int_vec_t::iterator>::iterator_category, std::random_access_iterator_tag>);
+    static_assert(
+        std::is_same_v<std::iterator_traits<int_vec_t::const_iterator>::iterator_category, std::random_access_iterator_tag>);
+    static_assert(
+        std::is_same_v<std::iterator_traits<ankerl::unordered_dense::segmented_map<int, int>::iterator>::iterator_category,
+                       std::random_access_iterator_tag>);
+#if defined(__cpp_lib_concepts)
+    static_assert(std::random_access_iterator<int_vec_t::iterator>);
+    static_assert(std::random_access_iterator<int_vec_t::const_iterator>);
+#endif
+
+    auto vec = int_vec_t();
+    for (int i = 0; i < 1000; ++i) {
+        vec.emplace_back(999 - i);
+    }
+
+    // this is the operator-() answer, not a walk
+    REQUIRE(std::distance(vec.begin(), vec.end()) == 1000);
+    REQUIRE(std::distance(vec.begin() + 400, vec.end() - 100) == 500);
+
+    // it[n] and n + it
+    REQUIRE(vec.begin()[7] == 992);
+    REQUIRE(*(3 + vec.begin()) == 996);
+    REQUIRE(*(vec.begin() + 3) == 996);
+
+    // and an algorithm that only compiles for a random access iterator
+    std::sort(vec.begin(), vec.end());
+    for (int i = 0; i < 1000; ++i) {
+        REQUIRE(vec[static_cast<size_t>(i)] == i);
+    }
+    REQUIRE(std::binary_search(vec.begin(), vec.end(), 727));
 }

@@ -605,7 +605,11 @@ private:
         using value_type = segmented_vector::value_type;
         using reference = std::conditional_t<IsConst, value_type const&, value_type&>;
         using pointer = std::conditional_t<IsConst, segmented_vector::const_pointer, segmented_vector::pointer>;
-        using iterator_category = std::forward_iterator_tag;
+        // Everything a random access iterator needs is right here -- the position is an index, so jumping and
+        // subtracting are single operations. Saying "forward" instead meant std::distance walked the whole container
+        // one element at a time to compute what operator-() answers directly, and every algorithm that requires
+        // random access, std::sort over values() among them, was ill-formed over an iterator that can do the job.
+        using iterator_category = std::random_access_iterator_tag;
 
         iter_t() noexcept = default;
 
@@ -652,8 +656,16 @@ private:
             return {m_data, static_cast<std::size_t>(static_cast<difference_type>(m_idx) + diff)};
         }
 
+        // n + it, which a random access iterator has to support just as it + n does
+        [[nodiscard]] friend constexpr auto operator+(difference_type diff, iter_t const& it) noexcept -> iter_t {
+            return it + diff;
+        }
+
+        // The cast is the one operator+() already does. Nothing instantiated these two before, because no algorithm
+        // could reach them through a forward iterator, so the implicit signed-to-unsigned conversion sat here
+        // unnoticed until clang's -Wsign-conversion saw std::sort use it.
         constexpr auto operator+=(difference_type diff) noexcept -> iter_t& {
-            m_idx += diff;
+            m_idx = static_cast<std::size_t>(static_cast<difference_type>(m_idx) + diff);
             return *this;
         }
 
@@ -662,7 +674,7 @@ private:
         }
 
         constexpr auto operator-=(difference_type diff) noexcept -> iter_t& {
-            m_idx -= diff;
+            m_idx = static_cast<std::size_t>(static_cast<difference_type>(m_idx) - diff);
             return *this;
         }
 
@@ -673,6 +685,10 @@ private:
 
         constexpr auto operator*() const noexcept -> reference {
             return m_data[m_idx >> num_bits][m_idx & mask];
+        }
+
+        [[nodiscard]] constexpr auto operator[](difference_type diff) const noexcept -> reference {
+            return *(*this + diff);
         }
 
         constexpr auto operator->() const noexcept -> pointer {
