@@ -211,8 +211,13 @@ if compiler.get_id() == 'clang'
     # what AFL++ reads as "add libAFLDriver.a to this command", and it adds it to compile commands
     # as well, where clang sees an archive among its inputs and -Werror turns the resulting
     # deprecation warning into a failed build.
-    fuzz_compile_sanitizers = '-fsanitize=fuzzer-no-link,address,undefined'
-    fuzz_link_sanitizers = '-fsanitize=fuzzer,address,undefined'
+    if get_option('fuzz_sanitizers')
+        fuzz_compile_sanitizers = '-fsanitize=fuzzer-no-link,address,undefined'
+        fuzz_link_sanitizers = '-fsanitize=fuzzer,address,undefined'
+    else
+        fuzz_compile_sanitizers = '-fsanitize=fuzzer-no-link'
+        fuzz_link_sanitizers = '-fsanitize=fuzzer'
+    endif
     foreach fuzz_target : ['fuzz_api', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
         executable(
             fuzz_target,
@@ -230,6 +235,13 @@ if compiler.get_id() == 'clang'
                 '-DDOCTEST_CONFIG_DISABLE',
                 fuzz_compile_sanitizers,
                 '-g',
+                # Optimized whatever the buildtype says, because these targets exist to be run
+                # millions of times. meson's default buildtype is debug, so a plain `meson setup`
+                # gave -O0, where every one-line accessor in the header and in std::deque is a
+                # real call: measured on fuzz_api, 28 executions per second against 136 at -O2.
+                # Target arguments come after the buildtype's, so this wins. Debugging a crash
+                # does not need this build -- the unit suite replays the corpus at -O0.
+                '-O2',
             ],
             link_args: link_args + [fuzz_link_sanitizers],
             dependencies: [

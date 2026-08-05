@@ -1,0 +1,15 @@
+# The fuzz targets are built with address and undefined behaviour sanitizers, which is what makes a
+# memory error a crash the fuzzer can save rather than something that quietly corrupts the run. They
+# also cost most of the throughput: measured on fuzz_api, 128 executions per second with them and
+# 970 without, because this harness allocates and frees whole tables constantly and ASan's poisoning
+# and quarantine dominate.
+#
+# So it is worth being able to turn them off for the instances whose job is to cover ground quickly,
+# while another instance keeps them on to explain whatever those instances find.
+# scripts/fuzz_afl.sh does exactly that.
+option(
+    'fuzz_sanitizers',
+    type: 'boolean',
+    value: true,
+    description: 'build the fuzz targets with address and undefined behaviour sanitizers',
+)
