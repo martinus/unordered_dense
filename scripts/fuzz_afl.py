@@ -285,7 +285,11 @@ def sweep_one(target: str, idle_seconds: int) -> str:
             # had a chance.
             found = queue_size(out)
             last_find = time.time()
-            while not done.wait(5):
+            # Five seconds between looks, except for an --idle small enough that five seconds of
+            # rounding would be most of it. Looking is a scan of the queue directories, which is
+            # not free once a long session has filled them.
+            poll = min(5.0, max(1.0, idle_seconds / 10))
+            while not done.wait(poll):
                 now = queue_size(out)
                 if now > found:
                     found, last_find = now, time.time()
@@ -431,11 +435,19 @@ def cmd_minimize(targets: list[str]):
 
 
 def duration(text: str) -> int:
-    """Seconds, written the way a fuzzing session is talked about: 300, 5m, 1h30m."""
-    parts = re.findall(r"(\d+)([hms]?)", text.strip().lower())
-    if not parts or "".join(n + u for n, u in parts) != text.strip().lower():
-        raise argparse.ArgumentTypeError(f"not a duration: {text} (try 300, 5m, 1h30m)")
-    seconds = sum(int(n) * {"h": 3600, "m": 60, "s": 1, "": 1}[u] for n, u in parts)
+    """Seconds, written the way a fuzzing session is talked about: 5m, 90s, 1h30m.
+
+    Every number needs its unit. A bare --idle 1 reads as one minute to whoever writes it and as
+    one second to a parser that has to pick a default, and picking wrong is quiet: the sweep moves
+    on almost at once, which looks like a fuzzer that will not fuzz rather than like a typo.
+    """
+    wanted = text.strip().lower()
+    parts = re.findall(r"(\d+)([hms])", wanted)
+    if not parts or "".join(n + u for n, u in parts) != wanted:
+        raise argparse.ArgumentTypeError(
+            f"not a duration: {text!r}. Every number needs a unit, so 1m for a minute and 1s for "
+            f"a second; 90s and 1h30m work too")
+    seconds = sum(int(n) * {"h": 3600, "m": 60, "s": 1}[u] for n, u in parts)
     if seconds <= 0:
         raise argparse.ArgumentTypeError("duration must be more than zero")
     return seconds
