@@ -85,8 +85,30 @@ suite (`./builddir/dev/test/udm-test -ts=fuzz`), which is what CI does. `scripts
 One body serves both modes: `FUZZ_TEST_CASE` in `test/fuzz/run.h` expands to the doctest replay case
 normally, and to libFuzzer's entry point under `-DFUZZ`.
 
+The same body also builds under AFL++, because `afl-clang-fast++` accepts `-fsanitize=fuzzer` and
+links its own driver over `LLVMFuzzerTestOneInput`. Ask for the target by name — a bare `ninja`
+fails, since AFL defines `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION` itself and that is what
+`fuzz/run.h` reads as "honggfuzz is driving":
+
+```sh
+CXX=afl-clang-fast++ meson setup builddir/afl
+ninja -C builddir/afl test/fuzz_api
+afl-fuzz -i data/fuzz/fuzz_api -o out -- ./builddir/afl/test/fuzz_api   # -i is never written to
+```
+
+Minimizing a corpus takes both tools, because neither subsumes the other: `afl-cmin` covers the same
+AFL edges with far fewer files but is blind to libFuzzer's finer features, and `-merge=1` onto its
+output adds back exactly the files carrying a feature it dropped. Note the `@@` — `afl-cmin` pipes
+stdin by default, which this driver reports no coverage for.
+
+```sh
+afl-cmin -i data/fuzz/fuzz_api -o corpus-cmin -- ./builddir/afl/test/fuzz_api @@
+cp -r corpus-cmin corpus-min && ./builddir/fuzz/test/fuzz_api -merge=1 corpus-min data/fuzz/fuzz_api
+```
+
 `.github/workflows/fuzz.yml` runs every target nightly, uploads any crash, and uploads the
-coverage-increasing inputs it found; committing those stays a human decision.
+coverage-increasing inputs it found. Its `minimize` dispatch input runs the two-step shrink above
+instead of fuzzing. Committing what either produces stays a human decision.
 
 ## CI
 
