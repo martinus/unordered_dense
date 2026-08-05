@@ -1,34 +1,280 @@
 name: Build, Test, Lint
 
-on: [push, pull_request]
+# Build pushes to main and any pull request. Previously this was "[push, pull_request]", which
+# ran all 28 jobs twice for a branch that has a PR open: once for the push and once for the
+# pull_request event.
+#
+# The weekly run is for a header-only library whose code stops changing while compilers keep
+# moving: it catches a new gcc, clang or standard library breaking us before someone has to
+# report it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
 
+# A new push to a PR makes the previous run obsolete, so cancel it. Runs on main are never
+# cancelled, they are the ones the badge points at.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing here writes to the repository.
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  # Downloaded wrap tarballs land here, so the cache key only has to track the wrap files.
+  MESON_PACKAGE_CACHE: subprojects/packagecache
 
 # see https://github.com/mesonbuild/meson/blob/master/docs/markdown/Continuous-Integration.md
-# Note: I've moved MinGW & Windows to the top because they are the slowest
 jobs:
+
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          packages: clang-tidy
-          version: 1.0
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
+          python-version: '3.x'
+      # Pinned, because .clang-tidy enables whole families and families gain checks in every
+      # release, so an unpinned clang-tidy turns a runner image bump into a red build for
+      # reasons that have nothing to do with a change. 18 is what ubuntu-latest happened to
+      # give us before this was pinned.
+      - run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
       - run: ./scripts/lint/lint-version.py
+      # Checks that the header uses std:: qualified names, without which the C++ module build
+      # breaks. It lives in scripts/lint but no job ran it.
+      - run: ./scripts/lint/lint-stdint-types-modules.py
       - run: ./scripts/lint/lint-clang-tidy.py
+        env:
+          UNORDERED_DENSE_CLANG_TIDY: clang-tidy-18
 
+  # Linux, macOS, Windows, the sanitizers and the hardened build used to be four jobs repeating
+  # the same ten lines of checkout, python, cache and artifact setup. They differ only in the
+  # runner, the compiler and the meson arguments, which is what the matrix carries. The displayed
+  # job names are kept as they were so required checks and run history stay readable; "id" is the
+  # same thing without the characters a cache key may not contain.
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One failing configuration should not hide the state of the others.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (gcc, C++17, 64bit)
+            id: linux-gcc-cpp17-64
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev
+          - name: Linux (gcc, C++23, 64bit)
+            id: linux-gcc-cpp23-64
+            os: ubuntu-latest
+            cxx: g++
+            cpp_std: '23'
+            apt: libboost-dev
+          - name: Linux (clang, C++17, 64bit)
+            id: linux-clang-cpp17-64
+            os: ubuntu-latest
+            cxx: clang++
+            apt: libboost-dev
+          - name: Linux (clang, C++23, 64bit)
+            id: linux-clang-cpp23-64
+            os: ubuntu-latest
+            cxx: clang++
+            cpp_std: '23'
+            apt: libboost-dev
+
+          # A hash map that packs a bucket into 8 bytes and indexes with size_t is exactly the
+          # design a different word size breaks, so 32 bit is real coverage, not a formality.
+          # The runner images carry a 64 bit only toolchain, hence g++-multilib. -m32 used to be
+          # passed through CXXFLAGS, which meson folds into cpp_args anyway; saying it directly
+          # is what test/meson.build actually reads to pick the bundled fmt.
+          - name: Linux (gcc, C++17, 32bit)
+            id: linux-gcc-cpp17-32
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev gcc-multilib g++-multilib
+            setup_args: -Dcpp_args=-m32 -Dcpp_link_args=-m32
+          - name: Linux (gcc, C++23, 32bit)
+            id: linux-gcc-cpp23-32
+            os: ubuntu-latest
+            cxx: g++
+            cpp_std: '23'
+            apt: libboost-dev gcc-multilib g++-multilib
+            setup_args: -Dcpp_args=-m32 -Dcpp_link_args=-m32
+          - name: Linux (clang, C++17, 32bit)
+            id: linux-clang-cpp17-32
+            os: ubuntu-latest
+            cxx: clang++
+            apt: libboost-dev gcc-multilib g++-multilib
+            setup_args: -Dcpp_args=-m32 -Dcpp_link_args=-m32
+          - name: Linux (clang, C++23, 32bit)
+            id: linux-clang-cpp23-32
+            os: ubuntu-latest
+            cxx: clang++
+            cpp_std: '23'
+            apt: libboost-dev gcc-multilib g++-multilib
+            setup_args: -Dcpp_args=-m32 -Dcpp_link_args=-m32
+
+          - name: macOS (C++17, arm64bit)
+            id: macos-cpp17
+            os: macos-latest
+            cxx: c++
+          - name: macOS (C++23, arm64bit)
+            id: macos-cpp23
+            os: macos-latest
+            cxx: c++
+            cpp_std: '23'
+
+          # ccache does not support MSVC, sccache does. Without this the windows jobs had no
+          # compiler cache at all and were by far the slowest.
+          - name: Windows (C++17, 64bit)
+            id: windows-cpp17-64
+            os: windows-latest
+            cxx: cl
+            msvc_arch: x64
+            ccache_variant: sccache
+            extra_artifacts: builddir/test/udm-test.exe
+          - name: Windows (C++latest, 64bit)
+            id: windows-cpplatest-64
+            os: windows-latest
+            cxx: cl
+            cpp_std: latest
+            msvc_arch: x64
+            ccache_variant: sccache
+            extra_artifacts: builddir/test/udm-test.exe
+          - name: Windows (C++17, 32bit)
+            id: windows-cpp17-32
+            os: windows-latest
+            cxx: cl
+            msvc_arch: x86
+            ccache_variant: sccache
+            extra_artifacts: builddir/test/udm-test.exe
+          - name: Windows (C++latest, 32bit)
+            id: windows-cpplatest-32
+            os: windows-latest
+            cxx: cl
+            cpp_std: latest
+            msvc_arch: x86
+            ccache_variant: sccache
+            extra_artifacts: builddir/test/udm-test.exe
+
+          # ARM64 is not an exotic target for this header: it has an ARM64EC carve-out, it
+          # assumes a little endian layout, and its hash reads 8 bytes at a time from possibly
+          # unaligned addresses. The old job was disabled over queue times and asked for a runner
+          # label that does not exist ("ubuntu-24.04-arm64"); the arm runners are free for public
+          # repositories now and the label is "ubuntu-24.04-arm".
+          - name: Linux ARM64 (gcc, C++17)
+            id: linux-arm64-gcc-cpp17
+            os: ubuntu-24.04-arm
+            cxx: g++
+            apt: libboost-dev
+          # The arm images carry a smaller toolset than the x64 ones, so clang is asked for
+          # explicitly rather than assumed.
+          - name: Linux ARM64 (clang, C++23)
+            id: linux-arm64-clang-cpp23
+            os: ubuntu-24.04-arm
+            cxx: clang++
+            cpp_std: '23'
+            apt: libboost-dev clang
+
+          # address and undefined are one leg per compiler rather than two: they compose, and the
+          # pair costs one build instead of two. halt_on_error is the point of running UBSan at
+          # all -- without it the runtime prints the error and the test still exits 0, so a green
+          # undefined-sanitizer leg meant very little.
+          - name: Linux Sanitizer (gcc, address+undefined)
+            id: linux-sanitize-gcc-asan-ubsan
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev
+            setup_args: --buildtype=debugoptimized -Db_sanitize=address,undefined
+            asan_options: detect_stack_use_after_return=1:strict_string_checks=1
+            ubsan_options: print_stacktrace=1:halt_on_error=1
+          - name: Linux Sanitizer (clang, address+undefined)
+            id: linux-sanitize-clang-asan-ubsan
+            os: ubuntu-latest
+            cxx: clang++
+            apt: libboost-dev
+            setup_args: --buildtype=debugoptimized -Db_sanitize=address,undefined -Db_lundef=false
+            asan_options: detect_stack_use_after_return=1:strict_string_checks=1
+            ubsan_options: print_stacktrace=1:halt_on_error=1
+          - name: Linux Sanitizer (gcc, thread)
+            id: linux-sanitize-gcc-tsan
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev
+            setup_args: --buildtype=debugoptimized -Db_sanitize=thread
+          - name: Linux Sanitizer (clang, thread)
+            id: linux-sanitize-clang-tsan
+            os: ubuntu-latest
+            cxx: clang++
+            apt: libboost-dev
+            setup_args: --buildtype=debugoptimized -Db_sanitize=thread -Db_lundef=false
+
+          # Builds with the hardening flags a distribution would use. _GLIBCXX_ASSERTIONS is the
+          # interesting one for a container: it turns on libstdc++'s precondition checks, so a
+          # bad iterator or index handed to a std type from inside the map is caught here.
+          - name: Linux Hardened (gcc, C++17, 64bit)
+            id: linux-hardened
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev
+            setup_args: >-
+              --buildtype=debugoptimized
+              -Dcpp_args="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -D_GLIBCXX_ASSERTIONS
+              -fstack-protector-strong -fstack-clash-protection -fcf-protection=full
+              -Wformat -Wformat-security -Werror=format-security"
+              -Dcpp_link_args="-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          variant: ${{ matrix.ccache_variant || 'ccache' }}
+          key: ${{ matrix.id }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+          cache: pip
+          cache-dependency-path: .github/workflows/requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.MESON_PACKAGE_CACHE }}
+          key: wraps-${{ hashFiles('subprojects/*.wrap') }}
+      - run: pip install -r .github/workflows/requirements.txt
+      - name: Install apt packages
+        if: matrix.apt
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.msvc_arch
+        with:
+          arch: ${{ matrix.msvc_arch }}
+      # Every runner has to build against the same fmt. The macOS images ship a Homebrew fmt and
+      # the linux jobs used to apt-install libfmt-dev, while everything else fell back to the
+      # wrap, so three legs were testing against three different libraries. fmt is only test
+      # scaffolding, so pinning it to the wrap costs no coverage.
+      - run: meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++${{ matrix.cpp_std || '17' }} ${{ matrix.setup_args }}
+        env:
+          CXX: ${{ matrix.ccache_variant || 'ccache' }} ${{ matrix.cxx }}
+      - run: meson test -C builddir --print-errorlogs
+        env:
+          ASAN_OPTIONS: ${{ matrix.asan_options }}
+          UBSAN_OPTIONS: ${{ matrix.ubsan_options }}
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: ${{ matrix.id }}-testlog
+          path: |
+            builddir/meson-logs/testlog.txt
+            ${{ matrix.extra_artifacts }}
+          retention-days: 7
+
+  # MinGW stays its own job: every step has to run inside the msys2 shell, and it brings its own
+  # compiler, python and meson rather than the ones the build job installs.
   mingw:
+    name: MinGW (C++${{ matrix.cxx_standard }}, ${{ matrix.arch_name }})
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -37,19 +283,18 @@ jobs:
         cxx_standard: [17, 23]
         include:
           - sys: mingw64
-            arch_name: "64bit"
+            arch_name: 64bit
             msystem: MINGW64
             prefix: mingw-w64-x86_64
           - sys: mingw32
-            arch_name: "32bit"
+            arch_name: 32bit
             msystem: MINGW32
             prefix: mingw-w64-i686
-    name: MinGW (C++${{ matrix.cxx_standard }}, ${{ matrix.arch_name }})
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
@@ -63,301 +308,91 @@ jobs:
             ${{ matrix.prefix }}-ninja
             ${{ matrix.prefix }}-python
             ${{ matrix.prefix }}-python-pip
-      - name: Print compiler version
-        run: g++ --version
-      - run: meson setup builddir -Dcpp_std=c++${{ matrix.cxx_standard }}
-      - run: meson test -C builddir -v
-      - uses: actions/upload-artifact@v4
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.MESON_PACKAGE_CACHE }}
+          key: wraps-${{ hashFiles('subprojects/*.wrap') }}
+      - run: g++ --version
+      - run: meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++${{ matrix.cxx_standard }}
+      - run: meson test -C builddir --print-errorlogs
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: MinGW_${{ matrix.arch_name }}_cpp${{ matrix.cxx_standard }}_Testlog
           path: builddir/meson-logs/testlog.txt
           retention-days: 7
 
-  windows:
-    runs-on: windows-latest
+  # The C++20 module build, which is CMake only. The two jobs this replaces uploaded meson logs
+  # from a build directory a CMake build never creates, and neither ever ran what it built:
+  # a module that compiles but does not link or start is not much of a check.
+  modules:
+    name: Modules (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, x86]
-        cxx_standard: [17, latest]
         include:
-          - arch: x64
-            arch_name: "64bit"
-          - arch: x86
-            arch_name: "32bit"
-    name: Windows (C++${{ matrix.cxx_standard }}, ${{ matrix.arch_name }})
+          - name: clang, C++20, 64bit
+            os: ubuntu-latest
+            cxx: clang++
+          - name: MSVC, C++20, 64bit
+            os: windows-latest
+            cxx: cl
+            msvc_arch: x64
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: pip install ninja meson
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.arch }}
-      - name: Print compiler version
-        run: cl
-      - run: meson setup builddir -Dcpp_std=c++${{ matrix.cxx_standard }}
-      - run: meson test -C builddir -v
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: Windows_${{ matrix.arch_name }}_cpp${{ matrix.cxx_standard }}_Testlog
-          path: |
-            builddir/meson-logs/testlog.txt
-            builddir/test/udm-test.exe
-          retention-days: 7
-
-  windows-module:
-    runs-on: windows-latest
-    name: Windows Modules (C++20, 64bit)
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: pip install ninja
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v2
+          python-version: '3.x'
+          cache: pip
+          cache-dependency-path: .github/workflows/requirements.txt
+      - run: pip install -r .github/workflows/requirements.txt
+      # CMake's C++ modules support needs a version the runner images do not necessarily carry.
+      - uses: jwlawson/actions-setup-cmake@v2
         with:
           cmake-version: '4.x'
-      - name: Print compiler version
-        run: cl
-      - run: cmake -G Ninja -DANKERL_ENABLE_EXAMPLE=TRUE -DANKERL_ENABLE_MODULES=TRUE -B build
-      - run: cmake --build build --verbose
-      - uses: actions/upload-artifact@v4
-        if: failure()
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.msvc_arch
         with:
-          name: Windows_64bit_cpp23-modules_Testlog
-          path: |
-            builddir/meson-logs/testlog.txt
-            builddir/test/udm-test.exe
-          retention-days: 7
-
-  macos:
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        cxx_standard: [17, 23]
-    name: macOS (C++${{ matrix.cxx_standard }}, arm64bit)
-    steps:
-      - uses: actions/checkout@v5
-      - uses: hendrikmuhs/ccache-action@v1.2.19
-        with:
-          key: clang-cpp${{ matrix.cxx_standard }}-arm64bit
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: brew install gcc ccache meson ninja
-      - name: Print compiler versions
-        run: c++ --version
-      - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
-        env:
-          CXX: ccache c++
-      - run: meson test -C builddir/ -v
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: MacOS_cpp${{ matrix.cxx_standard }}_Meson_Testlog
-          path: builddir/meson-logs/testlog.txt
-          retention-days: 7
-
-  linux:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler: [gcc, clang]
-        cxx_standard: [17, 23]
-        arch: [64, 32]
-        include:
-          - compiler: gcc
-            cc: gcc
-            cxx: g++
-          - compiler: clang
-            cc: clang
-            cxx: clang++
-          - arch: 64
-            arch_flags: ""
-            packages: libboost-dev libfmt-dev ccache
-          - arch: 32
-            arch_flags: "-m32"
-            packages: "libboost-dev gcc-multilib g++-multilib"
-    name: Linux (${{ matrix.compiler }}, C++${{ matrix.cxx_standard }}, ${{ matrix.arch }}bit)
-    steps:
-      - uses: actions/checkout@v5
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: ${{ matrix.packages }} ccache
-          version: 1.0
-      - uses: hendrikmuhs/ccache-action@v1.2.19
-        with:
-          key: ${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}-${{ matrix.arch }}bit
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: pip install meson ninja
-      - name: Print compiler versions
-        run: |
-          ${{ matrix.cc }} --version
-          ${{ matrix.cxx }} --version
-      - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
-        env:
-          CC: ccache ${{ matrix.cc }}
-          CXX: ccache ${{ matrix.cxx }}
-          CFLAGS: ${{ matrix.arch_flags }}
-          CXXFLAGS: ${{ matrix.arch_flags }}
-          LDFLAGS: ${{ matrix.arch_flags }}
-      - run: meson test -C builddir/ -v
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: Linux_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_${{ matrix.arch }}bit_Testlog
-          path: builddir/meson-logs/testlog.txt
-          retention-days: 7
-
-  linux-modules:
-    runs-on: ubuntu-latest
-    name: Linux Modules (clang, C++20, 64bit)
-    steps:
-      - uses: actions/checkout@v5
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: libboost-dev libfmt-dev
-          version: 1.0
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: pip install ninja
-      - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v2
-        with:
-          cmake-version: '4.x'
-      - name: Print compiler versions
-        run: |
-          clang --version
-          clang++ --version
+          arch: ${{ matrix.msvc_arch }}
       - run: cmake -G Ninja -DANKERL_ENABLE_EXAMPLE=TRUE -DANKERL_ENABLE_MODULES=TRUE -B build
         env:
-          CC: clang
-          CXX: clang++
-          CFLAGS: -m64
-          CXXFLAGS: -m64
-          LDFLAGS: -m64
+          CXX: ${{ matrix.cxx }}
       - run: cmake --build build --verbose
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: Linux_clang_cpp23-modules_64bit_Testlog
-          path: builddir/meson-logs/testlog.txt
-          retention-days: 7
+      # The example is the only consumer of the module, so running it is the only thing that
+      # says the module actually works.
+      - run: ./build/example
+        shell: bash
 
-  linux-sanitizers:
+  # CMakeLists.txt is what most consumers actually use, and nothing else in CI configures it
+  # without the module options. The install, export and package-config half of it was never
+  # built by any job at all. See test/cmake_consumer.
+  cmake-consumer:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler: [gcc, clang]
-        sanitizer: [address, thread, undefined]
-        include:
-          - compiler: gcc
-            cc: gcc
-            cxx: g++
-          - compiler: clang
-            cc: clang
-            cxx: clang++
-          - sanitizer: address
-            sanitizer_flags: "-fsanitize=address -fno-omit-frame-pointer"
-          - sanitizer: thread
-            sanitizer_flags: "-fsanitize=thread"
-          - sanitizer: undefined
-            sanitizer_flags: "-fsanitize=undefined"
-    name: Linux Sanitizer (${{ matrix.compiler }}, ${{ matrix.sanitizer }})
     steps:
-      - uses: actions/checkout@v5
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: libboost-dev libfmt-dev ccache
-          version: 1.0
-      - uses: hendrikmuhs/ccache-action@v1.2.19
-        with:
-          key: ${{ matrix.compiler }}-sanitize-${{ matrix.sanitizer }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: pip install meson ninja
-      - name: Print compiler versions
+      - uses: actions/checkout@v7
+      - name: add_subdirectory
         run: |
-          ${{ matrix.cc }} --version
-          ${{ matrix.cxx }} --version
-      - run: meson setup builddir/ -Dcpp_std=c++17 -Db_sanitize=${{ matrix.sanitizer }}
-        env:
-          CC: ccache ${{ matrix.cc }}
-          CXX: ccache ${{ matrix.cxx }}
-      - run: meson test -C builddir/ -v
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: Linux_${{ matrix.compiler }}_sanitize_${{ matrix.sanitizer }}_Testlog
-          path: builddir/meson-logs/testlog.txt
-          retention-days: 7
-
-  linux-arm64:
-    runs-on: ubuntu-24.04-arm64
-    if: false # Disabled for now due to long queue times
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler: [gcc, clang]
-        cxx_standard: [17, 23]
-        include:
-          - compiler: gcc
-            cc: gcc
-            cxx: g++
-          - compiler: clang
-            cc: clang
-            cxx: clang++
-    name: Linux ARM64 (${{ matrix.compiler }}, C++${{ matrix.cxx_standard }})
-    steps:
-      - uses: actions/checkout@v5
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: libboost-dev libfmt-dev ccache
-          version: 1.0
-      - uses: hendrikmuhs/ccache-action@v1.2.19
-        with:
-          key: arm64-${{ matrix.compiler }}-cpp${{ matrix.cxx_standard }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
-          cache: "pip"
-      - run: pip install meson ninja
-      - name: Print compiler versions
+          cmake -S test/cmake_consumer -B builddir-cmake
+          cmake --build builddir-cmake
+          ./builddir-cmake/consumer
+      - name: install
         run: |
-          ${{ matrix.cc }} --version
-          ${{ matrix.cxx }} --version
-      - run: meson setup builddir/ -Dcpp_std=c++${{ matrix.cxx_standard }}
-        env:
-          CC: ccache ${{ matrix.cc }}
-          CXX: ccache ${{ matrix.cxx }}
-      - run: meson test -C builddir/ -v
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: Linux_ARM64_${{ matrix.compiler }}_cpp${{ matrix.cxx_standard }}_Testlog
-          path: builddir/meson-logs/testlog.txt
-          retention-days: 7
+          cmake -S . -B builddir-install -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
+          cmake --build builddir-install --target install
+      # Asking for major version 4 rather than the exact one, so this does not need editing on
+      # every release. SameMajorVersion is the compatibility the generated config declares.
+      - name: find_package
+        run: |
+          cmake -S test/cmake_consumer/installed -B builddir-find \
+            -DCMAKE_PREFIX_PATH="$PWD/prefix" -DUNORDERED_DENSE_REQUIRED_VERSION=4
+          cmake --build builddir-find
+          ./builddir-find/consumer-installed
+      # The happy path passing says nothing about whether the version is actually checked.
+      - name: a version that is not installed has to be refused
+        run: |
+          if cmake -S test/cmake_consumer/installed -B builddir-badver \
+              -DCMAKE_PREFIX_PATH="$PWD/prefix" -DUNORDERED_DENSE_REQUIRED_VERSION=99 >/dev/null 2>&1; then
+            echo "::error::find_package accepted version 99, so it is not checking versions"
+            exit 1
+          fi

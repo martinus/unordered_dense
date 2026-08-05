@@ -1,0 +1,10 @@
+version: 2
+
+# The actions in the workflows are pinned to floating major tags, so a bad release inside a major
+# version arrives silently. This does not fix that, but it makes the bumps visible and reviewable
+# instead of invisible.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
