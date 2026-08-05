@@ -27,6 +27,10 @@ die() {
     exit 1
 }
 
+cores() {
+    nproc 2>/dev/null || sysctl -n hw.ncpu
+}
+
 # Both builds of the same target: afl-clang-fast++ for afl-fuzz and afl-cmin, clang++ for the
 # -merge=1 pass. AFL++ takes -fsanitize=fuzzer and links its own driver over the same entry point,
 # so this needs nothing special from test/meson.build. Ask for targets by name: a bare ninja would
@@ -79,7 +83,7 @@ cmd_run() {
     ensure_built "$BUILD_AFL_FAST" afl-clang-fast++ "-Dfuzz_sanitizers=false" "${targets[@]}"
 
     local cores
-    cores=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+    cores=$(cores)
     # One target: every core on it. Several: split the cores between them, at least one each.
     local per_target=$((cores / ${#targets[@]}))
     [[ $per_target -ge 1 ]] || per_target=1
@@ -203,13 +207,30 @@ cmd_minimize() {
         rm -rf "$work"
         mkdir -p "$work/all"
 
-        # Everything that exists: what is committed, plus every queue any instance produced.
-        cp "data/fuzz/$t/"* "$work/all/" 2>/dev/null || true
-        local n_found=0 f
-        while IFS= read -r -d '' f; do
-            cp "$f" "$work/all/afl-$(basename "$(dirname "$(dirname "$f")")")-$(basename "$f" | tr ':,' '__')"
-            n_found=$((n_found + 1))
-        done < <(find "$FINDINGS/$t" -path '*/queue/id:*' -type f -print0 2>/dev/null)
+        # Everything that exists: what is committed, plus every queue any instance produced,
+        # staged under the sha1 of its contents.
+        #
+        # Naming by content is what the final corpus uses anyway, and here it also collapses
+        # duplicates for free. Instances copy inputs from each other whenever they sync, so a good
+        # input ends up sitting in several queues and afl-cmin would otherwise execute every copy:
+        # measured on one four-instance run, 7960 queue files but only 5047 distinct ones.
+        #
+        # It is worth doing this without forking per file. Naming each file through basename,
+        # dirname and tr, then copying it, is six processes per file and around 80 seconds per
+        # 8000 inputs; one sha1sum over all of them and one hardlink each, made in parallel, is
+        # three. Hardlinks because these files are only ever read, and the fallback is for a
+        # $FINDINGS on a different filesystem, where linking cannot work.
+        local n_found pairs="$work/pairs"
+        n_found=$(find "$FINDINGS/$t" -path '*/queue/id:*' -type f 2>/dev/null | wc -l | tr -d ' ')
+        {
+            find "data/fuzz/$t" -type f -print0
+            find "$FINDINGS/$t" -path '*/queue/id:*' -type f -print0 2>/dev/null
+        } | xargs -0 -r sha1sum |
+            awk -v d="$work/all" '{h = $1; sub(/^[0-9a-f]+  /, ""); print $0 "\n" d "/" h}' |
+            tr '\n' '\0' >"$pairs"
+        xargs -0 -r -P "$(cores)" -n 2 ln -f <"$pairs" 2>/dev/null ||
+            xargs -0 -r -P "$(cores)" -n 2 cp <"$pairs" ||
+            die "could not stage the inputs for $t"
 
         local before
         before=$(find "data/fuzz/$t" -type f | wc -l | tr -d ' ')
@@ -217,8 +238,10 @@ cmd_minimize() {
         # Two passes, because neither minimizer subsumes the other. afl-cmin keeps a set covering
         # the same AFL edges and is far more aggressive; -merge=1 onto its output adds back the
         # files carrying a libFuzzer feature it could not see. The @@ matters: afl-cmin pipes stdin
-        # by default, and this driver reports no coverage for that.
-        AFL_SKIP_CPUFREQ=1 afl-cmin -i "$work/all" -o "$work/cmin" \
+        # by default, and this driver reports no coverage for that. -T runs the executions across
+        # every core -- only the trace collection parallelises and the solve stays single threaded,
+        # so it is not a speedup by the core count: 39s to 30s over 5520 inputs on four cores.
+        AFL_SKIP_CPUFREQ=1 afl-cmin -T all -i "$work/all" -o "$work/cmin" \
             -- "./$BUILD_AFL/test/$t" @@ >"$work/cmin.log" 2>&1 ||
             die "afl-cmin failed, see $work/cmin.log"
         cp -r "$work/cmin" "$work/min"
