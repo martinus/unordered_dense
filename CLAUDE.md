@@ -96,13 +96,13 @@ ninja -C builddir/afl test/fuzz_api
 afl-fuzz -i data/fuzz/fuzz_api -o out -- ./builddir/afl/test/fuzz_api   # -i is never written to
 ```
 
-`scripts/fuzz_afl.sh` does all of that for you, which is worth using because the steps above are
+`scripts/fuzz_afl.py` does all of that for you, which is worth using because the steps above are
 easy to get subtly wrong:
 
 ```sh
-scripts/fuzz_afl.sh run              # every core, all four targets, until Ctrl-C
-scripts/fuzz_afl.sh run fuzz_api     # every core on one target
-scripts/fuzz_afl.sh minimize         # fold the findings into data/fuzz, shrunk, with coverage
+scripts/fuzz_afl.py run              # every core, all four targets, until Ctrl-C
+scripts/fuzz_afl.py run fuzz_api     # every core on one target
+scripts/fuzz_afl.py minimize         # fold the findings into data/fuzz, shrunk, with coverage
 ```
 
 It builds what it needs, gives the first target's main instance the terminal so there is a status

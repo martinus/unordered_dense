@@ -12,5 +12,8 @@ compile_commands.json
 *.pcm
 a.out
 *.o
-# local fuzzing output, see scripts/fuzz_afl.sh
+# local fuzzing output, see scripts/fuzz_afl.py
 fuzz-findings/
+
+# left behind by importing anything under scripts/
+__pycache__/
