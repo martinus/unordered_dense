@@ -1,0 +1,60 @@
+name: Release
+
+# A tag is the one thing here that is genuinely hard to take back: deleting a pushed tag does not
+# delete it from the clones that already fetched it, and this repository is vendored by name and
+# tag all over the place. So the checks that a release is what it claims to be belong at tag
+# push, before anyone builds from it.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  MESON_PACKAGE_CACHE: subprojects/packagecache
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The ancestor check below needs main and the history connecting it to the tag.
+          fetch-depth: 0
+
+      # lint-version.py already checks the header, CMakeLists.txt, meson.build, stl.h and the
+      # namespace test against each other, on every run. What nothing checks is whether the tag
+      # agrees with them. The release convention is to tag the "bump version to X.Y.Z" commit,
+      # which by then is often no longer the tip of main, so this is easy to get wrong by hand.
+      - name: Tag matches the version in the tagged commit
+        run: ./scripts/lint/lint-version.py --expect "${GITHUB_REF_NAME#v}"
+
+      - name: Tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            echo "::error::${GITHUB_REF_NAME} points at a commit that is not on main."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+          cache: pip
+          cache-dependency-path: .github/workflows/requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.MESON_PACKAGE_CACHE }}
+          key: wraps-${{ hashFiles('subprojects/*.wrap') }}
+      - run: pip install -r .github/workflows/requirements.txt
+
+      # main.yml has already built this commit in every configuration, since the tag is on main.
+      # This is here so a release cannot be cut from a commit that was never actually run.
+      - run: meson setup builddir --force-fallback-for=fmt
+      - run: meson test -C builddir --print-errorlogs
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: release-meson-testlog
+          path: builddir/meson-logs/testlog.txt

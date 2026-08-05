@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Check that every file repeating the version agrees with the ANKERL_UNORDERED_DENSE_VERSION_*
+macros in unordered_dense.h, which are the reference.
+
+With --expect it also checks that reference against a version passed in. That is how the release
+workflow ties a pushed tag to what the tagged commit actually contains: the files agreeing with
+each other says nothing about whether v4.9.0 was put on the commit that says 4.9.0."""
+
+import argparse
 from pathlib import Path
 import re
 
@@ -25,8 +33,22 @@ def read_version_from_header(p: Path) -> str:
 
 
 def main():
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--expect",
+        default=None,
+        metavar="X.Y.Z",
+        help="also require this exact version, e.g. 4.9.0",
+    )
+    args = p.parse_args()
+
     ref = read_version_from_header(HEADER)
     errs = []
+    if args.expect is not None and args.expect != ref:
+        errs.append(f"ERROR: expected version {args.expect}, but {HEADER} says {ref}")
+
     for path, pattern, count in CHECKS:
         matches = list(re.finditer(pattern, path.read_text(), re.M))
         if (n := len(matches)) != count:

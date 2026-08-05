@@ -65,6 +65,20 @@ meson test -C builddir/clang_release unit --verbose
 ./builddir/clang_release/test/udm-test
 ```
 
+## CI
+
+`.github/workflows/main.yml` builds every leg the same way, so any of them reproduces locally:
+
+```sh
+meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++17 <matrix setup_args>
+meson test -C builddir --print-errorlogs
+```
+
+`--force-fallback-for=fmt` is what makes every runner build against the vendored fmt instead of
+whatever the machine happens to have installed. Linters (`scripts/lint/lint-*.py`) run in the
+`lint` job, against a pinned `clang-tidy-18` — `lint-clang-format.py` is deliberately *not* run
+there yet, the tree does not satisfy it.
+
 ## Notes for sandboxed / offline environments
 
 If meson cannot download the wrap subprojects (e.g. GitHub release tarballs blocked), fetch the doctest and fmt sources manually into `subprojects/doctest-2.4.12/` and `subprojects/fmt-11.2.0/` (matching the `directory` field of the `.wrap` files) with a minimal `meson.build` in each that declares `doctest_dep` (header-only, include dir `doctest/`) and `fmt_dep` (include dir `include/`, sources `src/format.cc`, `src/os.cc`) and calls `meson.override_dependency()`. Meson skips the download when the subproject directory already exists. These directories are gitignored — do not commit them.

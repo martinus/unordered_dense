@@ -1,0 +1,5 @@
+# Build tools for the CI jobs. Pinned so actions/setup-python's pip cache key is stable and pip
+# does not have to resolve anything against PyPI on every run. The requirements.txt in the root
+# is the unpinned one, for developers.
+meson==1.11.2
+ninja==1.13.0
