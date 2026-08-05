@@ -38,15 +38,13 @@ void insert_erase(fuzz::provider p) {
 
 } // namespace
 
-TEST_CASE("fuzz_insert_erase" * doctest::test_suite("fuzz")) {
-    fuzz::run([](fuzz::provider p) {
-        // try all 3 different map styles with the same input
-        insert_erase<ankerl::unordered_dense::map<uint64_t, uint64_t, dummy_hash>>(p.copy());
-        insert_erase<ankerl::unordered_dense::segmented_map<uint64_t, uint64_t, dummy_hash>>(p.copy());
-        insert_erase<ankerl::unordered_dense::map<uint64_t,
-                                                  uint64_t,
-                                                  ankerl::unordered_dense::hash<uint64_t>,
-                                                  std::equal_to<uint64_t>,
-                                                  std::deque<std::pair<uint64_t, uint64_t>>>>(p.copy());
-    });
+FUZZ_TEST_CASE(fuzz_insert_erase, p) {
+    // try all 3 different map styles with the same input
+    insert_erase<ankerl::unordered_dense::map<uint64_t, uint64_t, dummy_hash>>(p.copy());
+    insert_erase<ankerl::unordered_dense::segmented_map<uint64_t, uint64_t, dummy_hash>>(p.copy());
+    insert_erase<ankerl::unordered_dense::map<uint64_t,
+                                              uint64_t,
+                                              ankerl::unordered_dense::hash<uint64_t>,
+                                              std::equal_to<uint64_t>,
+                                              std::deque<std::pair<uint64_t, uint64_t>>>>(p.copy());
 }

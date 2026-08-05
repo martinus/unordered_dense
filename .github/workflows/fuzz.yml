@@ -1,0 +1,93 @@
+name: Fuzz
+
+# The corpora in data/fuzz/* are replayed by the normal test suite on every run. That is a
+# regression guard, and by construction it can only find what has already been found. Nothing was
+# doing the finding: the fuzz targets had fallen out of the meson build entirely, so
+# scripts/fuzz_run.sh pointed at binaries that no longer existed.
+#
+# It is worth running. A 60 second local session per target turned up between 19 and 189 new
+# coverage-increasing inputs, so the committed corpora are nowhere near saturated.
+on:
+  schedule:
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: how long to fuzz each target for
+        default: '600'
+
+permissions:
+  contents: read
+
+env:
+  MESON_PACKAGE_CACHE: subprojects/packagecache
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One target finding something should not stop the others from running.
+      fail-fast: false
+      matrix:
+        target: [fuzz_api, fuzz_insert_erase, fuzz_replace_map, fuzz_string]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+          cache: pip
+          cache-dependency-path: .github/workflows/requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.MESON_PACKAGE_CACHE }}
+          key: wraps-${{ hashFiles('subprojects/*.wrap') }}
+      - run: pip install -r .github/workflows/requirements.txt
+
+      # The fuzz targets only exist under clang, see the guard in test/meson.build. They are not
+      # built by default, so ask for this one by name.
+      - run: meson setup builddir --force-fallback-for=fmt
+        env:
+          CXX: clang++
+      - run: ninja -C builddir test/${{ matrix.target }}
+
+      # New inputs land in the scratch directory because libFuzzer writes to the first corpus
+      # directory it is given; data/fuzz/<target> is only ever read here. Committing what this
+      # finds stays a human decision.
+      - name: Fuzz
+        run: |
+          mkdir -p crashes corpus-scratch
+          ./builddir/test/${{ matrix.target }} \
+            -max_total_time=${{ inputs.seconds || 600 }} \
+            -print_final_stats=1 \
+            -artifact_prefix=crashes/ \
+            corpus-scratch data/fuzz/${{ matrix.target }}
+
+      # A crash is the whole point of running this, and the reproducer is the valuable part, so it
+      # has to survive the job.
+      - name: Upload the crash
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}-crash
+          path: crashes/
+
+      # -merge=1 keeps only the inputs that add coverage. Without it the artifact would be
+      # everything the fuzzer happened to keep rather than the handful worth committing, and the
+      # corpus would grow without bound.
+      - name: Minimize what was found
+        run: |
+          cp -r data/fuzz/${{ matrix.target }} corpus-merged
+          ./builddir/test/${{ matrix.target }} -merge=1 corpus-merged corpus-scratch
+          mkdir -p corpus-new
+          for f in corpus-merged/*; do
+            [ -e "data/fuzz/${{ matrix.target }}/$(basename "$f")" ] || cp "$f" corpus-new/
+          done
+          echo "${{ matrix.target }}: $(ls corpus-new | wc -l) new coverage-increasing inputs" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the new corpus entries
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}-corpus-new
+          path: corpus-new/
+          if-no-files-found: ignore

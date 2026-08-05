@@ -32,7 +32,7 @@ void evaluate_corpus(std::function<void(provider)> const& op);
  */
 template <typename Op>
 void run(Op const& op) {
-#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION) && !defined(FUZZ)
     size_t len = 0;
     uint8_t const* buf = nullptr;
     while (true) {
@@ -45,3 +45,36 @@ void run(Op const& op) {
 }
 
 } // namespace fuzz
+
+/**
+ * Declares a fuzz target, in both of the shapes it is needed in.
+ *
+ * Without -DFUZZ this is the doctest test case that replays the committed corpus in
+ * data/fuzz/<name>, which is what the unit test suite runs on every build. With -DFUZZ the same
+ * body becomes libFuzzer's entry point instead, so the target that searches for new inputs and the
+ * target that guards against the old ones can never drift apart. Used as:
+ *
+ *     FUZZ_TEST_CASE(fuzz_api, p) {
+ *         do_fuzz_api<some_map>(p.copy());
+ *     }
+ */
+#if defined(FUZZ)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#    define FUZZ_TEST_CASE(name, provider_param)                                                    \
+        static void fuzz_body_##name(fuzz::provider provider_param);                                \
+        extern "C" auto LLVMFuzzerTestOneInput(std::uint8_t const* data, std::size_t size) -> int { \
+            fuzz_body_##name(fuzz::provider(data, size));                                           \
+            return 0;                                                                               \
+        }                                                                                           \
+        static void fuzz_body_##name(fuzz::provider provider_param)
+#else
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#    define FUZZ_TEST_CASE(name, provider_param)                     \
+        static void fuzz_body_##name(fuzz::provider provider_param); \
+        TEST_CASE(#name* doctest::test_suite("fuzz")) {              \
+            fuzz::run([](fuzz::provider p) {                         \
+                fuzz_body_##name(p.copy());                          \
+            });                                                      \
+        }                                                            \
+        static void fuzz_body_##name(fuzz::provider provider_param)
+#endif

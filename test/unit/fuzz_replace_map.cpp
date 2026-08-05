@@ -58,14 +58,12 @@ void replace_map(fuzz::provider p) {
 
 } // namespace
 
-TEST_CASE("fuzz_replace_map" * doctest::test_suite("fuzz")) {
-    fuzz::run([](fuzz::provider p) {
-        replace_map<ankerl::unordered_dense::map<counter::obj, counter::obj>>(p.copy());
-        replace_map<ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>>(p.copy());
-        replace_map<ankerl::unordered_dense::map<counter::obj,
-                                                 counter::obj,
-                                                 ankerl::unordered_dense::hash<counter::obj>,
-                                                 std::equal_to<counter::obj>,
-                                                 std::deque<std::pair<counter::obj, counter::obj>>>>(p.copy());
-    });
+FUZZ_TEST_CASE(fuzz_replace_map, p) {
+    replace_map<ankerl::unordered_dense::map<counter::obj, counter::obj>>(p.copy());
+    replace_map<ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>>(p.copy());
+    replace_map<ankerl::unordered_dense::map<counter::obj,
+                                             counter::obj,
+                                             ankerl::unordered_dense::hash<counter::obj>,
+                                             std::equal_to<counter::obj>,
+                                             std::deque<std::pair<counter::obj, counter::obj>>>>(p.copy());
 }
