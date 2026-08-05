@@ -6,7 +6,7 @@
 #
 # So it is worth being able to turn them off for the instances whose job is to cover ground quickly,
 # while another instance keeps them on to explain whatever those instances find.
-# scripts/fuzz_afl.sh does exactly that.
+# scripts/fuzz_afl.py does exactly that.
 option(
     'fuzz_sanitizers',
     type: 'boolean',
