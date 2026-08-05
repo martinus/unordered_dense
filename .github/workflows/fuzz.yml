@@ -15,6 +15,10 @@ on:
       seconds:
         description: how long to fuzz each target for
         default: '600'
+      minimize:
+        description: instead of fuzzing, shrink the committed corpora to a minimal set
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,6 +29,7 @@ env:
 jobs:
   fuzz:
     name: ${{ matrix.target }}
+    if: ${{ !inputs.minimize }}
     runs-on: ubuntu-latest
     strategy:
       # One target finding something should not stop the others from running.
@@ -91,3 +96,77 @@ jobs:
           name: ${{ matrix.target }}-corpus-new
           path: corpus-new/
           if-no-files-found: ignore
+
+  # Nothing shrinks the committed corpora, and they do not stay minimal on their own: an input that
+  # added coverage when it was committed stops adding any once later inputs subsume it. Every clone
+  # carries the difference, and the fuzz test suite replays all of it on every single test run.
+  #
+  # Two passes, because the two minimizers disagree about what is redundant and neither is a
+  # superset of the other. afl-cmin keeps a set covering the same AFL edges, which is aggressive but
+  # blind to libFuzzer's finer features (the same edge reached a different number of times counts
+  # separately there). Feeding its output to -merge=1 as the destination adds back exactly the files
+  # that carry a feature the small set lost. Measured on fuzz_api: -merge=1 alone 641 files,
+  # afl-cmin alone 210 files but 406 features short, the two chained 276 files with nothing lost.
+  #
+  # Committing the result stays a human decision, like the new inputs the fuzz job uploads.
+  minimize:
+    name: minimize ${{ matrix.target }}
+    if: ${{ inputs.minimize }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_api, fuzz_insert_erase, fuzz_replace_map, fuzz_string]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+          cache: pip
+          cache-dependency-path: .github/workflows/requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.MESON_PACKAGE_CACHE }}
+          key: wraps-${{ hashFiles('subprojects/*.wrap') }}
+      - run: pip install -r .github/workflows/requirements.txt
+      - run: sudo apt-get update && sudo apt-get install -y afl++
+
+      # Two builds of the same target: afl-clang-fast++ instruments for afl-cmin, clang++ for
+      # -merge=1. AFL++ accepts -fsanitize=fuzzer and links its own driver over the same
+      # LLVMFuzzerTestOneInput, so test/meson.build needs nothing special for this.
+      - run: meson setup builddir --force-fallback-for=fmt
+        env:
+          CXX: clang++
+      - run: ninja -C builddir test/${{ matrix.target }}
+      - run: meson setup builddir-afl --force-fallback-for=fmt
+        env:
+          CXX: afl-clang-fast++
+      - run: ninja -C builddir-afl test/${{ matrix.target }}
+
+      - name: Minimize
+        env:
+          AFL_SKIP_CPUFREQ: 1
+          AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: 1
+        run: |
+          before=$(ls data/fuzz/${{ matrix.target }} | wc -l)
+          # @@ because the target takes a file, the way libFuzzer does; afl-cmin pipes stdin by
+          # default and the driver reports no coverage for that.
+          afl-cmin -i data/fuzz/${{ matrix.target }} -o corpus-cmin -- ./builddir-afl/test/${{ matrix.target }} @@
+          cp -r corpus-cmin corpus-minimized
+          ./builddir/test/${{ matrix.target }} -merge=1 corpus-minimized data/fuzz/${{ matrix.target }}
+          after=$(ls corpus-minimized | wc -l)
+          {
+            echo "\`${{ matrix.target }}\`: $before files -> $after"
+            echo
+            echo "coverage of the minimized set, which has to match the corpus it came from:"
+            echo '```'
+            ./builddir/test/${{ matrix.target }} -runs=0 corpus-minimized 2>&1 | grep INITED
+            ./builddir/test/${{ matrix.target }} -runs=0 data/fuzz/${{ matrix.target }} 2>&1 | grep INITED
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the minimized corpus
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}-corpus-minimized
+          path: corpus-minimized/
