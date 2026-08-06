@@ -739,6 +739,13 @@ private:
     // slow path: need to allocate a new segment every once in a while
     void increase_capacity() {
         auto ba = Allocator(m_blocks.get_allocator());
+
+        // Room for the pointer first. push_back is the other thing here that can throw -- it
+        // reallocates -- and it used to do so with the block already allocated and owned by
+        // nobody, which leaked it. Reserving first means the only allocation still outstanding
+        // when something fails is one that has not happened yet, and the push_back below cannot
+        // fail because the capacity is already there.
+        m_blocks.reserve(m_blocks.size() + 1);
         pointer block = std::allocator_traits<Allocator>::allocate(ba, num_elements_in_block);
         m_blocks.push_back(block);
     }

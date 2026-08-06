@@ -52,19 +52,25 @@ void require_consistent(Map const& map, int searched_up_to) {
     REQUIRE(iterated == map.size());
 }
 
-// Runs op with every allocation budget up to a bound, and holds the table to the same standard
-// after each failure. Which allocation inside op is the bucket one is not worth guessing -- and it
-// moves as the code changes -- so every one of them gets its turn.
+// Runs op with a growing allocation budget and holds the table to the same standard after each
+// failure. Which allocation inside op is the bucket one is not worth guessing -- it moves as the
+// code changes, and how many allocations precede it differs by standard library, since MSVC's
+// debug iterators take one through the allocator for every container that gets constructed. So
+// rather than a fixed number of budgets, this walks upwards until the budget is large enough for
+// op to run to completion, which is the point at which every allocation it makes has had its turn
+// at failing. The bound is only a runaway guard.
 template <typename Map, typename Op>
 void require_survives_every_allocation_failure(int start_size, int searched_up_to, Op op) {
     auto failures = 0;
-    for (int budget = 0; budget < 12; ++budget) {
+    auto completed = false;
+    for (int budget = 0; budget < 1000 && !completed; ++budget) {
         auto map = filled<Map>(start_size);
         auto const before_size = map.size();
 
         try {
             auto const bomb = test::bomb_after(budget);
             op(map);
+            completed = true;
         } catch (std::bad_alloc const&) {
             ++failures;
         }
@@ -73,8 +79,10 @@ void require_survives_every_allocation_failure(int start_size, int searched_up_t
         // Nothing is ever lost: the table either did the whole thing or none of it.
         REQUIRE(map.size() >= before_size);
     }
-    // If nothing ever threw the test would be vacuous.
+    // Both halves matter: without a failure the test is vacuous, and without a completion it never
+    // reached the end of op and the later allocations went untested.
     REQUIRE(failures > 0);
+    REQUIRE(completed);
 }
 
 template <typename Alloc>
