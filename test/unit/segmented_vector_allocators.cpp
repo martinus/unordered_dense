@@ -26,7 +26,7 @@ template <typename Alloc>
 using vec_of = ankerl::unordered_dense::segmented_vector<int, Alloc, sizeof(int) * 4>;
 
 using sticky_vec = vec_of<test::id_allocator<int>>;
-using copying_vec = vec_of<test::id_allocator<int, std::true_type>>;
+using copying_vec = vec_of<test::pocca_allocator<int>>;
 using std_vec = vec_of<std::allocator<int>>;
 
 template <typename Vec>

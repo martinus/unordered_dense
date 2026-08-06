@@ -87,59 +87,39 @@ struct countdown_guard {
     }
 };
 
+template <typename Map>
+void check_throwing_copy_assignment(int source_size, int target_size, int copies_until_throw) {
+    auto source = filled<Map>(source_size);
+    auto target = filled<Map>(target_size);
+
+    {
+        auto const guard = countdown_guard(copies_until_throw);
+        REQUIRE_THROWS_AS(target = source, std::runtime_error);
+    }
+
+    require_usable_and_empty(target);
+    // The source is untouched -- it was only ever read from.
+    REQUIRE(source.size() == static_cast<std::size_t>(source_size));
+}
+
 } // namespace
 
 TEST_CASE("copy_assignment_that_throws_leaves_a_usable_table") {
     SUBCASE("map") {
-        auto source = filled<map_t>(200);
-        auto target = filled<map_t>(50);
-
-        {
-            auto const guard = countdown_guard(100);
-            REQUIRE_THROWS_AS(target = source, std::runtime_error);
-        }
-
-        require_usable_and_empty(target);
-        // The source is untouched -- it was only ever read from.
-        REQUIRE(source.size() == 200);
+        check_throwing_copy_assignment<map_t>(200, 50, 100);
     }
 
     SUBCASE("segmented map") {
-        auto source = filled<segmented_map_t>(200);
-        auto target = filled<segmented_map_t>(50);
-
-        {
-            auto const guard = countdown_guard(100);
-            REQUIRE_THROWS_AS(target = source, std::runtime_error);
-        }
-
-        require_usable_and_empty(target);
-        REQUIRE(source.size() == 200);
+        check_throwing_copy_assignment<segmented_map_t>(200, 50, 100);
     }
 
     // Throwing on the very first copy, before the values container has committed to anything.
     SUBCASE("on the first copy") {
-        auto source = filled<map_t>(200);
-        auto target = filled<map_t>(50);
-
-        {
-            auto const guard = countdown_guard(1);
-            REQUIRE_THROWS_AS(target = source, std::runtime_error);
-        }
-
-        require_usable_and_empty(target);
+        check_throwing_copy_assignment<map_t>(200, 50, 1);
     }
 
     // Assigning onto a table that has no buckets to give back in the first place.
     SUBCASE("onto an empty table") {
-        auto source = filled<map_t>(200);
-        auto target = map_t();
-
-        {
-            auto const guard = countdown_guard(100);
-            REQUIRE_THROWS_AS(target = source, std::runtime_error);
-        }
-
-        require_usable_and_empty(target);
+        check_throwing_copy_assignment<map_t>(200, 0, 100);
     }
 }

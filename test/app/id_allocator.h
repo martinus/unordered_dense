@@ -13,10 +13,11 @@
 // *which* of a container's buffers went where.
 //
 // The defaults match std::pmr::polymorphic_allocator, which is the allocator this library supports
-// whose propagation is worth testing: propagates on nothing, instances differ. Each of the four
-// propagation questions is a template parameter, because a container answers them independently
-// and a container that answers one of them for only half of what it holds is exactly the bug these
-// are here to catch.
+// whose propagation is worth testing: propagates on nothing, instances differ. Each of the three
+// propagation traits is a template parameter, plus select_on_container_copy_construction, because a
+// container answers them independently and answering one of them for only half of what it holds is
+// exactly the bug these are here to catch. Prefer the named aliases below at call sites -- four
+// bare std::bool_constants in a row say nothing about which question is being asked.
 namespace test {
 
 struct alloc_counts {
@@ -90,5 +91,18 @@ struct id_allocator {
         return !(a == b);
     }
 };
+
+// One alias per question, named after the trait it turns on.
+template <typename T>
+using pmr_like_allocator = id_allocator<T, std::false_type, std::false_type>;
+
+template <typename T>
+using pocca_allocator = id_allocator<T, std::true_type>;
+
+template <typename T>
+using pocma_allocator = id_allocator<T, std::false_type, std::true_type, std::true_type>;
+
+template <typename T>
+using pocs_allocator = id_allocator<T, std::false_type, std::true_type, std::false_type, std::true_type>;
 
 } // namespace test
