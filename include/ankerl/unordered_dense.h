@@ -571,6 +571,15 @@ public:
 
 private:
     using vec_alloc = typename std::allocator_traits<Allocator>::template rebind_alloc<pointer>;
+    using vec_alloc_traits = std::allocator_traits<vec_alloc>;
+
+    // The allocator lives in m_blocks, so these are what the assignment operators below act on --
+    // and what their noexcept specifications are written over, so that the condition and the
+    // promise cannot drift apart.
+    static constexpr bool propagates_on_copy_assign = vec_alloc_traits::propagate_on_container_copy_assignment::value;
+    static constexpr bool propagates_on_move_assign = vec_alloc_traits::propagate_on_container_move_assignment::value;
+    static constexpr bool allocators_always_equal = vec_alloc_traits::is_always_equal::value;
+
     std::vector<pointer, vec_alloc> m_blocks{};
     std::size_t m_size{};
 
@@ -790,7 +799,7 @@ public:
         : segmented_vector(std::move(other), other.get_allocator()) {}
 
     segmented_vector(segmented_vector const& other)
-        : m_blocks(std::allocator_traits<vec_alloc>::select_on_container_copy_construction(other.m_blocks.get_allocator())) {
+        : m_blocks(vec_alloc_traits::select_on_container_copy_construction(other.m_blocks.get_allocator())) {
         append_everything_from(other);
     }
 
@@ -799,16 +808,13 @@ public:
             return *this;
         }
         clear();
-        if constexpr (std::allocator_traits<vec_alloc>::propagate_on_container_copy_assignment::value) {
+        if constexpr (propagates_on_copy_assign) {
             if (m_blocks.get_allocator() != other.m_blocks.get_allocator()) {
-                // Everything still held was allocated through the old allocator, so it has to go
-                // back through that one before the new allocator is adopted.
+                // Everything still held has to go back through the old allocator before the new
+                // one is adopted. Copy assignment and not move: which of the two propagates is
+                // the inner vector's own pocca/pocma, and only pocca is known true here, so
+                // assigning a temporary would consult pocma and silently keep the old allocator.
                 dealloc();
-                m_blocks.clear();
-                // Copy assignment rather than move: which of the two propagates the allocator is
-                // the inner vector's own pocca/pocma, and only pocca is known true in this branch.
-                // Assigning a temporary here would move, consult pocma, and silently keep the old
-                // allocator -- which is how the code being fixed came to adopt the wrong one.
                 auto const empty_with_other_allocator = std::vector<pointer, vec_alloc>(other.m_blocks.get_allocator());
                 m_blocks = empty_with_other_allocator;
             }
@@ -818,29 +824,26 @@ public:
     }
 
     // Not unconditionally noexcept. When the allocator neither propagates nor compares equal --
-    // std::pmr::polymorphic_allocator, for one -- the elements have to be moved one at a time
-    // into memory this container allocates, and running out of it there used to terminate the
-    // process against a noexcept boundary rather than throw. std::vector spells the condition the
-    // same way.
-    auto operator=(segmented_vector&& other) noexcept(
-        std::allocator_traits<vec_alloc>::propagate_on_container_move_assignment::value ||
-        std::allocator_traits<vec_alloc>::is_always_equal::value) -> segmented_vector& {
+    // std::pmr::polymorphic_allocator, for one -- the elements are moved one at a time into memory
+    // this container allocates, so running out of it here has to be allowed to throw rather than
+    // terminate. std::vector spells the condition the same way.
+    auto operator=(segmented_vector&& other) noexcept(propagates_on_move_assign || allocators_always_equal)
+        -> segmented_vector& {
         if (this == &other) {
             return *this;
         }
         clear();
-        dealloc();
-        // Either the allocator comes along with the blocks, or it is already the same one: both
-        // mean the blocks can simply be taken over. std::vector's own move assignment does the
+        // Either the allocator comes along with the blocks or it is already the same one, and
+        // either way the blocks can be taken over; std::vector's own move assignment does the
         // propagating in the first case.
-        if (std::allocator_traits<vec_alloc>::propagate_on_container_move_assignment::value ||
-            other.get_allocator() == get_allocator()) {
+        if (propagates_on_move_assign || m_blocks.get_allocator() == other.m_blocks.get_allocator()) {
+            dealloc();
             m_blocks = std::move(other.m_blocks);
             m_size = std::exchange(other.m_size, {});
         } else {
-            // Keeps its own allocator, because nothing said to take other's: adopting it here is
-            // what used to make memory allocated from one arena get freed through another.
-            m_blocks.clear();
+            // Keeps its own allocator, because nothing said to take other's -- so the blocks it
+            // already holds came from that same allocator and are reused rather than handed back
+            // and immediately asked for again.
             append_everything_from(std::move(other));
         }
         return *this;

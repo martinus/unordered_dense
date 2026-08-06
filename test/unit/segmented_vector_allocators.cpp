@@ -2,9 +2,12 @@
 
 #include <app/doctest.h>
 
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 // Allocator propagation in segmented_vector, from issue #104.
@@ -18,23 +21,23 @@ namespace {
 // Propagates on nothing and instances differ, which is how std::pmr::polymorphic_allocator behaves
 // -- the allocator this library supports and tests, and the reason issue #104's proposed
 // static_assert(pocma) fix cannot be applied here.
-template <typename T>
-struct sticky_allocator {
+template <typename T, typename Pocca = std::false_type>
+struct id_allocator {
     using value_type = T;
-    using propagate_on_container_copy_assignment = std::false_type;
+    using propagate_on_container_copy_assignment = Pocca;
     using propagate_on_container_move_assignment = std::false_type;
     using propagate_on_container_swap = std::false_type;
     using is_always_equal = std::false_type;
 
     int m_id = 0;
 
-    sticky_allocator() = default;
-    explicit sticky_allocator(int id)
+    id_allocator() = default;
+    explicit id_allocator(int id)
         : m_id(id) {}
 
     template <typename U>
     // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    sticky_allocator(sticky_allocator<U> const& other) noexcept
+    id_allocator(id_allocator<U, Pocca> const& other) noexcept
         : m_id(other.m_id) {}
 
     auto allocate(std::size_t n) -> T* {
@@ -45,38 +48,25 @@ struct sticky_allocator {
         std::allocator<T>{}.deallocate(p, n);
     }
 
-    friend auto operator==(sticky_allocator const& a, sticky_allocator const& b) noexcept -> bool {
+    friend auto operator==(id_allocator const& a, id_allocator const& b) noexcept -> bool {
         return a.m_id == b.m_id;
     }
 
-    friend auto operator!=(sticky_allocator const& a, sticky_allocator const& b) noexcept -> bool {
+    friend auto operator!=(id_allocator const& a, id_allocator const& b) noexcept -> bool {
         return !(a == b);
     }
-};
-
-// The same, except that it propagates on copy assignment, so the POCCA branch is reachable.
-template <typename T>
-struct copying_allocator : sticky_allocator<T> {
-    using propagate_on_container_copy_assignment = std::true_type;
-
-    using sticky_allocator<T>::sticky_allocator;
-
-    template <typename U>
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    copying_allocator(copying_allocator<U> const& other) noexcept
-        : sticky_allocator<T>(other.m_id) {}
 };
 
 template <typename Alloc>
 using vec_of = ankerl::unordered_dense::segmented_vector<int, Alloc, sizeof(int) * 4>;
 
-using sticky_vec = vec_of<sticky_allocator<int>>;
-using copying_vec = vec_of<copying_allocator<int>>;
+using sticky_vec = vec_of<id_allocator<int>>;
+using copying_vec = vec_of<id_allocator<int, std::true_type>>;
 using std_vec = vec_of<std::allocator<int>>;
 
 template <typename Vec>
-auto filled(typename Vec::allocator_type alloc, int count) -> Vec {
-    auto vec = Vec(alloc);
+auto filled(int allocator_id, int count) -> Vec {
+    auto vec = Vec(typename Vec::allocator_type(allocator_id));
     for (int i = 0; i < count; ++i) {
         vec.emplace_back(i);
     }
@@ -91,26 +81,35 @@ void require_holds(Vec const& vec, int count) {
     }
 }
 
-} // namespace
+template <typename Vec>
+void check_copy_assign(int expected_allocator_id) {
+    auto source = filled<Vec>(1, 10);
+    auto target = filled<Vec>(2, 3);
 
-// Move assignment between allocators that neither propagate nor compare equal has to move the
-// elements one at a time, and that allocates. It was noexcept anyway, so running out of memory
-// there terminated the process instead of throwing.
-TEST_CASE("segmented_vector_move_assign_noexcept_only_when_it_cannot_throw") {
-    static_assert(std::is_nothrow_move_assignable_v<std_vec>);
-    static_assert(std::is_nothrow_move_assignable_v<ankerl::unordered_dense::segmented_vector<std::string>>);
-    static_assert(!std::is_nothrow_move_assignable_v<sticky_vec>);
+    target = source;
 
-    // ... and the container built on it says the same thing, since that is what callers see.
-    using sticky_map = ankerl::unordered_dense::
-        segmented_map<int, int, ankerl::unordered_dense::hash<int>, std::equal_to<int>, sticky_allocator<std::pair<int, int>>>;
-    static_assert(!std::is_nothrow_move_assignable_v<sticky_map>);
-    static_assert(std::is_nothrow_move_assignable_v<ankerl::unordered_dense::segmented_map<int, int>>);
+    REQUIRE(target.get_allocator().m_id == expected_allocator_id);
+    require_holds(target, 10);
 }
 
+} // namespace
+
+// Move assignment between allocators that neither propagate nor compare equal moves the elements
+// one at a time, and that allocates. It was noexcept anyway, so running out of memory there
+// terminated the process instead of throwing.
+static_assert(std::is_nothrow_move_assignable_v<std_vec>);
+static_assert(std::is_nothrow_move_assignable_v<ankerl::unordered_dense::segmented_vector<std::string>>);
+static_assert(!std::is_nothrow_move_assignable_v<sticky_vec>);
+
+// ... and the container built on it says the same thing, since that is what callers see.
+using sticky_map = ankerl::unordered_dense::
+    segmented_map<int, int, ankerl::unordered_dense::hash<int>, std::equal_to<int>, id_allocator<std::pair<int, int>>>;
+static_assert(!std::is_nothrow_move_assignable_v<sticky_map>);
+static_assert(std::is_nothrow_move_assignable_v<ankerl::unordered_dense::segmented_map<int, int>>);
+
 TEST_CASE("segmented_vector_move_assign_keeps_its_own_allocator") {
-    auto source = filled<sticky_vec>(sticky_allocator<int>(1), 10);
-    auto target = filled<sticky_vec>(sticky_allocator<int>(2), 3);
+    auto source = filled<sticky_vec>(1, 10);
+    auto target = filled<sticky_vec>(2, 3);
 
     target = std::move(source);
 
@@ -121,8 +120,8 @@ TEST_CASE("segmented_vector_move_assign_keeps_its_own_allocator") {
 }
 
 TEST_CASE("segmented_vector_move_assign_between_equal_allocators_steals") {
-    auto source = filled<sticky_vec>(sticky_allocator<int>(7), 10);
-    auto target = filled<sticky_vec>(sticky_allocator<int>(7), 3);
+    auto source = filled<sticky_vec>(7, 10);
+    auto target = filled<sticky_vec>(7, 3);
 
     target = std::move(source);
 
@@ -132,7 +131,7 @@ TEST_CASE("segmented_vector_move_assign_between_equal_allocators_steals") {
 }
 
 TEST_CASE("segmented_vector_copy_construction_asks_the_allocator") {
-    auto source = filled<sticky_vec>(sticky_allocator<int>(5), 10);
+    auto source = filled<sticky_vec>(5, 10);
 
     auto copy = source;
 
@@ -144,38 +143,28 @@ TEST_CASE("segmented_vector_copy_construction_asks_the_allocator") {
 }
 
 TEST_CASE("segmented_vector_copy_construction_with_an_explicit_allocator") {
-    auto source = filled<sticky_vec>(sticky_allocator<int>(5), 10);
+    auto source = filled<sticky_vec>(5, 10);
 
-    auto copy = sticky_vec(source, sticky_allocator<int>(9));
+    auto copy = sticky_vec(source, id_allocator<int>(9));
 
     REQUIRE(copy.get_allocator().m_id == 9);
     require_holds(copy, 10);
 }
 
 TEST_CASE("segmented_vector_copy_assign_propagates_only_when_asked") {
+    // Named source, and not a temporary: assigning a prvalue would pick move assignment and stop
+    // testing what the case is called.
     SUBCASE("without pocca the target keeps its allocator") {
-        auto source = filled<sticky_vec>(sticky_allocator<int>(1), 10);
-        auto target = filled<sticky_vec>(sticky_allocator<int>(2), 3);
-
-        target = source;
-
-        REQUIRE(target.get_allocator().m_id == 2);
-        require_holds(target, 10);
+        check_copy_assign<sticky_vec>(2);
     }
 
     SUBCASE("with pocca it takes the source's") {
-        auto source = filled<copying_vec>(copying_allocator<int>(1), 10);
-        auto target = filled<copying_vec>(copying_allocator<int>(2), 3);
-
-        target = source;
-
-        REQUIRE(target.get_allocator().m_id == 1);
-        require_holds(target, 10);
+        check_copy_assign<copying_vec>(1);
     }
 }
 
 TEST_CASE("segmented_vector_self_assignment_keeps_the_contents") {
-    auto vec = filled<sticky_vec>(sticky_allocator<int>(3), 10);
+    auto vec = filled<sticky_vec>(3, 10);
 
     auto& alias = vec;
     vec = alias;
@@ -183,10 +172,9 @@ TEST_CASE("segmented_vector_self_assignment_keeps_the_contents") {
     REQUIRE(vec.get_allocator().m_id == 3);
 }
 
-// The move constructor reads other's allocator to build itself with. It used to read its own,
-// before its own existed; that has since been fixed, and this keeps it fixed.
+// Pins a fix that predates this change: the move constructor builds itself from other's allocator.
 TEST_CASE("segmented_vector_move_construction_takes_the_source_allocator") {
-    auto source = filled<sticky_vec>(sticky_allocator<int>(4), 10);
+    auto source = filled<sticky_vec>(4, 10);
 
     auto moved = std::move(source);
 
