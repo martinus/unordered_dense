@@ -545,6 +545,18 @@ struct base_table_type_map {
 // base type for set doesn't have mapped_type
 struct base_table_type_set {};
 
+// A key's hash, finalized and ready for a table to index with, as produced by hash_for(). See the
+// lookup section of table for what it is for; this is spelled table::precomputed_hash.
+//
+// Templated on the hasher and nothing else, because the hasher is all a hash depends on: a map, a
+// set and a segmented_map that hash the key the same way can pass one around between them. It is a
+// type of its own rather than a plain integer so that an integer does not convert to it by
+// accident -- in particular what hash_function() returns, which is not this number.
+template <typename Hash>
+struct precomputed_hash {
+    std::uint64_t m_mixed_hash;
+};
+
 } // namespace detail
 
 // Very much like std::deque, but faster for indexing (in most cases). As of now this doesn't implement the full std::vector
@@ -1066,6 +1078,11 @@ public:
     using iterator = std::conditional_t<is_map_v<T>, typename value_container_type::iterator, const_iterator>;
     using bucket_type = Bucket;
 
+    // What hash_for() returns; see the lookup section below. Shared by every table with this
+    // hasher, whatever else it is made of, because that is exactly the set of tables the hash is
+    // good for.
+    using precomputed_hash = detail::precomputed_hash<Hash>;
+
 private:
     using value_idx_type = decltype(Bucket::m_value_idx);
     using dist_and_fingerprint_type = decltype(Bucket::m_dist_and_fingerprint);
@@ -1371,7 +1388,8 @@ private:
 
     // The bucket array is not allocated until the first element goes in, so that a default
     // constructed table does not allocate. Every path that probes the buckets either returns early
-    // while the table is empty (do_find, do_erase_key), or needs an iterator into m_values and so
+    // while the table is empty (do_find and do_find_hashed's callers, do_erase_key), or needs an
+    // iterator into m_values and so
     // cannot be reached in this state (erase, extract, replace_key), or calls this first -- which
     // is the three insert entry points, the only ones that reach the buckets without a prior
     // emptiness check.
@@ -1567,7 +1585,14 @@ private:
                 return end();
             }
 
-        auto mh = mixed_hash(key);
+        return do_find_hashed(key, mixed_hash(key));
+    }
+
+    // Same lookup with the hashing already done. Requires the bucket array to be allocated, which
+    // !empty() implies; the callers test empty() rather than this function so that a lookup in an
+    // empty table returns without hashing anything.
+    template <typename K>
+    auto do_find_hashed(K const& key, std::uint64_t mh) -> iterator {
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto bucket_idx = bucket_idx_from_hash(mh);
         auto* bucket = &at(m_buckets, bucket_idx);
@@ -1606,6 +1631,21 @@ private:
         return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
+    template <typename K>
+    auto do_find(K const& key, precomputed_hash ph) -> iterator {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty()))
+            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+                return end();
+            }
+
+        return do_find_hashed(key, ph.m_mixed_hash);
+    }
+
+    template <typename K>
+    auto do_find(K const& key, precomputed_hash ph) const -> const_iterator {
+        return const_cast<table*>(this)->do_find(key, ph); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    }
+
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
     auto do_at(K const& key) -> Q& {
         if (auto it = find(key); ANKERL_UNORDERED_DENSE_LIKELY(end() != it))
@@ -1618,6 +1658,20 @@ private:
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
     auto do_at(K const& key) const -> Q const& {
         return const_cast<table*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
+    }
+
+    template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    auto do_at(K const& key, precomputed_hash ph) -> Q& {
+        if (auto it = find(key, ph); ANKERL_UNORDERED_DENSE_LIKELY(end() != it))
+            ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
+                return it->second;
+            }
+        on_error_key_not_found();
+    }
+
+    template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    auto do_at(K const& key, precomputed_hash ph) const -> Q const& {
+        return const_cast<table*>(this)->do_at(key, ph); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
 public:
@@ -2383,6 +2437,127 @@ public:
     auto equal_range(K const& key) const -> std::pair<const_iterator, const_iterator> {
         auto it = do_find(key);
         return {it, it == end() ? end() : it + 1};
+    }
+
+    // lookup with a precomputed hash /////////////////////////////////////////
+
+    // Looking the same key up over and over -- a handful of string literals against a map parsed
+    // out of a document, say -- hashes it every time, and for a long key that hashing is most of
+    // the cost of the lookup. Hashing it once instead is what hash_for() and these overloads are
+    // for:
+    //
+    //     auto const h = map.hash_for("some-long-key"); // once
+    //     auto it = map.find("some-long-key", h);       // as often as you like
+    //
+    // The key is still needed, because a lookup that found a bucket still has to compare keys to
+    // know it found the right one. What is saved is the hashing, not the comparison.
+    //
+    // The number a lookup wants is the one hash_for() returns, and nothing else: it is the hasher's
+    // output finalized the way a lookup finalizes it, which for most hashers is not the same number
+    // the hasher gave. An integer will not convert to a precomputed_hash, which is the mistake
+    // worth blocking; the value inside stays open, since a caller may want to keep or move one.
+    // Every table with this hasher takes it, so one hash can serve a map and a set together, and a
+    // stateless hasher makes it good for the life of the program. What it does not survive is the
+    // key changing -- pass the hash of a different key and the lookup quietly finds nothing.
+    //
+    // Only lookups take one. Insertion never will: a lookup handed the wrong hash merely misses,
+    // while an insertion handed one files the element under a probe chain it is not on, which
+    // loses it for good and lets a second copy of the same key in beside it. Erase is left out for
+    // a duller reason -- it hashes the moved element as well as the key, so precomputing the key's
+    // hash saves it only half its hashing.
+    [[nodiscard]] auto hash_for(Key const& key) const -> precomputed_hash {
+        return {mixed_hash(key)};
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    [[nodiscard]] auto hash_for(K const& key) const -> precomputed_hash {
+        return {mixed_hash(key)};
+    }
+
+    auto find(Key const& key, precomputed_hash ph) -> iterator {
+        return do_find(key, ph);
+    }
+
+    auto find(Key const& key, precomputed_hash ph) const -> const_iterator {
+        return do_find(key, ph);
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto find(K const& key, precomputed_hash ph) -> iterator {
+        return do_find(key, ph);
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto find(K const& key, precomputed_hash ph) const -> const_iterator {
+        return do_find(key, ph);
+    }
+
+    auto contains(Key const& key, precomputed_hash ph) const -> bool {
+        return find(key, ph) != end();
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto contains(K const& key, precomputed_hash ph) const -> bool {
+        return find(key, ph) != end();
+    }
+
+    auto count(Key const& key, precomputed_hash ph) const -> std::size_t {
+        return find(key, ph) == end() ? 0 : 1;
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto count(K const& key, precomputed_hash ph) const -> std::size_t {
+        return find(key, ph) == end() ? 0 : 1;
+    }
+
+    auto equal_range(Key const& key, precomputed_hash ph) -> std::pair<iterator, iterator> {
+        auto it = do_find(key, ph);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    auto equal_range(Key const& key, precomputed_hash ph) const -> std::pair<const_iterator, const_iterator> {
+        auto it = do_find(key, ph);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto equal_range(K const& key, precomputed_hash ph) -> std::pair<iterator, iterator> {
+        auto it = do_find(key, ph);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    auto equal_range(K const& key, precomputed_hash ph) const -> std::pair<const_iterator, const_iterator> {
+        auto it = do_find(key, ph);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    auto at(key_type const& key, precomputed_hash ph) -> Q& {
+        return do_at(key, ph);
+    }
+
+    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    auto at(key_type const& key, precomputed_hash ph) const -> Q const& {
+        return do_at(key, ph);
+    }
+
+    template <typename K,
+              typename Q = T,
+              typename H = Hash,
+              typename KE = KeyEqual,
+              std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
+    auto at(K const& key, precomputed_hash ph) -> Q& {
+        return do_at(key, ph);
+    }
+
+    template <typename K,
+              typename Q = T,
+              typename H = Hash,
+              typename KE = KeyEqual,
+              std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
+    auto at(K const& key, precomputed_hash ph) const -> Q const& {
+        return do_at(key, ph);
     }
 
     // bucket interface ///////////////////////////////////////////////////////
