@@ -38,14 +38,40 @@ BUILD_LIBFUZZER = Path("builddir/fuzz")
 # script -- an instance that is going to fail has failed long before this.
 STARTUP_TIMEOUT = 60
 
+# Where the kernel describes which logical CPUs share a physical core. A name rather than a literal
+# so a test can point fuzzing_cpus() at a directory describing a machine this one is not.
+CPU_TOPOLOGY = Path("/sys/devices/system/cpu")
+
 
 def die(message: str):
     print(f"error: {message}", file=sys.stderr)
     sys.exit(1)
 
 
+def fuzzing_cpus() -> list[int] | None:
+    """One logical CPU per physical core, or None when the topology cannot be read.
+
+    Hyperthread siblings share one core's execution units, so a second instance on the same core
+    does not buy a second core's worth of fuzzing -- it mostly slows down the instance already
+    there, while afl-fuzz counts both as busy. Every core, one instance each, is what is wanted.
+
+    Which sibling represents a core is not something to assume from the numbering: whether the
+    siblings of core 0 are 0 and 1 or 0 and n/2 differs between machines, so it comes from
+    thread_siblings_list, where both siblings name the same pair.
+    """
+    groups: dict[str, list[int]] = {}
+    for path in sorted(CPU_TOPOLOGY.glob("cpu[0-9]*")):
+        try:
+            siblings = (path / "topology" / "thread_siblings_list").read_text().strip()
+        except OSError:
+            continue
+        groups.setdefault(siblings, []).append(int(path.name[3:]))
+    return sorted(min(cpus) for cpus in groups.values()) or None
+
+
 def cores() -> int:
-    return os.cpu_count() or 1
+    cpus = fuzzing_cpus()
+    return len(cpus) if cpus else (os.cpu_count() or 1)
 
 
 def ensure_built(builddir: Path, compiler: str, setup_args: list[str], targets: list[str]):
@@ -140,22 +166,32 @@ class Instance:
         return fields
 
 
-def start_instance(target: str, index: int, sanitized_instance: int, out: Path) -> Instance:
-    """Start one backgrounded afl-fuzz with its UI off and its output in a log file.
+def afl_argv(target: str, index: int, sanitized_instance: int, out: Path, cpu: int | None) -> list[str]:
+    """The command for one instance: which build, which role, and which core it is pinned to.
 
     Instance 0 is the main one and does the deterministic passes; the rest explore at random and
     share whatever any of them finds through the output directory. The sanitizers cost around 7x,
     so exactly one instance carries them and the others cover ground -- a crash any of them finds
     is saved to the same place, so replay it under builddir/afl/test/<target> for the report.
+
+    -b pins it. Left to itself afl-fuzz takes the first core it finds unused, which knows nothing
+    about hyperthread siblings and would put two instances on one core while another sits idle.
     """
-    name = "main" if index == 0 else f"s{index}"
     build = BUILD_AFL if index == sanitized_instance else BUILD_AFL_FAST
+    bind = ["-b", str(cpu)] if cpu is not None else []
+    return ["afl-fuzz", "-M" if index == 0 else "-S", "main" if index == 0 else f"s{index}",
+            *bind, "-i", f"data/fuzz/{target}", "-o", str(out),
+            "--", f"./{build}/test/{target}"]
+
+
+def start_instance(target: str, index: int, sanitized_instance: int, out: Path,
+                   cpu: int | None) -> Instance:
+    """Start one backgrounded afl-fuzz with its UI off and its output in a log file."""
+    name = "main" if index == 0 else f"s{index}"
     log = out / f"afl-{index}.log"
     with log.open("wb") as handle:
         process = subprocess.Popen(
-            ["afl-fuzz", "-M" if index == 0 else "-S", name,
-             "-i", f"data/fuzz/{target}", "-o", str(out),
-             "--", f"./{build}/test/{target}"],
+            afl_argv(target, index, sanitized_instance, out, cpu),
             env=afl_env(AFL_NO_UI="1"),
             stdout=handle,
             stderr=subprocess.STDOUT,
@@ -178,7 +214,10 @@ def cmd_run(targets: list[str]):
     ensure_built(BUILD_AFL_FAST, "afl-clang-fast++", ["-Dfuzz_sanitizers=false"], targets)
 
     # One target: every core on it. Several: split the cores between them, at least one each.
+    cpus = fuzzing_cpus()
     per_target = max(1, cores() // len(targets))
+    # Only wraps when there are more targets than cores, where one each already oversubscribes.
+    assign = (lambda n: cpus[n % len(cpus)]) if cpus else (lambda n: None)
 
     # The first target's main instance runs in the foreground and keeps the terminal, so there is a
     # live status screen to watch rather than four silent log files. Everything else runs in the
@@ -189,7 +228,6 @@ def cmd_run(targets: list[str]):
     # number you watch and the one doing the deterministic passes; a secondary carries them. With
     # only one instance there is nothing to trade, so it keeps them.
     sanitized_instance = 1 if per_target > 1 else 0
-    watched_build = BUILD_AFL_FAST if per_target > 1 else BUILD_AFL
 
     print(f"fuzzing {' '.join(targets)} on {cores()} cores ({per_target} per target), Ctrl-C to stop")
     print(f"showing {watched}, the rest log to {FINDINGS}/<target>/afl-*.log")
@@ -197,13 +235,16 @@ def cmd_run(targets: list[str]):
     print()
 
     instances: list[Instance] = []
+    slot = 0
     for target in targets:
         out = FINDINGS / target
         out.mkdir(parents=True, exist_ok=True)
         for i in range(per_target):
+            cpu, slot = assign(slot), slot + 1
             if target == watched and i == 0:
-                continue  # this one is started last, in the foreground
-            instances.append(start_instance(target, i, sanitized_instance, out))
+                watched_cpu = cpu  # started last, in the foreground, but its core is reserved here
+                continue
+            instances.append(start_instance(target, i, sanitized_instance, out, cpu))
 
     wait_until_started(instances)
 
@@ -215,8 +256,7 @@ def cmd_run(targets: list[str]):
     # child has had the same SIGINT and is busy saving its queue, so waiting for it is the point.
     interrupted = False
     foreground = subprocess.Popen(
-        ["afl-fuzz", "-M", "main", "-i", f"data/fuzz/{watched}", "-o", str(FINDINGS / watched),
-         "--", f"./{watched_build}/test/{watched}"],
+        afl_argv(watched, 0, sanitized_instance, FINDINGS / watched, watched_cpu),
         env=afl_env(),
     )
     try:
@@ -270,19 +310,19 @@ def sweep_one(target: str, idle_seconds: int) -> str:
     """
     out = FINDINGS / target
     out.mkdir(parents=True, exist_ok=True)
+    cpus = fuzzing_cpus()
     count = cores()
     sanitized_instance = 1 if count > 1 else 0
-    others = [start_instance(target, i, sanitized_instance, out) for i in range(1, count)]
+    others = [start_instance(target, i, sanitized_instance, out, cpus[i] if cpus else None)
+              for i in range(1, count)]
     started = time.time()
     outcome: dict[str, str] = {}
     foreground = None
     try:
         wait_until_started(others)
 
-        build = BUILD_AFL if sanitized_instance == 0 else BUILD_AFL_FAST
         foreground = subprocess.Popen(
-            ["afl-fuzz", "-M", "main", "-i", f"data/fuzz/{target}", "-o", str(out),
-             "--", f"./{build}/test/{target}"],
+            afl_argv(target, 0, sanitized_instance, out, cpus[0] if cpus else None),
             env=afl_env(),
         )
         done = threading.Event()
