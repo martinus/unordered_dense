@@ -52,6 +52,7 @@ test_sources = [
     'unit/initializer_list.cpp',
     'unit/insert_or_assign.cpp',
     'unit/insert.cpp',
+    'unit/lazy_bucket_allocation.cpp',
     'unit/iterators_empty.cpp',
     'unit/iterators_erase.cpp',
     'unit/iterators_insert.cpp',

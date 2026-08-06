@@ -1149,9 +1149,9 @@ private:
     void copy_buckets(table const& other) {
         // assumes m_values has already the correct data copied over.
         if (empty()) {
-            // when empty, at least allocate an initial buckets and clear them.
-            allocate_buckets_from_shift();
-            clear_buckets();
+            // Nothing to index, so stay in the state a default constructed table is in and let the
+            // first insert allocate. Copying an empty table therefore allocates nothing either.
+            m_shifts = initial_shifts;
         } else {
             m_shifts = other.m_shifts;
             allocate_buckets_from_shift();
@@ -1200,7 +1200,28 @@ private:
         }
     }
 
+    // The bucket array is not allocated until the first element goes in, so that a default
+    // constructed table does not allocate. Every path that probes the buckets either returns early
+    // while the table is empty (do_find, do_erase_key), or needs an iterator into m_values and so
+    // cannot be reached in this state (erase, extract, replace_key), or calls this first -- which
+    // is the three insert entry points, the only ones that reach the buckets without a prior
+    // emptiness check.
+    void allocate_buckets_if_none() {
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(0 == bucket_count()))
+            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+                allocate_buckets_from_shift();
+                clear_buckets();
+            }
+    }
+
     void clear_buckets() {
+        // Reachable now that a table can have no buckets at all -- extract() clears them on the way
+        // out whether or not there are any. data() is null in that state, and memset's pointer has
+        // to be valid even for a zero length. Neither sanitizer in CI objects, so this is on the
+        // language rule rather than on a diagnostic.
+        if (0 == bucket_count()) {
+            return;
+        }
         if constexpr (IsSegmented || !std::is_same_v<BucketContainer, default_container_t>) {
             for (auto&& e : m_buckets) {
                 std::memset(&e, 0, sizeof(e));
@@ -1336,6 +1357,7 @@ private:
 
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+        allocate_buckets_if_none();
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
@@ -1427,11 +1449,11 @@ public:
         , m_buckets(alloc_or_container)
         , m_hash(hash)
         , m_equal(equal) {
+        // No bucket_count asked for means no buckets yet: the first insert allocates them. See
+        // allocate_buckets_if_none(). A default constructed table therefore costs no allocation at
+        // all, so one can sit in a scope that may never use it without paying for it.
         if (0 != bucket_count) {
             reserve(bucket_count);
-        } else {
-            allocate_buckets_from_shift();
-            clear_buckets();
         }
     }
 
@@ -1555,8 +1577,10 @@ public:
                 m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
                 m_hash = std::exchange(other.m_hash, {});
                 m_equal = std::exchange(other.m_equal, {});
-                other.allocate_buckets_from_shift();
-                other.clear_buckets();
+                // The exchanges above leave "other" exactly as a default constructed table looks,
+                // so it is already usable and does not need buckets handed back to it. It used to
+                // get a freshly allocated set here, which is an allocation -- and a way to throw --
+                // inside an operation that is otherwise noexcept and needs neither.
             } else {
                 // set max_load_factor *before* copying the other's buckets, so we have the same
                 // behavior
@@ -1790,6 +1814,7 @@ public:
               typename KE = KeyEqual,
               std::enable_if_t<!is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
     auto emplace(K&& key) -> std::pair<iterator, bool> {
+        allocate_buckets_if_none();
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
@@ -1810,6 +1835,8 @@ public:
 
     template <class... Args>
     auto emplace(Args&&... args) -> std::pair<iterator, bool> {
+        allocate_buckets_if_none();
+
         // we have to instantiate the value_type to be able to access the key.
         // 1. emplace_back the object so it is constructed. 2. If the key is already there, pop it later in the loop.
         auto& key = get_key(m_values.emplace_back(std::forward<Args>(args)...));
