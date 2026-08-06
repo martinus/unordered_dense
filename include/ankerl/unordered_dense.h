@@ -1192,6 +1192,45 @@ private:
         }
     }
 
+    // The part of copy assignment that can throw, kept separate so the operator can put the table
+    // back together if it does.
+    void copy_everything_from(table const& other) {
+        // The assignment below takes other's allocator (pocca), and the buckets have to follow it,
+        // or the container's two halves end up on different allocators and get_allocator() -- which
+        // reports m_values' -- stops describing the bucket array, which the "same allocator" check
+        // in the move assignment relies on it doing.
+        //
+        // Done before the copy rather than after: it is the same allocator either way, both
+        // containers are empty here so it cannot throw, and doing it first means a copy that fails
+        // part way through cannot leave the two halves disagreeing. Copy assignment and not move:
+        // move would consult pocma, a different question, and not the one answered true here.
+        if constexpr (std::allocator_traits<allocator_type>::propagate_on_container_copy_assignment::value) {
+            auto const empty_with_other_allocator = bucket_container_type(other.m_values.get_allocator());
+            m_buckets = empty_with_other_allocator;
+        }
+
+        m_values = other.m_values;
+        m_max_load_factor = other.m_max_load_factor;
+        m_hash = other.m_hash;
+        m_equal = other.m_equal;
+        m_shifts = initial_shifts;
+        copy_buckets(other);
+    }
+
+    // Back to what a default constructed table holds. An assignment gives the buckets back before
+    // it knows whether it can build new ones, and in between the table holds values it has no way
+    // to find -- size() elements and no bucket array at all, which no operation is prepared for. If
+    // an exception leaves that window this is where it lands: assignment owes the basic guarantee,
+    // which means valid and not merely non-leaking, and with no buckets the only valid state is
+    // empty. Every step is noexcept, so the recovery cannot fail on its way out.
+    void reset_to_empty() noexcept {
+        m_values.clear();
+        m_buckets.clear();
+        m_max_bucket_capacity = 0;
+        m_bucket_mask = 0;
+        m_shifts = initial_shifts;
+    }
+
     /**
      * True when no element can be added any more without increasing the size
      */
@@ -1591,25 +1630,21 @@ public:
     auto operator=(table const& other) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
-            m_values = other.m_values;
 
-            // That assignment may just have taken other's allocator (pocca). The buckets have to
-            // follow it, or the container's two halves end up on different allocators and
-            // get_allocator() -- which reports m_values' -- stops describing the bucket array,
-            // which the "same allocator" check in the move assignment below relies on it doing.
-            // The buckets are already given back above, so this only moves the allocator across.
-            // Copy assignment and not move: move would consult pocma, which is a different
-            // question and is not the one that was answered true here.
-            if constexpr (std::allocator_traits<allocator_type>::propagate_on_container_copy_assignment::value) {
-                auto const empty_with_other_allocator = bucket_container_type(m_values.get_allocator());
-                m_buckets = empty_with_other_allocator;
+            // Copying the values, and building the buckets for them, both allocate. Until both have
+            // happened the table holds values with no buckets to find them by; a throw in there
+            // used to leave it that way, so size() counted elements that find() could not reach and
+            // the next lookup probed a bucket array that was not there. See reset_to_empty().
+            if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()) {
+                try {
+                    copy_everything_from(other);
+                } catch (...) {
+                    reset_to_empty();
+                    throw;
+                }
+            } else {
+                copy_everything_from(other);
             }
-
-            m_max_load_factor = other.m_max_load_factor;
-            m_hash = other.m_hash;
-            m_equal = other.m_equal;
-            m_shifts = initial_shifts;
-            copy_buckets(other);
         }
         return *this;
     }
@@ -1622,6 +1657,29 @@ public:
                                            std::is_nothrow_move_assignable_v<KeyEqual>) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
+
+            // Same window as the copy assignment above, and reachable for the same reason: with an
+            // allocator that neither propagates nor compares equal the move below moves the
+            // elements one at a time into memory it has to allocate. See reset_to_empty().
+            if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() &&
+                          !std::is_nothrow_move_assignable_v<value_container_type>) {
+                try {
+                    move_everything_from(std::move(other));
+                } catch (...) {
+                    reset_to_empty();
+                    throw;
+                }
+            } else {
+                move_everything_from(std::move(other));
+            }
+        }
+        return *this;
+    }
+
+private:
+    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
+    void move_everything_from(table&& other) {
+        {
             m_values = std::move(other.m_values);
             other.m_values.clear();
 
@@ -1653,9 +1711,9 @@ public:
             }
             // map "other" is now already usable, it's empty.
         }
-        return *this;
     }
 
+public:
     auto operator=(std::initializer_list<value_type> ilist) -> table& {
         clear();
         insert(ilist);
