@@ -142,6 +142,11 @@ TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
     auto source_counts = test::alloc_counts{};
     auto target_counts = test::alloc_counts{};
 
+    // Deliberately not an assertion about how many allocations either allocator has served at this
+    // point. Which buffers a container is still sitting on midway through a copy assignment is up
+    // to the standard library -- libstdc++ and libc++ disagree about it -- and none of that is
+    // what this is testing. What has to be true is that allocator 2 is finished with: the target
+    // holds nothing of its any more, so nothing the target does from here can reach it.
     auto check = [&](auto make) {
         auto source = make(pocca(1, &source_counts), 200);
         auto target = make(pocca(2, &target_counts), 50);
@@ -149,27 +154,34 @@ TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
         target = source;
 
         REQUIRE(target.get_allocator().m_id == 1);
-        // Allocator 2 is out of the picture entirely: everything it handed out has come back,
-        // while the target is still alive and holding 200 elements. The buckets used to stay
-        // behind and keep being reallocated through it.
-        REQUIRE(target_counts.allocations > 0);
-        REQUIRE(target_counts.deallocations == target_counts.allocations);
-        return target;
+        require_holds(target, 200);
+
+        // Growing the target reallocates both halves, and every byte of it has to come from
+        // allocator 1 now. The buckets used to stay behind, so this went to allocator 2.
+        auto const before = target_counts.allocations;
+        target.reserve(20000);
+        REQUIRE(target_counts.allocations == before);
+        require_holds(target, 200);
     };
 
     SUBCASE("map") {
-        auto target = check([](pocca alloc, int count) {
+        check([](pocca alloc, int count) {
             return filled<map_of<pocca>>(alloc, count);
         });
-        require_holds(target, 200);
     }
 
     SUBCASE("segmented map") {
-        auto target = check([](pocca alloc, int count) {
+        check([](pocca alloc, int count) {
             return filled<segmented_map_of<pocca>>(alloc, count);
         });
-        require_holds(target, 200);
     }
+
+    // ... and once everything is destroyed, both allocators are square. This is the part that
+    // would catch a buffer stranded on allocator 2 rather than handed back to it.
+    REQUIRE(target_counts.allocations > 0);
+    REQUIRE(target_counts.deallocations == target_counts.allocations);
+    REQUIRE(source_counts.allocations > 0);
+    REQUIRE(source_counts.deallocations == source_counts.allocations);
 }
 
 // Item 4 of #174. An extended move constructor has to use the allocator it was handed, whatever
