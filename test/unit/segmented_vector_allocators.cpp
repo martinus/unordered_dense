@@ -1,6 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/id_allocator.h>
 
 #include <cstddef>
 #include <functional>
@@ -21,47 +22,11 @@ namespace {
 // Propagates on nothing and instances differ, which is how std::pmr::polymorphic_allocator behaves
 // -- the allocator this library supports and tests, and the reason issue #104's proposed
 // static_assert(pocma) fix cannot be applied here.
-template <typename T, typename Pocca = std::false_type>
-struct id_allocator {
-    using value_type = T;
-    using propagate_on_container_copy_assignment = Pocca;
-    using propagate_on_container_move_assignment = std::false_type;
-    using propagate_on_container_swap = std::false_type;
-    using is_always_equal = std::false_type;
-
-    int m_id = 0;
-
-    id_allocator() = default;
-    explicit id_allocator(int id)
-        : m_id(id) {}
-
-    template <typename U>
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    id_allocator(id_allocator<U, Pocca> const& other) noexcept
-        : m_id(other.m_id) {}
-
-    auto allocate(std::size_t n) -> T* {
-        return std::allocator<T>{}.allocate(n);
-    }
-
-    void deallocate(T* p, std::size_t n) {
-        std::allocator<T>{}.deallocate(p, n);
-    }
-
-    friend auto operator==(id_allocator const& a, id_allocator const& b) noexcept -> bool {
-        return a.m_id == b.m_id;
-    }
-
-    friend auto operator!=(id_allocator const& a, id_allocator const& b) noexcept -> bool {
-        return !(a == b);
-    }
-};
-
 template <typename Alloc>
 using vec_of = ankerl::unordered_dense::segmented_vector<int, Alloc, sizeof(int) * 4>;
 
-using sticky_vec = vec_of<id_allocator<int>>;
-using copying_vec = vec_of<id_allocator<int, std::true_type>>;
+using sticky_vec = vec_of<test::id_allocator<int>>;
+using copying_vec = vec_of<test::id_allocator<int, std::true_type>>;
 using std_vec = vec_of<std::allocator<int>>;
 
 template <typename Vec>
@@ -103,7 +68,7 @@ static_assert(!std::is_nothrow_move_assignable_v<sticky_vec>);
 
 // ... and the container built on it says the same thing, since that is what callers see.
 using sticky_map = ankerl::unordered_dense::
-    segmented_map<int, int, ankerl::unordered_dense::hash<int>, std::equal_to<int>, id_allocator<std::pair<int, int>>>;
+    segmented_map<int, int, ankerl::unordered_dense::hash<int>, std::equal_to<int>, test::id_allocator<std::pair<int, int>>>;
 static_assert(!std::is_nothrow_move_assignable_v<sticky_map>);
 static_assert(std::is_nothrow_move_assignable_v<ankerl::unordered_dense::segmented_map<int, int>>);
 
@@ -145,7 +110,7 @@ TEST_CASE("segmented_vector_copy_construction_asks_the_allocator") {
 TEST_CASE("segmented_vector_copy_construction_with_an_explicit_allocator") {
     auto source = filled<sticky_vec>(5, 10);
 
-    auto copy = sticky_vec(source, id_allocator<int>(9));
+    auto copy = sticky_vec(source, test::id_allocator<int>(9));
 
     REQUIRE(copy.get_allocator().m_id == 9);
     require_holds(copy, 10);
