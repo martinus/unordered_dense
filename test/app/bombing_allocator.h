@@ -8,6 +8,21 @@
 // out of memory part way through an operation. The countdown is global rather than per instance,
 // because the point is usually to fail one specific allocation inside a call, and a container's
 // allocator has usually been copied and rebound several times by the time it gets there.
+//
+// Usable only where a container construction does not allocate. MSVC's debug iterators allocate a
+// _Container_proxy through the allocator every time a container is constructed, and the standard
+// declares std::vector's allocator-only constructor noexcept -- so a throwing allocator terminates
+// there rather than propagating, whatever the container being tested does about it. That rules the
+// whole technique out under _ITERATOR_DEBUG_LEVEL, which is what ANKERL_TEST_CAN_BOMB_ALLOCATIONS
+// below reports.
+
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+#    define ANKERL_TEST_CAN_BOMB_ALLOCATIONS() 0 // NOLINT(cppcoreguidelines-macro-usage)
+#else
+#    define ANKERL_TEST_CAN_BOMB_ALLOCATIONS() 1 // NOLINT(cppcoreguidelines-macro-usage)
+#endif
+
 namespace test {
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
