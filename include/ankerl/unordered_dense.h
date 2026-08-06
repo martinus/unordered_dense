@@ -1190,13 +1190,23 @@ private:
             m_shifts = initial_shifts;
         } else {
             m_shifts = other.m_shifts;
-            allocate_buckets_from_shift();
             if constexpr (IsSegmented || !std::is_same_v<BucketContainer, default_container_t>) {
+                allocate_buckets_from_shift();
                 for (auto i = 0UL; i < bucket_count(); ++i) {
                     at(m_buckets, i) = at(other.m_buckets, i);
                 }
             } else {
-                std::memcpy(m_buckets.data(), other.m_buckets.data(), sizeof(Bucket) * bucket_count());
+                // One pass, not two. This used to grow the array with resize(), which value
+                // initialises every bucket it adds, and then memcpy over all of it -- so every byte
+                // of the bucket array was written twice, and for a large map the wasted half is a
+                // memset of megabytes. assign() copies straight into the new storage.
+                //
+                // assign() and not m_buckets = other.m_buckets, which would consult pocca: the
+                // allocator question is answered by the caller, and this is also reached from the
+                // move assignment's differing-allocator branch, where adopting other's would be
+                // exactly wrong.
+                m_buckets.assign(other.m_buckets.begin(), other.m_buckets.end());
+                describe_buckets(m_buckets.size());
             }
         }
     }
@@ -1313,6 +1323,12 @@ private:
         // indexing past the end of the array that is still there. This is the one function all six
         // bucket-allocating paths go through, so committing here rather than up front is what makes
         // a failed growth leave the old buckets intact and consistent instead of unusable.
+        describe_buckets(num_buckets);
+    }
+
+    // The two values derived from the bucket array's size. Only ever called once the array of that
+    // size exists; see the note above.
+    void describe_buckets(std::size_t num_buckets) {
         m_bucket_mask = static_cast<value_idx_type>(num_buckets - 1);
         if (num_buckets == max_bucket_count()) {
             // reached the maximum, make sure we can use each bucket

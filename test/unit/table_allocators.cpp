@@ -2,6 +2,7 @@
 
 #include <app/doctest.h>
 #include <app/id_allocator.h>
+#include <app/map_fixtures.h>
 
 #include <cstddef>
 #include <functional>
@@ -38,30 +39,11 @@ using pocca = test::pocca_allocator<value_type>;
 using pocma = test::pocma_allocator<value_type>;
 using pocs = test::pocs_allocator<value_type>;
 
-template <typename Map>
-auto filled(typename Map::allocator_type alloc, int count) -> Map {
-    auto map = Map(0, alloc);
-    for (int i = 0; i < count; ++i) {
-        map[i] = i;
-    }
-    return map;
-}
-
 // Carries a map type into a generic lambda, which cannot take a type parameter of its own.
 template <typename T>
 struct tag_of {
     using type = T;
 };
-
-template <typename Map>
-void require_holds(Map const& map, int count) {
-    REQUIRE(map.size() == static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        auto it = map.find(i);
-        REQUIRE(it != map.end());
-        REQUIRE(it->second == i);
-    }
-}
 
 } // namespace
 
@@ -70,25 +52,25 @@ void require_holds(Map const& map, int count) {
 // silently kept that arena alive and kept allocating into it.
 TEST_CASE("table_copy_construction_asks_the_allocator") {
     SUBCASE("an allocator that declines is not inherited") {
-        auto source = filled<map_of<pmr_like>>(pmr_like(7), 20);
+        auto source = test::filled<map_of<pmr_like>>(20, pmr_like(7));
         auto copy = source;
         REQUIRE(copy.get_allocator().m_id == 0);
-        require_holds(copy, 20);
-        require_holds(source, 20);
+        test::require_holds(copy, 20);
+        test::require_holds(source, 20);
     }
 
     SUBCASE("an allocator that accepts is inherited") {
-        auto source = filled<map_of<inheriting>>(inheriting(7), 20);
+        auto source = test::filled<map_of<inheriting>>(20, inheriting(7));
         auto copy = source;
         REQUIRE(copy.get_allocator().m_id == 7);
-        require_holds(copy, 20);
+        test::require_holds(copy, 20);
     }
 
     SUBCASE("the segmented map answers the same way") {
-        auto source = filled<segmented_map_of<pmr_like>>(pmr_like(7), 20);
+        auto source = test::filled<segmented_map_of<pmr_like>>(20, pmr_like(7));
         auto copy = source;
         REQUIRE(copy.get_allocator().m_id == 0);
-        require_holds(copy, 20);
+        test::require_holds(copy, 20);
     }
 }
 
@@ -97,35 +79,35 @@ TEST_CASE("table_copy_construction_asks_the_allocator") {
 // landed in the default resource while the values went where the caller said.
 TEST_CASE("table_constructors_put_the_buckets_where_they_were_told") {
     SUBCASE("copy with an allocator") {
-        auto source = filled<map_of<inheriting>>(inheriting(1), 200);
+        auto source = test::filled<map_of<inheriting>>(200, inheriting(1));
         auto counts = test::alloc_counts{};
 
         auto copy = map_of<inheriting>(source, inheriting(9, &counts));
 
         REQUIRE(copy.get_allocator().m_id == 9);
-        require_holds(copy, 200);
+        test::require_holds(copy, 200);
         // Values and buckets, not just values.
         REQUIRE(counts.allocations >= 2);
     }
 
     SUBCASE("move with an allocator") {
-        auto source = filled<map_of<inheriting>>(inheriting(1), 200);
+        auto source = test::filled<map_of<inheriting>>(200, inheriting(1));
         auto counts = test::alloc_counts{};
 
         auto moved = map_of<inheriting>(std::move(source), inheriting(9, &counts));
 
-        require_holds(moved, 200);
+        test::require_holds(moved, 200);
         REQUIRE(counts.allocations >= 2);
     }
 
     SUBCASE("the segmented map answers the same way") {
-        auto source = filled<segmented_map_of<inheriting>>(inheriting(1), 200);
+        auto source = test::filled<segmented_map_of<inheriting>>(200, inheriting(1));
         auto counts = test::alloc_counts{};
 
         auto copy = segmented_map_of<inheriting>(source, inheriting(9, &counts));
 
         REQUIRE(copy.get_allocator().m_id == 9);
-        require_holds(copy, 200);
+        test::require_holds(copy, 200);
         REQUIRE(counts.allocations >= 2);
     }
 }
@@ -134,8 +116,8 @@ TEST_CASE("table_constructors_put_the_buckets_where_they_were_told") {
 TEST_CASE("table_gives_every_block_back_to_the_allocator_that_produced_it") {
     auto counts = test::alloc_counts{};
     {
-        auto map = filled<map_of<inheriting>>(inheriting(3, &counts), 200);
-        require_holds(map, 200);
+        auto map = test::filled<map_of<inheriting>>(200, inheriting(3, &counts));
+        test::require_holds(map, 200);
     }
     REQUIRE(counts.allocations > 0);
     REQUIRE(counts.deallocations == counts.allocations);
@@ -155,20 +137,20 @@ TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
     // holds nothing of its any more, so nothing the target does from here can reach it.
     auto check = [&](auto tag) {
         using map_type = typename decltype(tag)::type;
-        auto source = filled<map_type>(pocca(1, &source_counts), 200);
-        auto target = filled<map_type>(pocca(2, &target_counts), 50);
+        auto source = test::filled<map_type>(200, pocca(1, &source_counts));
+        auto target = test::filled<map_type>(50, pocca(2, &target_counts));
 
         target = source;
 
         REQUIRE(target.get_allocator().m_id == 1);
-        require_holds(target, 200);
+        test::require_holds(target, 200);
 
         // Growing the target reallocates both halves, and every byte of it has to come from
         // allocator 1 now. The buckets used to stay behind, so this went to allocator 2.
         auto const before = target_counts.allocations;
         target.reserve(20000);
         REQUIRE(target_counts.allocations == before);
-        require_holds(target, 200);
+        test::require_holds(target, 200);
     };
 
     SUBCASE("map") {
@@ -193,17 +175,17 @@ TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
 // allocator the result held the source's allocator and the caller's was dropped.
 TEST_CASE("extended_move_construction_uses_the_allocator_it_was_given") {
     SUBCASE("map") {
-        auto source = filled<map_of<pocma>>(pocma(1), 200);
+        auto source = test::filled<map_of<pocma>>(200, pocma(1));
         auto moved = map_of<pocma>(std::move(source), pocma(9));
         REQUIRE(moved.get_allocator().m_id == 9);
-        require_holds(moved, 200);
+        test::require_holds(moved, 200);
     }
 
     SUBCASE("segmented map") {
-        auto source = filled<segmented_map_of<pocma>>(pocma(1), 200);
+        auto source = test::filled<segmented_map_of<pocma>>(200, pocma(1));
         auto moved = segmented_map_of<pocma>(std::move(source), pocma(9));
         REQUIRE(moved.get_allocator().m_id == 9);
-        require_holds(moved, 200);
+        test::require_holds(moved, 200);
     }
 
     SUBCASE("segmented_vector on its own") {
@@ -243,41 +225,41 @@ TEST_CASE("extended_move_construction_uses_the_allocator_it_was_given") {
 // choices answered the same question differently for the same map.
 TEST_CASE("swap_exchanges_the_allocators_when_asked_to") {
     SUBCASE("map") {
-        auto a = filled<map_of<pocs>>(pocs(1), 100);
-        auto b = filled<map_of<pocs>>(pocs(2), 30);
+        auto a = test::filled<map_of<pocs>>(100, pocs(1));
+        auto b = test::filled<map_of<pocs>>(30, pocs(2));
 
         a.swap(b);
 
         REQUIRE(a.get_allocator().m_id == 2);
         REQUIRE(b.get_allocator().m_id == 1);
-        require_holds(a, 30);
-        require_holds(b, 100);
+        test::require_holds(a, 30);
+        test::require_holds(b, 100);
     }
 
     SUBCASE("segmented map") {
-        auto a = filled<segmented_map_of<pocs>>(pocs(1), 100);
-        auto b = filled<segmented_map_of<pocs>>(pocs(2), 30);
+        auto a = test::filled<segmented_map_of<pocs>>(100, pocs(1));
+        auto b = test::filled<segmented_map_of<pocs>>(30, pocs(2));
 
         a.swap(b);
 
         REQUIRE(a.get_allocator().m_id == 2);
         REQUIRE(b.get_allocator().m_id == 1);
-        require_holds(a, 30);
-        require_holds(b, 100);
+        test::require_holds(a, 30);
+        test::require_holds(b, 100);
     }
 
     // Equal allocators, so nothing propagates and nothing is reallocated either way.
     SUBCASE("swapping costs no allocation") {
         auto counts = test::alloc_counts{};
-        auto a = filled<segmented_map_of<inheriting>>(inheriting(1, &counts), 100);
-        auto b = filled<segmented_map_of<inheriting>>(inheriting(1, &counts), 30);
+        auto a = test::filled<segmented_map_of<inheriting>>(100, inheriting(1, &counts));
+        auto b = test::filled<segmented_map_of<inheriting>>(30, inheriting(1, &counts));
         auto const before = counts.allocations;
 
         a.swap(b);
 
         REQUIRE(counts.allocations == before);
-        require_holds(a, 30);
-        require_holds(b, 100);
+        test::require_holds(a, 30);
+        test::require_holds(b, 100);
     }
 }
 
