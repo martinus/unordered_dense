@@ -7,6 +7,7 @@
 #include <functional>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 // Allocator handling in detail::table, from issue #174. The container-level counterpart to the
 // segmented_vector fixes in #173 -- the same decisions are made again one level up, over m_values
@@ -30,6 +31,12 @@ using pmr_like = test::id_allocator<value_type, std::false_type, std::false_type
 // The same, except that select_on_container_copy_construction does what allocator_traits does by
 // default and hands back a copy.
 using inheriting = test::id_allocator<value_type>;
+
+// One allocator per propagation question, since each is answered separately and the bug in every
+// case was answering it for the values but not for the buckets.
+using pocca = test::id_allocator<value_type, std::true_type>;
+using pocma = test::id_allocator<value_type, std::false_type, std::true_type, std::true_type>;
+using pocs = test::id_allocator<value_type, std::false_type, std::true_type, std::false_type, std::true_type>;
 
 template <typename Map>
 auto filled(typename Map::allocator_type alloc, int count) -> Map {
@@ -127,6 +134,141 @@ TEST_CASE("table_gives_every_block_back_to_the_allocator_that_produced_it") {
     REQUIRE(counts.allocations > 0);
     REQUIRE(counts.deallocations == counts.allocations);
 }
+
+// Item 3 of #174. m_values honours pocca on its own -- that is std::vector's job -- and the
+// buckets used to be left behind on the old allocator, so the container advertised one allocator
+// while half its memory belonged to another.
+TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
+    auto source_counts = test::alloc_counts{};
+    auto target_counts = test::alloc_counts{};
+
+    auto check = [&](auto make) {
+        auto source = make(pocca(1, &source_counts), 200);
+        auto target = make(pocca(2, &target_counts), 50);
+
+        target = source;
+
+        REQUIRE(target.get_allocator().m_id == 1);
+        // Allocator 2 is out of the picture entirely: everything it handed out has come back,
+        // while the target is still alive and holding 200 elements. The buckets used to stay
+        // behind and keep being reallocated through it.
+        REQUIRE(target_counts.allocations > 0);
+        REQUIRE(target_counts.deallocations == target_counts.allocations);
+        return target;
+    };
+
+    SUBCASE("map") {
+        auto target = check([](pocca alloc, int count) {
+            return filled<map_of<pocca>>(alloc, count);
+        });
+        require_holds(target, 200);
+    }
+
+    SUBCASE("segmented map") {
+        auto target = check([](pocca alloc, int count) {
+            return filled<segmented_map_of<pocca>>(alloc, count);
+        });
+        require_holds(target, 200);
+    }
+}
+
+// Item 4 of #174. An extended move constructor has to use the allocator it was handed, whatever
+// the allocator says about propagation. This one used to construct empty and then move-assign,
+// and assignment asks propagate_on_container_move_assignment instead -- so with a propagating
+// allocator the result held the source's allocator and the caller's was dropped.
+TEST_CASE("extended_move_construction_uses_the_allocator_it_was_given") {
+    SUBCASE("map") {
+        auto source = filled<map_of<pocma>>(pocma(1), 200);
+        auto moved = map_of<pocma>(std::move(source), pocma(9));
+        REQUIRE(moved.get_allocator().m_id == 9);
+        require_holds(moved, 200);
+    }
+
+    SUBCASE("segmented map") {
+        auto source = filled<segmented_map_of<pocma>>(pocma(1), 200);
+        auto moved = segmented_map_of<pocma>(std::move(source), pocma(9));
+        REQUIRE(moved.get_allocator().m_id == 9);
+        require_holds(moved, 200);
+    }
+
+    SUBCASE("segmented_vector on its own") {
+        using vec = ankerl::unordered_dense::
+            segmented_vector<int, test::id_allocator<int, std::false_type, std::true_type, std::true_type>>;
+        using alloc = typename vec::allocator_type;
+
+        auto source = vec(alloc(1));
+        for (int i = 0; i < 100; ++i) {
+            source.emplace_back(i);
+        }
+
+        auto moved = vec(std::move(source), alloc(9));
+
+        REQUIRE(moved.get_allocator().m_id == 9);
+        REQUIRE(moved.size() == 100);
+        for (int i = 0; i < 100; ++i) {
+            REQUIRE(moved[static_cast<std::size_t>(i)] == i);
+        }
+    }
+
+    // What std::vector answers, which is what the above is measured against.
+    SUBCASE("std::vector agrees") {
+        using alloc = test::id_allocator<int, std::false_type, std::true_type, std::true_type>;
+        auto source = std::vector<int, alloc>(alloc(1));
+        source.push_back(1);
+
+        auto moved = std::vector<int, alloc>(std::move(source), alloc(9));
+
+        REQUIRE(moved.get_allocator().m_id == 9);
+    }
+}
+
+// Item 6 of #174. swap has to exchange the allocators when propagate_on_container_swap says so.
+// segmented_vector had no member swap, so an unqualified swap() found the generic std::swap, which
+// is three moves -- and a move asks about move assignment, not about swap. The two container
+// choices answered the same question differently for the same map.
+TEST_CASE("swap_exchanges_the_allocators_when_asked_to") {
+    SUBCASE("map") {
+        auto a = filled<map_of<pocs>>(pocs(1), 100);
+        auto b = filled<map_of<pocs>>(pocs(2), 30);
+
+        a.swap(b);
+
+        REQUIRE(a.get_allocator().m_id == 2);
+        REQUIRE(b.get_allocator().m_id == 1);
+        require_holds(a, 30);
+        require_holds(b, 100);
+    }
+
+    SUBCASE("segmented map") {
+        auto a = filled<segmented_map_of<pocs>>(pocs(1), 100);
+        auto b = filled<segmented_map_of<pocs>>(pocs(2), 30);
+
+        a.swap(b);
+
+        REQUIRE(a.get_allocator().m_id == 2);
+        REQUIRE(b.get_allocator().m_id == 1);
+        require_holds(a, 30);
+        require_holds(b, 100);
+    }
+
+    // Equal allocators, so nothing propagates and nothing is reallocated either way.
+    SUBCASE("swapping costs no allocation") {
+        auto counts = test::alloc_counts{};
+        auto a = filled<segmented_map_of<inheriting>>(inheriting(1, &counts), 100);
+        auto b = filled<segmented_map_of<inheriting>>(inheriting(1, &counts), 30);
+        auto const before = counts.allocations;
+
+        a.swap(b);
+
+        REQUIRE(counts.allocations == before);
+        require_holds(a, 30);
+        require_holds(b, 100);
+    }
+}
+
+// The member swap is what table::swap calls; without it the call fell back to three moves.
+static_assert(std::is_void_v<decltype(std::declval<ankerl::unordered_dense::segmented_vector<int>&>().swap(
+                  std::declval<ankerl::unordered_dense::segmented_vector<int>&>()))>);
 
 // The extended move constructor's body is *this = std::move(other), which for an allocator that
 // neither propagates nor compares equal moves the elements one at a time and allocates. #173 made
