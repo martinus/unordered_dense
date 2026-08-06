@@ -45,6 +45,7 @@ test_sources = [
     'unit/fuzz_insert_erase.cpp',
     'unit/fuzz_replace_map.cpp',
     'unit/fuzz_string.cpp',
+    'unit/growth_exception_safety.cpp',
     'unit/hash_char_types.cpp',
     'unit/hash_smart_ptr.cpp',
     'unit/hash_string_view.cpp',
