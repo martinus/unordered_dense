@@ -73,6 +73,7 @@ test_sources = [
     'unit/reserve_and_assign.cpp',
     'unit/reserve.cpp',
     'unit/segmented_vector.cpp',
+    'unit/segmented_vector_allocators.cpp',
     'unit/set_or_map_types.cpp',
     'unit/set.cpp',
     'unit/std_hash.cpp',

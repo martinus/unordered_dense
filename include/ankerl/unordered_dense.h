@@ -789,7 +789,8 @@ public:
     segmented_vector(segmented_vector&& other) noexcept
         : segmented_vector(std::move(other), other.get_allocator()) {}
 
-    segmented_vector(segmented_vector const& other) {
+    segmented_vector(segmented_vector const& other)
+        : m_blocks(std::allocator_traits<vec_alloc>::select_on_container_copy_construction(other.m_blocks.get_allocator())) {
         append_everything_from(other);
     }
 
@@ -798,19 +799,48 @@ public:
             return *this;
         }
         clear();
+        if constexpr (std::allocator_traits<vec_alloc>::propagate_on_container_copy_assignment::value) {
+            if (m_blocks.get_allocator() != other.m_blocks.get_allocator()) {
+                // Everything still held was allocated through the old allocator, so it has to go
+                // back through that one before the new allocator is adopted.
+                dealloc();
+                m_blocks.clear();
+                // Copy assignment rather than move: which of the two propagates the allocator is
+                // the inner vector's own pocca/pocma, and only pocca is known true in this branch.
+                // Assigning a temporary here would move, consult pocma, and silently keep the old
+                // allocator -- which is how the code being fixed came to adopt the wrong one.
+                auto const empty_with_other_allocator = std::vector<pointer, vec_alloc>(other.m_blocks.get_allocator());
+                m_blocks = empty_with_other_allocator;
+            }
+        }
         append_everything_from(other);
         return *this;
     }
 
-    auto operator=(segmented_vector&& other) noexcept -> segmented_vector& {
+    // Not unconditionally noexcept. When the allocator neither propagates nor compares equal --
+    // std::pmr::polymorphic_allocator, for one -- the elements have to be moved one at a time
+    // into memory this container allocates, and running out of it there used to terminate the
+    // process against a noexcept boundary rather than throw. std::vector spells the condition the
+    // same way.
+    auto operator=(segmented_vector&& other) noexcept(
+        std::allocator_traits<vec_alloc>::propagate_on_container_move_assignment::value ||
+        std::allocator_traits<vec_alloc>::is_always_equal::value) -> segmented_vector& {
+        if (this == &other) {
+            return *this;
+        }
         clear();
         dealloc();
-        if (other.get_allocator() == get_allocator()) {
+        // Either the allocator comes along with the blocks, or it is already the same one: both
+        // mean the blocks can simply be taken over. std::vector's own move assignment does the
+        // propagating in the first case.
+        if (std::allocator_traits<vec_alloc>::propagate_on_container_move_assignment::value ||
+            other.get_allocator() == get_allocator()) {
             m_blocks = std::move(other.m_blocks);
             m_size = std::exchange(other.m_size, {});
         } else {
-            // make sure to construct with other's allocator!
-            m_blocks = std::vector<pointer, vec_alloc>(vec_alloc(other.get_allocator()));
+            // Keeps its own allocator, because nothing said to take other's: adopting it here is
+            // what used to make memory allocated from one arena get freed through another.
+            m_blocks.clear();
             append_everything_from(std::move(other));
         }
         return *this;
