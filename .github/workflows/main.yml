@@ -95,6 +95,20 @@ jobs:
             cpp_std: '23'
             apt: libboost-dev
 
+          # The only other standard library this project meets. Without this leg the sole libc++ in
+          # CI was macOS, so anything that differed between libc++ *versions* was invisible, and
+          # anything that differed between the two libraries could only be diagnosed by pushing to
+          # macOS and reading the log. Both have happened: a container proxy allocation on MSVC and
+          # an unconditional deallocate(nullptr, 0) on libc++ each cost a round trip to find.
+          # No libboost-dev here on purpose -- the runner's boost is built against libstdc++, and
+          # this leg exists to test one library at a time.
+          - name: Linux (clang, C++17, libc++)
+            id: linux-clang-cpp17-libcxx
+            os: ubuntu-latest
+            cxx: clang++
+            apt: libc++-dev libc++abi-dev
+            setup_args: -Dcpp_args=-stdlib=libc++ -Dcpp_link_args=-stdlib=libc++
+
           # A hash map that packs a bucket into 8 bytes and indexes with size_t is exactly the
           # design a different word size breaks, so 32 bit is real coverage, not a formality.
           # The runner images carry a 64 bit only toolchain, hence g++-multilib. -m32 used to be
