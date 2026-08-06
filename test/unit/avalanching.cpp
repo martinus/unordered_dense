@@ -16,69 +16,65 @@
 
 namespace {
 
-// Says nothing about itself.
-struct quiet_hash {
+// The seven hashers below differ only in what they say about themselves, which is the whole point
+// of each of them, so the body they share lives here once and the marker is the only line each one
+// carries. They stay distinct types because two of them are named from outside by a specialization,
+// which needs a type of its own to name.
+struct identity {
     [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
         return static_cast<uint64_t>(x);
     }
 };
 
-// Same hash, and claims to be avalanching from outside (see the specialization below).
-struct quiet_but_good_hash {
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(x);
-    }
-};
+// Says nothing about itself.
+struct quiet_hash : identity {};
+
+// Says nothing either, and is called avalanching from outside (see the specializations below).
+struct quiet_but_good_hash : identity {};
 
 // Claims to be avalanching, and is contradicted from outside.
-struct boastful_hash {
+struct boastful_hash : identity {
     using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(x);
-    }
 };
 
 // Claims to be avalanching and is taken at its word.
-struct honest_hash {
+struct honest_hash : identity {
     using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(x);
-    }
 };
 
 // The spelling Boost's documentation asks for, in both of its answers. A hash annotated for Boost
 // has to be read the same way here -- and false_type in particular has to mean no, which a bare
 // "the member is there" test would get backwards.
-struct boost_style_yes {
+struct boost_style_yes : identity {
     using is_avalanching = std::true_type;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(x);
-    }
 };
 
-struct boost_style_no {
+struct boost_style_no : identity {
     using is_avalanching = std::false_type;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(x);
-    }
 };
 
-// Not std::true_type, but still a compile time bool.
-struct boost_style_constant {
-    using is_avalanching = std::integral_constant<bool, true>;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(x);
-    }
+// Any type carrying a compile time bool, not just the std:: ones -- std::true_type would not test
+// this, being the same type as std::integral_constant<bool, true>.
+struct home_grown_yes {
+    static constexpr bool value = true;
 };
 
-// For the std::hash fallback: one type whose std::hash declares itself avalanching, one whose does
-// not.
+struct home_grown_marker : identity {
+    using is_avalanching = home_grown_yes;
+};
+
+// For the std::hash fallback: one type whose std::hash declares itself avalanching the way this
+// library spells it, one the way Boost spells it, one that says nothing and is named from outside,
+// and one that says nothing at all.
 struct annotated {
+    int x;
+};
+
+struct annotated_boost_style {
+    int x;
+};
+
+struct named_from_outside {
     int x;
 };
 
@@ -108,6 +104,22 @@ struct std::hash<annotated> {
 };
 
 template <>
+struct std::hash<annotated_boost_style> {
+    using is_avalanching = std::true_type;
+
+    [[nodiscard]] auto operator()(annotated_boost_style const& a) const noexcept -> size_t {
+        return static_cast<size_t>(a.x);
+    }
+};
+
+template <>
+struct std::hash<named_from_outside> {
+    [[nodiscard]] auto operator()(named_from_outside const& a) const noexcept -> size_t {
+        return static_cast<size_t>(a.x);
+    }
+};
+
+template <>
 struct std::hash<unannotated> {
     [[nodiscard]] auto operator()(unannotated const& a) const noexcept -> size_t {
         return static_cast<size_t>(a.x);
@@ -119,6 +131,10 @@ struct ankerl::unordered_dense::hash_is_avalanching<quiet_but_good_hash> : std::
 
 template <>
 struct ankerl::unordered_dense::hash_is_avalanching<boastful_hash> : std::false_type {};
+
+// A std::hash that cannot be edited, named from outside -- the case the fallback used to miss.
+template <>
+struct ankerl::unordered_dense::hash_is_avalanching<std::hash<named_from_outside>> : std::true_type {};
 
 namespace {
 
@@ -145,14 +161,14 @@ TEST_CASE("the_member_typedef_still_answers") {
 // other, or sharing hash types between them silently changes what the table does.
 TEST_CASE("the_member_typedef_may_be_spelled_the_way_boost_asks") {
     REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style_yes>);
-    REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style_constant>);
+    REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<home_grown_marker>);
 
     // The one that a mere "the member exists" test gets backwards.
     REQUIRE_FALSE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style_no>);
 
     // And it decides what the table does, not just what the trait reports.
     REQUIRE(finalized<boost_style_yes>(7) == 7);
-    REQUIRE(finalized<boost_style_constant>(7) == 7);
+    REQUIRE(finalized<home_grown_marker>(7) == 7);
     REQUIRE(finalized<boost_style_no>(7) == ankerl::unordered_dense::detail::wyhash::hash(7));
 }
 
@@ -165,6 +181,23 @@ TEST_CASE("an_avalanching_std_hash_is_noticed_through_the_fallback") {
     // ... and it is not merely reported: an avalanching one is used unmixed.
     auto annotated_map = ankerl::unordered_dense::map<annotated, int, ankerl::unordered_dense::hash<annotated>>();
     REQUIRE(annotated_map.hash_for(annotated{7}).m_mixed_hash == 7);
+}
+
+// The fallback used to read std::hash<T>::is_avalanching itself, which made it a second reader of
+// the marker that understood only the one spelling. Both of these answered no before it was made to
+// ask hash_is_avalanching like everything else.
+TEST_CASE("the_fallback_reads_the_marker_the_same_way_as_everything_else") {
+    using boost_style = ankerl::unordered_dense::hash<annotated_boost_style>;
+    using outside = ankerl::unordered_dense::hash<named_from_outside>;
+
+    REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style>);
+    REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<outside>);
+
+    auto boost_map = ankerl::unordered_dense::map<annotated_boost_style, int, boost_style>();
+    REQUIRE(boost_map.hash_for(annotated_boost_style{7}).m_mixed_hash == 7);
+
+    auto outside_map = ankerl::unordered_dense::map<named_from_outside, int, outside>();
+    REQUIRE(outside_map.hash_for(named_from_outside{7}).m_mixed_hash == 7);
 }
 
 // The specialization has to change what the table does, not just what a trait says.
@@ -214,16 +247,6 @@ TEST_CASE("require_avalanching_accepts_a_hash_that_says_so_itself") {
     REQUIRE(map.size() == 100);
     REQUIRE(map.at(42) == 42);
     REQUIRE(map.hash_for(7).m_mixed_hash == 7);
-}
-
-// It asks the trait, not the hash, so a hash overruled from outside is rejected rather than
-// quietly requiring nothing. Only the condition is checked here -- the failure itself is a build
-// error, which no test can catch at runtime:
-//
-//     require_avalanching<boastful_hash>   // static_assert fires
-TEST_CASE("require_avalanching_would_reject_a_hash_the_trait_calls_bad") {
-    REQUIRE_FALSE(ankerl::unordered_dense::hash_is_avalanching_v<boastful_hash>);
-    REQUIRE_FALSE(ankerl::unordered_dense::hash_is_avalanching_v<quiet_hash>);
 }
 
 // The case the member typedef cannot carry on its own: a hash named avalanching only from outside.

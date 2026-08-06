@@ -235,7 +235,7 @@ For more information see the examples in `test/unit/transparent.cpp`.
 
 When an implementation for `std::hash` of a custom type is available, it is automatically used and assumed to be of low quality (thus `std::hash` is used, but an additional mixing step is performed).
 
-If your `std::hash` specialization is a high quality one, say so there and it is taken at its word — the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`:
+If your `std::hash` specialization is a high quality one, say so there and it is taken at its word — the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`. The fallback asks `hash_is_avalanching` like everything else, so either spelling of the marker works, and a `std::hash` you cannot edit can be named from outside ([3.2.7](#327-marking-a-hash-avalanching-from-outside)):
 
 ```cpp
 template <>
@@ -306,7 +306,9 @@ template <class Key, class T>
 using my_map = ankerl::unordered_dense::map<Key, T, ankerl::unordered_dense::require_avalanching<my_hash<Key>>>;
 ```
 
-The requirement rides on the map's type rather than on the hash, so it is still checked when the hash underneath is swapped for another one — which is what a `static_assert` next to the hash cannot do. It accepts a hash marked either way, by its own member typedef or by a `hash_is_avalanching` specialization.
+The requirement is written into the alias rather than next to the hash, so it is part of what `my_map` *is*, and survives `my_hash` being reimplemented without its marker — which a `static_assert` next to the hash does not. (It does not follow a map that is given a different hash outright: `map<K, V, other_hash>` names no requirement, so there is none.) It accepts a hash marked either way, by its own member typedef or by a `hash_is_avalanching` specialization.
+
+The hash must not be `final`, since the wrapper derives from it — for one that is, specialize `hash_is_avalanching` instead. A stateful hash goes in either braced or by value: `require_avalanching<my_hash>{my_hash{seed}}`.
 
 ### 3.3. Container API
 
