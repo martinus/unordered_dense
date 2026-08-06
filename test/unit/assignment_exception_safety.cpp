@@ -1,6 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/map_fixtures.h>
 
 #include <cstddef>
 #include <stdexcept>
@@ -46,34 +47,6 @@ struct throws_on_copy {
 using map_t = ankerl::unordered_dense::map<int, throws_on_copy>;
 using segmented_map_t = ankerl::unordered_dense::segmented_map<int, throws_on_copy>;
 
-template <typename Map>
-auto filled(int count) -> Map {
-    auto map = Map();
-    for (int i = 0; i < count; ++i) {
-        map.try_emplace(i, throws_on_copy(i));
-    }
-    return map;
-}
-
-// Everything a table has to be able to answer, on a table that just failed an assignment.
-template <typename Map>
-void require_usable_and_empty(Map& map) {
-    REQUIRE(map.empty());
-    REQUIRE(map.size() == 0);
-    REQUIRE(map.begin() == map.end());
-    REQUIRE(map.find(1) == map.end());
-    REQUIRE(map.count(1) == 0);
-    REQUIRE(!map.contains(1));
-    REQUIRE(map.erase(1) == 0);
-
-    // ... and it still works as a map afterwards.
-    map.try_emplace(7, throws_on_copy(7));
-    REQUIRE(map.size() == 1);
-    auto it = map.find(7);
-    REQUIRE(it != map.end());
-    REQUIRE(it->second.m_value == 7);
-}
-
 struct countdown_guard {
     explicit countdown_guard(int n) {
         throws_on_copy::copies_until_throw = n;
@@ -89,15 +62,15 @@ struct countdown_guard {
 
 template <typename Map>
 void check_throwing_copy_assignment(int source_size, int target_size, int copies_until_throw) {
-    auto source = filled<Map>(source_size);
-    auto target = filled<Map>(target_size);
+    auto source = test::filled<Map>(source_size);
+    auto target = test::filled<Map>(target_size);
 
     {
         auto const guard = countdown_guard(copies_until_throw);
         REQUIRE_THROWS_AS(target = source, std::runtime_error);
     }
 
-    require_usable_and_empty(target);
+    test::require_empty_table_answers(target);
     // The source is untouched -- it was only ever read from.
     REQUIRE(source.size() == static_cast<std::size_t>(source_size));
 }

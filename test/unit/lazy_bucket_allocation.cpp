@@ -2,6 +2,7 @@
 
 #include <app/doctest.h>
 #include <app/id_allocator.h>
+#include <app/map_fixtures.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -48,11 +49,12 @@ struct transparent_hash {
 using transparent_set =
     ankerl::unordered_dense::set<std::string, transparent_hash, std::equal_to<>, test::id_allocator<std::string>>;
 
-// Every container here is built through the (bucket_count, allocator) constructor with a count of
-// zero, which is what a default construction resolves to.
-template <typename Map>
-auto tracked(test::alloc_counts& counts) -> Map {
-    return Map(0, typename Map::allocator_type(0, &counts));
+// An empty container whose allocator reports back. Built through the (bucket_count, allocator)
+// constructor with a count of zero, which is what a default construction resolves to. Not
+// test::filled, which needs a mapped_type and so cannot serve the set cases below.
+template <typename Container>
+auto tracked(test::alloc_counts& counts) -> Container {
+    return Container(0, typename Container::allocator_type(0, &counts));
 }
 
 // What a table costs before it has allocated anything of its own. Not zero everywhere: a table is
@@ -68,14 +70,6 @@ auto empty_table_cost() -> int {
         static_cast<void>(buckets);
     }
     return counts.allocations;
-}
-
-template <typename Map>
-void require_holds(Map const& map, int count) {
-    REQUIRE(map.size() == static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        REQUIRE(map.find(i) != map.end());
-    }
 }
 
 } // namespace
@@ -105,28 +99,20 @@ TEST_CASE("default_construction_allocates_nothing") {
 }
 
 // Nothing may reach the bucket array while it is not there. The read paths get this by returning
-// early on empty(); this pins that they actually do.
+// early on empty(); this pins that they actually do. The list itself is shared with the test for a
+// table that just failed an assignment, which lands in the same state by a different route.
 TEST_CASE("a_table_without_buckets_answers_every_query") {
     auto map = ankerl::unordered_dense::map<int, int>();
+    test::require_empty_table_answers(map);
 
-    REQUIRE(map.find(1) == map.end());
-    REQUIRE(map.count(1) == 0);
-    REQUIRE(!map.contains(1));
-    REQUIRE(map.erase(1) == 0);
-    REQUIRE(map.begin() == map.end());
-    REQUIRE(map.load_factor() == 0.0F);
-    REQUIRE(map.equal_range(1).first == map.end());
-    REQUIRE(std::as_const(map).find(1) == map.end());
-
+    auto swapped = ankerl::unordered_dense::map<int, int>();
     auto other = ankerl::unordered_dense::map<int, int>();
-    map.swap(other);
-    REQUIRE(map.empty());
-
-    map.clear();
-    REQUIRE(map.bucket_count() == 0);
+    swapped.swap(other);
+    REQUIRE(swapped.empty());
 
     // extract() clears the buckets on the way out, with none to clear.
-    REQUIRE(std::move(map).extract().empty());
+    auto extracted = ankerl::unordered_dense::map<int, int>();
+    REQUIRE(std::move(extracted).extract().empty());
 }
 
 // One case per insert entry point, each starting from a container that has no buckets.
@@ -243,7 +229,7 @@ TEST_CASE("a_moved_from_table_keeps_no_buckets") {
         target = std::move(source);
 
         REQUIRE(counts.allocations == before);
-        require_holds(target, 100);
+        test::require_holds(target, 100);
         REQUIRE(source.bucket_count() == 0); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
         REQUIRE(source.empty());             // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 
@@ -288,7 +274,7 @@ TEST_CASE("a_lazily_allocated_table_grows_and_empties_like_any_other") {
     for (int i = 0; i < count; ++i) {
         map[i] = i;
     }
-    require_holds(map, count);
+    test::require_holds(map, count);
 
     for (int i = 0; i < count; ++i) {
         REQUIRE(map.erase(i) == 1);
@@ -300,7 +286,7 @@ TEST_CASE("a_lazily_allocated_table_grows_and_empties_like_any_other") {
     for (int i = 0; i < count; ++i) {
         map[i] = i;
     }
-    require_holds(map, count);
+    test::require_holds(map, count);
 }
 
 // Two tables in different states, swapped both ways round.
@@ -313,7 +299,7 @@ TEST_CASE("swapping_an_unallocated_table_with_a_full_one") {
 
     empty.swap(full);
 
-    require_holds(empty, 100);
+    test::require_holds(empty, 100);
     REQUIRE(full.empty());
     REQUIRE(full.bucket_count() == 0);
 
