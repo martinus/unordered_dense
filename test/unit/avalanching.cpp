@@ -48,6 +48,34 @@ struct honest_hash {
     }
 };
 
+// The spelling Boost's documentation asks for, in both of its answers. A hash annotated for Boost
+// has to be read the same way here -- and false_type in particular has to mean no, which a bare
+// "the member is there" test would get backwards.
+struct boost_style_yes {
+    using is_avalanching = std::true_type;
+
+    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
+        return static_cast<uint64_t>(x);
+    }
+};
+
+struct boost_style_no {
+    using is_avalanching = std::false_type;
+
+    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
+        return static_cast<uint64_t>(x);
+    }
+};
+
+// Not std::true_type, but still a compile time bool.
+struct boost_style_constant {
+    using is_avalanching = std::integral_constant<bool, true>;
+
+    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
+        return static_cast<uint64_t>(x);
+    }
+};
+
 // For the std::hash fallback: one type whose std::hash declares itself avalanching, one whose does
 // not.
 struct annotated {
@@ -110,6 +138,22 @@ TEST_CASE("the_member_typedef_still_answers") {
     REQUIRE_FALSE(ankerl::unordered_dense::hash_is_avalanching_v<quiet_hash>);
     REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<boastful_hash const>);
     REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<ankerl::unordered_dense::hash<std::string>>);
+}
+
+// Boost's boost::hash_is_avalanching reads the member as a compile time bool, and takes void only
+// as a deprecated spelling of true. A hash annotated for one library has to mean the same in the
+// other, or sharing hash types between them silently changes what the table does.
+TEST_CASE("the_member_typedef_may_be_spelled_the_way_boost_asks") {
+    REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style_yes>);
+    REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style_constant>);
+
+    // The one that a mere "the member exists" test gets backwards.
+    REQUIRE_FALSE(ankerl::unordered_dense::hash_is_avalanching_v<boost_style_no>);
+
+    // And it decides what the table does, not just what the trait reports.
+    REQUIRE(finalized<boost_style_yes>(7) == 7);
+    REQUIRE(finalized<boost_style_constant>(7) == 7);
+    REQUIRE(finalized<boost_style_no>(7) == ankerl::unordered_dense::detail::wyhash::hash(7));
 }
 
 // Part one of the issue: specializing std::hash rather than moving the hash into ankerl's namespace
