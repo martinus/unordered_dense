@@ -59,6 +59,7 @@ void require_consistent(Map const& map, int searched_up_to) {
 // rather than a fixed number of budgets, this walks upwards until the budget is large enough for
 // op to run to completion, which is the point at which every allocation it makes has had its turn
 // at failing. The bound is only a runaway guard.
+#if ANKERL_TEST_CAN_BOMB_ALLOCATIONS()
 template <typename Map, typename Op>
 void require_survives_every_allocation_failure(int start_size, int searched_up_to, Op op) {
     auto failures = 0;
@@ -84,6 +85,7 @@ void require_survives_every_allocation_failure(int start_size, int searched_up_t
     REQUIRE(failures > 0);
     REQUIRE(completed);
 }
+#endif
 
 template <typename Alloc>
 using map_of = ankerl::unordered_dense::map<int, int, ankerl::unordered_dense::hash<int>, std::equal_to<int>, Alloc>;
@@ -96,6 +98,10 @@ using bombing_map = map_of<test::bombing_allocator<pair_t>>;
 using bombing_segmented_map = segmented_map_of<test::bombing_allocator<pair_t>>;
 
 } // namespace
+
+// Every case below makes an allocation fail on purpose; see ANKERL_TEST_CAN_BOMB_ALLOCATIONS. The
+// legs that cannot run them are the MSVC ones, and MinGW covers Windows here.
+#if ANKERL_TEST_CAN_BOMB_ALLOCATIONS()
 
 TEST_CASE("reserve_that_cannot_allocate_leaves_the_table_alone") {
     require_survives_every_allocation_failure<bombing_map>(100, 200, [](bombing_map& map) {
@@ -141,6 +147,8 @@ TEST_CASE("the_segmented_map_survives_the_same_failures") {
         map.reserve(100000);
     });
 }
+
+#endif
 
 // Shrinking is the other direction, and it is not in the harness above because it cannot fail:
 // it hands storage back rather than asking for it, so there is no allocation to bomb. It needs its
