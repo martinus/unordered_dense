@@ -17,3 +17,6 @@ fuzz-findings/
 
 # left behind by importing anything under scripts/
 __pycache__/
+
+# compiler cache, populated by the MinGW CI job
+.ccache/
