@@ -301,16 +301,26 @@ jobs:
     defaults:
       run:
         shell: msys2 {0}
+    env:
+      # Somewhere both halves of this job can reach: actions/cache runs as a Windows process and
+      # ccache is a native mingw binary, so the one path has to suit both.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
     steps:
       - uses: actions/checkout@v7
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msystem }}
-          update: true
+          # Not update: true. That is a full pacman -Syuu on top of the runner image, and it was
+          # the single most expensive thing in this job: 63s of an 82s setup step, every run, to
+          # upgrade packages this build does not use. The install list below is what it needs and
+          # it is pinned to nothing, so it still gets current versions of those.
+          update: false
           cache: true
           install: >-
             ca-certificates
             ${{ matrix.prefix }}-ca-certificates
+            ${{ matrix.prefix }}-ccache
             ${{ matrix.prefix }}-gcc
             ${{ matrix.prefix }}-meson
             ${{ matrix.prefix }}-ninja
@@ -320,9 +330,27 @@ jobs:
         with:
           path: ${{ env.MESON_PACKAGE_CACHE }}
           key: wraps-${{ hashFiles('subprojects/*.wrap') }}
-      - run: g++ --version
+
+      # The build matrix has had a compiler cache since it was rewritten; MinGW was the one job
+      # left without one, and compiling is most of what it does -- 107s of a 110s step, against a
+      # test that runs in two. hendrikmuhs/ccache-action is what the other jobs use, but it
+      # installs a Windows-native ccache that the msys2 shell does not see, so this wires up the
+      # msys2 one by hand. The key is per arch and per standard because the objects are not
+      # interchangeable between them; run_id makes every run save a fresh entry and the prefix
+      # restore-key picks up the most recent one.
+      - uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-mingw-${{ matrix.sys }}-cpp${{ matrix.cxx_standard }}-${{ github.run_id }}
+          restore-keys: ccache-mingw-${{ matrix.sys }}-cpp${{ matrix.cxx_standard }}-
+      - run: g++ --version && ccache --version && ccache --zero-stats
       - run: meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++${{ matrix.cxx_standard }}
+        env:
+          CXX: ccache g++
       - run: meson test -C builddir --print-errorlogs
+      # Printed rather than assumed: a cache that silently stops hitting looks exactly like one
+      # that works, only slower.
+      - run: ccache --show-stats
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
