@@ -119,8 +119,16 @@ the queue directories rather than from `fuzzer_stats`, because afl-fuzz rewrites
 own schedule and both `last_find` and `corpus_count` in it can sit unchanged for a minute at a
 time -- long enough to call a target done while it is still finding things.
 
-Note that AFL binds each instance to a free core, so a `sweep` on a machine that is already busy
-fails at startup with `No more free CPU cores` rather than sharing.
+"Every core" means every *physical* core: the script reads `thread_siblings_list` and starts one
+instance per core, pinned to it with `afl-fuzz -b`. Hyperthread siblings share a core's execution
+units, so a second instance there mostly slows down the one already on it while afl-fuzz counts
+both cores as busy. Which sibling represents a core is not guessable from the numbering — whether
+core 0's siblings are `0,1` or `0,n/2` differs between machines — which is why it comes from the
+kernel rather than from arithmetic. Where the topology cannot be read (macOS), it falls back to
+`os.cpu_count()` and lets afl-fuzz place the instances itself.
+
+Pinning with `-b` skips the scan afl-fuzz otherwise does for an unused core, so on a machine that
+is already busy it shares rather than refusing to start.
 
 Minimizing a corpus takes both tools, because neither subsumes the other: `afl-cmin` covers the same
 AFL edges with far fewer files but is blind to libFuzzer's finer features, and `-merge=1` onto its
