@@ -32,6 +32,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.3.3. `extract()` Single Elements](#333-extract-single-elements)
     - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
     - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
+    - [3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#336-auto-hash_fork-const-key-const---precomputed_hash)
   - [3.4. Custom Container Types](#34-custom-container-types)
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::standard`](#351-ankerlunordered_densebucket_typestandard)
@@ -293,6 +294,49 @@ Exposes the underlying values container.
 
 Discards the internally held container and replaces it with the one passed. Non-unique elements are
 removed, and the container will be partly reordered when non-unique elements are found.
+
+#### 3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`
+
+Hashing a key is usually the largest part of a lookup, and looking up the same key over and over hashes it every time. `hash_for()` does it once, and `find`, `contains`, `count`, `equal_range` and `at` each take what it returns as a second argument:
+
+```cpp
+auto map = ankerl::unordered_dense::map<std::string, int>();
+// ...
+
+// hash it once, e.g. at startup
+auto const status_hash = map.hash_for("status");
+
+// as often as you like
+auto it = map.find("status", status_hash);
+```
+
+The key is still needed — a lookup that lands on a bucket still has to compare keys to know it found the right one. What is skipped is the hashing, so the longer the key the more there is to gain (clang 18, x86-64, half hits and half misses):
+
+| key length | `find(key)` | `find(key, hash)` | |
+| ---------: | ----------: | ----------------: | ---: |
+| 8 bytes | 5.6 ns | 4.0 ns | 1.4x |
+| 32 bytes | 7.1 ns | 4.3 ns | 1.7x |
+| 200 bytes | 22.5 ns | 7.4 ns | 3.0x |
+
+`precomputed_hash` is a distinct type rather than a plain integer, because the number a lookup wants is *not* what `hash_function()` returns — the table finalizes that further — and an integer parameter would happily accept the wrong one. An integer does not convert to it; the value inside stays reachable, so a hash can be stored or moved around freely.
+
+A hash belongs to the hasher, not to the table it came from. It stays valid across insertions, erasures, `rehash()` and moves, and every table using the same hasher takes it — so one hash can serve a map and a set together:
+
+```cpp
+auto set = ankerl::unordered_dense::set<std::string>();
+auto found = set.find("status", status_hash); // the hash from the map above
+```
+
+What it does not survive is the key changing. Looking up a key with the hash of a different key does not throw or crash — it just quietly reports the key as not present.
+
+Heterogeneous lookup works as usual when the hash and equality are transparent, and the hash may be taken from one key type and used with another:
+
+```cpp
+auto const h = map.hash_for(std::string_view("status"));
+auto it = map.find("status"s, h);
+```
+
+Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason — it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
 
 ### 3.4. Custom Container Types
 
