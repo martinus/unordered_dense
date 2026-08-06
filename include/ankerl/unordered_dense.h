@@ -579,6 +579,7 @@ private:
     static constexpr bool propagates_on_copy_assign = vec_alloc_traits::propagate_on_container_copy_assignment::value;
     static constexpr bool propagates_on_move_assign = vec_alloc_traits::propagate_on_container_move_assignment::value;
     static constexpr bool allocators_always_equal = vec_alloc_traits::is_always_equal::value;
+    static constexpr bool propagates_on_swap = vec_alloc_traits::propagate_on_container_swap::value;
 
     std::vector<pointer, vec_alloc> m_blocks{};
     std::size_t m_size{};
@@ -785,9 +786,19 @@ public:
     segmented_vector(Allocator alloc)
         : m_blocks(vec_alloc(alloc)) {}
 
-    segmented_vector(segmented_vector&& other, Allocator alloc)
-        : segmented_vector(alloc) {
-        *this = std::move(other);
+    // Uses alloc, unconditionally -- that is the whole point of an extended move constructor. It
+    // used to delegate to move assignment, which cannot express it: assignment has to consult
+    // propagate_on_container_move_assignment, so with a propagating allocator it adopted other's
+    // and the allocator the caller named was quietly dropped.
+    segmented_vector(segmented_vector&& other, Allocator alloc) noexcept(allocators_always_equal)
+        : m_blocks(vec_alloc(alloc)) {
+        if (allocators_always_equal || alloc == other.get_allocator()) {
+            // Nothing to move element by element, the blocks just change hands.
+            m_blocks = std::move(other.m_blocks);
+            m_size = std::exchange(other.m_size, {});
+        } else {
+            append_everything_from(std::move(other));
+        }
     }
 
     segmented_vector(segmented_vector const& other, Allocator alloc)
@@ -940,6 +951,22 @@ public:
 
     [[nodiscard]] auto get_allocator() const -> allocator_type {
         return allocator_type{m_blocks.get_allocator()};
+    }
+
+    // Exchanging two pointers and a size, and the inner vector's own swap exchanges the allocators
+    // exactly when propagate_on_container_swap says to -- so this answers the allocator question
+    // the way std::vector does, and a map gets the same answer whichever container backs it.
+    // Without a member swap, std::swap fell back to a move construction and two move assignments:
+    // O(n) for an operation that needs none, able to throw from inside a noexcept swap, and a
+    // different answer from the flat container for the same map.
+    void swap(segmented_vector& other) noexcept(propagates_on_swap || allocators_always_equal) {
+        using std::swap;
+        swap(m_blocks, other.m_blocks);
+        swap(m_size, other.m_size);
+    }
+
+    friend void swap(segmented_vector& a, segmented_vector& b) noexcept(noexcept(a.swap(b))) {
+        a.swap(b);
     }
 
     template <class... Args>
@@ -1515,15 +1542,33 @@ public:
     table(table&& other) noexcept
         : table(std::move(other), other.m_values.get_allocator()) {}
 
-    // Not unconditionally noexcept, unlike the above: this is the constructor whose whole purpose
-    // is a *differing* allocator, so the assignment below may have to move the elements one at a
-    // time, and that allocates. The specification is the assignment's own.
-    table(table&& other, allocator_type const& alloc) noexcept(std::is_nothrow_move_assignable_v<value_container_type> &&
-                                                               std::is_nothrow_move_assignable_v<Hash> &&
-                                                               std::is_nothrow_move_assignable_v<KeyEqual>)
-        : m_values(alloc)
-        , m_buckets(alloc) {
-        *this = std::move(other);
+    // Uses alloc, unconditionally. It used to construct empty and then move-assign, which cannot
+    // express that: assignment has to consult propagate_on_container_move_assignment, so with a
+    // propagating allocator this ended up holding other's and the allocator the caller asked for
+    // was quietly dropped -- while std::vector, given the same allocator, kept it.
+    //
+    // Not unconditionally noexcept, unlike the plain move constructor above: this is the one whose
+    // whole purpose is a *differing* allocator, so the containers below may have to move the
+    // elements one at a time, and that allocates. The specification is theirs.
+    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
+    table(table&& other, allocator_type const& alloc) noexcept(
+        std::is_nothrow_constructible_v<value_container_type, value_container_type&&, allocator_type const&> &&
+        std::is_nothrow_constructible_v<bucket_container_type, bucket_container_type&&, allocator_type const&> &&
+        std::is_nothrow_move_constructible_v<Hash> && std::is_nothrow_move_constructible_v<KeyEqual>)
+        : m_values(std::move(other.m_values), alloc)
+        , m_buckets(std::move(other.m_buckets), alloc)
+        , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
+        , m_bucket_mask(std::exchange(other.m_bucket_mask, 0))
+        , m_max_load_factor(std::exchange(other.m_max_load_factor, default_max_load_factor))
+        , m_hash(std::move(other.m_hash))
+        , m_equal(std::move(other.m_equal))
+        , m_shifts(std::exchange(other.m_shifts, initial_shifts)) {
+        // When the allocators differ the two containers above moved element by element, so other
+        // still holds them. Either way it has to come out of this as an empty, usable table, which
+        // the exchanges above have already made the rest of it -- and an empty table needs no
+        // buckets, so this hands nothing back to it.
+        other.m_values.clear();
+        other.m_buckets.clear();
     }
 
     table(std::initializer_list<value_type> ilist,
@@ -1547,6 +1592,19 @@ public:
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
             m_values = other.m_values;
+
+            // That assignment may just have taken other's allocator (pocca). The buckets have to
+            // follow it, or the container's two halves end up on different allocators and
+            // get_allocator() -- which reports m_values' -- stops describing the bucket array,
+            // which the "same allocator" check in the move assignment below relies on it doing.
+            // The buckets are already given back above, so this only moves the allocator across.
+            // Copy assignment and not move: move would consult pocma, which is a different
+            // question and is not the one that was answered true here.
+            if constexpr (std::allocator_traits<allocator_type>::propagate_on_container_copy_assignment::value) {
+                auto const empty_with_other_allocator = bucket_container_type(m_values.get_allocator());
+                m_buckets = empty_with_other_allocator;
+            }
+
             m_max_load_factor = other.m_max_load_factor;
             m_hash = other.m_hash;
             m_equal = other.m_equal;
@@ -2069,9 +2127,22 @@ public:
         // There is no free swap() for table, so "swap(other, *this)" used to resolve to the generic std::swap: three
         // move assignments, each of which hands the moved-from table a freshly allocated set of buckets. That is three
         // allocations for an operation that needs none, and three ways to throw out of a noexcept function.
+        //
+        // What made the two container choices disagree was segmented_vector having no swap at all:
+        // the call below found the generic std::swap, which exchanges by moving every element --
+        // O(n), able to throw between these two lines and leave both tables inconsistent, and
+        // asking about move assignment where swap was the question, so a propagate_on_container_swap
+        // allocator stayed put. segmented_vector has a swap now, so both containers answer the way
+        // the standard ones do: exchange the allocators if propagate_on_container_swap says so, and
+        // require them to be equal if it does not.
+        //
+        // Calling it as a member rather than unqualified is not what fixes that -- the free swap
+        // beside it is found by ADL just the same. It is so that a BucketContainer supplied from
+        // some other namespace cannot quietly fall back to the three-move std::swap: every
+        // container is required to have the member, none is required to have the free function.
+        m_values.swap(other.m_values);
+        m_buckets.swap(other.m_buckets);
         using std::swap;
-        swap(m_values, other.m_values);
-        swap(m_buckets, other.m_buckets);
         swap(m_max_bucket_capacity, other.m_max_bucket_capacity);
         swap(m_bucket_mask, other.m_bucket_mask);
         swap(m_max_load_factor, other.m_max_load_factor);

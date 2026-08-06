@@ -13,7 +13,10 @@
 // *which* of a container's buffers went where.
 //
 // The defaults match std::pmr::polymorphic_allocator, which is the allocator this library supports
-// whose propagation is worth testing: propagates on nothing, instances differ.
+// whose propagation is worth testing: propagates on nothing, instances differ. Each of the four
+// propagation questions is a template parameter, because a container answers them independently
+// and a container that answers one of them for only half of what it holds is exactly the bug these
+// are here to catch.
 namespace test {
 
 struct alloc_counts {
@@ -21,12 +24,16 @@ struct alloc_counts {
     int deallocations = 0;
 };
 
-template <typename T, typename Pocca = std::false_type, typename Soccc = std::true_type>
+template <typename T,
+          typename Pocca = std::false_type,
+          typename Soccc = std::true_type,
+          typename Pocma = std::false_type,
+          typename Pocs = std::false_type>
 struct id_allocator {
     using value_type = T;
     using propagate_on_container_copy_assignment = Pocca;
-    using propagate_on_container_move_assignment = std::false_type;
-    using propagate_on_container_swap = std::false_type;
+    using propagate_on_container_move_assignment = Pocma;
+    using propagate_on_container_swap = Pocs;
     using is_always_equal = std::false_type;
 
     int m_id = 0;
@@ -40,7 +47,7 @@ struct id_allocator {
 
     template <typename U>
     // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    id_allocator(id_allocator<U, Pocca, Soccc> const& other) noexcept
+    id_allocator(id_allocator<U, Pocca, Soccc, Pocma, Pocs> const& other) noexcept
         : m_id(other.m_id)
         , m_counts(other.m_counts) {}
 
