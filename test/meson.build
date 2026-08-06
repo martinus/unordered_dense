@@ -78,6 +78,7 @@ test_sources = [
     'unit/set.cpp',
     'unit/std_hash.cpp',
     'unit/swap.cpp',
+    'unit/table_allocators.cpp',
     'unit/transparent.cpp',
     'unit/try_emplace.cpp',
     'unit/tuple_hash.cpp',

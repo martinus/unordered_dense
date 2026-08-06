@@ -1466,22 +1466,41 @@ public:
     table(InputIt first, InputIt last, size_type bucket_count, Hash const& hash, allocator_type const& alloc)
         : table(first, last, bucket_count, hash, KeyEqual(), alloc) {}
 
+    // Asks the allocator whether it wants to come along, which is what allocator_traits' default
+    // does and what an allocator like std::pmr::polymorphic_allocator declines: a copy of a map
+    // living in an arena should not silently keep that arena alive and keep allocating into it.
     table(table const& other)
-        : table(other, other.m_values.get_allocator()) {}
+        : table(other,
+                std::allocator_traits<allocator_type>::select_on_container_copy_construction(other.m_values.get_allocator())) {
+    }
 
+    // m_buckets takes the allocator too. Leaving it to its default member initialiser put the
+    // bucket array in the default resource while the values went where the caller asked, so half
+    // the container escaped the arena it was given -- and get_allocator(), which reports m_values'
+    // allocator, could not be used to reason about the buckets any more.
     table(table const& other, allocator_type const& alloc)
         : m_values(other.m_values, alloc)
+        , m_buckets(alloc)
         , m_max_load_factor(other.m_max_load_factor)
         , m_hash(other.m_hash)
         , m_equal(other.m_equal) {
         copy_buckets(other);
     }
 
+    // Unconditionally noexcept, and honestly so: it hands over other's own allocator, so the
+    // assignment below always takes the branch that takes the buffers over rather than the one
+    // that moves elements into freshly allocated memory.
     table(table&& other) noexcept
         : table(std::move(other), other.m_values.get_allocator()) {}
 
-    table(table&& other, allocator_type const& alloc) noexcept
-        : m_values(alloc) {
+    // Not unconditionally noexcept, unlike the above: this is the constructor whose whole purpose
+    // is a *differing* allocator, so the assignment below may have to move the elements one at a
+    // time, and that allocates. The specification is the assignment's own.
+    table(table&& other, allocator_type const& alloc) noexcept(std::is_nothrow_move_assignable_v<value_container_type> &&
+                                                               std::is_nothrow_move_assignable_v<Hash> &&
+                                                               std::is_nothrow_move_assignable_v<KeyEqual>)
+        : m_values(alloc)
+        , m_buckets(alloc) {
         *this = std::move(other);
     }
 
