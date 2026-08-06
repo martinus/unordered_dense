@@ -1034,6 +1034,15 @@ private:
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets
     static constexpr float default_max_load_factor = 0.8F;
 
+    // Named, and covering both containers, so that the promise and the recovery that exists for
+    // when the promise cannot be made are spelled the same way and cannot drift apart -- the same
+    // reason segmented_vector names its propagation traits. Covering only m_values would be wrong
+    // twice over: it would leave m_buckets free to throw out of a noexcept function, and it would
+    // compile a rethrow into one, which gcc rejects outright.
+    static constexpr bool move_assign_is_nothrow =
+        std::is_nothrow_move_assignable_v<value_container_type> && std::is_nothrow_move_assignable_v<bucket_container_type> &&
+        std::is_nothrow_move_assignable_v<Hash> && std::is_nothrow_move_assignable_v<KeyEqual>;
+
 public:
     using key_type = Key;
     using value_type = typename value_container_type::value_type;
@@ -1205,16 +1214,55 @@ private:
         // part way through cannot leave the two halves disagreeing. Copy assignment and not move:
         // move would consult pocma, a different question, and not the one answered true here.
         if constexpr (std::allocator_traits<allocator_type>::propagate_on_container_copy_assignment::value) {
-            auto const empty_with_other_allocator = bucket_container_type(other.m_values.get_allocator());
-            m_buckets = empty_with_other_allocator;
+            // Rebound explicitly: m_values' allocator and m_buckets' are different types, and
+            // comparing them directly is ambiguous rather than merely unusual.
+            auto const wanted = typename bucket_container_type::allocator_type(other.m_values.get_allocator());
+            if (m_buckets.get_allocator() != wanted) {
+                auto const empty_with_other_allocator = bucket_container_type(wanted);
+                m_buckets = empty_with_other_allocator;
+            }
         }
 
         m_values = other.m_values;
         m_max_load_factor = other.m_max_load_factor;
         m_hash = other.m_hash;
         m_equal = other.m_equal;
-        m_shifts = initial_shifts;
-        copy_buckets(other);
+        copy_buckets(other); // sets m_shifts on both of its branches
+    }
+
+    // The half of move assignment that can throw, so the caller can put the table back together if
+    // it does. Its twin for copies is above.
+    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
+    void move_everything_from(table&& other) {
+        m_values = std::move(other.m_values);
+        other.m_values.clear();
+
+        // we can only reuse m_buckets when both maps have the same allocator!
+        if (get_allocator() == other.get_allocator()) {
+            m_buckets = std::move(other.m_buckets);
+            other.m_buckets.clear();
+            m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
+            m_bucket_mask = std::exchange(other.m_bucket_mask, 0);
+            m_shifts = std::exchange(other.m_shifts, initial_shifts);
+            m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
+            m_hash = std::exchange(other.m_hash, {});
+            m_equal = std::exchange(other.m_equal, {});
+            // The exchanges above leave "other" exactly as a default constructed table looks, so it
+            // is already usable and does not need buckets handed back to it. It used to get a
+            // freshly allocated set here, which is an allocation -- and a way to throw -- inside an
+            // operation that is otherwise noexcept and needs neither.
+        } else {
+            // set max_load_factor *before* copying the other's buckets, so we have the same behavior
+            m_max_load_factor = other.m_max_load_factor;
+
+            // copy_buckets sets m_buckets, m_num_buckets, m_max_bucket_capacity, m_shifts
+            copy_buckets(other);
+            // clear's the other's buckets so other is now already usable.
+            other.clear_buckets();
+            m_hash = other.m_hash;
+            m_equal = other.m_equal;
+        }
+        // map "other" is now already usable, it's empty.
     }
 
     // Back to what a default constructed table holds. An assignment gives the buckets back before
@@ -1223,6 +1271,9 @@ private:
     // an exception leaves that window this is where it lands: assignment owes the basic guarantee,
     // which means valid and not merely non-leaking, and with no buckets the only valid state is
     // empty. Every step is noexcept, so the recovery cannot fail on its way out.
+    // Deliberately not deallocate_buckets(), which is otherwise the same three stores: that one
+    // also calls shrink_to_fit(), which is allowed to allocate and is not noexcept, and this runs
+    // while an exception is already in flight.
     void reset_to_empty() noexcept {
         m_values.clear();
         m_buckets.clear();
@@ -1247,7 +1298,6 @@ private:
 
     void allocate_buckets_from_shift() {
         auto num_buckets = calc_num_buckets(m_shifts);
-        m_bucket_mask = static_cast<value_idx_type>(num_buckets - 1);
         if constexpr (IsSegmented || !std::is_same_v<BucketContainer, default_container_t>) {
             if constexpr (has_reserve<bucket_container_type>) {
                 m_buckets.reserve(num_buckets);
@@ -1258,6 +1308,12 @@ private:
         } else {
             m_buckets.resize(num_buckets);
         }
+        // Only now that the array exists, and not before the growth above: these two describe it,
+        // and a mask published ahead of the allocation that failed would have left every probe
+        // indexing past the end of the array that is still there. This is the one function all six
+        // bucket-allocating paths go through, so committing here rather than up front is what makes
+        // a failed growth leave the old buckets intact and consistent instead of unusable.
+        m_bucket_mask = static_cast<value_idx_type>(num_buckets - 1);
         if (num_buckets == max_bucket_count()) {
             // reached the maximum, make sure we can use each bucket
             m_max_bucket_capacity = max_bucket_count();
@@ -1652,17 +1708,16 @@ public:
     // The condition used to be wrapped in another noexcept(), which asks whether evaluating a bool expression can
     // throw. It cannot, so the specification was noexcept(true) whatever the traits said, and a type with a throwing
     // move assignment terminated instead of propagating.
-    auto operator=(table&& other) noexcept(std::is_nothrow_move_assignable_v<value_container_type> &&
-                                           std::is_nothrow_move_assignable_v<Hash> &&
-                                           std::is_nothrow_move_assignable_v<KeyEqual>) -> table& {
+    auto operator=(table&& other) noexcept(move_assign_is_nothrow) -> table& {
         if (&other != this) {
             deallocate_buckets(); // deallocate before m_values is set (might have another allocator)
 
             // Same window as the copy assignment above, and reachable for the same reason: with an
             // allocator that neither propagates nor compares equal the move below moves the
             // elements one at a time into memory it has to allocate. See reset_to_empty().
-            if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() &&
-                          !std::is_nothrow_move_assignable_v<value_container_type>) {
+            // Exactly when this operator does not promise noexcept, which is what makes the
+            // recovery reachable rather than a rethrow inside a noexcept function.
+            if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() && !move_assign_is_nothrow) {
                 try {
                     move_everything_from(std::move(other));
                 } catch (...) {
@@ -1676,44 +1731,6 @@ public:
         return *this;
     }
 
-private:
-    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
-    void move_everything_from(table&& other) {
-        {
-            m_values = std::move(other.m_values);
-            other.m_values.clear();
-
-            // we can only reuse m_buckets when both maps have the same allocator!
-            if (get_allocator() == other.get_allocator()) {
-                m_buckets = std::move(other.m_buckets);
-                other.m_buckets.clear();
-                m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
-                m_bucket_mask = std::exchange(other.m_bucket_mask, 0);
-                m_shifts = std::exchange(other.m_shifts, initial_shifts);
-                m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
-                m_hash = std::exchange(other.m_hash, {});
-                m_equal = std::exchange(other.m_equal, {});
-                // The exchanges above leave "other" exactly as a default constructed table looks,
-                // so it is already usable and does not need buckets handed back to it. It used to
-                // get a freshly allocated set here, which is an allocation -- and a way to throw --
-                // inside an operation that is otherwise noexcept and needs neither.
-            } else {
-                // set max_load_factor *before* copying the other's buckets, so we have the same
-                // behavior
-                m_max_load_factor = other.m_max_load_factor;
-
-                // copy_buckets sets m_buckets, m_num_buckets, m_max_bucket_capacity, m_shifts
-                copy_buckets(other);
-                // clear's the other's buckets so other is now already usable.
-                other.clear_buckets();
-                m_hash = other.m_hash;
-                m_equal = other.m_equal;
-            }
-            // map "other" is now already usable, it's empty.
-        }
-    }
-
-public:
     auto operator=(std::initializer_list<value_type> ilist) -> table& {
         clear();
         insert(ilist);
@@ -2180,19 +2197,15 @@ public:
         return tmp;
     }
 
-    void swap(table& other) noexcept(std::is_nothrow_swappable_v<value_container_type> && std::is_nothrow_swappable_v<Hash> &&
+    void swap(table& other) noexcept(std::is_nothrow_swappable_v<value_container_type> &&
+                                     std::is_nothrow_swappable_v<bucket_container_type> && std::is_nothrow_swappable_v<Hash> &&
                                      std::is_nothrow_swappable_v<KeyEqual>) {
         // There is no free swap() for table, so "swap(other, *this)" used to resolve to the generic std::swap: three
         // move assignments, each of which hands the moved-from table a freshly allocated set of buckets. That is three
         // allocations for an operation that needs none, and three ways to throw out of a noexcept function.
         //
-        // What made the two container choices disagree was segmented_vector having no swap at all:
-        // the call below found the generic std::swap, which exchanges by moving every element --
-        // O(n), able to throw between these two lines and leave both tables inconsistent, and
-        // asking about move assignment where swap was the question, so a propagate_on_container_swap
-        // allocator stayed put. segmented_vector has a swap now, so both containers answer the way
-        // the standard ones do: exchange the allocators if propagate_on_container_swap says so, and
-        // require them to be equal if it does not.
+        // segmented_vector has a swap of its own now, so both container choices answer the allocator
+        // question the same way; see its definition for what the generic std::swap did instead.
         //
         // Calling it as a member rather than unqualified is not what fixes that -- the free swap
         // beside it is found by ADL just the same. It is so that a BucketContainer supplied from

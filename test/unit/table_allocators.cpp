@@ -26,7 +26,7 @@ using segmented_map_of =
 // Propagates on nothing, instances differ, and a copy does not inherit the allocator -- the shape
 // of std::pmr::polymorphic_allocator, which is the allocator whose propagation this library has to
 // get right.
-using pmr_like = test::id_allocator<value_type, std::false_type, std::false_type>;
+using pmr_like = test::pmr_like_allocator<value_type>;
 
 // The same, except that select_on_container_copy_construction does what allocator_traits does by
 // default and hands back a copy.
@@ -34,9 +34,9 @@ using inheriting = test::id_allocator<value_type>;
 
 // One allocator per propagation question, since each is answered separately and the bug in every
 // case was answering it for the values but not for the buckets.
-using pocca = test::id_allocator<value_type, std::true_type>;
-using pocma = test::id_allocator<value_type, std::false_type, std::true_type, std::true_type>;
-using pocs = test::id_allocator<value_type, std::false_type, std::true_type, std::false_type, std::true_type>;
+using pocca = test::pocca_allocator<value_type>;
+using pocma = test::pocma_allocator<value_type>;
+using pocs = test::pocs_allocator<value_type>;
 
 template <typename Map>
 auto filled(typename Map::allocator_type alloc, int count) -> Map {
@@ -46,6 +46,12 @@ auto filled(typename Map::allocator_type alloc, int count) -> Map {
     }
     return map;
 }
+
+// Carries a map type into a generic lambda, which cannot take a type parameter of its own.
+template <typename T>
+struct tag_of {
+    using type = T;
+};
 
 template <typename Map>
 void require_holds(Map const& map, int count) {
@@ -147,9 +153,10 @@ TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
     // to the standard library -- libstdc++ and libc++ disagree about it -- and none of that is
     // what this is testing. What has to be true is that allocator 2 is finished with: the target
     // holds nothing of its any more, so nothing the target does from here can reach it.
-    auto check = [&](auto make) {
-        auto source = make(pocca(1, &source_counts), 200);
-        auto target = make(pocca(2, &target_counts), 50);
+    auto check = [&](auto tag) {
+        using map_type = typename decltype(tag)::type;
+        auto source = filled<map_type>(pocca(1, &source_counts), 200);
+        auto target = filled<map_type>(pocca(2, &target_counts), 50);
 
         target = source;
 
@@ -165,15 +172,11 @@ TEST_CASE("table_copy_assignment_takes_the_allocator_for_both_halves") {
     };
 
     SUBCASE("map") {
-        check([](pocca alloc, int count) {
-            return filled<map_of<pocca>>(alloc, count);
-        });
+        check(tag_of<map_of<pocca>>{});
     }
 
     SUBCASE("segmented map") {
-        check([](pocca alloc, int count) {
-            return filled<segmented_map_of<pocca>>(alloc, count);
-        });
+        check(tag_of<segmented_map_of<pocca>>{});
     }
 
     // ... and once everything is destroyed, both allocators are square. This is the part that
@@ -224,7 +227,7 @@ TEST_CASE("extended_move_construction_uses_the_allocator_it_was_given") {
 
     // What std::vector answers, which is what the above is measured against.
     SUBCASE("std::vector agrees") {
-        using alloc = test::id_allocator<int, std::false_type, std::true_type, std::true_type>;
+        using alloc = test::pocma_allocator<int>;
         auto source = std::vector<int, alloc>(alloc(1));
         source.push_back(1);
 
@@ -278,15 +281,10 @@ TEST_CASE("swap_exchanges_the_allocators_when_asked_to") {
     }
 }
 
-// The member swap is what table::swap calls; without it the call fell back to three moves.
-static_assert(std::is_void_v<decltype(std::declval<ankerl::unordered_dense::segmented_vector<int>&>().swap(
-                  std::declval<ankerl::unordered_dense::segmented_vector<int>&>()))>);
-
-// The extended move constructor's body is *this = std::move(other), which for an allocator that
-// neither propagates nor compares equal moves the elements one at a time and allocates. #173 made
-// that assignment able to throw; the constructor around it still promised it could not, which is
-// the terminate-instead-of-throw that #173 set out to remove.
-using pmr_like_map = map_of<pmr_like>;
+// An allocator that neither propagates nor compares equal makes the extended move constructor move
+// the elements one at a time, and that allocates, so it cannot promise noexcept. It used to promise
+// it anyway -- around a body that was *this = std::move(other), which #173 had already made able to
+// throw -- which is the terminate-instead-of-throw that #173 set out to remove.
 using pmr_like_segmented = segmented_map_of<pmr_like>;
 
 static_assert(!std::is_nothrow_constructible_v<pmr_like_segmented, pmr_like_segmented&&, pmr_like>);
