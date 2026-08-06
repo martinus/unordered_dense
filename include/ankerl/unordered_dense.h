@@ -557,6 +557,41 @@ struct precomputed_hash {
     std::uint64_t m_mixed_hash;
 };
 
+template <typename>
+constexpr bool dependent_false = false;
+
+// What a hash's is_avalanching member means. void is this library's spelling, and Boost's original
+// one. A type carrying a compile time bool is what Boost's documentation asks for now, and saying
+// std::false_type there has to mean no rather than yes -- reading it as a bare "the member is
+// there" would take a hash that declares itself ordinary and use it unmixed, which is the one
+// answer that costs the table its distribution.
+//
+// Anything else is a mistake and is said to be one, rather than being guessed at.
+template <typename T, typename Enable = void>
+struct avalanching_value {
+    static_assert(dependent_false<T>,
+                  "is_avalanching must be void, or a type with a compile time bool value such as "
+                  "std::true_type or std::false_type");
+    static constexpr bool value = false;
+};
+
+template <>
+struct avalanching_value<void> {
+    static constexpr bool value = true;
+};
+
+template <typename T>
+struct avalanching_value<T, std::enable_if_t<std::is_convertible_v<decltype(T::value), bool>>> {
+    static constexpr bool value = static_cast<bool>(T::value);
+};
+
+template <typename Hash, typename Enable = void>
+struct hash_is_avalanching_impl : std::false_type {};
+
+template <typename Hash>
+struct hash_is_avalanching_impl<Hash, std::void_t<detect_avalanching<Hash>>>
+    : std::bool_constant<avalanching_value<detect_avalanching<Hash>>::value> {};
+
 } // namespace detail
 
 // Whether a hash is high quality -- every bit of its result independently well distributed -- so
@@ -564,7 +599,7 @@ struct precomputed_hash {
 // answer is the member typedef a hash can carry:
 //
 //     struct my_hash {
-//         using is_avalanching = void;
+//         using is_avalanching = void;               // or std::true_type
 //         auto operator()(my_type const&) const noexcept -> std::uint64_t;
 //     };
 //
@@ -576,8 +611,13 @@ struct precomputed_hash {
 // This is the answer a table actually asks for, so the specialization also works the other way:
 // naming a hash false_type makes the table mix its output whatever the hash claims about itself,
 // which is the escape hatch for one that promises more than it delivers.
+//
+// Deliberately the same name, the same two ways of answering and the same meaning as Boost's
+// boost::hash_is_avalanching, so that a hash annotated for either library is read correctly by the
+// other. Boost calls `= void` deprecated; here it is the ordinary spelling, since it is what this
+// library has always documented and what every hash in this header uses.
 template <typename Hash>
-struct hash_is_avalanching : std::bool_constant<detail::is_detected_v<detail::detect_avalanching, Hash>> {};
+struct hash_is_avalanching : detail::hash_is_avalanching_impl<Hash> {};
 
 template <typename Hash>
 constexpr bool hash_is_avalanching_v = hash_is_avalanching<Hash>::value;

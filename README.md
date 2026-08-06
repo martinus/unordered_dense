@@ -138,7 +138,7 @@ using is_avalanching = void;
 
 This is the case for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, and `std::basic_string_view<C>`.
 
-Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation.
+Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation. The marker can also be spelled `using is_avalanching = std::true_type;`, and given for a hash you cannot edit — see [3.2.7](#327-marking-a-hash-avalanching-from-outside).
 
 #### 3.2.1. Simple Hash
 
@@ -287,6 +287,15 @@ struct ankerl::unordered_dense::hash_is_avalanching<their::good_hash> : std::tru
 ```
 
 The extra mixing is now skipped for `their::good_hash` everywhere, without touching it. The specialization also works the other way — `std::false_type` makes the map mix a hash's output whatever the hash claims about itself, which is the escape hatch for one that promises more than it delivers.
+
+This is deliberately the same name, the same two ways of answering, and the same meaning as [`boost::hash_is_avalanching`](https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered/reference/hash_traits.html), so a hash annotated for Boost.Unordered is read correctly here and the other way around. The member may therefore also be written as a compile time bool, which is the spelling Boost's documentation asks for:
+
+```cpp
+using is_avalanching = std::true_type;   // same as `= void`
+using is_avalanching = std::false_type;  // says the opposite
+```
+
+Boost calls `= void` deprecated; here it stays the ordinary spelling, since it is what this library has always documented and what every hash in the header uses. Writing anything else there — a stray `int`, say — is a compile error rather than a silent yes or no.
 
 #### 3.2.8. Requiring an Avalanching Hash
 
