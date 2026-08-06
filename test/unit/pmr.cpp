@@ -199,11 +199,22 @@ TEST_CASE("pmr_move_different_mr") {
 
     REQUIRE(mr1.num_allocs() == 3);
     REQUIRE(mr1.num_deallocs() == 1);
-    REQUIRE(mr1.num_is_equals() == 1);
 
     REQUIRE(mr2.num_allocs() == 2);
     REQUIRE(mr2.num_deallocs() == 0);
-    REQUIRE(mr2.num_is_equals() == 1);
+
+    // The total, not one comparison per resource -- that split is only how libstdc++ and Apple's
+    // libc++ happen to land. Two comparisons are made in all three standard libraries this is
+    // built against: table's own "same allocator?" check, and one inside std::vector's move
+    // assignment. pmr counts each against its left operand, and that is the half nothing pins
+    // down: table always asks mr1, while vector asks the source (mr2) under libstdc++ and the
+    // target (mr1) under libc++ 18. Same two comparisons, split 1/1 on one and 2/0 on the other.
+    //
+    // Kept as an equality rather than relaxed to "at least one", because the count is what would
+    // notice a redundant allocator comparison being added to the move path, and because all three
+    // libraries do agree on it. A fourth that does not will say so here, which is the useful
+    // outcome -- it is how the 2/0 split was found in the first place.
+    REQUIRE(mr1.num_is_equals() + mr2.num_is_equals() == 2);
 }
 
 TEST_CASE("pmr_move_same_mr") {
