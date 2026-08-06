@@ -51,15 +51,21 @@ struct id_allocator {
         : m_id(other.m_id)
         , m_counts(other.m_counts) {}
 
+    // Empty requests are not counted, because a container is allowed to make them and they say
+    // nothing about where its memory came from. libc++'s vector deallocates unconditionally when it
+    // propagates an allocator on copy assignment, so an empty container being handed a new
+    // allocator arrives here as deallocate(nullptr, 0) -- one deallocation with no allocation
+    // behind it, which made a balanced allocator look like it had freed something twice. libstdc++
+    // guards the call and does not.
     auto allocate(std::size_t n) -> T* {
-        if (nullptr != m_counts) {
+        if (nullptr != m_counts && 0 != n) {
             ++m_counts->allocations;
         }
         return std::allocator<T>{}.allocate(n);
     }
 
     void deallocate(T* p, std::size_t n) {
-        if (nullptr != m_counts) {
+        if (nullptr != m_counts && 0 != n) {
             ++m_counts->deallocations;
         }
         std::allocator<T>{}.deallocate(p, n);
