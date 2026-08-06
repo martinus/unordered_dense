@@ -42,6 +42,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [5.2. Lookups](#52-lookups)
   - [5.3. Removals](#53-removals)
 - [6. Real World Usage](#6-real-world-usage)
+- [7. Ports](#7-ports)
 
 ## 1. Overview
 
@@ -359,7 +360,7 @@ Since all data is stored in a vector, removals are a bit more complicated:
 
 ## 6. Real World Usage
 
-On 2023-09-10 I did a quick search on GitHub to see if this map is used in any popular open source projects. Here are some of the projects I found. Please send me a note if you want to be on that list!
+On 2023-09-10 I did a quick search on GitHub to see if this map is used in any popular open source projects. Here are some of the projects I found, plus the ones whose authors have written in since. Please send me a note if you want to be on that list!
 
 * [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) -  G-code generator for 3D printers (RepRap, Makerbot, Ultimaker etc.) 
 * [Kismet](https://github.com/kismetwireless/kismet): Wi-Fi, Bluetooth, RF, and more. Kismet is a sniffer, WIDS, and wardriving tool for Wi-Fi, Bluetooth, Zigbee, RF, and more, which runs on Linux and macOS
@@ -376,3 +377,10 @@ On 2023-09-10 I did a quick search on GitHub to see if this map is used in any p
 * [Operon](https://github.com/heal-research/operon) - A modern C++ framework for symbolic regression that uses genetic programming to explore a hypothesis space of possible mathematical expressions in order to find the best-fitting model for a given regression target.
 * [MashMap](https://github.com/marbl/MashMap) - A fast approximate aligner for long DNA sequences
 * [minigpt4.cpp](https://github.com/Maknee/minigpt4.cpp) - Port of MiniGPT4 in C++ (4bit, 5bit, 6bit, 8bit, 16bit CPU inference with GGML)
+* [CoMaps](https://codeberg.org/comaps/comaps) - Privacy-focused offline maps and navigation for Android and iOS, based on OpenStreetMap data.
+
+## 7. Ports
+
+Reimplementations of this design in other languages. They are not maintained here, and are listed because people have found them useful.
+
+* [HashMapC99](https://github.com/benanil/HashMapC99) - A cache-efficient, densely stored hash map in C99, by Anılcan Gülkaya. Useful where a C++17 header is not an option, such as embedded targets, and for shorter compile times and smaller binaries.
