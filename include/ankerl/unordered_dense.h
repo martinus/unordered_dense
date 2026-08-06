@@ -1189,9 +1189,8 @@ private:
             // first insert allocate. Copying an empty table therefore allocates nothing either.
             m_shifts = initial_shifts;
         } else {
-            m_shifts = other.m_shifts;
             if constexpr (IsSegmented || !std::is_same_v<BucketContainer, default_container_t>) {
-                allocate_buckets_from_shift();
+                allocate_buckets_from_shift(other.m_shifts);
                 for (auto i = 0UL; i < bucket_count(); ++i) {
                     at(m_buckets, i) = at(other.m_buckets, i);
                 }
@@ -1206,6 +1205,7 @@ private:
                 // move assignment's differing-allocator branch, where adopting other's would be
                 // exactly wrong.
                 m_buckets.assign(other.m_buckets.begin(), other.m_buckets.end());
+                m_shifts = other.m_shifts;
                 describe_buckets(m_buckets.size());
             }
         }
@@ -1306,23 +1306,47 @@ private:
         m_bucket_mask = 0;
     }
 
-    void allocate_buckets_from_shift() {
-        auto num_buckets = calc_num_buckets(m_shifts);
+    // Takes the shift rather than reading m_shifts, so that nothing describing the bucket array is
+    // written until an array of that size exists. Callers used to assign m_shifts and then
+    // allocate, which left a gap for a failed allocation to stop in.
+    void allocate_buckets_from_shift(std::uint8_t shifts) {
+        auto num_buckets = calc_num_buckets(shifts);
         if constexpr (IsSegmented || !std::is_same_v<BucketContainer, default_container_t>) {
-            if constexpr (has_reserve<bucket_container_type>) {
-                m_buckets.reserve(num_buckets);
-            }
-            for (std::size_t i = m_buckets.size(); i < num_buckets; ++i) {
-                m_buckets.emplace_back();
+            if (num_buckets < m_buckets.size()) {
+                // Shrinking, which rehash does. This used to work because the caller emptied the
+                // array first and the loop below then grew it from nothing; without that it would
+                // keep the larger size. Shrinking rather than emptying is what keeps the array and
+                // the mask agreeing at every point: it hands memory back instead of asking for it,
+                // so unlike a clear-then-regrow it has no failure to stop in.
+                m_buckets.resize(num_buckets);
+            } else {
+                if constexpr (has_reserve<bucket_container_type>) {
+                    m_buckets.reserve(num_buckets);
+                }
+                // Growing in place leaves the old buckets where they are, so a failure part way
+                // through leaves an array that is merely larger than the mask below describes,
+                // which nothing reads.
+                for (std::size_t i = m_buckets.size(); i < num_buckets; ++i) {
+                    m_buckets.emplace_back();
+                }
             }
         } else {
-            m_buckets.resize(num_buckets);
+            // Built beside the old array rather than over it, so that a failure here leaves the
+            // table exactly as it was. Callers used to give the old array back first, which made
+            // this the only allocation alive -- and made a failure leave them holding values with
+            // no buckets to find them by, which is not a state anything can recover from without
+            // allocating again.
+            auto fresh = bucket_container_type(m_buckets.get_allocator());
+            fresh.resize(num_buckets);
+            m_buckets = std::move(fresh);
         }
-        // Only now that the array exists, and not before the growth above: these two describe it,
-        // and a mask published ahead of the allocation that failed would have left every probe
-        // indexing past the end of the array that is still there. This is the one function all six
-        // bucket-allocating paths go through, so committing here rather than up front is what makes
-        // a failed growth leave the old buckets intact and consistent instead of unusable.
+        // All three commit here, together, and only once the array they describe exists. They have
+        // to move as one: do_find indexes its first probe with hash >> m_shifts and does not mask,
+        // so a shift that has run ahead of the array reads past the end of it, and a mask published
+        // ahead of an allocation that then failed does the same. This is the one function every
+        // bucket-allocating path goes through, which is what makes a failed growth leave the old
+        // buckets intact and consistent rather than unusable.
+        m_shifts = shifts;
         describe_buckets(num_buckets);
     }
 
@@ -1347,7 +1371,7 @@ private:
     void allocate_buckets_if_none() {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(0 == bucket_count()))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-                allocate_buckets_from_shift();
+                allocate_buckets_from_shift(m_shifts);
                 clear_buckets();
             }
     }
@@ -1387,11 +1411,22 @@ private:
             m_values.pop_back();
             on_error_bucket_overflow();
         }
-        --m_shifts;
-        if constexpr (!IsSegmented && std::is_same_v<BucketContainer, default_container_t>) {
-            deallocate_buckets();
+        // Both callers have already appended the new element to m_values, which is why the branch
+        // above takes it back out before reporting the overflow. A bucket array that cannot be
+        // grown is the same situation: the element is in m_values with no bucket pointing at it,
+        // and never will have one, so size() would count an element that find() cannot reach.
+        // Taking it back out is what makes a failed insert have no effect, which is what the
+        // unordered containers promise for inserting a single element.
+        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()) {
+            try {
+                allocate_buckets_from_shift(static_cast<std::uint8_t>(m_shifts - 1));
+            } catch (...) {
+                m_values.pop_back();
+                throw;
+            }
+        } else {
+            allocate_buckets_from_shift(static_cast<std::uint8_t>(m_shifts - 1));
         }
-        allocate_buckets_from_shift();
         clear_and_fill_buckets_from_values();
     }
 
@@ -1870,9 +1905,7 @@ public:
             }
         auto shifts = calc_shifts_for_size(container.size());
         if (0 == bucket_count() || shifts < m_shifts || container.get_allocator() != m_values.get_allocator()) {
-            m_shifts = shifts;
-            deallocate_buckets();
-            allocate_buckets_from_shift();
+            allocate_buckets_from_shift(shifts);
         }
         clear_buckets();
 
@@ -2380,10 +2413,8 @@ public:
         count = (std::min)(count, max_size());
         auto shifts = calc_shifts_for_size((std::max)(count, size()));
         if (shifts != m_shifts) {
-            m_shifts = shifts;
-            deallocate_buckets();
+            allocate_buckets_from_shift(shifts);
             m_values.shrink_to_fit();
-            allocate_buckets_from_shift();
             clear_and_fill_buckets_from_values();
         }
     }
@@ -2396,9 +2427,7 @@ public:
         }
         auto shifts = calc_shifts_for_size((std::max)(capa, size()));
         if (0 == bucket_count() || shifts < m_shifts) {
-            m_shifts = shifts;
-            deallocate_buckets();
-            allocate_buckets_from_shift();
+            allocate_buckets_from_shift(shifts);
             clear_and_fill_buckets_from_values();
         }
     }
