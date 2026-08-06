@@ -378,6 +378,8 @@ On 2023-09-10 I did a quick search on GitHub to see if this map is used in any p
 * [MashMap](https://github.com/marbl/MashMap) - A fast approximate aligner for long DNA sequences
 * [minigpt4.cpp](https://github.com/Maknee/minigpt4.cpp) - Port of MiniGPT4 in C++ (4bit, 5bit, 6bit, 8bit, 16bit CPU inference with GGML)
 * [CoMaps](https://codeberg.org/comaps/comaps) - Privacy-focused offline maps and navigation for Android and iOS, based on OpenStreetMap data.
+* [MySQL](https://github.com/mysql/mysql-server) - Binary log transaction dependency tracking has used this map since 8.4.3 and 9.1.0, replacing a tree for the writeset history and taking about 60% less space for it.
+* [Valhalla](https://github.com/valhalla/valhalla) - Open source routing engine for OpenStreetMap data. Replaced robin-hood-hashing with this map and set in 3.6.0.
 
 ## 7. Ports
 
