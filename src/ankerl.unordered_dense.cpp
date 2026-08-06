@@ -22,6 +22,9 @@ export module ankerl.unordered_dense;
 export namespace ankerl::unordered_dense {
     inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
       using ankerl::unordered_dense::hash;
+      using ankerl::unordered_dense::hash_is_avalanching;
+      using ankerl::unordered_dense::hash_is_avalanching_v;
+      using ankerl::unordered_dense::require_avalanching;
 
       using ankerl::unordered_dense::map;
       using ankerl::unordered_dense::segmented_map;

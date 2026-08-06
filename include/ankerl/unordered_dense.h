@@ -559,6 +559,49 @@ struct precomputed_hash {
 
 } // namespace detail
 
+// Whether a hash is high quality -- every bit of its result independently well distributed -- so
+// that a table can index with those bits as they come instead of mixing them first. The default
+// answer is the member typedef a hash can carry:
+//
+//     struct my_hash {
+//         using is_avalanching = void;
+//         auto operator()(my_type const&) const noexcept -> std::uint64_t;
+//     };
+//
+// which stays the way to say it for a hash you wrote. For one you did not, say it from outside:
+//
+//     template <>
+//     struct ankerl::unordered_dense::hash_is_avalanching<their::good_hash> : std::true_type {};
+//
+// This is the answer a table actually asks for, so the specialization also works the other way:
+// naming a hash false_type makes the table mix its output whatever the hash claims about itself,
+// which is the escape hatch for one that promises more than it delivers.
+template <typename Hash>
+struct hash_is_avalanching : std::bool_constant<detail::is_detected_v<detail::detect_avalanching, Hash>> {};
+
+template <typename Hash>
+constexpr bool hash_is_avalanching_v = hash_is_avalanching<Hash>::value;
+
+// A hash that has to be a high quality one, for a codebase where they all are meant to be and
+// forgetting to say so is the easy mistake:
+//
+//     template <class Key, class T>
+//     using my_map = ankerl::unordered_dense::map<Key, T, require_avalanching<my_hash<Key>>>;
+//
+// The check rides on the table's type rather than on the hash, so it is still made when the hash
+// underneath is swapped for another -- which is the point of asking for it here rather than
+// writing a static_assert next to the hash.
+template <typename Hash>
+struct require_avalanching : Hash {
+    static_assert(hash_is_avalanching_v<Hash>,
+                  "hash is not avalanching: give it 'using is_avalanching = void;', or specialize "
+                  "ankerl::unordered_dense::hash_is_avalanching for it, or stop requiring it here");
+
+    // Restated rather than inherited, because a hash named avalanching by a specialization of
+    // hash_is_avalanching has no member typedef to inherit.
+    using is_avalanching = void;
+};
+
 // Very much like std::deque, but faster for indexing (in most cases). As of now this doesn't implement the full std::vector
 // API, but merely what's necessary to work as an underlying container for ankerl::unordered_dense::{map, set}.
 // It allocates blocks of equal size and puts them into the m_blocks vector. That means it can grow simply by adding a new
@@ -1124,7 +1167,7 @@ private:
     // The goal of mixed_hash is to always produce a high quality 64bit hash.
     template <typename K>
     [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> std::uint64_t {
-        if constexpr (is_detected_v<detect_avalanching, Hash>) {
+        if constexpr (hash_is_avalanching_v<Hash>) {
             // we know that the hash is good because is_avalanching.
             if constexpr (sizeof(decltype(m_hash(key))) < sizeof(std::uint64_t)) {
                 // 32bit hash and is_avalanching => multiply with a constant to avalanche bits upwards

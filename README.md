@@ -26,6 +26,8 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.2.4. Heterogeneous Overloads using `is_transparent`](#324-heterogeneous-overloads-using-is_transparent)
     - [3.2.5. Automatic Fallback to `std::hash`](#325-automatic-fallback-to-stdhash)
     - [3.2.6. Hash the Whole Memory](#326-hash-the-whole-memory)
+    - [3.2.7. Marking a Hash Avalanching From Outside](#327-marking-a-hash-avalanching-from-outside)
+    - [3.2.8. Requiring an Avalanching Hash](#328-requiring-an-avalanching-hash)
   - [3.3. Container API](#33-container-api)
     - [3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`](#331-auto-replace_keyiterator-it-k-new_key---stdpairiterator-bool)
     - [3.3.2. `auto extract() && -> value_container_type`](#332-auto-extract----value_container_type)
@@ -233,6 +235,19 @@ For more information see the examples in `test/unit/transparent.cpp`.
 
 When an implementation for `std::hash` of a custom type is available, it is automatically used and assumed to be of low quality (thus `std::hash` is used, but an additional mixing step is performed).
 
+If your `std::hash` specialization is a high quality one, say so there and it is taken at its word — the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`:
+
+```cpp
+template <>
+struct std::hash<id> {
+    using is_avalanching = void;
+
+    auto operator()(id const& x) const noexcept -> size_t {
+        return ankerl::unordered_dense::detail::wyhash::hash(x.value);
+    }
+};
+```
+
 
 #### 3.2.6. Hash the Whole Memory
 
@@ -261,6 +276,28 @@ struct custom_hash_unique_object_representation {
     }
 };
 ```
+
+#### 3.2.7. Marking a Hash Avalanching From Outside
+
+`using is_avalanching = void;` is a member of the hash, which is no help when the hash comes from a library you cannot edit. `hash_is_avalanching` is what the map and set actually ask, and it can be answered from outside:
+
+```cpp
+template <>
+struct ankerl::unordered_dense::hash_is_avalanching<their::good_hash> : std::true_type {};
+```
+
+The extra mixing is now skipped for `their::good_hash` everywhere, without touching it. The specialization also works the other way — `std::false_type` makes the map mix a hash's output whatever the hash claims about itself, which is the escape hatch for one that promises more than it delivers.
+
+#### 3.2.8. Requiring an Avalanching Hash
+
+In a codebase where every hash is meant to be a high quality one, forgetting to say so is the easy mistake, and nothing complains — the map just quietly mixes. Wrap the hash to make it a build error instead:
+
+```cpp
+template <class Key, class T>
+using my_map = ankerl::unordered_dense::map<Key, T, ankerl::unordered_dense::require_avalanching<my_hash<Key>>>;
+```
+
+The requirement rides on the map's type rather than on the hash, so it is still checked when the hash underneath is swapped for another one — which is what a `static_assert` next to the hash cannot do. It accepts a hash marked either way, by its own member typedef or by a `hash_is_avalanching` specialization.
 
 ### 3.3. Container API
 
