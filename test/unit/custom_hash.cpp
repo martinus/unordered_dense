@@ -82,13 +82,12 @@ TEST_CASE_SET("custom_hash_default", id) {
     set.insert(id{124});
 }
 
-static_assert(
-    !ankerl::unordered_dense::detail::is_detected_v<ankerl::unordered_dense::detail::detect_avalanching, custom_hash_simple>);
+// Asked of the public trait rather than of the private detector, because the trait is the contract:
+// it is what the table consults, and a hash can be named avalanching without carrying the member
+// the detector looks for.
+static_assert(!ankerl::unordered_dense::hash_is_avalanching_v<custom_hash_simple>);
 
-static_assert(ankerl::unordered_dense::detail::is_detected_v<ankerl::unordered_dense::detail::detect_avalanching,
-                                                             custom_hash_avalanching>);
-static_assert(ankerl::unordered_dense::detail::is_detected_v<ankerl::unordered_dense::detail::detect_avalanching,
-                                                             custom_hash_unique_object_representation>);
+static_assert(ankerl::unordered_dense::hash_is_avalanching_v<custom_hash_avalanching>);
+static_assert(ankerl::unordered_dense::hash_is_avalanching_v<custom_hash_unique_object_representation>);
 
-static_assert(!ankerl::unordered_dense::detail::is_detected_v<ankerl::unordered_dense::detail::detect_avalanching,
-                                                              ankerl::unordered_dense::hash<point>>);
+static_assert(!ankerl::unordered_dense::hash_is_avalanching_v<ankerl::unordered_dense::hash<point>>);

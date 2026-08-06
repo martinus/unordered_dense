@@ -310,6 +310,85 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 
 } // namespace detail::wyhash
 
+namespace detail {
+
+struct nonesuch {};
+
+template <class Default, class AlwaysVoid, template <class...> class Op, class... Args>
+struct detector {
+    using value_t = std::false_type;
+    using type = Default;
+};
+
+template <class Default, template <class...> class Op, class... Args>
+struct detector<Default, std::void_t<Op<Args...>>, Op, Args...> {
+    using value_t = std::true_type;
+    using type = Op<Args...>;
+};
+
+template <template <class...> class Op, class... Args>
+using is_detected = typename detail::detector<detail::nonesuch, void, Op, Args...>::value_t;
+
+template <template <class...> class Op, class... Args>
+constexpr bool is_detected_v = is_detected<Op, Args...>::value;
+
+template <typename>
+constexpr bool dependent_false = false;
+
+template <typename T>
+using detect_avalanching = typename T::is_avalanching;
+
+// The member written as a value instead of a type, which is the near miss that would otherwise
+// answer "not avalanching" and say nothing about why.
+template <typename T>
+using detect_avalanching_as_value = decltype((void)T::is_avalanching);
+
+template <typename T>
+using detect_bool_value = std::enable_if_t<std::is_convertible_v<decltype(T::value), bool>>;
+
+// What a hash's is_avalanching member means. void is this library's spelling, and Boost's original
+// one; a type carrying a compile time bool is what Boost's documentation asks for now. Saying
+// std::false_type there has to mean no rather than yes -- reading the member as a bare "it is
+// there" would take a hash that declares itself ordinary and use it unmixed, which is the one
+// answer that costs the table its distribution.
+//
+// Anything else is a mistake, and is said to be one rather than guessed at.
+template <typename Hash>
+[[nodiscard]] constexpr auto is_avalanching_member() -> bool {
+    if constexpr (!is_detected_v<detect_avalanching, Hash>) {
+        static_assert(!is_detected_v<detect_avalanching_as_value, Hash>,
+                      "is_avalanching must be a type: write 'using is_avalanching = std::true_type;' "
+                      "rather than 'static constexpr bool is_avalanching = true;'");
+        return false;
+    } else if constexpr (std::is_void_v<detect_avalanching<Hash>>) {
+        return true;
+    } else if constexpr (is_detected_v<detect_bool_value, detect_avalanching<Hash>>) {
+        return static_cast<bool>(detect_avalanching<Hash>::value);
+    } else {
+        static_assert(dependent_false<Hash>,
+                      "is_avalanching must be void, or a type with a compile time bool value such "
+                      "as std::true_type or std::false_type");
+        return false;
+    }
+}
+
+} // namespace detail
+
+// Whether a hash is high quality -- every bit of its result independently well distributed -- so
+// that a table can index with those bits as they come instead of mixing them first. The default
+// answer is the member typedef a hash can carry, `using is_avalanching = void;` or the equivalent
+// `= std::true_type`. For a hash you cannot edit, specialize this instead; `std::false_type` is
+// allowed too, and forces the mixing back on for a hash that promises more than it delivers.
+//
+// Deliberately the same name, the same two ways of answering and the same meaning as Boost's
+// boost::hash_is_avalanching, so that a hash annotated for either library is read correctly by the
+// other. See README 3.2.7.
+template <typename Hash>
+struct hash_is_avalanching : std::bool_constant<detail::is_avalanching_member<Hash>()> {};
+
+template <typename Hash>
+constexpr bool hash_is_avalanching_v = hash_is_avalanching<Hash>::value;
+
 template <typename T, typename Enable = void>
 struct hash {
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
@@ -318,8 +397,12 @@ struct hash {
     }
 };
 
+// Asked of hash_is_avalanching rather than of std::hash<T>::is_avalanching directly, so that there
+// is one reader of the marker and not two: a std::hash spelling its marker the way Boost asks, or
+// named avalanching by a specialization because it cannot be edited, reaches the table through here
+// as well.
 template <typename T>
-struct hash<T, typename std::hash<T>::is_avalanching> {
+struct hash<T, std::enable_if_t<hash_is_avalanching_v<std::hash<T>>>> {
     using is_avalanching = void;
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
         -> std::uint64_t {
@@ -487,29 +570,7 @@ ANKERL_UNORDERED_DENSE_PACK(struct big {
 
 namespace detail {
 
-struct nonesuch {};
 struct default_container_t {};
-
-template <class Default, class AlwaysVoid, template <class...> class Op, class... Args>
-struct detector {
-    using value_t = std::false_type;
-    using type = Default;
-};
-
-template <class Default, template <class...> class Op, class... Args>
-struct detector<Default, std::void_t<Op<Args...>>, Op, Args...> {
-    using value_t = std::true_type;
-    using type = Op<Args...>;
-};
-
-template <template <class...> class Op, class... Args>
-using is_detected = typename detail::detector<detail::nonesuch, void, Op, Args...>::value_t;
-
-template <template <class...> class Op, class... Args>
-constexpr bool is_detected_v = is_detected<Op, Args...>::value;
-
-template <typename T>
-using detect_avalanching = typename T::is_avalanching;
 
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
@@ -557,70 +618,7 @@ struct precomputed_hash {
     std::uint64_t m_mixed_hash;
 };
 
-template <typename>
-constexpr bool dependent_false = false;
-
-// What a hash's is_avalanching member means. void is this library's spelling, and Boost's original
-// one. A type carrying a compile time bool is what Boost's documentation asks for now, and saying
-// std::false_type there has to mean no rather than yes -- reading it as a bare "the member is
-// there" would take a hash that declares itself ordinary and use it unmixed, which is the one
-// answer that costs the table its distribution.
-//
-// Anything else is a mistake and is said to be one, rather than being guessed at.
-template <typename T, typename Enable = void>
-struct avalanching_value {
-    static_assert(dependent_false<T>,
-                  "is_avalanching must be void, or a type with a compile time bool value such as "
-                  "std::true_type or std::false_type");
-    static constexpr bool value = false;
-};
-
-template <>
-struct avalanching_value<void> {
-    static constexpr bool value = true;
-};
-
-template <typename T>
-struct avalanching_value<T, std::enable_if_t<std::is_convertible_v<decltype(T::value), bool>>> {
-    static constexpr bool value = static_cast<bool>(T::value);
-};
-
-template <typename Hash, typename Enable = void>
-struct hash_is_avalanching_impl : std::false_type {};
-
-template <typename Hash>
-struct hash_is_avalanching_impl<Hash, std::void_t<detect_avalanching<Hash>>>
-    : std::bool_constant<avalanching_value<detect_avalanching<Hash>>::value> {};
-
 } // namespace detail
-
-// Whether a hash is high quality -- every bit of its result independently well distributed -- so
-// that a table can index with those bits as they come instead of mixing them first. The default
-// answer is the member typedef a hash can carry:
-//
-//     struct my_hash {
-//         using is_avalanching = void;               // or std::true_type
-//         auto operator()(my_type const&) const noexcept -> std::uint64_t;
-//     };
-//
-// which stays the way to say it for a hash you wrote. For one you did not, say it from outside:
-//
-//     template <>
-//     struct ankerl::unordered_dense::hash_is_avalanching<their::good_hash> : std::true_type {};
-//
-// This is the answer a table actually asks for, so the specialization also works the other way:
-// naming a hash false_type makes the table mix its output whatever the hash claims about itself,
-// which is the escape hatch for one that promises more than it delivers.
-//
-// Deliberately the same name, the same two ways of answering and the same meaning as Boost's
-// boost::hash_is_avalanching, so that a hash annotated for either library is read correctly by the
-// other. Boost calls `= void` deprecated; here it is the ordinary spelling, since it is what this
-// library has always documented and what every hash in this header uses.
-template <typename Hash>
-struct hash_is_avalanching : detail::hash_is_avalanching_impl<Hash> {};
-
-template <typename Hash>
-constexpr bool hash_is_avalanching_v = hash_is_avalanching<Hash>::value;
 
 // A hash that has to be a high quality one, for a codebase where they all are meant to be and
 // forgetting to say so is the easy mistake:
@@ -628,14 +626,26 @@ constexpr bool hash_is_avalanching_v = hash_is_avalanching<Hash>::value;
 //     template <class Key, class T>
 //     using my_map = ankerl::unordered_dense::map<Key, T, require_avalanching<my_hash<Key>>>;
 //
-// The check rides on the table's type rather than on the hash, so it is still made when the hash
-// underneath is swapped for another -- which is the point of asking for it here rather than
-// writing a static_assert next to the hash.
+// Written into the alias rather than next to the hash so that the check is part of what the map
+// is, and survives my_hash being reimplemented without its marker.
+//
+// It inherits, which is what keeps the hash's own operator() overloads and its is_transparent, and
+// costs nothing: the wrapper is the same size as the hash and compiles to the same code.
 template <typename Hash>
 struct require_avalanching : Hash {
     static_assert(hash_is_avalanching_v<Hash>,
                   "hash is not avalanching: give it 'using is_avalanching = void;', or specialize "
                   "ankerl::unordered_dense::hash_is_avalanching for it, or stop requiring it here");
+    static_assert(!std::is_final_v<Hash>,
+                  "hash is final, so it cannot be wrapped: specialize "
+                  "ankerl::unordered_dense::hash_is_avalanching for it instead");
+
+    require_avalanching() = default;
+
+    // So that a stateful hash can be handed over by value as well as braced into place -- an
+    // aggregate would take require_avalanching<H>{h} but not require_avalanching<H>(h).
+    explicit require_avalanching(Hash const& hash)
+        : Hash(hash) {}
 
     // Restated rather than inherited, because a hash named avalanching by a specialization of
     // hash_is_avalanching has no member typedef to inherit.
