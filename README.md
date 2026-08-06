@@ -51,7 +51,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [6.7. Networking, media and security](#67-networking-media-and-security)
   - [6.8. Finance and blockchain](#68-finance-and-blockchain)
   - [6.9. Tools, libraries and machine learning](#69-tools-libraries-and-machine-learning)
-- [7. Ports](#7-ports)
+  - [6.10. Ports](#610-ports)
 
 ## 1. Overview
 
@@ -467,7 +467,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [STP](https://github.com/stp/stp) - Simple Theorem Prover, an efficient SMT solver for bitvectors.
 * [Tulip](https://github.com/Tulip-Dev/tulip) - Large graphs analysis, drawing and visualization framework.
 
-## 7. Ports
+### 6.10. Ports
 
 Reimplementations of this design in other languages. They are not maintained here, and are listed because people have found them useful.
 
