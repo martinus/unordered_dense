@@ -53,6 +53,12 @@ jobs:
         env:
           UNORDERED_DENSE_CLANG_TIDY: clang-tidy-18
 
+      # scripts/fuzz_afl.py has no compiler to catch its mistakes, and the interesting parts --
+      # which instance lands on which core, what counts as a new find, what --idle accepts -- are
+      # exactly the parts a refactoring moves. These tests are hermetic (no AFL++, no meson, no
+      # network), so they belong here rather than in the nightly fuzz workflow.
+      - run: ./scripts/test_fuzz_afl.py
+
   # Linux, macOS, Windows, the sanitizers and the hardened build used to be four jobs repeating
   # the same ten lines of checkout, python, cache and artifact setup. They differ only in the
   # runner, the compiler and the meson arguments, which is what the matrix carries. The displayed
