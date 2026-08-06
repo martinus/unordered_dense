@@ -225,7 +225,11 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(map1.find(3) != map1.end());
     show(mr1, "mr1");
 
-    REQUIRE(mr1.num_allocs() == 5); // 5 because of the initial allocation
+    // Two allocations per map, values and buckets, and nothing for the move: map1's buckets and
+    // values are handed over rather than copied, and map2 is left as a default constructed map,
+    // which no longer means "with a freshly allocated bucket array". That last one is what used to
+    // make this 5.
+    REQUIRE(mr1.num_allocs() == 4);
     REQUIRE(mr1.num_deallocs() == 2);
     REQUIRE(mr1.num_is_equals() == 0);
 }
