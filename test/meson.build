@@ -23,6 +23,7 @@ test_sources = [
     'unit/assignment_combinations.cpp',
     'unit/assignment_exception_safety.cpp',
     'unit/at.cpp',
+    'unit/avalanching.cpp',
     'unit/bucket.cpp',
     'unit/contains.cpp',
     'unit/copy_and_assign_maps.cpp',
