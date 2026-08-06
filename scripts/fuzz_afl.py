@@ -69,9 +69,45 @@ def fuzzing_cpus() -> list[int] | None:
     return sorted(min(cpus) for cpus in groups.values()) or None
 
 
-def cores() -> int:
-    cpus = fuzzing_cpus()
+def core_count(cpus: list[int] | None) -> int:
+    """How many instances to run, given what fuzzing_cpus() found. Takes the list rather than
+    calling for it, because reading the topology means a file per logical CPU and the answer
+    cannot change during a run."""
     return len(cpus) if cpus else (os.cpu_count() or 1)
+
+
+def instance_name(index: int) -> str:
+    """Instance 0 is the main one. afl-fuzz names the output subdirectory after this, so the -M/-S
+    argument and the path fuzzer_stats appears at have to be decided in one place: get them out of
+    step and wait_until_started watches for a file that never arrives."""
+    return "main" if index == 0 else f"s{index}"
+
+
+def sanitized_index(count: int) -> int:
+    """Which instance carries the sanitizers. They cost around 7x, so exactly one does and the
+    rest cover ground; with only one instance there is nothing to trade and it keeps them."""
+    return 1 if count > 1 else 0
+
+
+def ensure_fuzzing_builds(targets: list[str]):
+    """Both builds every fuzzing session needs, which afl_argv then picks between per instance."""
+    ensure_built(BUILD_AFL, "afl-clang-fast++", [], targets)
+    ensure_built(BUILD_AFL_FAST, "afl-clang-fast++", ["-Dfuzz_sanitizers=false"], targets)
+
+
+def preflight():
+    """Refuse to start rather than fuzz badly. Both checks belong to running AFL at all, not to
+    one subcommand -- sweep starts the same processes and used to skip them, so the same broken
+    core_pattern was explained by run and left for sweep to fail on obscurely."""
+    if shutil.which("afl-fuzz") is None:
+        die("afl-fuzz not found. Install AFL++ first.")
+
+    # afl-fuzz refuses to start when the kernel would hand crashes to a crash reporter instead of
+    # to it, and it is right to: crashes would be missed or blamed on the wrong input.
+    core_pattern = Path("/proc/sys/kernel/core_pattern")
+    if core_pattern.is_file() and core_pattern.read_text().startswith("|"):
+        die("core_pattern pipes to a crash handler. Fix it with:\n"
+            "    sudo sh -c 'echo core > /proc/sys/kernel/core_pattern'")
 
 
 def ensure_built(builddir: Path, compiler: str, setup_args: list[str], targets: list[str]):
@@ -138,9 +174,14 @@ def wait_until_started(instances: list[Instance]):
 
 
 class Instance:
-    """One backgrounded afl-fuzz, with the two files that say whether it is alive and why not."""
+    """One running afl-fuzz, with the files that say whether it is alive and why not.
 
-    def __init__(self, process: subprocess.Popen, log: Path, stats: Path):
+    The one on screen is one of these too, with its UI on and no log to redirect to -- otherwise
+    every capability added here would quietly exclude the instance being watched, and its shutdown
+    would have to be written again at each call site.
+    """
+
+    def __init__(self, process: subprocess.Popen, log: Path | None, stats: Path):
         self.process = process
         self.log = log
         self.stats = stats
@@ -153,120 +194,96 @@ class Instance:
         except subprocess.TimeoutExpired:
             self.process.kill()
 
-    def read_stats(self) -> dict[str, str]:
-        """afl-fuzz rewrites this every few seconds; missing or half written reads as nothing."""
-        try:
-            text = self.stats.read_text()
-        except OSError:
-            return {}
-        fields = {}
-        for line in text.splitlines():
-            key, _, value = line.partition(":")
-            fields[key.strip()] = value.strip()
-        return fields
 
-
-def afl_argv(target: str, index: int, sanitized_instance: int, out: Path, cpu: int | None) -> list[str]:
+def afl_argv(target: str, index: int, count: int, out: Path, cpu: int | None) -> list[str]:
     """The command for one instance: which build, which role, and which core it is pinned to.
 
     Instance 0 is the main one and does the deterministic passes; the rest explore at random and
-    share whatever any of them finds through the output directory. The sanitizers cost around 7x,
-    so exactly one instance carries them and the others cover ground -- a crash any of them finds
-    is saved to the same place, so replay it under builddir/afl/test/<target> for the report.
+    share whatever any of them finds through the output directory. A crash any of them finds is
+    saved to the same place, so replay it under builddir/afl/test/<target> for the report.
 
     -b pins it. Left to itself afl-fuzz takes the first core it finds unused, which knows nothing
     about hyperthread siblings and would put two instances on one core while another sits idle.
     """
-    build = BUILD_AFL if index == sanitized_instance else BUILD_AFL_FAST
+    build = BUILD_AFL if index == sanitized_index(count) else BUILD_AFL_FAST
     bind = ["-b", str(cpu)] if cpu is not None else []
-    return ["afl-fuzz", "-M" if index == 0 else "-S", "main" if index == 0 else f"s{index}",
+    return ["afl-fuzz", "-M" if index == 0 else "-S", instance_name(index),
             *bind, "-i", f"data/fuzz/{target}", "-o", str(out),
             "--", f"./{build}/test/{target}"]
 
 
-def start_instance(target: str, index: int, sanitized_instance: int, out: Path,
-                   cpu: int | None) -> Instance:
-    """Start one backgrounded afl-fuzz with its UI off and its output in a log file."""
-    name = "main" if index == 0 else f"s{index}"
+def start_instance(target: str, index: int, count: int, out: Path, cpu: int | None,
+                   ui: bool = False) -> Instance:
+    """Start one afl-fuzz. With ui it keeps the terminal and draws its screen; without, its UI is
+    off and its output goes to a log file, because AFL's screen only makes sense one at a time."""
+    argv = afl_argv(target, index, count, out, cpu)
+    stats = out / instance_name(index) / "fuzzer_stats"
+    if ui:
+        return Instance(subprocess.Popen(argv, env=afl_env()), None, stats)
+
     log = out / f"afl-{index}.log"
     with log.open("wb") as handle:
         process = subprocess.Popen(
-            afl_argv(target, index, sanitized_instance, out, cpu),
+            argv,
             env=afl_env(AFL_NO_UI="1"),
             stdout=handle,
             stderr=subprocess.STDOUT,
         )
-    return Instance(process, log, out / name / "fuzzer_stats")
+    return Instance(process, log, stats)
 
 
 def cmd_run(targets: list[str]):
-    if shutil.which("afl-fuzz") is None:
-        die("afl-fuzz not found. Install AFL++ first.")
-
-    # afl-fuzz refuses to start when the kernel would hand crashes to a crash reporter instead of
-    # to it, and it is right to: crashes would be missed or blamed on the wrong input.
-    core_pattern = Path("/proc/sys/kernel/core_pattern")
-    if core_pattern.is_file() and core_pattern.read_text().startswith("|"):
-        die("core_pattern pipes to a crash handler. Fix it with:\n"
-            "    sudo sh -c 'echo core > /proc/sys/kernel/core_pattern'")
-
-    ensure_built(BUILD_AFL, "afl-clang-fast++", [], targets)
-    ensure_built(BUILD_AFL_FAST, "afl-clang-fast++", ["-Dfuzz_sanitizers=false"], targets)
+    preflight()
+    ensure_fuzzing_builds(targets)
 
     # One target: every core on it. Several: split the cores between them, at least one each.
     cpus = fuzzing_cpus()
-    per_target = max(1, cores() // len(targets))
-    # Only wraps when there are more targets than cores, where one each already oversubscribes.
-    assign = (lambda n: cpus[n % len(cpus)]) if cpus else (lambda n: None)
+    per_target = max(1, core_count(cpus) // len(targets))
 
     # The first target's main instance runs in the foreground and keeps the terminal, so there is a
-    # live status screen to watch rather than four silent log files. Everything else runs in the
-    # background with the UI off, because AFL's screen only makes sense one at a time.
+    # live status screen to watch rather than four silent log files.
     watched = targets[0]
+    watched_cpu = cpus[0] if cpus else None
 
-    # With more than one instance the foreground one runs without sanitizers, because it is the
-    # number you watch and the one doing the deterministic passes; a secondary carries them. With
-    # only one instance there is nothing to trade, so it keeps them.
-    sanitized_instance = 1 if per_target > 1 else 0
-
-    print(f"fuzzing {' '.join(targets)} on {cores()} cores ({per_target} per target), Ctrl-C to stop")
+    print(f"fuzzing {' '.join(targets)} on {core_count(cpus)} cores "
+          f"({per_target} per target), Ctrl-C to stop")
     print(f"showing {watched}, the rest log to {FINDINGS}/<target>/afl-*.log")
-    print(f"sanitizers on instance s{sanitized_instance} of each target, off elsewhere for speed")
+    print(f"sanitizers on instance s{sanitized_index(per_target)} of each target, "
+          f"off elsewhere for speed")
     print()
 
     instances: list[Instance] = []
-    slot = 0
-    for target in targets:
-        out = FINDINGS / target
-        out.mkdir(parents=True, exist_ok=True)
-        for i in range(per_target):
-            cpu, slot = assign(slot), slot + 1
-            if target == watched and i == 0:
-                watched_cpu = cpu  # started last, in the foreground, but its core is reserved here
-                continue
-            instances.append(start_instance(target, i, sanitized_instance, out, cpu))
-
-    wait_until_started(instances)
-
-    # No AFL_NO_UI and no redirect: this is the one with the screen. A Ctrl-C goes to the whole
-    # process group, so afl-fuzz gets it directly and saves its queue before exiting, and this
-    # process gets the KeyboardInterrupt -- which is what tells a stop apart from a failure.
-    #
-    # Popen and wait rather than subprocess.run, which kills the child on KeyboardInterrupt: the
-    # child has had the same SIGINT and is busy saving its queue, so waiting for it is the point.
-    interrupted = False
-    foreground = subprocess.Popen(
-        afl_argv(watched, 0, sanitized_instance, FINDINGS / watched, watched_cpu),
-        env=afl_env(),
-    )
     try:
-        status = foreground.wait()
-    except KeyboardInterrupt:
-        interrupted = True
-        status = foreground.wait()
+        slot = 0
+        for target in targets:
+            out = FINDINGS / target
+            out.mkdir(parents=True, exist_ok=True)
+            for i in range(per_target):
+                # Wraps only when there are more targets than cores, where one each already
+                # oversubscribes. Slot 0 is the watched target's, started last, in the foreground.
+                cpu = cpus[slot % len(cpus)] if cpus else None
+                slot += 1
+                if target == watched and i == 0:
+                    continue
+                instances.append(start_instance(target, i, per_target, out, cpu))
 
-    for instance in instances:
-        instance.stop()
+        wait_until_started(instances)
+
+        # A Ctrl-C goes to the whole process group, so afl-fuzz gets it directly and saves its
+        # queue before exiting, and this process gets the KeyboardInterrupt -- which is what tells
+        # a stop apart from a failure. Popen and wait rather than subprocess.run, which kills the
+        # child on KeyboardInterrupt: the child is busy saving its queue, so waiting is the point.
+        interrupted = False
+        foreground = start_instance(watched, 0, per_target, FINDINGS / watched, watched_cpu, ui=True)
+        instances.append(foreground)
+        try:
+            status = foreground.process.wait()
+        except KeyboardInterrupt:
+            interrupted = True
+            status = foreground.process.wait()
+    finally:
+        for instance in instances:
+            instance.stop()
 
     if not interrupted and status != 0:
         die(f"afl-fuzz on {watched} exited with {status}")
@@ -287,16 +304,30 @@ def queue_size(out: Path) -> int:
     that is still finding things to look like it has gone quiet. A queue entry, on the other hand,
     is written the moment it is found.
     """
-    total = 0
+    return sum(1 for _ in queue_inputs(out))
+
+
+def queue_inputs(out: Path):
+    """Every queue entry under an output directory, as os.DirEntry.
+
+    scandir rather than Path.glob: this runs on a timer against directories a long session fills
+    with six figures of entries, and glob builds a Path and matches a pattern per file. Measured
+    over 170k entries, 217ms for the glob against 83ms for this.
+    """
     try:
-        for _ in out.glob("*/queue/id:*"):
-            total += 1
+        for instance in os.scandir(out):
+            if not instance.is_dir():
+                continue
+            try:
+                for entry in os.scandir(Path(instance.path) / "queue"):
+                    if entry.name.startswith("id:") and entry.is_file():
+                        yield entry
+            except OSError:
+                continue  # no queue yet, or it went away underneath us
     except OSError:
         # afl-fuzz is writing into these directories while this walks them. A short count only
         # ever delays the decision, because only an increase counts as a find.
-        pass
-    return total
-
+        return
 
 
 def sweep_one(target: str, idle_seconds: int) -> str:
@@ -311,24 +342,21 @@ def sweep_one(target: str, idle_seconds: int) -> str:
     out = FINDINGS / target
     out.mkdir(parents=True, exist_ok=True)
     cpus = fuzzing_cpus()
-    count = cores()
-    sanitized_instance = 1 if count > 1 else 0
-    others = [start_instance(target, i, sanitized_instance, out, cpus[i] if cpus else None)
-              for i in range(1, count)]
+    count = core_count(cpus)
+    instances = [start_instance(target, i, count, out, cpus[i] if cpus else None)
+                 for i in range(1, count)]
     started = time.time()
-    outcome: dict[str, str] = {}
-    foreground = None
+    outcome_text: str | None = None
     try:
-        wait_until_started(others)
+        wait_until_started(instances)
 
-        foreground = subprocess.Popen(
-            afl_argv(target, 0, sanitized_instance, out, cpus[0] if cpus else None),
-            env=afl_env(),
-        )
+        foreground = start_instance(target, 0, count, out, cpus[0] if cpus else None, ui=True)
+        instances.append(foreground)
         done = threading.Event()
         progress = (out / "sweep.log").open("w", buffering=1)
 
         def watch():
+            nonlocal outcome_text
             # Anything raised in here used to end the thread and nothing else, which left the
             # sweep fuzzing one target for as long as it was allowed to: no decision was being
             # made any more and there was nothing on screen to say so.
@@ -355,44 +383,38 @@ def sweep_one(target: str, idle_seconds: int) -> str:
                     progress.write(f"{time.strftime('%H:%M:%S')}  queue {found}  "
                                    f"idle {clock(idle)}/{clock(idle_seconds)}\n")
                     if idle >= idle_seconds:
-                        outcome["text"] = (f"{target}: quiet for {clock(idle)}, stopping after "
-                                           f"{clock(time.time() - started)} with {found} inputs")
-                        foreground.terminate()  # ends the wait below; the finally stops the rest
+                        outcome_text = (f"{target}: quiet for {clock(idle)}, stopping after "
+                                        f"{clock(time.time() - started)} with {found} inputs")
+                        # ends the wait below; the finally stops the rest
+                        foreground.process.terminate()
                         return
             except Exception as error:  # noqa: BLE001 -- whatever it is, do not fuzz forever
-                outcome["text"] = f"{target}: stopped watching it after {error!r}"
+                outcome_text = f"{target}: stopped watching it after {error!r}"
                 progress.write(f"watching failed: {error!r}\n")
-                foreground.terminate()
+                foreground.process.terminate()
 
         watcher = threading.Thread(target=watch, daemon=True)
         watcher.start()
-        foreground.wait()
+        foreground.process.wait()
         done.set()
         watcher.join(timeout=15)
         progress.close()
-        # Not outcome.get(..., default): that default is an f-string, so it would scan the queue
-        # directories on every target whether or not the watcher had already decided anything.
-        if "text" in outcome:
-            return outcome["text"]
+        if outcome_text is not None:
+            return outcome_text
         return (f"{target}: the main instance exited on its own after "
                 f"{clock(time.time() - started)}, with {queue_size(out)} inputs")
     finally:
-        if foreground is not None and foreground.poll() is None:
-            foreground.terminate()
-            try:
-                foreground.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                foreground.kill()
-        for instance in others:
+        for instance in instances:
             instance.stop()
 
 
 def cmd_sweep(targets: list[str], idle_seconds: int):
-    ensure_built(BUILD_AFL, "afl-clang-fast++", [], targets)
-    ensure_built(BUILD_AFL_FAST, "afl-clang-fast++", ["-Dfuzz_sanitizers=false"], targets)
+    preflight()
+    ensure_fuzzing_builds(targets)
 
     plural = "target" if len(targets) == 1 else "targets"
-    print(f"sweeping {len(targets)} {plural} on {cores()} cores each, one at a time")
+    print(f"sweeping {len(targets)} {plural} on {core_count(fuzzing_cpus())} cores each, "
+          f"one at a time")
     print(f"moving on when a target goes {clock(idle_seconds)} without a new find, Ctrl-C to stop")
     print()
 
@@ -408,7 +430,7 @@ def cmd_sweep(targets: list[str], idle_seconds: int):
     print(f"fold the findings in with: scripts/fuzz_afl.py minimize {' '.join(targets)}")
 
 
-def stage_by_content(sources: list[Path], dest: Path) -> int:
+def stage_by_content(sources: list[str], dest: Path) -> int:
     """Hardlink every source into dest under the sha1 of its contents, and say how many landed.
 
     Naming by content is what the final corpus uses anyway, and here it also collapses duplicates
@@ -421,19 +443,24 @@ def stage_by_content(sources: list[Path], dest: Path) -> int:
     """
     dest.mkdir(parents=True, exist_ok=True)
 
-    def stage_one(source: Path):
-        target = dest / hashlib.sha1(source.read_bytes()).hexdigest()
-        try:
-            os.link(source, target)
-        except FileExistsError:
-            pass  # same contents already staged, which is the deduplication
-        except OSError:
-            shutil.copyfile(source, target)
+    def stage_batch(batch: list[str]):
+        # A batch per worker rather than a file per worker: ThreadPoolExecutor.map has no chunksize
+        # and each item costs a future, which against six figures of inputs is around a third of
+        # the time for three syscalls of actual work.
+        for source in batch:
+            target = dest / hashlib.sha1(Path(source).read_bytes()).hexdigest()
+            try:
+                os.link(source, target)
+            except FileExistsError:
+                pass  # same contents already staged, which is the deduplication
+            except OSError:
+                shutil.copyfile(source, target)
 
-    with ThreadPoolExecutor(max_workers=cores()) as pool:
-        for _ in pool.map(stage_one, sources):
-            pass
-    return sum(1 for _ in dest.iterdir())
+    workers = core_count(fuzzing_cpus())
+    size = max(1, -(-len(sources) // workers))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(stage_batch, [sources[i:i + size] for i in range(0, len(sources), size)]))
+    return sum(1 for _ in os.scandir(dest))
 
 
 def run_logged(command: list[str], log: Path, what: str, env: dict[str, str] | None = None):
@@ -455,6 +482,8 @@ def coverage_of(target: str, corpus: Path) -> str:
 
 
 def cmd_minimize(targets: list[str]):
+    if shutil.which("afl-cmin") is None:
+        die("afl-cmin not found. Install AFL++ first.")
     ensure_built(BUILD_AFL, "afl-clang-fast++", [], targets)
     ensure_built(BUILD_LIBFUZZER, "clang++", [], targets)
 
@@ -463,9 +492,12 @@ def cmd_minimize(targets: list[str]):
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True)
 
+        # Unsorted, and dirents rather than Paths: nothing downstream cares about the order,
+        # because staging names every file by the sha1 of its contents, and sorting six figures of
+        # paths costs more than collecting them does.
         corpus = Path("data/fuzz") / target
-        committed = sorted(p for p in corpus.iterdir() if p.is_file())
-        found = sorted((FINDINGS / target).glob("*/queue/id:*"))
+        committed = [e.path for e in os.scandir(corpus) if e.is_file()]
+        found = [e.path for e in queue_inputs(FINDINGS / target)]
         staged = stage_by_content(committed + found, work / "all")
         before = len(committed)
 
@@ -480,9 +512,11 @@ def cmd_minimize(targets: list[str]):
              "--", f"./{BUILD_AFL}/test/{target}", "@@"],
             work / "cmin.log",
             "afl-cmin",
-            env={**os.environ, "AFL_SKIP_CPUFREQ": "1"},
+            env=afl_env(),
         )
-        shutil.copytree(work / "cmin", work / "min")
+        # Linked, not copied: -merge=1 only adds files to its destination, and both of these are
+        # under FINDINGS/.minimize, so they are on one filesystem by construction.
+        shutil.copytree(work / "cmin", work / "min", copy_function=os.link)
         run_logged(
             [f"./{BUILD_LIBFUZZER}/test/{target}", "-merge=1", str(work / "min"), str(work / "all")],
             work / "merge.log",
@@ -492,11 +526,11 @@ def cmd_minimize(targets: list[str]):
         # Name every file by the sha1 of its contents, which is what -merge=1 does and what the
         # nightly workflow uploads, so a file that was already committed keeps its name.
         shutil.rmtree(corpus)
-        after = stage_by_content(sorted(p for p in (work / "min").iterdir() if p.is_file()), corpus)
+        after = stage_by_content([e.path for e in os.scandir(work / "min") if e.is_file()], corpus)
 
         print(f"{target:<20} {before:>5} files -> {after:<5}  ({len(found)} from fuzzing went in, "
               f"{staged} distinct)")
-        print(" " * 21 + coverage_of(target, corpus))
+        print(f"{'':<20} {coverage_of(target, corpus)}")
 
     print()
     print(f"crashes, if any: find {FINDINGS} -path '*/crashes/id:*'")
@@ -537,7 +571,7 @@ def main():
         command = commands.add_parser(name, help=help_text)
         # Not argparse choices: with nargs="*" that also validates the empty default, and the
         # error it produces for a typo names the whole list rather than the word that was wrong.
-        command.add_argument("targets", nargs="*", default=[],
+        command.add_argument("targets", nargs="*",
                              help=f"which targets to work on (default: all of {', '.join(ALL_TARGETS)})")
         if name == "sweep":
             command.add_argument("--idle", type=duration, default="5m", metavar="DURATION",
