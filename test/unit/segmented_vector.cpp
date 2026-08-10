@@ -104,6 +104,34 @@ TEST_CASE("segmented_vector_reserve") {
     REQUIRE(counts.size() == 3);
 }
 
+// PR #188. Growing one segment at a time used to call m_blocks.reserve(size + 1), which
+// std::vector takes literally: the new capacity is exactly size + 1, so the next segment
+// reallocated the pointer array again, and every segment paid for copying every pointer before
+// it. Quadratic overall, and slow enough to notice from a plain insert loop once the map held a
+// few million elements. The index has to keep growing geometrically, the way push_back would
+// have grown it.
+TEST_CASE("segmented_vector_grows_the_block_index_geometrically") {
+    auto counts = counts_for_allocator{};
+    auto vec = ankerl::unordered_dense::segmented_vector<int, counting_allocator<int>, sizeof(int) * 16>(&counts);
+
+    static constexpr auto num_blocks = size_t{256};
+    static constexpr auto elements_per_block = size_t{16};
+    for (size_t i = 0; i < num_blocks * elements_per_block; ++i) {
+        vec.emplace_back(static_cast<int>(i));
+    }
+
+    // One allocation per segment is the unavoidable part. Doubling adds an allocate/deallocate
+    // pair each of the log2(num_blocks) + 1 times the index grows, and the slack covers a
+    // standard library that takes an extra allocation per container (MSVC's debug iterators do).
+    // The reserve(size + 1) version reallocated the index for every segment and lands near
+    // 3 * num_blocks events, far past this bound.
+    REQUIRE(counts.size() <= num_blocks + 64);
+
+    for (size_t i = 0; i < vec.size(); ++i) {
+        REQUIRE(vec[i] == static_cast<int>(i));
+    }
+}
+
 TEST_CASE("segmented_vector_resize") {
     auto counts = counts_for_allocator{};
     auto vec = ankerl::unordered_dense::segmented_vector<int, counting_allocator<int>, sizeof(int) * 16>(&counts);
