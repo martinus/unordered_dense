@@ -849,8 +849,11 @@ private:
         // reallocates -- and it used to do so with the block already allocated and owned by
         // nobody, which leaked it. Reserving first means the only allocation still outstanding
         // when something fails is one that has not happened yet, and the push_back below cannot
-        // fail because the capacity is already there.
-        m_blocks.reserve(m_blocks.size() + 1);
+        // fail because the capacity is already there. Grow geometrically: reserve(size() + 1)
+        // forces a reallocation on every new segment with libstdc++.
+        if (m_blocks.size() == m_blocks.capacity()) {
+            m_blocks.reserve((std::max)(std::size_t{1}, m_blocks.capacity() * 2));
+        }
         pointer block = std::allocator_traits<Allocator>::allocate(ba, num_elements_in_block);
         m_blocks.push_back(block);
     }
