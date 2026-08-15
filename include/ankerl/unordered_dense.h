@@ -1186,6 +1186,22 @@ private:
     static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
+    // m_dist_and_fingerprint packs two fields into one integer, and these are what keeps them from
+    // reaching into each other. A bucket type is something a user can supply, so this is checked
+    // here rather than assumed.
+    //
+    // The fingerprint has to stay strictly below dist_inc. A mask that overlaps it lets hash bits
+    // add to the distance a bucket claims, which silently reorders the robin hood sequence that
+    // every probe depends on -- and a mask that reaches the bit above turns a fresh bucket into one
+    // that reads as further from home than it is. Fewer fingerprint bits than dist_inc allows is
+    // merely a weaker fingerprint, so the bound is one-sided.
+    static_assert(Bucket::fingerprint_mask < Bucket::dist_inc,
+                  "the fingerprint must fit strictly below dist_inc, or it changes the distance");
+    // And dist_inc has to be a single bit, because the distance is incremented by adding it: two
+    // bits set would carry into the fingerprint on the very first step away from home.
+    static_assert(0 != Bucket::dist_inc && 0 == (Bucket::dist_inc & (Bucket::dist_inc - 1)),
+                  "dist_inc must be a power of two, so that adding it only touches the distance");
+
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
     bucket_container_type m_buckets{};
     std::size_t m_max_bucket_capacity = 0;
