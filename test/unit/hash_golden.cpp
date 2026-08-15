@@ -95,7 +95,11 @@ TEST_CASE("wyhash_golden_values_by_length") {
     }};
 
     auto const data = pattern(512);
-    for (auto const& [len, want] : expected) {
+    for (auto const& entry : expected) {
+        // Copied out of the structured binding rather than used directly: doctest's INFO builds a
+        // lambda around what it is given, and capturing a structured binding is C++20.
+        auto const len = entry.first;
+        auto const want = entry.second;
         INFO("length ", len);
         REQUIRE(ankerl::unordered_dense::detail::wyhash::hash(data.data(), len) == want);
     }
@@ -129,7 +133,9 @@ TEST_CASE("wyhash_golden_values_for_the_integer_overload") {
         {UINT64_C(0x0123456789abcdef), UINT64_C(0x0c27a443d5ff218e)},
         {UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff)},
     }};
-    for (auto const& [input, want] : expected) {
+    for (auto const& entry : expected) {
+        auto const input = entry.first;
+        auto const want = entry.second;
         INFO("input ", input);
         REQUIRE(ankerl::unordered_dense::detail::wyhash::hash(input) == want);
     }
