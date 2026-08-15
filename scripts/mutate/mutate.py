@@ -566,6 +566,24 @@ OPERATOR_MUTATIONS = [
     ("/", ["*"]),
 ]
 
+# Bitwise, kept out of the table above so that it can be asked for on its own.
+#
+# `&` is missing on purpose and for the same reason `->` and `::` are: it is three
+# operators sharing a spelling -- bitwise and, address-of, and the reference
+# declarator in `auto& x` -- and only a parser can tell them apart. `^` and `|`
+# have one meaning each, so they cost nothing to be sure about.
+#
+# The empty entries are consumers, not omissions: `||` has to be matched before
+# the `|` inside it, or a mutant turns `a || b` into `a &| b`, which is a rebuild
+# spent on a syntax error. The table is read in order and the first match wins.
+BITWISE_MUTATIONS = [
+    ("||", []),
+    ("|=", ["&=", "^="]),
+    ("^=", ["&=", "|="]),
+    ("^", ["&", "|"]),
+    ("|", ["&", "^"]),
+]
+
 # `# 123 "some/file.h" 1` -- what -E emits when the next line it prints is not
 # the one that would follow. The path may be quoted with escapes; nothing here
 # has one, and realpath on a mangled path simply fails to match.
@@ -645,14 +663,21 @@ def line_starts(src):
     return starts
 
 
-def mutation_sites(src, mask, line_filter=None, skipped=None):
+def mutation_sites(src, mask, line_filter=None, skipped=None,
+                   operator_table=None, words_and_numbers=True):
     """Every single-token change worth trying, as {offset, original, ...} dicts.
 
     `skipped` collects the sites left out as provably equivalent, so the caller can say how many
     there were. Every other "we will not run this" rule in this file reports itself -- see
     drop_uncompiled -- and a rule that recognises an idiom by shape is exactly the one that should,
     because the shape is wider than the idiom and a real hole would be indistinguishable from
-    silence."""
+    silence.
+
+    `operator_table` and `words_and_numbers` are what let one scanner serve two named operators:
+    `tokens` takes the defaults, `bitwise` passes BITWISE_MUTATIONS and turns the rest off. The two
+    tables share no spelling, so asking for both produces no duplicate sites."""
+    if operator_table is None:
+        operator_table = OPERATOR_MUTATIONS
     sites = []
     n = len(src)
     starts = line_starts(src)
@@ -674,7 +699,7 @@ def mutation_sites(src, mask, line_filter=None, skipped=None):
             i += 1
             continue
 
-        m = IDENT.match(src, i)
+        m = IDENT.match(src, i) if words_and_numbers else None
         if m:
             word = m.group(0)
             # The guard is inside the lookup because only `true` and `false` can produce a mutation
@@ -689,7 +714,7 @@ def mutation_sites(src, mask, line_filter=None, skipped=None):
             i = m.end()
             continue
 
-        m = NUMBER.match(src, i)
+        m = NUMBER.match(src, i) if words_and_numbers else None
         if m:
             # A float like 1.5 or 0.8 must not be picked apart into an int. A
             # number at the very start or end of the file has no neighbour, and
@@ -705,7 +730,7 @@ def mutation_sites(src, mask, line_filter=None, skipped=None):
             i = m.end()
             continue
 
-        for op, reps in OPERATOR_MUTATIONS:
+        for op, reps in operator_table:
             if src.startswith(op, i):
                 if is_comparison(src, i, op):
                     for rep in reps:
@@ -718,7 +743,7 @@ def mutation_sites(src, mask, line_filter=None, skipped=None):
     return sites
 
 
-OPERATORS = ("tokens", "deletions")
+OPERATORS = ("tokens", "bitwise", "deletions", "transpositions")
 
 
 def parse_operators(text):
@@ -820,6 +845,104 @@ def deletion_sites(src, mask, line_filter=None):
         text = line.lstrip()
         sites.append(dict(offset=start + (len(line) - len(text)), original=text, replacement="", line=lineno,
                           description="delete: %s" % (stripped[:52] + ("..." if len(stripped) > 52 else ""))))
+    return sites
+
+
+def abbreviate(text, width=24):
+    return text[:width] + ("..." if len(text) > width else "")
+
+
+def statement_line(src, mask, start, end):
+    """The statement on this line, or None if the line does not hold exactly one.
+
+    The same question deletion_sites asks, pulled out because transposition_sites
+    asks it of two lines at once and the two must agree about what a statement is.
+    Returns (indent, text, stripped-code) so callers do not re-derive them."""
+    line = src[start:end].rstrip("\n")
+    # Read through the mask so that a trailing comment does not decide whether
+    # this looks like a statement.
+    code = "".join(c if mask[start + k] else " " for k, c in enumerate(line))
+    stripped = code.strip()
+    if not stripped.endswith(";") or NOT_A_STATEMENT.match(stripped):
+        return None
+    if code.count("(") != code.count(")") or code.count("{") != code.count("}"):
+        return None
+    text = line.lstrip()
+    return line[:len(line) - len(text)], text, stripped
+
+
+# `auto x = ...` and friends. Deliberately only the spellings measured -- this header
+# is written in the `auto` style throughout, and a wider rule would be a wider guess.
+DECLARATION = re.compile(r"^auto\b")
+
+
+def transposition_sites(src, mask, line_filter=None, skipped=None):
+    """Two adjacent statements, in the other order.
+
+    The operator neither of the other two can express, and the one bugs/invariants.txt
+    says so in as many words: "a sweep cannot express 'pop_back before repointing
+    instead of after'". Twelve of the hand-written bugs are orderings, and the header
+    carries a comment about one that really happened -- allocate_buckets_from_shift
+    takes the shift as an argument because "callers used to assign m_shifts and then
+    allocate, which left a gap for a failed allocation to stop in".
+
+    Both lines must be single statements by the same rule deletion_sites uses, and
+    must share an indent. The indent is what stands in for "same block": the header is
+    clang-formatted, so two statements one nesting level apart are not adjacent
+    statements at all -- one of them is inside a branch, and swapping across that
+    boundary produces a mutant whose only interest is that it does not compile.
+
+    Identical statements are skipped. Swapping a line with its own text is the
+    original file, and a mutant that is the original survives every test by
+    construction -- a full rebuild spent proving the tests pass.
+
+    Two `auto` declarations in a row are skipped as well, and that one is a
+    measurement rather than a proof: over the whole header those pairs were 24
+    mutants, of which 11 did not compile, 13 survived and *none* was ever caught
+    by a test. Reordering two declarations only matters if an initializer has a
+    side effect the other can see, which is rare enough here to be worth the
+    trade -- but it is a shape, not a guarantee, so `skipped` collects them and
+    the caller says how many there were.
+    """
+    sites = []
+    starts = line_starts(src)
+    for index in range(len(starts) - 1):
+        start = starts[index]
+        mid = starts[index + 1]
+        end = starts[index + 2] if index + 2 < len(starts) else len(src)
+
+        first = statement_line(src, mask, start, mid)
+        if first is None:
+            continue
+        second = statement_line(src, mask, mid, end)
+        if second is None:
+            continue
+        if first[0] != second[0] or first[2] == second[2]:
+            continue
+
+        # Reported against the first of the pair, but reachable from either: in
+        # --diff mode only one of the two may be a line the change touched, and the
+        # swap is as much a mutation of one as of the other.
+        #
+        # Asked before the declaration rule below, so that what the run says it
+        # skipped is a count of what it would otherwise have run. Filtering second
+        # made --diff report every declaration pair in the file, most of them
+        # nowhere near the change.
+        lineno = index + 1
+        if line_filter is not None and lineno not in line_filter and (lineno + 1) not in line_filter:
+            continue
+
+        if DECLARATION.match(first[2]) and DECLARATION.match(second[2]):
+            if skipped is not None:
+                skipped.append(lineno)
+            continue
+
+        indent = first[0]
+        original = src[start + len(indent):mid] + second[0] + second[1]
+        replacement = second[1] + "\n" + indent + first[1]
+        sites.append(dict(
+            offset=start + len(indent), original=original, replacement=replacement, line=lineno,
+            description="swap: %s <-> %s" % (abbreviate(first[2]), abbreviate(second[2]))))
     return sites
 
 
@@ -1711,14 +1834,22 @@ def main():
                    metavar="LIST",
                    help="which mutations to make, comma separated (default "
                         "tokens). `tokens` changes one token at a time. "
+                        "`bitwise` does the same for ^ and | , which the token "
+                        "table leaves alone; kept separate so a header full of "
+                        "masks and fingerprints can be swept for them without "
+                        "re-answering every comparison. "
                         "`deletions` removes whole statements, which is where "
                         "the hand-written bugs turn out to live -- nearly every "
                         "one of them is some form of \"the code forgot to do "
                         "this\", which is not one token and cannot be reached by "
-                        "changing one. Asking for deletions alone is worth it "
-                        "for a survey: half of them are rejected by the "
-                        "pre-filter in half a second, so it costs less than the "
-                        "token sweep, and the two answer different questions")
+                        "changing one. `transpositions` puts two adjacent "
+                        "statements in the other order, which is the rest of "
+                        "that same list: bugs/invariants.txt says outright that "
+                        "a sweep cannot express \"pop_back before repointing "
+                        "instead of after\". Each is worth asking for alone: "
+                        "half of the statement-level mutants are rejected by "
+                        "the pre-filter in half a second, so they cost less "
+                        "than the token sweep and answer different questions")
     p.add_argument("--limit", type=int, help="stop after N mutants")
     p.add_argument("--shuffle-seed", type=int, default=0,
                    help="sample mutants deterministically when using --limit")
@@ -1835,8 +1966,18 @@ def main():
                     print("%d template parameter default%s skipped -- the value of a SFINAE dummy "
                           "is never read, so flipping it cannot be caught"
                           % (len(equivalent), "" if len(equivalent) == 1 else "s"))
+            if "bitwise" in args.operators:
+                sites += mutation_sites(original, mask, line_filter,
+                                        operator_table=BITWISE_MUTATIONS, words_and_numbers=False)
             if "deletions" in args.operators:
                 sites += deletion_sites(original, mask, line_filter)
+            if "transpositions" in args.operators:
+                declarations = []
+                sites += transposition_sites(original, mask, line_filter, skipped=declarations)
+                if declarations:
+                    print("%d pair%s of adjacent declarations skipped -- reordering two of those "
+                          "was never once caught by a test over the whole header"
+                          % (len(declarations), "" if len(declarations) == 1 else "s"))
             sites.sort(key=lambda s: s["offset"])
             sweep = site_mutants(sites)
             if args.limit and len(sweep) > args.limit:
