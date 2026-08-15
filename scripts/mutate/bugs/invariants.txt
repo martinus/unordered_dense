@@ -288,9 +288,11 @@
 # The table is then born exactly one insert short of needing to grow, which is only visible if
 # something reserves and then inserts precisely that many.
 <<<
-        while (shifts > 0 && static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
+        while (shifts > 0 && calc_num_buckets(shifts) < max_bucket_count() &&
+               static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
 ===
-        while (shifts > 0 && static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s - 1) {
+        while (shifts > 0 && calc_num_buckets(shifts) < max_bucket_count() &&
+               static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s - 1) {
 >>>
 
 # reserve grows the values but not the buckets

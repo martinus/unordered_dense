@@ -1,6 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/hashers.h>
 
 #include <cstdint>     // for uint64_t
 #include <functional>  // for equal_to
@@ -47,19 +48,21 @@ TEST_CASE_MAP("equal_range", int, int) {
 // hit" and "the end" are as far apart as they get.
 namespace {
 
-template <typename Map>
-void check_hit_is_exactly_one(Map& map) {
-    auto const& key = map.begin()->first;
+// `key` has to be the one at begin(), which every caller arranges: that is what puts "one past the
+// hit" as far from "the end" as the container allows. Taking it as a parameter rather than reading
+// it here is what lets a set (where it is *begin(), not begin()->first) and a transparent lookup
+// (where it has to be a string_view to select the template overload) use the same six assertions.
+template <typename Container, typename Key>
+void check_hit_is_exactly_one(Container& container, Key const& key) {
+    auto range = container.equal_range(key);
+    REQUIRE(range.first == container.begin());
+    REQUIRE(range.second == std::next(container.begin()));
+    REQUIRE(range.second != container.end());
 
-    auto range = map.equal_range(key);
-    REQUIRE(range.first == map.begin());
-    REQUIRE(range.second == std::next(map.begin()));
-    REQUIRE(range.second != map.end());
-
-    auto const_range = std::as_const(map).equal_range(key);
-    REQUIRE(const_range.first == std::as_const(map).begin());
-    REQUIRE(const_range.second == std::next(std::as_const(map).begin()));
-    REQUIRE(const_range.second != std::as_const(map).end());
+    auto const_range = std::as_const(container).equal_range(key);
+    REQUIRE(const_range.first == std::as_const(container).begin());
+    REQUIRE(const_range.second == std::next(std::as_const(container).begin()));
+    REQUIRE(const_range.second != std::as_const(container).end());
 }
 
 template <typename Map, typename Key>
@@ -80,7 +83,7 @@ TEST_CASE_MAP("equal_range_const_overload_with_more_than_one_element", int, int)
     for (int i = 0; i < 100; ++i) {
         map.try_emplace(i, i);
     }
-    check_hit_is_exactly_one(map);
+    check_hit_is_exactly_one(map, map.begin()->first);
     check_miss_is_empty(map, 1000);
 }
 
@@ -89,16 +92,8 @@ TEST_CASE_SET("equal_range_set", int) {
     for (int i = 0; i < 100; ++i) {
         set.emplace(i);
     }
-    auto const& key = *set.begin();
-    auto range = set.equal_range(key);
-    REQUIRE(range.first == set.begin());
-    REQUIRE(range.second == std::next(set.begin()));
-
-    auto const_range = std::as_const(set).equal_range(key);
-    REQUIRE(const_range.first == std::as_const(set).begin());
-    REQUIRE(const_range.second == std::next(std::as_const(set).begin()));
-
-    REQUIRE(set.equal_range(1000) == std::pair(set.end(), set.end()));
+    check_hit_is_exactly_one(set, *set.begin());
+    check_miss_is_empty(set, 1000);
 }
 
 // The transparent overloads are a separate pair of functions with the same body, and nothing was
@@ -106,16 +101,7 @@ TEST_CASE_SET("equal_range_set", int) {
 // an exact std::string would match the non-template overload, which is the one already covered.
 namespace {
 
-struct transparent_hash {
-    using is_transparent = void;
-    using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(std::string_view sv) const noexcept -> uint64_t {
-        return ankerl::unordered_dense::hash<std::string_view>{}(sv);
-    }
-};
-
-using transparent_map = ankerl::unordered_dense::map<std::string, int, transparent_hash, std::equal_to<>>;
+using transparent_map = ankerl::unordered_dense::map<std::string, int, test::transparent_hash, std::equal_to<>>;
 
 } // namespace
 
@@ -126,16 +112,7 @@ TEST_CASE("equal_range_transparent") {
     }
 
     auto const key = std::string_view(map.begin()->first);
-    auto range = map.equal_range(key);
-    REQUIRE(range.first == map.begin());
-    REQUIRE(range.second == std::next(map.begin()));
-    REQUIRE(range.second != map.end());
-
-    auto const_range = std::as_const(map).equal_range(key);
-    REQUIRE(const_range.first == std::as_const(map).begin());
-    REQUIRE(const_range.second == std::next(std::as_const(map).begin()));
-    REQUIRE(const_range.second != std::as_const(map).end());
-
+    check_hit_is_exactly_one(map, key);
     check_miss_is_empty(map, "not in here"sv);
 
     // And the same overloads reached through count/contains, whose answer for a key that is not

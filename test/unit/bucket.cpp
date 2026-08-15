@@ -18,19 +18,9 @@ using map_big_t = ankerl::unordered_dense::map<std::string,
                                                std::allocator<std::pair<std::string, size_t>>,
                                                ankerl::unordered_dense::bucket_type::big>;
 
-// The packing the table's own static_asserts check, spelled out here for the two shipped bucket
-// types and for the deliberately tiny one below. A fingerprint that reaches dist_inc adds hash bits
-// to the distance a bucket claims, which reorders the probe sequence without ever being wrong about
-// a single lookup -- so nothing but this notices.
-template <typename Bucket>
-constexpr auto fingerprint_and_distance_do_not_overlap() -> bool {
-    return Bucket::fingerprint_mask < Bucket::dist_inc && 0 != Bucket::dist_inc &&
-           0 == (Bucket::dist_inc & (Bucket::dist_inc - 1));
-}
-
-static_assert(fingerprint_and_distance_do_not_overlap<ankerl::unordered_dense::bucket_type::standard>());
-static_assert(fingerprint_and_distance_do_not_overlap<ankerl::unordered_dense::bucket_type::big>());
-
+// The packing is asserted by the table itself, so that a user's own bucket type is held to it
+// too -- see the static_asserts on Bucket in the header. Instantiating map_default_t, map_big_t
+// and the bucket_micro map below is what fires them for these three.
 static_assert(sizeof(map_default_t::bucket_type) == 8U);
 static_assert(sizeof(map_big_t::bucket_type) == sizeof(size_t) + 4U);
 static_assert(map_default_t::max_size() == map_default_t::max_bucket_count());
@@ -45,13 +35,11 @@ static_assert(map_big_t::max_size() == uint64_t{1} << 63U);
 
 struct bucket_micro {
     static constexpr uint8_t dist_inc = 1U << 1U;             // 1 bits for fingerprint
-    static constexpr uint8_t fingerprint_mask = dist_inc - 1; // 11 bit = 2048 positions for distance
+    static constexpr uint8_t fingerprint_mask = dist_inc - 1; // 7 bit = 128 positions for distance
 
     uint8_t m_dist_and_fingerprint;
     uint8_t m_value_idx;
 };
-
-static_assert(fingerprint_and_distance_do_not_overlap<bucket_micro>());
 
 TYPE_TO_STRING_MAP(counter::obj,
                    counter::obj,

@@ -389,6 +389,10 @@ TEST_CASE("segmented_vector_iterator_is_random_access") {
     REQUIRE(std::binary_search(vec.begin(), vec.end(), 727));
 }
 
+// Four elements to a block, so every step in these tests crosses a block boundary -- which is
+// where an index-based iterator is least like a pointer.
+using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
+
 // The rest of the random access iterator interface. The map only ever uses ++, *, - and the
 // comparisons against end(), so everything else here is reached by user code and by algorithms and
 // by nothing in these tests -- post-increment could have called operator--, -= could have added,
@@ -397,7 +401,6 @@ TEST_CASE("segmented_vector_iterator_is_random_access") {
 // The block size is four elements, so every one of these steps crosses a block boundary, which is
 // where an index-based iterator is least like a pointer.
 TEST_CASE("segmented_vector_iterator_operations") {
-    using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
     auto vec = small_block_vec_t();
     for (int i = 0; i < 20; ++i) {
         vec.emplace_back(i);
@@ -455,7 +458,6 @@ TEST_CASE("segmented_vector_iterator_operations") {
 }
 
 TEST_CASE("segmented_vector_back_is_the_last_element") {
-    using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
     auto vec = small_block_vec_t();
 
     // Every size from one element to several blocks, so back() is asked both in the middle of a
@@ -477,7 +479,6 @@ TEST_CASE("segmented_vector_back_is_the_last_element") {
 // resize() growing a vector that is not empty. Every existing case grows from zero, where "how many
 // more do we need" is the same number whichever way it is worked out.
 TEST_CASE("segmented_vector_resize_grows_a_non_empty_vector") {
-    using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
     auto vec = small_block_vec_t();
     vec.resize(5, 1);
     REQUIRE(vec.size() == 5);

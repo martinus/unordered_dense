@@ -645,8 +645,14 @@ def line_starts(src):
     return starts
 
 
-def mutation_sites(src, mask, line_filter=None):
-    """Every single-token change worth trying, as {offset, original, ...} dicts."""
+def mutation_sites(src, mask, line_filter=None, skipped=None):
+    """Every single-token change worth trying, as {offset, original, ...} dicts.
+
+    `skipped` collects the sites left out as provably equivalent, so the caller can say how many
+    there were. Every other "we will not run this" rule in this file reports itself -- see
+    drop_uncompiled -- and a rule that recognises an idiom by shape is exactly the one that should,
+    because the shape is wider than the idiom and a real hole would be indistinguishable from
+    silence."""
     sites = []
     n = len(src)
     starts = line_starts(src)
@@ -670,9 +676,16 @@ def mutation_sites(src, mask, line_filter=None):
 
         m = IDENT.match(src, i)
         if m:
-            if not is_template_default(src, i, m.group(0)):
-                for rep in WORD_MUTATIONS.get(m.group(0), ()):
-                    add(i, m.group(0), rep)
+            word = m.group(0)
+            # The guard is inside the lookup because only `true` and `false` can produce a mutation
+            # at all, and it scans whitespace either side of whatever it is given.
+            if word in WORD_MUTATIONS:
+                if is_template_default(src, i, word):
+                    if skipped is not None:
+                        skipped.append(line_of(i))
+                else:
+                    for rep in WORD_MUTATIONS[word]:
+                        add(i, word, rep)
             i = m.end()
             continue
 
@@ -790,6 +803,11 @@ def deletion_sites(src, mask, line_filter=None):
     starts = line_starts(src)
     for index, start in enumerate(starts):
         end = starts[index + 1] if index + 1 < len(starts) else len(src)
+        lineno = index + 1
+        # Asked first: in --diff mode the filter is a handful of lines, and everything below is
+        # per-character work over the whole file.
+        if line_filter is not None and lineno not in line_filter:
+            continue
         line = src[start:end].rstrip("\n")
         # Read through the mask so that a trailing comment does not decide
         # whether this looks like a statement.
@@ -799,14 +817,8 @@ def deletion_sites(src, mask, line_filter=None):
             continue
         if code.count("(") != code.count(")") or code.count("{") != code.count("}"):
             continue
-        lineno = index + 1
-        if line_filter is not None and lineno not in line_filter:
-            continue
-        offset = start + (len(line) - len(line.lstrip()))
-        text = src[offset:start + len(line)]
-        if not text:
-            continue
-        sites.append(dict(offset=offset, original=text, replacement="", line=lineno,
+        text = line.lstrip()
+        sites.append(dict(offset=start + (len(line) - len(text)), original=text, replacement="", line=lineno,
                           description="delete: %s" % (stripped[:52] + ("..." if len(stripped) > 52 else ""))))
     return sites
 
@@ -1015,14 +1027,23 @@ class Lane:
         with open(path, encoding="utf-8") as f:
             entries = json.load(f)
         wanted = os.path.normpath(os.path.join(self.dir, self.syntax_file))
-        borrowed = not any(
-            os.path.normpath(os.path.join(e["directory"], e["file"])) == wanted for e in entries)
-        for entry in entries:
-            resolved = os.path.normpath(
-                os.path.join(entry["directory"], entry["file"]))
-            if not borrowed and resolved != wanted:
-                continue
+
+        def resolved(entry):
+            return os.path.normpath(os.path.join(entry["directory"], entry["file"]))
+
+        entry = next((e for e in entries if resolved(e) == wanted), None)
+        borrowed = entry is None
+        if borrowed:
+            # Unity: no entry names this file, so any chunk's flags will do. Prefer one from the
+            # same directory tree, which is what keeps a build with several targets from handing
+            # over a different target's -I and -D.
+            entry = next((e for e in entries
+                          if os.path.abspath(e["directory"]) == os.path.abspath(self.build)), None)
+        if entry is None:
+            return None
+        for entry in (entry,):
             argv, out, i = shlex.split(entry["command"]), [], 0
+            swapped = False
             while i < len(argv):
                 arg = argv[i]
                 # -MF/-MQ name ninja's depfile for this object: writing it from
@@ -1032,12 +1053,20 @@ class Lane:
                     i += 2
                     continue
                 if arg not in ("-c", "-MD", "-MMD"):
-                    out.append(wanted if borrowed and arg == entry["file"] else arg)
+                    if borrowed and arg == entry["file"]:
+                        arg, swapped = wanted, True
+                    out.append(arg)
                 i += 1
             # ccache refuses -fsyntax-only outright, and there is nothing to
             # cache in a compile that produces no object anyway.
             if out and os.path.basename(out[0]) == "ccache":
                 out = out[1:]
+            if borrowed and not swapped:
+                # The source path in the command was spelled some other way, so the check would
+                # have compiled the chunk it was borrowed from instead of the file asked for --
+                # and passed, every time, filtering nothing. Better to have no pre-filter than one
+                # that always says yes.
+                return None
             out.insert(1, "-fsyntax-only")
             return dict(argv=out, cwd=entry["directory"])
         return None
@@ -1124,7 +1153,7 @@ class Lane:
             raise RuntimeError("missing tool: %s" % e)
 
 
-def evaluate(lane, mutant, args):
+def evaluate(lane, mutant, args, original):
     """Run one mutant. Returns (verdict, tests that caught it).
 
     The order the checks come in is the order they get cheaper to be wrong
@@ -1132,7 +1161,7 @@ def evaluate(lane, mutant, args):
     status is read, because a stopped build looks like a build that failed and
     "the compiler refused it" is the one thing it definitely does not mean.
     """
-    lane.write_target(mutant["text"])
+    lane.write_target(mutant_text(mutant, original))
     if args.quick_reject and lane.syntax_cmd:
         proc = lane.run_syntax_check(args.build_timeout)
         if killed_for_memory(proc):
@@ -1225,12 +1254,26 @@ def bug_mutants(bugs, original):
             for bug in bugs]
 
 
-def site_mutants(sites, original):
+def site_mutants(sites):
+    """Sweep mutants, as the edit rather than the edited file.
+
+    A whole mutated copy of the file per site is ~130 KB here, and a sweep of both operators is
+    1500 of them -- 200 MB of strings built before --limit or the uncompiled-line filter have had a
+    chance to throw most of them away, and held live alongside 32 build subprocesses. The splice is
+    a few microseconds at the point the lane writes it out."""
     return [dict(name=site["description"], line=site["line"],
                  offset=site["offset"], description=site["description"],
-                 text=(original[:site["offset"]] + site["replacement"]
-                       + original[site["offset"] + len(site["original"]):]))
+                 original=site["original"], replacement=site["replacement"])
             for site in sites]
+
+
+def mutant_text(mutant, original):
+    """The mutated file. A named bug carries its own, having been built by substitution over the
+    whole text; a sweep mutant is one splice away from it."""
+    if "text" in mutant:
+        return mutant["text"]
+    return (original[:mutant["offset"]] + mutant["replacement"]
+            + original[mutant["offset"] + len(mutant["original"]):])
 
 
 def reverse_commit_mutant(ref, original, target):
@@ -1521,7 +1564,7 @@ def drop_uncompiled(lane, mutants, args, log):
     return kept
 
 
-def run_mutants(lanes, mutants, args, log):
+def run_mutants(lanes, mutants, args, log, original):
     """Every mutant through a lane, reported in the order they were produced."""
     pending, results, lock = queue.Queue(), [], threading.Lock()
     for index, mutant in enumerate(mutants):
@@ -1540,7 +1583,7 @@ def run_mutants(lanes, mutants, args, log):
             # exception would flatter the tests, which is the one direction this
             # tool must never be wrong in.
             try:
-                verdict, caught_by = evaluate(lane, mutant, args)
+                verdict, caught_by = evaluate(lane, mutant, args, original)
             except Exception as e:  # noqa: BLE001 - deliberately total
                 verdict, caught_by = "error", ["%s: %s" % (type(e).__name__, e)]
             with lock:
@@ -1555,8 +1598,10 @@ def run_mutants(lanes, mutants, args, log):
 
     results.sort(key=lambda r: r["index"])
     for r in results:
-        r.pop("text", None)  # a whole mutated header per result helps nobody
-        r.pop("index", None)
+        # None of these belong in --json: a whole mutated header, or the splice that
+        # would rebuild one.
+        for key in ("text", "index", "offset", "original", "replacement"):
+            r.pop(key, None)
     return results
 
 
@@ -1783,13 +1828,17 @@ def main():
                 return 0
         else:
             mask = code_mask(original)
-            sites = []
+            sites, equivalent = [], []
             if "tokens" in args.operators:
-                sites += mutation_sites(original, mask, line_filter)
+                sites += mutation_sites(original, mask, line_filter, skipped=equivalent)
+                if equivalent:
+                    print("%d template parameter default%s skipped -- the value of a SFINAE dummy "
+                          "is never read, so flipping it cannot be caught"
+                          % (len(equivalent), "" if len(equivalent) == 1 else "s"))
             if "deletions" in args.operators:
                 sites += deletion_sites(original, mask, line_filter)
             sites.sort(key=lambda s: s["offset"])
-            sweep = site_mutants(sites, original)
+            sweep = site_mutants(sites)
             if args.limit and len(sweep) > args.limit:
                 random.Random(args.shuffle_seed).shuffle(sweep)
                 sweep = sweep[:args.limit]
@@ -1843,7 +1892,7 @@ def main():
         log("%d mutant%s over %d lane%s"
             % (len(mutants), "" if len(mutants) == 1 else "s",
                len(lanes), "" if len(lanes) == 1 else "s"))
-        results = run_mutants(lanes, mutants, args, log)
+        results = run_mutants(lanes, mutants, args, log, original)
 
     counts = report(results, args, original)
     print("\n%d mutant%s in %.0fs"

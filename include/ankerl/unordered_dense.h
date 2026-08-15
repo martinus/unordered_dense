@@ -1541,13 +1541,17 @@ private:
 
     void clear_and_fill_buckets_from_values() {
         clear_buckets();
-        for (value_idx_type value_idx = 0, end_idx = static_cast<value_idx_type>(m_values.size()); value_idx < end_idx;
-             ++value_idx) {
+        // Counted in std::size_t, for the reason spelled out in replace(): max_size() is exactly
+        // what value_idx_type can hold, so a container of precisely that many has a size that is
+        // not representable in it and the cast wraps to zero. Latent here rather than live -- a
+        // table at max_size() already has the smallest shift, so rehash() and reserve() early out
+        // before reaching this -- but the rule is the same and only one place was following it.
+        for (std::size_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
             auto const& key = get_key(m_values[value_idx]);
             auto [dist_and_fingerprint, bucket] = next_while_less(key);
 
             // we know for certain that key has not yet been inserted, so no need to check it.
-            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket);
+            place_and_shift_up({dist_and_fingerprint, static_cast<value_idx_type>(value_idx)}, bucket);
         }
     }
 

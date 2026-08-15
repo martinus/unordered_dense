@@ -1,6 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/hashers.h>
 #include <app/id_allocator.h>
 #include <app/map_fixtures.h>
 
@@ -35,19 +36,8 @@ using counting_map = map_of<counting_alloc>;
 using counting_segmented_map = segmented_map_of<counting_alloc>;
 using counting_set = set_of<test::id_allocator<int>>;
 
-// A set whose emplace() goes through the single-argument transparent overload rather than the
-// variadic one -- a third insert entry point, with its own path to the buckets.
-struct transparent_hash {
-    using is_transparent = void;
-    using is_avalanching = void;
-
-    auto operator()(std::string_view sv) const noexcept -> std::uint64_t {
-        return ankerl::unordered_dense::hash<std::string_view>{}(sv);
-    }
-};
-
 using transparent_set =
-    ankerl::unordered_dense::set<std::string, transparent_hash, std::equal_to<>, test::id_allocator<std::string>>;
+    ankerl::unordered_dense::set<std::string, test::transparent_hash, std::equal_to<>, test::id_allocator<std::string>>;
 
 // An empty container whose allocator reports back. Built through the (bucket_count, allocator)
 // constructor with a count of zero, which is what a default construction resolves to. Not
@@ -312,13 +302,15 @@ TEST_CASE("swapping_an_unallocated_table_with_a_full_one") {
 // and which decides how big an array the next insert asks for. A table that kept the shift of the
 // table it used to be allocates that whole array again for one element.
 TEST_CASE_MAP("an_emptied_table_looks_default_constructed", int, int) {
+    // Enough to have grown the bucket array well past the size a first insert allocates, which is
+    // the whole point -- a table that kept its old shift asks for that array again for one element.
+    // Nothing here gets truer with more.
+    static constexpr int grown = 64;
+
     SUBCASE("moved from") {
-        auto source = map_t();
-        for (int i = 0; i < 500; ++i) {
-            source[i] = i;
-        }
+        auto source = test::filled<map_t>(grown);
         auto const sink = std::move(source);
-        REQUIRE(sink.size() == 500);
+        REQUIRE(sink.size() == grown);
 
         // Using a moved-from object is exactly what is being tested: the standard requires it to be
         // valid, and this table promises more than that -- it promises to be indistinguishable from
@@ -331,40 +323,28 @@ TEST_CASE_MAP("an_emptied_table_looks_default_constructed", int, int) {
     // constructor exchanges the members itself, the assignment goes through move_everything_from.
     // Both have to leave the same thing.
     SUBCASE("moved from by assignment") {
-        auto source = map_t();
-        for (int i = 0; i < 500; ++i) {
-            source[i] = i;
-        }
+        auto source = test::filled<map_t>(grown);
         auto sink = map_t();
         sink[1] = 1;
         sink = std::move(source);
-        REQUIRE(sink.size() == 500);
+        REQUIRE(sink.size() == grown);
 
         // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
         test::require_empty_table_answers(source);
     }
 
     SUBCASE("a copy of a table that was cleared") {
-        auto source = map_t();
-        for (int i = 0; i < 500; ++i) {
-            source[i] = i;
-        }
+        auto source = test::filled<map_t>(grown);
         source.clear();
         auto copy = source;
         test::require_empty_table_answers(copy);
     }
 
     SUBCASE("assigned from a table that was cleared") {
-        auto source = map_t();
-        for (int i = 0; i < 500; ++i) {
-            source[i] = i;
-        }
+        auto source = test::filled<map_t>(grown);
         source.clear();
 
-        auto target = map_t();
-        for (int i = 0; i < 20; ++i) {
-            target[i] = i;
-        }
+        auto target = test::filled<map_t>(20);
         target = source;
         test::require_empty_table_answers(target);
     }
@@ -405,13 +385,13 @@ TEST_CASE_MAP("reserve_sizes_the_buckets_not_just_the_values", int, int) {
     auto map = map_t();
     map[1] = 1; // so the table already has buckets, which is the case that regressed
 
-    map.reserve(1000);
+    map.reserve(200);
     auto const after_reserve = map.bucket_count();
-    REQUIRE(after_reserve >= 1000);
+    REQUIRE(after_reserve >= 200);
 
-    for (int i = 0; i < 1000; ++i) {
+    for (int i = 0; i < 200; ++i) {
         map[i] = i;
     }
     REQUIRE(map.bucket_count() == after_reserve);
-    REQUIRE(map.size() == 1000);
+    REQUIRE(map.size() == 200);
 }

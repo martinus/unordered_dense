@@ -318,17 +318,33 @@ class TestDropUncompiled(unittest.TestCase):
 
 
 class TestSiteMutants(unittest.TestCase):
+    def texts(self, src):
+        """What each mutant's file looks like, spliced the way a lane splices it."""
+        mutants = mutate.site_mutants(mutate.mutation_sites(src, mutate.code_mask(src)))
+        return [mutate.mutant_text(m, src) for m in mutants]
+
     def test_the_replacement_lands_where_the_site_says(self):
-        src = "x = a + b;"
-        mutants = mutate.site_mutants(
-            mutate.mutation_sites(src, mutate.code_mask(src)), src)
-        self.assertEqual([m["text"] for m in mutants], ["x = a - b;"])
+        self.assertEqual(self.texts("x = a + b;"), ["x = a - b;"])
 
     def test_a_multi_character_operator_is_replaced_whole(self):
-        src = "if (a <= b) {}"
-        texts = [m["text"] for m in mutate.site_mutants(
-            mutate.mutation_sites(src, mutate.code_mask(src)), src)]
-        self.assertEqual(texts, ["if (a < b) {}", "if (a >= b) {}", "if (a == b) {}"])
+        self.assertEqual(self.texts("if (a <= b) {}"),
+                         ["if (a < b) {}", "if (a >= b) {}", "if (a == b) {}"])
+
+    def test_a_mutant_carries_the_edit_and_not_a_copy_of_the_file(self):
+        # 130 KB per site here, 1500 sites for a sweep of both operators -- built before --limit or
+        # the uncompiled-line filter can throw most of them away.
+        mutants = mutate.site_mutants(mutate.mutation_sites("x = a + b;", mutate.code_mask("x = a + b;")))
+        self.assertNotIn("text", mutants[0])
+
+    def test_a_named_bug_keeps_the_whole_text_it_was_built_from(self):
+        # Those are built by substitution over the file and there are dozens, not thousands.
+        got = mutate.bug_mutants([dict(name="n", old="a + b", new="a - b")], "x = a + b;")
+        self.assertEqual(mutate.mutant_text(got[0], "x = a + b;"), "x = a - b;")
+
+    def test_a_deletion_splices_the_statement_out(self):
+        src = "    foo();\n    bar();\n"
+        mutants = mutate.site_mutants(mutate.deletion_sites(src, mutate.code_mask(src)))
+        self.assertEqual(mutate.mutant_text(mutants[0], src), "    \n    bar();\n")
 
 
 class TestBugFiles(unittest.TestCase):
@@ -953,13 +969,13 @@ class TestEvaluate(unittest.TestCase):
     def verdict(self, **canned):
         args = types.SimpleNamespace(quick_reject=True, build_timeout=1, test_timeout=1)
         lane = self.FakeLane(**canned)
-        return mutate.evaluate(lane, dict(text="mutated"), args)
+        return mutate.evaluate(lane, dict(text="mutated"), args, "original")
 
     def test_the_mutant_is_written_before_anything_is_run(self):
         lane = self.FakeLane(syntax=finished(1))
         mutate.evaluate(lane, dict(text="mutated source"),
                         types.SimpleNamespace(quick_reject=True, build_timeout=1,
-                                              test_timeout=1))
+                                              test_timeout=1), "original")
         self.assertEqual(lane.written, "mutated source")
 
     def test_nothing_noticed_is_survived(self):
@@ -1004,7 +1020,7 @@ class TestEvaluate(unittest.TestCase):
     def test_without_a_prefilter_the_build_is_what_decides(self):
         args = types.SimpleNamespace(quick_reject=False, build_timeout=1, test_timeout=1)
         lane = self.FakeLane(build=finished(0), tests=finished(0), has_syntax_cmd=False)
-        self.assertEqual(mutate.evaluate(lane, dict(text="x"), args), ("survived", []))
+        self.assertEqual(mutate.evaluate(lane, dict(text="x"), args, "original"), ("survived", []))
 
 
 class TestEstimate(unittest.TestCase):

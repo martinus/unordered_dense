@@ -1,6 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/hashers.h>
 
 #include <cstddef>     // for size_t
 #include <cstdint>     // for uint32_t, uint64_t
@@ -45,25 +46,6 @@ using counting_map = ankerl::unordered_dense::map<std::string, int, counting_has
 struct weak_hash {
     [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
         return static_cast<uint64_t>(x);
-    }
-};
-
-struct narrow_hash {
-    using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint32_t {
-        return static_cast<uint32_t>(x) * UINT32_C(2654435761);
-    }
-};
-
-// Transparent, so that a hash taken from one key type can be used to look up another. std::string
-// converts to the parameter, so one overload serves both.
-struct transparent_hash {
-    using is_transparent = void;
-    using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(std::string_view str) const noexcept -> uint64_t {
-        return ankerl::unordered_dense::hash<std::string_view>{}(str);
     }
 };
 
@@ -218,7 +200,7 @@ TEST_CASE("a_hash_carries_over_to_every_table_with_the_same_hasher") {
 
 // Heterogeneous lookup: hash a string_view once, look up with whatever compares equal to it.
 TEST_CASE("a_precomputed_hash_works_across_key_types") {
-    auto map = ankerl::unordered_dense::map<std::string, int, transparent_hash, std::equal_to<>>();
+    auto map = ankerl::unordered_dense::map<std::string, int, test::transparent_hash, std::equal_to<>>();
     map[long_key("a")] = 1;
 
     auto const key = long_key("a");
@@ -240,7 +222,7 @@ TEST_CASE("a_precomputed_hash_works_across_key_types") {
 // is present (where `? 0 : 1` gives the right answer whichever way round it is). This asks each of
 // them the two questions that tell those apart.
 TEST_CASE("precomputed_equal_range_and_count_in_every_overload") {
-    auto map = ankerl::unordered_dense::map<std::string, int, transparent_hash, std::equal_to<>>();
+    auto map = ankerl::unordered_dense::map<std::string, int, test::transparent_hash, std::equal_to<>>();
     for (int i = 0; i < 100; ++i) {
         map[long_key(std::to_string(i))] = i;
     }
@@ -280,7 +262,7 @@ TEST_CASE("precomputed_equal_range_and_count_in_every_overload") {
 // the lookup ever disagreed about which one to use, these would find nothing.
 TEST_CASE("finalization_matches_for_every_kind_of_hasher") {
     auto weak = ankerl::unordered_dense::map<int, int, weak_hash, std::equal_to<int>>();
-    auto narrow = ankerl::unordered_dense::map<int, int, narrow_hash, std::equal_to<int>>();
+    auto narrow = ankerl::unordered_dense::map<int, int, test::narrow_avalanching_hash, std::equal_to<int>>();
 
     for (int i = 0; i < 1000; ++i) {
         weak[i] = i;

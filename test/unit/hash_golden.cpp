@@ -2,7 +2,6 @@
 
 #include <app/doctest.h>
 
-#include <array>   // for array
 #include <cstddef> // for size_t
 #include <cstdint> // for uint64_t, uint8_t
 #include <cstring> // for memcpy
@@ -31,11 +30,17 @@
 
 namespace {
 
-[[nodiscard]] auto is_little_endian() -> bool {
+// True when this machine is one the golden values were taken on, and says so in the test log when
+// it is not -- rather than passing silently, which looks the same as having checked.
+[[nodiscard]] auto skip_on_big_endian() -> bool {
     std::uint32_t const one = 1;
     std::uint8_t first{};
     std::memcpy(&first, &one, 1);
-    return 1 == first;
+    if (1 == first) {
+        return false;
+    }
+    MESSAGE("skipped: these values are little-endian, and so is the hash");
+    return true;
 }
 
 // Deterministic, and not all-zero or all-one: a buffer of equal bytes hides a mutated offset,
@@ -58,41 +63,22 @@ namespace {
 // the iteration where the counter lands exactly on the bound, so there are lengths here that leave
 // it at 17 after the 48-byte loop (65) and at 96 after the 96-byte one (192, 289).
 TEST_CASE("wyhash_golden_values_by_length") {
-    if (!is_little_endian()) {
-        MESSAGE("skipped: these values are little-endian, and so is the hash");
+    if (skip_on_big_endian()) {
         return;
     }
 
-    static constexpr auto expected = std::array<std::pair<std::size_t, std::uint64_t>, 27>{{
-        {0, UINT64_C(0x42bc986dc5eec4d3)},
-        {1, UINT64_C(0x3e73bcceee051a90)},
-        {2, UINT64_C(0xabb36df2a05cdd96)},
-        {3, UINT64_C(0x737b3594dbad4615)},
-        {4, UINT64_C(0x06959e50533f44b2)},
-        {5, UINT64_C(0x36e18d353c41722a)},
-        {7, UINT64_C(0xc3e479040f170b82)},
-        {8, UINT64_C(0xd7517cd74fe903fb)},
-        {9, UINT64_C(0x7050188f7743ca56)},
-        {15, UINT64_C(0xb4f9a728274096d7)},
-        {16, UINT64_C(0xce6a868a78a46c73)},
-        {17, UINT64_C(0xab9f0d72fd62acbb)},
-        {24, UINT64_C(0xaf048c621425ee78)},
-        {32, UINT64_C(0x46f297d4bd07d149)},
-        {48, UINT64_C(0x9e97709342df6b56)},
-        {49, UINT64_C(0x3b846738927f6274)},
-        {64, UINT64_C(0xd4a468aebbe74bfa)},
-        {96, UINT64_C(0x2d9d003ab847fe53)},
-        {97, UINT64_C(0x97ef6fc060548571)},
-        {128, UINT64_C(0x04c929c0de5c5ada)},
-        {192, UINT64_C(0x188b2a6bd5264944)},
-        {193, UINT64_C(0x11ff8ae436691f52)},
-        {200, UINT64_C(0xc0895d26f8d2d90f)},
-        {289, UINT64_C(0xede2975ce774d7e7)},
-        {300, UINT64_C(0xb8446c7b09ba427b)},
-        {512, UINT64_C(0x2c274db7d27dc42b)},
-        // 65 lands the mid-size loop on exactly its bound, 192 and 289 the six-lane one.
-        {65, UINT64_C(0x68624a1222e1898b)},
-    }};
+    // Sized by its contents: adding a length here must not also mean bumping a count.
+    static constexpr std::pair<std::size_t, std::uint64_t> expected[] = {
+        {0, UINT64_C(0x42bc986dc5eec4d3)},   {1, UINT64_C(0x3e73bcceee051a90)},   {2, UINT64_C(0xabb36df2a05cdd96)},
+        {3, UINT64_C(0x737b3594dbad4615)},   {4, UINT64_C(0x06959e50533f44b2)},   {5, UINT64_C(0x36e18d353c41722a)},
+        {7, UINT64_C(0xc3e479040f170b82)},   {8, UINT64_C(0xd7517cd74fe903fb)},   {9, UINT64_C(0x7050188f7743ca56)},
+        {15, UINT64_C(0xb4f9a728274096d7)},  {16, UINT64_C(0xce6a868a78a46c73)},  {17, UINT64_C(0xab9f0d72fd62acbb)},
+        {24, UINT64_C(0xaf048c621425ee78)},  {32, UINT64_C(0x46f297d4bd07d149)},  {48, UINT64_C(0x9e97709342df6b56)},
+        {49, UINT64_C(0x3b846738927f6274)},  {64, UINT64_C(0xd4a468aebbe74bfa)},  {65, UINT64_C(0x68624a1222e1898b)},
+        {96, UINT64_C(0x2d9d003ab847fe53)},  {97, UINT64_C(0x97ef6fc060548571)},  {128, UINT64_C(0x04c929c0de5c5ada)},
+        {192, UINT64_C(0x188b2a6bd5264944)}, {193, UINT64_C(0x11ff8ae436691f52)}, {200, UINT64_C(0xc0895d26f8d2d90f)},
+        {289, UINT64_C(0xede2975ce774d7e7)}, {300, UINT64_C(0xb8446c7b09ba427b)}, {512, UINT64_C(0x2c274db7d27dc42b)},
+    };
 
     auto const data = pattern(512);
     for (auto const& entry : expected) {
@@ -109,7 +95,7 @@ TEST_CASE("wyhash_golden_values_by_length") {
 // target `mum` takes its long-hand branch instead of __uint128_t, so this is also what says the two
 // multiplications agree.
 TEST_CASE("wyhash_reads_only_the_bytes_it_was_given") {
-    if (!is_little_endian()) {
+    if (skip_on_big_endian()) {
         return;
     }
     auto const data = pattern(512);
@@ -125,14 +111,14 @@ TEST_CASE("wyhash_reads_only_the_bytes_it_was_given") {
 
 TEST_CASE("wyhash_golden_values_for_the_integer_overload") {
     // No endianness in this one: it takes a uint64_t, not bytes.
-    static constexpr auto expected = std::array<std::pair<std::uint64_t, std::uint64_t>, 6>{{
+    static constexpr std::pair<std::uint64_t, std::uint64_t> expected[] = {
         {UINT64_C(0), UINT64_C(0x0000000000000000)},
         {UINT64_C(1), UINT64_C(0x9e3779b97f4a7c15)},
         {UINT64_C(2), UINT64_C(0x3c6ef372fe94f82b)},
         {UINT64_C(42), UINT64_C(0xf519f86ee2385b6b)},
         {UINT64_C(0x0123456789abcdef), UINT64_C(0x0c27a443d5ff218e)},
         {UINT64_C(0xffffffffffffffff), UINT64_C(0xffffffffffffffff)},
-    }};
+    };
     for (auto const& entry : expected) {
         auto const input = entry.first;
         auto const want = entry.second;
@@ -143,7 +129,7 @@ TEST_CASE("wyhash_golden_values_for_the_integer_overload") {
 
 // The same values again through the public hashers, which is what a user's map actually calls.
 TEST_CASE("public_hashers_golden_values") {
-    if (!is_little_endian()) {
+    if (skip_on_big_endian()) {
         return;
     }
     REQUIRE(ankerl::unordered_dense::hash<std::string>{}("") == UINT64_C(0x42bc986dc5eec4d3));
