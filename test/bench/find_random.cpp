@@ -14,7 +14,7 @@
 #include <vector>        // for vector
 
 template <typename Map>
-void bench() {
+void bench_find() {
     static constexpr size_t num_total = 4;
 
     auto required_checksum = std::array<size_t, 5>{200000, 25198620, 50197240, 75195862, 100194482};
@@ -83,19 +83,19 @@ void bench() {
 
 // 26.81
 TEST_CASE("bench_find_random_uo" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<std::unordered_map<size_t, size_t>>();
+    bench_find<std::unordered_map<size_t, size_t>>();
 }
 
 #if 0
 
 // 10.55
 TEST_CASE("bench_find_random_rh" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<robin_hood::unordered_flat_map<size_t, size_t>>();
+    bench_find<robin_hood::unordered_flat_map<size_t, size_t>>();
 }
 
 #endif
 
 // 8.87
 TEST_CASE_MAP("bench_find_random_udm" * doctest::test_suite("bench") * doctest::skip(), size_t, size_t) {
-    bench<map_t>();
+    bench_find<map_t>();
 }

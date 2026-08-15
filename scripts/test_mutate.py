@@ -519,6 +519,17 @@ class TestMesonSetupArgs(unittest.TestCase):
             types.SimpleNamespace(buildtype="release", meson_arg=[]))
         self.assertEqual(got[:2], ["--buildtype", "release"])
 
+    def test_the_lanes_build_as_one_unity(self):
+        # 2.5x less compiling for the same work, and the usual objection --
+        # touching one file recompiles its whole chunk -- cannot apply to a
+        # mutant, which recompiles every file anyway.
+        self.assertIn("--unity=on", mutate.meson_setup_args(self.args()))
+
+    def test_an_explicit_unity_setting_wins(self):
+        got = mutate.meson_setup_args(
+            types.SimpleNamespace(buildtype="debug", meson_arg=["--unity=off"]))
+        self.assertNotIn("--unity=on", got)
+
     def test_extra_arguments_come_last_so_they_can_override(self):
         got = mutate.meson_setup_args(
             types.SimpleNamespace(buildtype="debug", meson_arg=["-Db_sanitize=address"]))

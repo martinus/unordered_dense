@@ -11,7 +11,7 @@
 #include <utility> // for move
 
 template <typename Map>
-void test() {
+void check_maps_of_maps() {
     auto counts = counter();
     INFO(counts);
 
@@ -60,9 +60,9 @@ TYPE_TO_STRING_MAP(counter::obj, ankerl::unordered_dense::map<counter::obj, coun
 TYPE_TO_STRING_MAP(counter::obj, ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>);
 
 TEST_CASE_MAP("mapmap_map", counter::obj, ankerl::unordered_dense::map<counter::obj, counter::obj>) {
-    test<map_t>();
+    check_maps_of_maps<map_t>();
 }
 
 TEST_CASE_MAP("mapmap_segmented_map", counter::obj, ankerl::unordered_dense::segmented_map<counter::obj, counter::obj>) {
-    test<map_t>();
+    check_maps_of_maps<map_t>();
 }

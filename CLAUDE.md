@@ -129,6 +129,11 @@ The run prints how much room it is about to take and whether that room is RAM, a
 copying rather than part way through. Core dumps are disabled for the same reason — a crashing
 mutant is an ordinary verdict, and each one would leave ~30 MB in a lane about to be deleted.
 
+Lanes are configured `--unity=on`, which is 2.5x less compiling for the same work — measured, one
+mutant rebuild of the whole suite: 67 CPU-seconds separately, 27 merged. The usual objection to
+unity builds (touching one file recompiles its whole chunk) cannot apply to a mutant, which
+recompiles every file anyway. `--meson-arg=--unity=off` turns it off.
+
 `scripts/test_mutate.py` covers the half of the tool that decides what a verdict *means*, and runs
 in CI. It is hermetic: no compiler, no meson, no lanes, no cgroups.
 
@@ -222,6 +227,13 @@ meson test -C builddir --print-errorlogs
 
 `--force-fallback-for=fmt` is what makes every runner build against the vendored fmt instead of
 whatever the machine happens to have installed.
+
+One leg builds `--unity=on`. It is off by default because merging translation units is bad for
+development — touching one file recompiles its whole chunk — but it catches a class of problem
+separate compilation hides, and an anonymous namespace stops isolating a file once its neighbours
+share the chunk. Everything it caught the first time had been there and invisible: `test/app/print.h`
+had no include guard, and four `test/bench/*.cpp` each defined a `bench()` that only became
+ambiguous when two landed in the same chunk.
 
 Linters (`scripts/lint/lint-*.py`, all of them via `scripts/lint/all.py`) run in the `lint` job.
 Two of them pin their tool, because both tools gain checks or change their output between
