@@ -510,15 +510,18 @@ TEST_CASE("segmented_vector_shrink_to_fit_frees_exactly_the_empty_blocks") {
     for (int i = 0; i < 100; ++i) {
         vec.emplace_back(i);
     }
-    auto const blocks_when_full = counts.size();
-    REQUIRE(blocks_when_full > 20);
+    REQUIRE(counts.size() > 20);
+    REQUIRE(vec.capacity() == 100);
 
     vec.resize(9);
-    counts.reset();
+    REQUIRE(vec.capacity() == 100); // shrinking the size does not hand anything back
     vec.shrink_to_fit();
-    REQUIRE(counts.size() != 0); // something was given back
 
-    // 9 elements at 4 per block is 3 blocks, and all 9 are still readable.
+    // 9 elements at 4 per block is 3 blocks, so exactly 12 slots -- capacity() is m_blocks.size()
+    // times the block size, which makes it a direct count of the blocks still held. Asking the
+    // allocator instead would not do: m_blocks is itself allocated through it, and its own
+    // shrink_to_fit records an event whether or not a single block was freed.
+    REQUIRE(vec.capacity() == 12);
     REQUIRE(vec.size() == 9);
     for (int i = 0; i < 9; ++i) {
         REQUIRE(vec[static_cast<size_t>(i)] == i);
@@ -529,4 +532,5 @@ TEST_CASE("segmented_vector_shrink_to_fit_frees_exactly_the_empty_blocks") {
     counts.reset();
     vec.shrink_to_fit();
     REQUIRE(counts.size() == 0);
+    REQUIRE(vec.capacity() == 12);
 }
