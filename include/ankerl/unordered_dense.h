@@ -2095,7 +2095,7 @@ public:
 
         // can't use clear_and_fill_buckets_from_values() because container elements might not be unique
         //
-        // Counted in size_t rather than in value_idx_type. max_size() is exactly the number of
+        // Counted in std::size_t rather than in value_idx_type. max_size() is exactly the number
         // values that type can hold, so a container of precisely that many has a size that is not
         // representable in it: the cast wrapped to zero, the loop below never ran once, and the
         // table came back reporting size() elements with no bucket pointing at any of them. Every

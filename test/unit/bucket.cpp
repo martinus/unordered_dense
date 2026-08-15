@@ -162,8 +162,7 @@ TEST_CASE("replace_drops_a_duplicate_that_sits_last") {
 // answer is an array of 2^32 buckets, so the test would be asking the machine for 32 GB. Here the
 // same walk runs off the same end and the correct answer is 256 buckets.
 TEST_CASE("a_count_above_the_bucket_limit_does_not_collapse_the_array") {
-    auto const above_the_limit =
-        static_cast<size_t>(static_cast<double>(micro_map_t::max_bucket_count()) * double{0.8}) + 1;
+    auto const above_the_limit = static_cast<size_t>(static_cast<double>(micro_map_t::max_bucket_count()) * double{0.8}) + 1;
     REQUIRE(above_the_limit < micro_map_t::max_size());
 
     SUBCASE("rehash") {
