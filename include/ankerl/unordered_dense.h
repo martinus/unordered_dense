@@ -1311,7 +1311,16 @@ private:
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(std::size_t s) const -> std::uint8_t {
         auto shifts = initial_shifts;
-        while (shifts > 0 && static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
+        // Stopping once the array is as large as it may get is what keeps this from running off the
+        // end. calc_num_buckets() saturates at max_bucket_count(), so past that point the capacity
+        // being compared stops growing while the loop keeps decrementing -- and for any size above
+        // max_bucket_count() * max_load_factor() it used to walk all the way to zero. A shift of
+        // zero then asks calc_num_buckets() for `1 << 64`, which is undefined and in practice one:
+        // a table sized for billions of elements would come back with a single bucket and a mask of
+        // zero, and the next probe reads past the end of it. Reachable from rehash(), which does not
+        // allocate the values and so has nothing to fail first.
+        while (shifts > 0 && calc_num_buckets(shifts) < max_bucket_count() &&
+               static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
             --shifts;
         }
         return shifts;
@@ -2085,10 +2094,16 @@ public:
         m_values = std::move(container);
 
         // can't use clear_and_fill_buckets_from_values() because container elements might not be unique
-        auto value_idx = value_idx_type{};
+        //
+        // Counted in size_t rather than in value_idx_type. max_size() is exactly the number of
+        // values that type can hold, so a container of precisely that many has a size that is not
+        // representable in it: the cast wrapped to zero, the loop below never ran once, and the
+        // table came back reporting size() elements with no bucket pointing at any of them. Every
+        // index the loop produces is representable -- it is the count that is not.
+        auto value_idx = std::size_t{};
 
         // loop until we reach the end of the container. duplicated entries will be replaced with back().
-        while (value_idx != static_cast<value_idx_type>(m_values.size())) {
+        while (value_idx != m_values.size()) {
             auto const& key = get_key(m_values[value_idx]);
 
             auto hash = mixed_hash(key);
@@ -2111,12 +2126,12 @@ public:
             }
 
             if (key_found) {
-                if (value_idx != static_cast<value_idx_type>(m_values.size() - 1)) {
+                if (value_idx != m_values.size() - 1) {
                     m_values[value_idx] = std::move(m_values.back());
                 }
                 m_values.pop_back();
             } else {
-                place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
+                place_and_shift_up({dist_and_fingerprint, static_cast<value_idx_type>(value_idx)}, bucket_idx);
                 ++value_idx;
             }
         }
