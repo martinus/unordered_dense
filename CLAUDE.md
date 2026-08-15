@@ -65,6 +65,59 @@ meson test -C builddir/clang_release unit --verbose
 ./builddir/clang_release/test/udm-test
 ```
 
+## Mutation testing
+
+Coverage says a line ran. `scripts/mutate/mutate.py` says something would have noticed it
+misbehaving: it breaks the header, rebuilds, runs the suite and asks whether anything went red.
+What nothing notices is a hole in the tests. It never touches the working tree — every build
+happens in a throwaway copy of the repo.
+
+The everyday use is putting a *specific* bug back, which is the check that decides whether a new
+test earns its place. Bugs worth keeping live in `scripts/mutate/bugs/`:
+
+```sh
+scripts/mutate/mutate.py --replace OLD NEW               # one, must match exactly once
+scripts/mutate/mutate.py --bugs scripts/mutate/bugs/erase-path.txt
+scripts/mutate/mutate.py --reverse HEAD                  # undo a fix, keep today's tests
+```
+
+The other mode sweeps for holes nobody thought of, mutating one token at a time. Both compose, and
+a change is best asked both questions at once:
+
+```sh
+scripts/mutate/mutate.py --diff HEAD~1                   # only what this change touched
+scripts/mutate/mutate.py --lines 1278-1290 --dry-run     # how many, and how long
+scripts/mutate/mutate.py --bugs bugs.txt --lines 1278-1290 --reuse
+```
+
+A mutant costs one full rebuild of the test binary — all ~90 translation units include the header,
+so there is no incremental mutant build and ccache cannot help either. That is ~100 CPU-seconds of
+compiling against 3 of running the suite, which is why the lanes default to one ninja job each and
+a single named bug instead gets the whole machine. Budget roughly a minute for a handful of
+mutants and an hour for a sweep of a whole function.
+
+Verdicts are `caught` (a test failed — the number worth moving), `compiler` (the build refused it),
+`hang`, `oom` and `survived`. Without a sanitizer, a mutant that reads one slot past a bucket comes
+back `survived` however good the tests are, so re-run anything surprising with
+`--meson-arg=-Db_sanitize=address,undefined` before believing it.
+
+Each lane runs inside a cgroup with a memory cap (`systemd-run --user --scope`), because a mutated
+growth policy turns an insert into a request for more memory than the machine has. Capped, that is
+one `oom` verdict; uncapped, the kernel picks the victim and it is as likely to be another lane as
+the mutant that caused it. `--memory-limit` overrides the default, which is the smaller of a lane's
+share of the machine and 1 GiB per ninja job; a build is never capped below what its jobs need. On
+a machine with no user scope to be had — another init, no session bus, an undelegated container —
+the run says so up front rather than pretending.
+
+The lanes are the other half of the same problem: ~90 MB each in a workdir defaulting to `/tmp`,
+which is a tmpfs on most current distributions, so `--lanes` buys memory as much as parallelism.
+The run prints how much room it is about to take and whether that room is RAM, and refuses before
+copying rather than part way through. Core dumps are disabled for the same reason — a crashing
+mutant is an ordinary verdict, and each one would leave ~30 MB in a lane about to be deleted.
+
+`scripts/test_mutate.py` covers the half of the tool that decides what a verdict *means*, and runs
+in CI. It is hermetic: no compiler, no meson, no lanes, no cgroups.
+
 ## Fuzzing
 
 The `fuzz` test suite replays the committed corpora in `data/fuzz/<target>` on every test run, which

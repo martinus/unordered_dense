@@ -59,6 +59,13 @@ jobs:
       # network), so they belong here rather than in the nightly fuzz workflow.
       - run: ./scripts/test_fuzz_afl.py
 
+      # Same reasoning for scripts/mutate/mutate.py, and one more: what that tool decides is
+      # whether a test noticed a bug, so every way it can be wrong is silent -- a bug block that
+      # substitutes nothing, a filter that matches no case, a lane still holding yesterday's
+      # binary all come back "survived" and read as a hole in the suite. Hermetic too: no
+      # compiler, no meson, no lanes, no cgroups.
+      - run: ./scripts/test_mutate.py
+
   # Linux, macOS, Windows, the sanitizers and the hardened build used to be four jobs repeating
   # the same ten lines of checkout, python, cache and artifact setup. They differ only in the
   # runner, the compiler and the meson arguments, which is what the matrix carries. The displayed
