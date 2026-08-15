@@ -20,3 +20,9 @@ __pycache__/
 
 # compiler cache, populated by the MinGW CI job
 .ccache/
+
+# Core dumps. kernel.core_pattern is often a bare `core`, so a crashing test or a
+# hand-run reproducer drops one wherever it was started from -- which is usually here.
+# scripts/mutate/mutate.py sets RLIMIT_CORE to 0 for what it spawns; this is for everything else.
+core
+core.*
