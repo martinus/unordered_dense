@@ -86,3 +86,52 @@ TEST_CASE_MAP("extract_element", counter::obj, counter::obj) {
     }
     REQUIRE(map.empty());
 }
+
+// extract(iterator) has to find the bucket that points at the element before it can erase it, and
+// it does that by walking the probe sequence from the key's home bucket. A deletion sweep removed
+// the statement that advances that walk -- `bucket_idx = next(bucket_idx)` -- and nothing failed,
+// which can only mean the loop never went round: every element every test extracted was already
+// sitting in its home bucket, so the first look was always the right one.
+//
+// A hash that sends every key to the same bucket makes the walk unavoidable, and extracting from
+// the middle makes it several steps long. Without the advance this hangs rather than fails, which
+// is a verdict the mutation tool reports as `hang` and is just as dead.
+namespace {
+
+struct always_collides {
+    using is_avalanching = void;
+
+    auto operator()(int /*unused*/) const noexcept -> uint64_t {
+        return 0;
+    }
+};
+
+} // namespace
+
+TEST_CASE("extract_by_iterator_walks_the_probe_sequence") {
+    auto map = ankerl::unordered_dense::map<int, int, always_collides>();
+    for (int i = 0; i < 10; ++i) {
+        map.try_emplace(i, i * 10);
+    }
+
+    auto const it = map.begin() + 5;
+    auto const key = it->first;
+    auto const value = it->second;
+
+    auto const extracted = map.extract(it);
+    REQUIRE(extracted.first == key);
+    REQUIRE(extracted.second == value);
+    REQUIRE(map.size() == 9);
+    REQUIRE(map.find(key) == map.end());
+
+    // and every other key is still reachable, which is what says the walk stopped at the right
+    // bucket rather than at some other element's
+    for (int i = 0; i < 10; ++i) {
+        if (i == key) {
+            continue;
+        }
+        auto found = map.find(i);
+        REQUIRE(found != map.end());
+        REQUIRE(found->second == i * 10);
+    }
+}

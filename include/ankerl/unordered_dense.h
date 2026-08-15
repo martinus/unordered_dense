@@ -241,13 +241,13 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
                 b = r4(p + len - 4);
             } else if (ANKERL_UNORDERED_DENSE_LIKELY(len > 0))
                 ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
+                    // b stays zero: r3 packs all len bytes it is given into a, and there are at
+                    // most three of them.
                     a = r3(p, len);
-                    b = 0;
                 }
-            else {
-                a = 0;
-                b = 0;
-            }
+            // ... and an empty input needs no branch of its own: it hashes whatever a and b were
+            // declared with, which is the zero it has to be. Assigning it again here is what a
+            // deletion sweep of this file kept pointing at.
         }
     else {
         std::size_t i = len;

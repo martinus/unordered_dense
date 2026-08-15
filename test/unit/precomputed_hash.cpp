@@ -214,6 +214,17 @@ TEST_CASE("a_precomputed_hash_works_across_key_types") {
     REQUIRE(map.count(std::string_view(key), from_view) == 1);
     REQUIRE(map.contains(std::string_view(key), from_view));
     REQUIRE(map.equal_range(std::string_view(key), from_view).first->second == 1);
+
+    // at(key, precomputed_hash) is four overloads like the rest of them, and every call above is on
+    // a table the test still owns by value. The const transparent one -- a lookup key that is not
+    // the key type, on a table reached through a const reference -- had nothing calling it at all:
+    // its whole body could be deleted with the suite still green.
+    auto const& cmap = map;
+    REQUIRE(cmap.at(std::string_view(key), from_view) == 1);
+
+    auto const absent = long_key("absent");
+    auto const absent_hash = map.hash_for(std::string_view(absent));
+    REQUIRE_THROWS_AS(static_cast<void>(cmap.at(std::string_view(absent), absent_hash)), std::out_of_range);
 }
 
 // equal_range and count come in four overloads apiece -- exact key or transparent, const table or
