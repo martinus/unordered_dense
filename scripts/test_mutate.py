@@ -157,6 +157,31 @@ class TestMutationSites(unittest.TestCase):
         self.assertEqual([s["line"] for s in found], [3])
 
 
+class TestLineFilter(unittest.TestCase):
+    """What --lines accepts. The list form is what lets a second pass -- under a sanitizer, say --
+    ask about exactly the survivors of the first, which land scattered rather than in a range."""
+
+    def test_a_single_line(self):
+        self.assertEqual(mutate.parse_lines("1290"), {1290})
+
+    def test_a_range_includes_both_ends(self):
+        self.assertEqual(mutate.parse_lines("10-13"), {10, 11, 12, 13})
+
+    def test_lines_and_ranges_mix(self):
+        self.assertEqual(mutate.parse_lines("12, 40-42 ,900"), {12, 40, 41, 42, 900})
+
+    def test_overlapping_parts_are_not_counted_twice(self):
+        # Or the same mutant is built and run once per part that names its line.
+        self.assertEqual(mutate.parse_lines("10-12,11-13"), {10, 11, 12, 13})
+
+    def test_nonsense_is_refused_with_the_part_that_was_wrong(self):
+        # A silently dropped part would sweep less than was asked for and report
+        # a clean result for lines nobody looked at.
+        for text in ("ten", "1-", "-", "1--2", "1-2-3"):
+            with self.assertRaises(Exception):
+                mutate.parse_lines(text)
+
+
 class TestSiteMutants(unittest.TestCase):
     def test_the_replacement_lands_where_the_site_says(self):
         src = "x = a + b;"

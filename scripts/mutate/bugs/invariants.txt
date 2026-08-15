@@ -1,0 +1,704 @@
+# The invariants the table is built on, each one broken on purpose, and what notices.
+#
+# A sweep asks "would anything notice this token changing". This asks the question the other way
+# round: here is a mistake a person would plausibly make in this code, does the suite say so. The
+# two find different things -- a sweep cannot express "pop_back before repointing instead of
+# after", and a person would not think to try "2 -> 3" in a distance comparison.
+#
+# Grouped by the invariant being broken rather than by function, because that is what a survivor
+# here means: not "this line is untested" but "this promise is untested".
+#
+#     scripts/mutate/mutate.py --bugs scripts/mutate/bugs/invariants.txt
+#
+# A snapshot against the code as it was: when a block stops applying, that part has been rewritten
+# and the question wants re-deriving rather than repairing.
+
+# ---------------------------------------------------------------- probing and robin hood
+
+# the probe walks off the end of the bucket array instead of wrapping
+# m_bucket_mask is bucket_count()-1, so masking is the wrap. Without it the walk runs past the
+# array as soon as a probe starts near the end, which is a read out of bounds long before it is a
+# wrong answer -- so a plain build may well stay green where a sanitizer build screams.
+<<<
+    [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
+        return static_cast<value_idx_type>((bucket_idx + 1U) & m_bucket_mask);
+    }
+===
+    [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
+        return static_cast<value_idx_type>(bucket_idx + 1U);
+    }
+>>>
+
+# the probe skips a bucket each step instead of taking the next one
+# Every element is still placed and found by the same rule, so a table built this way is
+# self-consistent and mostly works -- until a wrap makes two probe sequences interleave.
+<<<
+        return static_cast<value_idx_type>((bucket_idx + 1U) & m_bucket_mask);
+    }
+
+    // Helper to access bucket through pointer types
+===
+        return static_cast<value_idx_type>((bucket_idx + 2U) & m_bucket_mask);
+    }
+
+    // Helper to access bucket through pointer types
+>>>
+
+# next_while_less stops one bucket late, so an insert lands out of robin hood order
+# `<` is what makes the scan stop at the first bucket whose distance is not greater. With `<=` it
+# walks past every equal-distance bucket, and the ordering the whole probe rests on is gone.
+<<<
+        while (dist_and_fingerprint < at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+        return {dist_and_fingerprint, bucket_idx};
+===
+        while (dist_and_fingerprint <= at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+        return {dist_and_fingerprint, bucket_idx};
+>>>
+
+# the displaced bucket keeps its old distance while being pushed one slot further
+# The distance is how far a bucket sits from home; shifting one up without counting it makes every
+# later comparison read a bucket as closer to home than it is.
+<<<
+            bucket = std::exchange(at(m_buckets, place), bucket);
+            bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
+===
+            bucket = std::exchange(at(m_buckets, place), bucket);
+>>>
+
+# place_and_shift_up overwrites the occupant instead of carrying it along
+# One element silently disappears from the index while staying in m_values, so size() counts it and
+# find() cannot reach it.
+<<<
+            bucket = std::exchange(at(m_buckets, place), bucket);
+            bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
+            place = static_cast<value_idx_type>((place + 1U) & mask);
+===
+            at(m_buckets, place) = bucket;
+            bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
+            place = static_cast<value_idx_type>((place + 1U) & mask);
+>>>
+
+# dist_inc and dist_dec are swapped
+# Distances then count the wrong way at every site at once, which is the kind of bug that either
+# fails instantly or -- if the tests only ever ask small questions -- not at all.
+<<<
+    [[nodiscard]] static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+        return static_cast<dist_and_fingerprint_type>(x + Bucket::dist_inc);
+    }
+
+    [[nodiscard]] static constexpr auto dist_dec(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+        return static_cast<dist_and_fingerprint_type>(x - Bucket::dist_inc);
+    }
+===
+    [[nodiscard]] static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+        return static_cast<dist_and_fingerprint_type>(x - Bucket::dist_inc);
+    }
+
+    [[nodiscard]] static constexpr auto dist_dec(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+        return static_cast<dist_and_fingerprint_type>(x + Bucket::dist_inc);
+    }
+>>>
+
+# a fresh bucket starts at distance zero, which is the marker for "empty"
+# dist_inc is or'ed in so that a real bucket is never zero. Without it a just-placed bucket reads as
+# an empty slot, and every probe past it stops early.
+<<<
+        return Bucket::dist_inc | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::fingerprint_mask);
+===
+        return (static_cast<dist_and_fingerprint_type>(hash) & Bucket::fingerprint_mask);
+>>>
+
+# the fingerprint keeps bits that belong to the distance
+# Without the mask a hash with high bits set inflates the distance the bucket claims, so the robin
+# hood ordering is decided by hash bits rather than by distance.
+<<<
+        return Bucket::dist_inc | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::fingerprint_mask);
+    }
+
+    [[nodiscard]] constexpr auto bucket_idx_from_hash
+===
+        return Bucket::dist_inc | static_cast<dist_and_fingerprint_type>(hash);
+    }
+
+    [[nodiscard]] constexpr auto bucket_idx_from_hash
+>>>
+
+# the home bucket comes from the low bits of the hash rather than the high ones
+# m_shifts and m_bucket_mask describe the same array two ways, and only the shift is applied to a
+# first probe -- do_find_hashed indexes with hash >> m_shifts and does not mask. Taking the low
+# bits still lands inside the array, so this is not a crash; it is every key whose low bits collide
+# piling into one run.
+<<<
+        return static_cast<value_idx_type>(hash >> m_shifts);
+===
+        return static_cast<value_idx_type>(hash) & m_bucket_mask;
+>>>
+
+# find trusts the fingerprint and never compares the key
+# A fingerprint is a few bits of the hash, so this returns the wrong element roughly once per
+# however many bits that is -- rare enough that a small test can easily not see it.
+<<<
+        while (true) {
+            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
+                if (m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
+                    return begin() + static_cast<difference_type>(bucket->m_value_idx);
+                }
+            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
+                return end();
+            }
+===
+        while (true) {
+            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
+                return begin() + static_cast<difference_type>(bucket->m_value_idx);
+            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
+                return end();
+            }
+>>>
+
+# find gives up one bucket too early
+# `>` is the robin hood stop: a bucket closer to home than we are means our key cannot be further
+# along. `>=` also stops on an equal distance, which is exactly where a colliding key lives.
+<<<
+            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
+                return end();
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+            bucket = &at(m_buckets, bucket_idx);
+        }
+    }
+===
+            } else if (dist_and_fingerprint >= bucket->m_dist_and_fingerprint) {
+                return end();
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+            bucket = &at(m_buckets, bucket_idx);
+        }
+    }
+>>>
+
+# the unrolled head of find checks the same bucket twice instead of advancing
+# The two hand-unrolled probes exist for speed only, so getting one wrong changes no answer that
+# the loop would not also reach -- unless the second probe is where the key was.
+<<<
+        dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+        bucket_idx = next(bucket_idx);
+        bucket = &at(m_buckets, bucket_idx);
+
+        if (dist_and_fingerprint == bucket->m_dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
+            return begin() + static_cast<difference_type>(bucket->m_value_idx);
+        }
+===
+        if (dist_and_fingerprint == bucket->m_dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
+            return begin() + static_cast<difference_type>(bucket->m_value_idx);
+        }
+>>>
+
+# insert stops looking for a duplicate one bucket early and inserts a second copy
+# The map's central promise is that a key appears once. This breaks it only for keys that probe at
+# least one slot, so anything testing with a handful of keys sees nothing.
+<<<
+            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
+                return do_place_element(dist_and_fingerprint,
+===
+            } else if (dist_and_fingerprint >= bucket->m_dist_and_fingerprint) {
+                return do_place_element(dist_and_fingerprint,
+>>>
+
+# ---------------------------------------------------------------- growth and load factor
+
+# the table never decides it is full, so it fills up completely and probes forever
+# is_full() is what triggers growth. Once every bucket is taken, place_and_shift_up looks for an
+# empty slot that no longer exists.
+<<<
+    [[nodiscard]] auto is_full() const -> bool {
+        return size() > m_max_bucket_capacity;
+    }
+===
+    [[nodiscard]] auto is_full() const -> bool {
+        return false;
+    }
+>>>
+
+# growing keeps the same number of buckets instead of doubling
+# m_shifts - 1 is the doubling. Without it the table decides it is full, does the work of a rehash,
+# and comes back just as full.
+<<<
+            try {
+                allocate_buckets_from_shift(static_cast<std::uint8_t>(m_shifts - 1));
+            } catch (...) {
+===
+            try {
+                allocate_buckets_from_shift(static_cast<std::uint8_t>(m_shifts));
+            } catch (...) {
+>>>
+
+# growth allocates the bigger array but never refills it from the values
+# Every bucket is then zero, so the table reports the right size and finds nothing at all.
+<<<
+        clear_and_fill_buckets_from_values();
+    }
+
+    // Closes the hole that the erased value left in m_values
+===
+    }
+
+    // Closes the hole that the erased value left in m_values
+>>>
+
+# the bucket mask is the bucket count rather than one less than it
+# Every probe can then produce an index one past the end of the array, and the mask stops being a
+# mask at all: it is only a power of two minus one that turns & into a modulo.
+<<<
+        m_bucket_mask = static_cast<value_idx_type>(num_buckets - 1);
+===
+        m_bucket_mask = static_cast<value_idx_type>(num_buckets);
+>>>
+
+# the load factor limit is taken as a count of buckets rather than a fraction of them
+# m_max_bucket_capacity would exceed bucket_count(), is_full() would never fire, and the table
+# fills completely -- the same end state as never growing, reached a different way.
+<<<
+            m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(num_buckets) * max_load_factor());
+        }
+    }
+===
+            m_max_bucket_capacity = static_cast<value_idx_type>(num_buckets);
+        }
+    }
+>>>
+
+# max_load_factor accepts a value above 1
+# The comment on this line says what happens: the capacity exceeds the bucket count, is_full() never
+# fires, and place_and_shift_up probes forever for an empty bucket that does not exist.
+<<<
+        m_max_load_factor = (std::min)(ml, 1.0F);
+===
+        m_max_load_factor = ml;
+>>>
+
+# calc_shifts_for_size sizes the array for one element too few
+# The table is then born exactly one insert short of needing to grow, which is only visible if
+# something reserves and then inserts precisely that many.
+<<<
+        while (shifts > 0 && static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
+===
+        while (shifts > 0 && static_cast<std::size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s - 1) {
+>>>
+
+# reserve grows the values but not the buckets
+# So reserve() stops being a promise about lookups and becomes one about m_values only; the table
+# still rehashes on the way up, just later than asked.
+<<<
+        auto shifts = calc_shifts_for_size((std::max)(capa, size()));
+        if (0 == bucket_count() || shifts < m_shifts) {
+            allocate_buckets_from_shift(shifts);
+            clear_and_fill_buckets_from_values();
+        }
+    }
+===
+        auto shifts = calc_shifts_for_size((std::max)(capa, size()));
+        if (0 == bucket_count()) {
+            allocate_buckets_from_shift(shifts);
+            clear_and_fill_buckets_from_values();
+        }
+    }
+>>>
+
+# rehash resizes the bucket array and leaves it empty
+# Same shape as the growth bug above, reached through the public API instead.
+<<<
+        if (shifts != m_shifts) {
+            allocate_buckets_from_shift(shifts);
+            m_values.shrink_to_fit();
+            clear_and_fill_buckets_from_values();
+        }
+===
+        if (shifts != m_shifts) {
+            allocate_buckets_from_shift(shifts);
+            m_values.shrink_to_fit();
+        }
+>>>
+
+# ---------------------------------------------------------------- the dense value array
+
+# the erased hole is closed by moving the last value in, without repointing its bucket
+# The moved element is still indexed at the slot it came from, which is now out of range or holds
+# something else.
+<<<
+            at(m_buckets, bucket_idx).m_value_idx = value_idx_to_remove;
+        }
+        m_values.pop_back();
+===
+        }
+        m_values.pop_back();
+>>>
+
+# the hole is closed only when the erased element was the last one
+# Reversed condition: the one case that needs no repair gets it, and every case that does is left
+# with a hole in a container that promises to have none.
+<<<
+        if (value_idx_to_remove != m_values.size() - 1) {
+===
+        if (value_idx_to_remove == m_values.size() - 1) {
+>>>
+
+# the last value is popped before the moved element's bucket is repointed
+# The scan then looks for an index that is one past the end of m_values, and no bucket holds it, so
+# it runs until something else happens to.
+<<<
+            auto bucket_idx = bucket_idx_from_hash(mixed_hash(get_key(val)));
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
+===
+            m_values.pop_back();
+            auto bucket_idx = bucket_idx_from_hash(mixed_hash(get_key(val)));
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size());
+>>>
+
+# erase leaves the bucket run stranded instead of shifting it down
+# Every element that probed past the erased slot becomes unreachable while still being counted by
+# size() and still walked by iteration.
+<<<
+        erase_and_shift_down(bucket_idx);
+        auto&& erased_value = std::move(m_values[value_idx_to_remove]);
+===
+        at(m_buckets, bucket_idx) = {};
+        auto&& erased_value = std::move(m_values[value_idx_to_remove]);
+>>>
+
+# the shift down stops one bucket late and pulls an already-home element back
+# dist_inc * 2 is "at least one slot from home". With dist_inc it also moves elements that are
+# exactly where they belong, so a later probe walks straight past them.
+<<<
+        while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2) {
+===
+        while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc) {
+>>>
+
+# emplace leaves the duplicate it speculatively constructed in m_values
+# The variadic emplace has to build the value before it can see the key. Forgetting to take it back
+# out means a duplicate key in the dense array with no bucket of its own.
+<<<
+                m_values.pop_back(); // value was already there, so get rid of it
+                return {begin() + static_cast<difference_type>(at(m_buckets, bucket_idx).m_value_idx), false};
+===
+                return {begin() + static_cast<difference_type>(at(m_buckets, bucket_idx).m_value_idx), false};
+>>>
+
+# an insert that cannot grow the bucket array leaves the value behind anyway
+# A failed single-element insert has to have no effect. Here size() counts an element that find()
+# will never reach.
+<<<
+            // remove the value again, we can't add it!
+            m_values.pop_back();
+            on_error_bucket_overflow();
+===
+            on_error_bucket_overflow();
+>>>
+
+# extract() hands the values over and leaves the buckets pointing into them
+# "*this is emptied" then holds only for size() and find(); the next insert probes a bucket that
+# indexes a container which has moved out.
+<<<
+        m_values.clear();
+        clear_buckets();
+        return values;
+===
+        m_values.clear();
+        return values;
+>>>
+
+# ---------------------------------------------------------------- copying, moving, assignment
+
+# copying a table does not carry its max_load_factor over
+# The copy then grows at a different point than the original, which is invisible until something
+# compares bucket_count() or inserts exactly enough to straddle the difference.
+<<<
+        : m_values(other.m_values, alloc)
+        , m_buckets(alloc)
+        , m_max_load_factor(other.m_max_load_factor)
+        , m_hash(other.m_hash)
+        , m_equal(other.m_equal) {
+        copy_buckets(other);
+===
+        : m_values(other.m_values, alloc)
+        , m_buckets(alloc)
+        , m_hash(other.m_hash)
+        , m_equal(other.m_equal) {
+        copy_buckets(other);
+>>>
+
+# a moved-from table keeps its bucket array, which now indexes the values that left
+# The comment above these lines is the promise: what is left behind has to look exactly like a
+# default constructed table. Keeping the mask and the shift means it looks like a full one.
+<<<
+            m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
+            m_bucket_mask = std::exchange(other.m_bucket_mask, 0);
+            m_shifts = std::exchange(other.m_shifts, initial_shifts);
+===
+            m_max_bucket_capacity = other.m_max_bucket_capacity;
+            m_bucket_mask = other.m_bucket_mask;
+            m_shifts = other.m_shifts;
+>>>
+
+# the recovery from a failed assignment forgets to put the shift back
+# reset_to_empty has to leave exactly what a default constructed table holds, because it runs while
+# an exception is in flight and nothing downstream can fix it up.
+<<<
+        m_max_bucket_capacity = 0;
+        m_bucket_mask = 0;
+        m_shifts = initial_shifts;
+    }
+===
+        m_max_bucket_capacity = 0;
+        m_bucket_mask = 0;
+    }
+>>>
+
+# copying an empty table leaves the shift wherever the source had it
+# An empty table is meant to be indistinguishable from a fresh one, so that the first insert
+# allocates the smallest array rather than the one the source had grown to.
+<<<
+            // first insert allocate. Copying an empty table therefore allocates nothing either.
+            m_shifts = initial_shifts;
+===
+            // first insert allocate. Copying an empty table therefore allocates nothing either.
+>>>
+
+# ---------------------------------------------------------------- the API's own promises
+
+# two tables compare equal as soon as their keys match, whatever the values are
+# For a map this is simply the wrong operator, and it is the sort of thing a test suite checks with
+# two tables built the same way -- which agree on both.
+<<<
+                if (a.end() == it || !(b_entry.second == it->second)) {
+                    return false;
+                }
+===
+                if (a.end() == it) {
+                    return false;
+                }
+>>>
+
+# tables of different sizes are compared element by element instead of being rejected
+# Every entry of the smaller can be present in the larger, so a subset now compares equal to its
+# superset in one direction.
+<<<
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (auto const& b_entry : b) {
+===
+        for (auto const& b_entry : b) {
+>>>
+
+# equal_range hands back an empty range for a key that is present
+# Standard containers promise [it, it+1) for a found key, and code that iterates the range then
+# silently does nothing.
+<<<
+    auto equal_range(Key const& key) -> std::pair<iterator, iterator> {
+        auto it = do_find(key);
+        return {it, it == end() ? end() : it + 1};
+    }
+===
+    auto equal_range(Key const& key) -> std::pair<iterator, iterator> {
+        auto it = do_find(key);
+        return {it, it};
+    }
+>>>
+
+# insert_or_assign does not assign when the key is already there
+# It becomes try_emplace, which is a real function with a real caller, so nothing about the shape of
+# it looks wrong.
+<<<
+        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
+        if (!it_isinserted.second) {
+            it_isinserted.first->second = std::forward<M>(mapped);
+        }
+        return it_isinserted;
+===
+        auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
+        return it_isinserted;
+>>>
+
+# erase(iterator) returns an iterator to the start of the table
+# The returned iterator is meant to be the position the erased element occupied, which after the
+# swap-with-last holds a different element -- that is what makes an erase-while-iterating loop work.
+<<<
+        return begin() + static_cast<difference_type>(value_idx_to_remove);
+    }
+
+    auto extract(iterator it) -> value_type {
+===
+        return begin();
+    }
+
+    auto extract(iterator it) -> value_type {
+>>>
+
+# load_factor divides by the number of elements instead of the number of buckets
+# Right at zero and right at full, wrong everywhere in between.
+<<<
+        return bucket_count() ? static_cast<float>(size()) / static_cast<float>(bucket_count()) : 0.0F;
+===
+        return bucket_count() ? static_cast<float>(bucket_count()) / static_cast<float>(size()) : 0.0F;
+>>>
+
+# replace_key does not check whether the new key is already in the table
+# The documented contract is that it fails and changes nothing in that case. Skipping the check
+# leaves two equal keys in a container whose entire point is that there is one.
+<<<
+        while (dist_and_fingerprint <= at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+            auto const& bucket = at(m_buckets, bucket_idx);
+            if (dist_and_fingerprint == bucket.m_dist_and_fingerprint &&
+                m_equal(new_key, get_key(m_values[bucket.m_value_idx]))) {
+                return {begin() + static_cast<difference_type>(bucket.m_value_idx), false};
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+===
+        while (false) {
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+>>>
+
+# replace_key adds the new bucket without removing the old one
+# The old key is gone from m_values but still indexed, so the table has one more bucket than it has
+# elements and one of them points at a key that is not there.
+<<<
+        erase_and_shift_down(bucket_idx);
+
+        // place the new bucket
+===
+        // place the new bucket
+>>>
+
+# clearing the table keeps the buckets, which now index nothing
+# clear() has to leave a table that the next insert can use. Buckets surviving it point into an
+# empty container.
+<<<
+    void clear() {
+        if (!empty()) {
+            m_values.clear();
+===
+    void clear() {
+        if (false) {
+            m_values.clear();
+>>>
+
+# ---------------------------------------------------------------- hashing
+
+# a hash that never said it avalanches is used as-is
+# wyhash is what turns std::hash<int>'s identity function into something with entropy in the high
+# bits -- which is where bucket_idx_from_hash takes the index from. Without it every small integer
+# key lands in the same handful of buckets.
+<<<
+            // not is_avalanching => apply wyhash
+            return wyhash::hash(m_hash(key));
+===
+            // not is_avalanching => apply wyhash
+            return m_hash(key);
+>>>
+
+# a 32 bit avalanching hash is used without being spread into the high bits
+# The multiply is what moves 32 bits of entropy up to where the shift reads them. Without it every
+# key hashes into bucket zero.
+<<<
+                return m_hash(key) * UINT64_C(0x9ddfea08eb382d69);
+===
+                return m_hash(key);
+>>>
+
+# wyhash reads the wrong three bytes of a very short key
+# Keys of 1 to 3 bytes then collide in groups instead of being told apart, which is a distribution
+# bug and never a wrong answer -- the sort of thing only a statistical test sees.
+<<<
+    return (static_cast<std::uint64_t>(p[0]) << 16U) | (static_cast<std::uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
+===
+    return (static_cast<std::uint64_t>(p[0]) << 16U) | (static_cast<std::uint64_t>(p[0]) << 8U) | p[0];
+>>>
+
+# ---------------------------------------------------------------- segmented_vector
+
+# the block index and the offset within a block are taken from the same bits
+# operator[] is how every element is reached, so this is either instantly fatal or, if the tests
+# never fill more than one block, entirely invisible.
+<<<
+    [[nodiscard]] constexpr auto operator[](std::size_t i) noexcept -> T& {
+        return m_blocks[i >> num_bits][i & mask];
+    }
+===
+    [[nodiscard]] constexpr auto operator[](std::size_t i) noexcept -> T& {
+        return m_blocks[i >> num_bits][i >> num_bits];
+    }
+>>>
+
+# the block count for a capacity rounds down instead of up
+# A capacity that is not a whole number of blocks then gets one block too few, and the last few
+# elements are written past the end of the last one.
+<<<
+        return (capacity + num_elements_in_block - 1U) / num_elements_in_block;
+===
+        return capacity / num_elements_in_block;
+>>>
+
+# shrinking a segmented_vector does not destroy the elements it drops
+# Only visible with a value type whose destructor does something -- so a suite that tests with
+# integers cannot see it at all, and one with a sanitizer only sees the leak.
+<<<
+    void resize_shrink(std::size_t new_size) {
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            for (std::size_t ix = new_size; ix < m_size; ++ix) {
+                operator[](ix).~T();
+            }
+        }
+        m_size = new_size;
+===
+    void resize_shrink(std::size_t new_size) {
+        m_size = new_size;
+>>>
+
+# clear() does not run the destructors of what it drops
+# Same shape, on the path every table takes when it is emptied rather than resized.
+<<<
+    void clear() {
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            for (std::size_t i = 0, s = size(); i < s; ++i) {
+                operator[](i).~T();
+            }
+        }
+        m_size = 0;
+===
+    void clear() {
+        m_size = 0;
+>>>
+
+# pop_back drops the element without destroying it
+<<<
+    void pop_back() {
+        back().~T();
+        --m_size;
+    }
+===
+    void pop_back() {
+        --m_size;
+    }
+>>>
+
+# shrink_to_fit hands back one block too many
+# The block still holding live elements is deallocated, and everything in it is a use after free
+# that a plain build has no way to notice.
+<<<
+        while (m_blocks.size() > num_blocks_required) {
+===
+        while (m_blocks.size() >= num_blocks_required) {
+>>>
