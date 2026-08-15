@@ -418,3 +418,41 @@ TEST_CASE_MAP("transparent_find_simple", std::string, size_t, string_hash_simple
     it = map.find("hello"s);
     REQUIRE(it != map.end());
 }
+
+// The transparent emplace is its own probe loop -- its own `<=` bound, its own key comparison, its
+// own returned iterator -- shared with no other insert path. The tests above call it, but only ever
+// on a set holding nothing or one element, where a wrong iterator and a wrong "was it inserted" are
+// both still begin() and still the only answer available. This asks it with a hundred elements
+// behind the one it finds.
+TEST_CASE_SET("transparent_set_emplace_returns_what_was_already_there", std::string, string_hash, string_eq) {
+    auto set = set_t();
+    for (int i = 0; i < 100; ++i) {
+        set.emplace("key #" + std::to_string(i));
+    }
+    REQUIRE(set.size() == 100U);
+
+    // Every key looked up again through a type that is not the key type, so the transparent
+    // overload is the one that runs. Nothing may be inserted, and the iterator has to be the
+    // element that was already there rather than merely some element.
+    for (int i = 0; i < 100; ++i) {
+        auto const key = "key #" + std::to_string(i);
+        auto const r = set.emplace(std::string_view(key));
+        REQUIRE_FALSE(r.second);
+        REQUIRE(r.first != set.end());
+        REQUIRE(*r.first == key);
+        REQUIRE(set.size() == 100U);
+    }
+
+    // ... and a key that is not there is inserted, and reported as inserted.
+    auto const fresh = set.emplace(std::string_view("brand new"));
+    REQUIRE(fresh.second);
+    REQUIRE(*fresh.first == "brand new");
+    REQUIRE(set.size() == 101U);
+
+    // Emplacing it a second time now finds it, which is the same path with the element at the end
+    // of the dense array rather than in the middle of it.
+    auto const again = set.emplace(std::string_view("brand new"));
+    REQUIRE_FALSE(again.second);
+    REQUIRE(again.first == fresh.first);
+    REQUIRE(set.size() == 101U);
+}
