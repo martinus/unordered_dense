@@ -11,7 +11,7 @@
 #include <unordered_map> // for unordered_map, operator==
 
 template <typename Map>
-void bench(std::string_view name) {
+void bench_copy(std::string_view name) {
     auto a = Map();
     auto rng = ankerl::nanobench::Rng(123);
     for (size_t i = 0; i < 1000000; ++i) {
@@ -29,19 +29,19 @@ void bench(std::string_view name) {
 #if 0
 
 TEST_CASE("bench_copy_rhn" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<robin_hood::unordered_node_map<uint64_t, uint64_t>>("robin_hood::unordered_node_map");
+    bench_copy<robin_hood::unordered_node_map<uint64_t, uint64_t>>("robin_hood::unordered_node_map");
 }
 
 TEST_CASE("bench_copy_rhf" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<robin_hood::unordered_flat_map<uint64_t, uint64_t>>("robin_hood::unordered_flat_map");
+    bench_copy<robin_hood::unordered_flat_map<uint64_t, uint64_t>>("robin_hood::unordered_flat_map");
 }
 
 #endif
 
 TEST_CASE_MAP("bench_copy_udm" * doctest::test_suite("bench") * doctest::skip(), uint64_t, uint64_t) {
-    bench<map_t>("ankerl::unordered_dense::map");
+    bench_copy<map_t>("ankerl::unordered_dense::map");
 }
 
 TEST_CASE("bench_copy_std" * doctest::test_suite("bench") * doctest::skip()) {
-    bench<std::unordered_map<uint64_t, uint64_t>>("std::unordered_map");
+    bench_copy<std::unordered_map<uint64_t, uint64_t>>("std::unordered_map");
 }

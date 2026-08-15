@@ -42,7 +42,7 @@ auto make_queries(size_t key_len) -> std::vector<std::string> {
     return queries;
 }
 
-void bench(size_t key_len) {
+void bench_precomputed(size_t key_len) {
     auto const map = make_map(key_len);
     auto const queries = make_queries(key_len);
 
@@ -79,7 +79,7 @@ void bench(size_t key_len) {
 } // namespace
 
 TEST_CASE("bench_precomputed_hash" * doctest::test_suite("bench") * doctest::skip()) {
-    bench(8);
-    bench(32);
-    bench(200);
+    bench_precomputed(8);
+    bench_precomputed(32);
+    bench_precomputed(200);
 }

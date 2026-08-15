@@ -116,6 +116,21 @@ jobs:
             apt: libc++-dev libc++abi-dev
             setup_args: -Dcpp_args=-stdlib=libc++ -Dcpp_link_args=-stdlib=libc++
 
+          # A unity build merges the translation units, and an anonymous namespace stops isolating
+          # a file once its neighbours are in the same one. Every collision this leg exists to
+          # catch was already there and invisible: test/app/print.h had no include guard, and four
+          # bench files each defined a bench() that only became ambiguous when two landed in the
+          # same chunk. It is off by default because it is bad for development -- touching one file
+          # recompiles its whole chunk -- so without a leg it would quietly go back to broken.
+          # scripts/mutate/mutate.py builds its lanes this way, where the objection cannot apply:
+          # a mutant recompiles every file anyway, and merging is 2.5x less compiling for it.
+          - name: Linux (gcc, C++17, unity)
+            id: linux-gcc-cpp17-unity
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev
+            setup_args: --unity=on --unity-size=16
+
           # A hash map that packs a bucket into 8 bytes and indexes with size_t is exactly the
           # design a different word size breaks, so 32 bit is real coverage, not a formality.
           # The runner images carry a 64 bit only toolchain, hence g++-multilib. -m32 used to be

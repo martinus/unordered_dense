@@ -1001,6 +1001,13 @@ class Lane:
         flags that matter here are the ones the real build uses, -Werror very
         much included, and a hand-written approximation of them drifts the day
         someone adds a warning to meson.build.
+
+        A unity build lists the chunks it generates and not the files they
+        include, so the TU asked for is not in there at all. The flags are the
+        same for every chunk, so one is borrowed and the source path swapped --
+        which matters because the alternative is the pre-filter quietly turning
+        itself off, and then every mutant that is not valid C++ costs a full
+        rebuild instead of half a second.
         """
         if not self.syntax_file:
             return None
@@ -1008,10 +1015,12 @@ class Lane:
         with open(path, encoding="utf-8") as f:
             entries = json.load(f)
         wanted = os.path.normpath(os.path.join(self.dir, self.syntax_file))
+        borrowed = not any(
+            os.path.normpath(os.path.join(e["directory"], e["file"])) == wanted for e in entries)
         for entry in entries:
             resolved = os.path.normpath(
                 os.path.join(entry["directory"], entry["file"]))
-            if resolved != wanted:
+            if not borrowed and resolved != wanted:
                 continue
             argv, out, i = shlex.split(entry["command"]), [], 0
             while i < len(argv):
@@ -1023,7 +1032,7 @@ class Lane:
                     i += 2
                     continue
                 if arg not in ("-c", "-MD", "-MMD"):
-                    out.append(arg)
+                    out.append(wanted if borrowed and arg == entry["file"] else arg)
                 i += 1
             # ccache refuses -fsyntax-only outright, and there is nothing to
             # cache in a compile that produces no object anyway.
@@ -1270,6 +1279,17 @@ def meson_setup_args(args):
     extra = ["--buildtype", args.buildtype]
     if not any(a.startswith("-Ddebug=") for a in args.meson_arg):
         extra.append("-Ddebug=false")
+    # A unity build is 2.5x less compiling for the same work -- measured, one
+    # mutant rebuild of the whole suite: 67 CPU-seconds separately, 27 merged.
+    # Every one of the ~90 translation units includes the header and most
+    # instantiate the map three times over, and merged into chunks that work is
+    # done once per chunk instead of once per file.
+    #
+    # The usual objection does not apply here. Unity is bad for development
+    # because touching one file recompiles its whole chunk; a mutant recompiles
+    # every file either way, so there is nothing left to spoil.
+    if not any("unity" in a for a in args.meson_arg):
+        extra.append("--unity=on")
     return extra + list(args.meson_arg)
 
 
