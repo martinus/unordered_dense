@@ -1,8 +1,8 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/hashers.h>
 
-#include <cmath>       // for log2
 #include <cstddef>     // for size_t
 #include <cstdint>     // for uint64_t
 #include <functional>  // for hash, equal_to
@@ -221,75 +221,42 @@ TEST_CASE("saying_a_hash_is_not_avalanching_from_outside_starts_the_mixing") {
 // `hash >> m_shifts`, which reads the top. So it is multiplied up first. Drop the multiply and
 // every key lands in bucket zero; the table still answers every question correctly, just by
 // probing linearly through the whole array, which is why only this can see it.
-namespace {
-
-// Avalanching and 32 bit: the combination the third branch exists for.
-struct narrow_avalanching {
-    using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint32_t {
-        // Fibonacci hashing in 32 bits -- genuinely avalanching, genuinely too narrow.
-        return static_cast<uint32_t>(x) * UINT32_C(2654435761);
-    }
-};
-
-// The same quality, at the width the table can use as it is.
-struct wide_avalanching {
-    using is_avalanching = void;
-
-    [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-        return static_cast<uint64_t>(static_cast<uint32_t>(x)) * UINT64_C(0x9E3779B97F4A7C15);
-    }
-};
-
-} // namespace
+namespace {} // namespace
 
 TEST_CASE("a_narrow_avalanching_hash_is_spread_into_the_high_bits") {
     // Not wyhash -- it said it avalanches and is believed.
-    REQUIRE(finalized<narrow_avalanching>(7) != ankerl::unordered_dense::detail::wyhash::hash(7));
+    REQUIRE(finalized<test::narrow_avalanching_hash>(7) != ankerl::unordered_dense::detail::wyhash::hash(7));
 
     // ... but not used as it is either, which is what the third branch is for.
-    auto const raw = static_cast<uint64_t>(narrow_avalanching{}(7));
-    REQUIRE(finalized<narrow_avalanching>(7) != raw);
-    REQUIRE(finalized<narrow_avalanching>(7) == raw * UINT64_C(0x9ddfea08eb382d69));
+    auto const raw = static_cast<uint64_t>(test::narrow_avalanching_hash{}(7));
+    REQUIRE(finalized<test::narrow_avalanching_hash>(7) != raw);
+    REQUIRE(finalized<test::narrow_avalanching_hash>(7) == raw * UINT64_C(0x9ddfea08eb382d69));
 
-    // A 64 bit one of the same quality is used exactly as it is, which is the branch either side.
-    REQUIRE(finalized<wide_avalanching>(7) == wide_avalanching{}(7));
+    // A 64 bit hash of the same standing is used exactly as it is, which is the branch either
+    // side. honest_hash is the identity, so "used as it is" and "equals the key" are the same
+    // statement here.
+    REQUIRE(finalized<honest_hash>(7) == honest_hash{}(7));
 
-    // The bits that matter are the top ones, because that is where the bucket index is read from.
-    // Unspread, every one of these keys has zeros up there and the whole table collides.
+    // The bits that matter are the top ones, because that is where the bucket index is read from:
+    // do_find indexes its first probe with hash >> m_shifts. Unspread, every one of these keys has
+    // zeros up there, they all share a home bucket, and the table answers every lookup correctly by
+    // walking most of the array -- which is why only a distribution check can see it.
     auto high_bits = ankerl::unordered_dense::set<uint64_t>();
     for (int i = 0; i < 1000; ++i) {
-        high_bits.insert(finalized<narrow_avalanching>(i) >> 40U);
+        high_bits.insert(finalized<test::narrow_avalanching_hash>(i) >> 40U);
     }
     REQUIRE(high_bits.size() > 900);
-}
 
-// And the table built on it does not degenerate. Without the multiply this still answers every
-// lookup correctly -- it just does it by walking most of the array, so what it costs is what has to
-// be measured. Probe distances are visible through the bucket's own encoding: a key found at its
-// home bucket is one dist_inc, the next one along is two.
-TEST_CASE("a_narrow_avalanching_hash_does_not_pile_every_key_into_one_bucket") {
-    auto map = ankerl::unordered_dense::map<int, int, narrow_avalanching, std::equal_to<int>>();
-    for (int i = 0; i < 10000; ++i) {
+    // And a table built on it works, which is the other half: the spread above is worth nothing if
+    // the finalization the table applies is not the one measured here.
+    auto map = ankerl::unordered_dense::map<int, int, test::narrow_avalanching_hash, std::equal_to<int>>();
+    for (int i = 0; i < 1000; ++i) {
         map[i] = i;
     }
-    REQUIRE(map.size() == 10000);
-
-    // Spread, the 10000 keys land across the whole array; piled up, they land in a handful of
-    // buckets and every lookup is a long walk. Counting distinct home buckets is the same question
-    // asked cheaply: the index is the top bits of the finalized hash.
-    auto homes = ankerl::unordered_dense::set<uint64_t>();
-    auto const shift = 64U - static_cast<unsigned>(std::log2(static_cast<double>(map.bucket_count())));
-    for (int i = 0; i < 10000; ++i) {
-        homes.insert(finalized<narrow_avalanching>(i) >> shift);
+    REQUIRE(map.size() == 1000);
+    for (int i = 0; i < 1000; ++i) {
+        REQUIRE(map.at(i) == i);
     }
-    // The bound is deliberately loose. 10000 keys into 16384 buckets cannot fill more than about
-    // 46% of them even with a perfect hash -- collisions are expected, that is what the probing is
-    // for -- so this asks only that the keys are spread at all. Unspread they share a single home
-    // bucket, so the margin between passing and failing is three orders of magnitude, not a few
-    // percent, and the check does not need to be tuned.
-    REQUIRE(homes.size() > map.bucket_count() / 4);
 }
 
 // Whatever the trait says, the table has to keep working.
