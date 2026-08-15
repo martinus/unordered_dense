@@ -38,8 +38,12 @@ auto filled(int allocator_id, int count) -> Vec {
     return vec;
 }
 
+// Named for the vector rather than just `require_holds`, because test::require_holds in
+// app/map_fixtures.h asks the same question of a map -- and these vectors carry a test::id_allocator,
+// so ADL finds that one too. Two equally good candidates is an ambiguous call, which only appears
+// once a unity build puts this file and a user of map_fixtures.h in one translation unit.
 template <typename Vec>
-void require_holds(Vec const& vec, int count) {
+void require_vector_holds(Vec const& vec, int count) {
     REQUIRE(vec.size() == static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
         REQUIRE(vec[static_cast<std::size_t>(i)] == i);
@@ -54,7 +58,7 @@ void check_copy_assign(int expected_allocator_id) {
     target = source;
 
     REQUIRE(target.get_allocator().m_id == expected_allocator_id);
-    require_holds(target, 10);
+    require_vector_holds(target, 10);
 }
 
 } // namespace
@@ -81,7 +85,7 @@ TEST_CASE("segmented_vector_move_assign_keeps_its_own_allocator") {
     // Nothing propagates, so the target keeps the allocator it was built with. It used to adopt
     // the source's, which meant memory allocated from one arena was later freed through another.
     REQUIRE(target.get_allocator().m_id == 2);
-    require_holds(target, 10);
+    require_vector_holds(target, 10);
 }
 
 TEST_CASE("segmented_vector_move_assign_between_equal_allocators_steals") {
@@ -91,7 +95,7 @@ TEST_CASE("segmented_vector_move_assign_between_equal_allocators_steals") {
     target = std::move(source);
 
     REQUIRE(target.get_allocator().m_id == 7);
-    require_holds(target, 10);
+    require_vector_holds(target, 10);
     REQUIRE(source.empty()); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 }
 
@@ -103,8 +107,8 @@ TEST_CASE("segmented_vector_copy_construction_asks_the_allocator") {
     // select_on_container_copy_construction defaults to handing back a copy, so this one inherits
     // the id. The copy constructor used to default construct its allocator and lose it.
     REQUIRE(copy.get_allocator().m_id == 5);
-    require_holds(copy, 10);
-    require_holds(source, 10);
+    require_vector_holds(copy, 10);
+    require_vector_holds(source, 10);
 }
 
 TEST_CASE("segmented_vector_copy_construction_with_an_explicit_allocator") {
@@ -113,7 +117,7 @@ TEST_CASE("segmented_vector_copy_construction_with_an_explicit_allocator") {
     auto copy = sticky_vec(source, test::id_allocator<int>(9));
 
     REQUIRE(copy.get_allocator().m_id == 9);
-    require_holds(copy, 10);
+    require_vector_holds(copy, 10);
 }
 
 TEST_CASE("segmented_vector_copy_assign_propagates_only_when_asked") {
@@ -133,7 +137,7 @@ TEST_CASE("segmented_vector_self_assignment_keeps_the_contents") {
 
     auto& alias = vec;
     vec = alias;
-    require_holds(vec, 10);
+    require_vector_holds(vec, 10);
     REQUIRE(vec.get_allocator().m_id == 3);
 }
 
@@ -144,5 +148,5 @@ TEST_CASE("segmented_vector_move_construction_takes_the_source_allocator") {
     auto moved = std::move(source);
 
     REQUIRE(moved.get_allocator().m_id == 4);
-    require_holds(moved, 10);
+    require_vector_holds(moved, 10);
 }
