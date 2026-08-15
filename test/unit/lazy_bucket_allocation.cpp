@@ -327,6 +327,23 @@ TEST_CASE_MAP("an_emptied_table_looks_default_constructed", int, int) {
         test::require_empty_table_answers(source);
     }
 
+    // Move construction and move assignment leave the source behind by different code: the
+    // constructor exchanges the members itself, the assignment goes through move_everything_from.
+    // Both have to leave the same thing.
+    SUBCASE("moved from by assignment") {
+        auto source = map_t();
+        for (int i = 0; i < 500; ++i) {
+            source[i] = i;
+        }
+        auto sink = map_t();
+        sink[1] = 1;
+        sink = std::move(source);
+        REQUIRE(sink.size() == 500);
+
+        // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+        test::require_empty_table_answers(source);
+    }
+
     SUBCASE("a copy of a table that was cleared") {
         auto source = map_t();
         for (int i = 0; i < 500; ++i) {
