@@ -148,3 +148,52 @@ TEST_CASE("replace_drops_a_duplicate_that_sits_last") {
     // The first of the duplicates is the one that stays; the later one is dropped, not merged.
     REQUIRE(map.at(1) == 10U);
 }
+
+// A count above what the bucket array can ever hold. calc_shifts_for_size() walks the shift down
+// until the capacity it computes covers the count -- but the bucket count saturates at
+// max_bucket_count(), so past max_bucket_count() * max_load_factor() the capacity being compared
+// stops growing while the walk carries on, all the way to a shift of zero. calc_num_buckets(0) then
+// asks for `1 << 64`, which is undefined and in practice one: a table sized for far more elements
+// than it can hold came back with a single bucket and a mask of zero, and the next probe read past
+// the end of it.
+//
+// bucket_micro is what makes this cheap to ask. The arithmetic is the same for the shipped bucket
+// types -- map<uint32_t, uint32_t>::rehash(3865470566) reproduced it -- but there the correct
+// answer is an array of 2^32 buckets, so the test would be asking the machine for 32 GB. Here the
+// same walk runs off the same end and the correct answer is 256 buckets.
+TEST_CASE("a_count_above_the_bucket_limit_does_not_collapse_the_array") {
+    auto const above_the_limit =
+        static_cast<size_t>(static_cast<double>(micro_map_t::max_bucket_count()) * double{0.8}) + 1;
+    REQUIRE(above_the_limit < micro_map_t::max_size());
+
+    SUBCASE("rehash") {
+        // rehash() is the reachable way in: unlike reserve() it does not size the value container
+        // first, so there is no enormous allocation to fail before the bucket arithmetic runs.
+        auto map = micro_map_t();
+        map[1] = 1;
+        map.rehash(above_the_limit);
+        REQUIRE(map.bucket_count() == micro_map_t::max_bucket_count());
+        REQUIRE(map.find(1) != map.end());
+
+        map[2] = 2;
+        REQUIRE(map.find(2) != map.end());
+        REQUIRE(map.size() == 2U);
+    }
+
+    SUBCASE("reserve") {
+        auto map = micro_map_t();
+        map[1] = 1;
+        map.reserve(above_the_limit);
+        REQUIRE(map.bucket_count() == micro_map_t::max_bucket_count());
+        REQUIRE(map.find(1) != map.end());
+    }
+
+    SUBCASE("replace") {
+        auto map = micro_map_t();
+        map.replace(container_of(above_the_limit));
+        REQUIRE(map.size() == above_the_limit);
+        for (size_t i = 0; i < above_the_limit; ++i) {
+            REQUIRE(map.contains(i));
+        }
+    }
+}

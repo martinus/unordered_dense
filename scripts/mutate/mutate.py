@@ -36,10 +36,31 @@ the tool saying that part has been rewritten and the questions need re-deriving.
 
 **Or sweep for holes you have not thought of**, mutating one token at a time:
 
-    mutate.py --diff HEAD~1                    # only what this change touched
-    mutate.py --lines 1200-1260                # one function
+    mutate.py --diff                           # whatever is uncommitted
+    mutate.py --diff HEAD~1                    # only what that change touched
+    mutate.py --lines 1200-1260,1300           # a function, or a scattering
     mutate.py                                  # the whole header
-    mutate.py --diff HEAD~1 --dry-run          # how many, and how long
+    mutate.py --diff --dry-run                 # how many, and how long
+
+`--diff` is the everyday one, and it measures from the merge base: on a branch
+that has not caught up, comparing against a ref's tip sweeps every line main
+moved on without you as though it were yours.
+
+`--deletions` adds a second operator that removes whole statements. It is worth
+knowing that nearly every bug in `bugs/invariants.txt` is some form of "the code
+forgot to do this" -- the shift down that never happens, the pop_back that is
+skipped -- and that none of them is one token, so the token sweep cannot reach
+any of them. It roughly doubles the count; the ones that cannot compile cost the
+pre-filter's half second rather than a rebuild.
+
+Two kinds of mutant are never generated, because nothing could ever catch them.
+Comments, string literals and preprocessor lines are not code and are skipped by
+the lexer. `std::enable_if_t<..., bool> = true>` is skipped too: the parameter
+exists so the substitution has somewhere to fail and nothing reads its value, so
+flipping it is 47 rebuilds to prove that nothing happened. A third kind is found
+rather than predicted -- a mutant in a branch this configuration does not
+compile is dropped once the lanes exist and the preprocessor has been asked
+which lines survived, and the run says which lines those were.
 
 The two compose, and a change is best asked both questions at once - the named
 bugs the tests were written for, and the sweep for what nobody thought to ask:
@@ -537,11 +558,57 @@ OPERATOR_MUTATIONS = [
     ("/", ["*"]),
 ]
 
+# `# 123 "some/file.h" 1` -- what -E emits when the next line it prints is not
+# the one that would follow. The path may be quoted with escapes; nothing here
+# has one, and realpath on a mangled path simply fails to match.
+LINEMARKER = re.compile(r'^#\s+(\d+)\s+"([^"]*)"')
+
 IDENT = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
 # integer literal, not part of an identifier or a float/exponent
 NUMBER = re.compile(r"\b(\d+)([uUlL]*)\b")
 
 WORD_MUTATIONS = {"true": ["false"], "false": ["true"]}
+
+COMPOUND_OPERATOR_TAIL = "=!<>+-*/&|^%"
+
+
+def nonspace_before(src, offset):
+    while offset > 0 and src[offset - 1] in " \t\n":
+        offset -= 1
+    return (src[offset - 1], offset - 1) if offset > 0 else ("", -1)
+
+
+def nonspace_after(src, offset):
+    n = len(src)
+    while offset < n and src[offset] in " \t\n":
+        offset += 1
+    return src[offset] if offset < n else ""
+
+
+def is_template_default(src, offset, word):
+    """Whether this `true`/`false` is a template parameter's default value.
+
+    `std::enable_if_t<is_map_v<Q>, bool> = true>` is the SFINAE idiom: the
+    parameter exists only so the substitution has somewhere to fail, and nothing
+    ever reads its value, so flipping it is a mutant that cannot be killed. This
+    header has 47 of them and every one costs a full rebuild of ~90 translation
+    units to prove that nothing happened.
+
+    Recognised by shape rather than by looking for `enable_if_t`, because the
+    idiom is the default value in a `>`-terminated list and not any particular
+    trait: preceded by an `=` that is an assignment rather than the tail of `==`
+    or `<=`, and followed by the `>` that closes the template parameter list.
+    """
+    before, at = nonspace_before(src, offset)
+    if "=" != before:
+        return False
+    # Only an *adjacent* character makes the `=` the tail of `==`, `<=` or `>=`.
+    # The one that closes `bool>` sits a space away and is the usual sight here,
+    # so testing for it without asking about the space rejects every real case.
+    prev, prev_at = nonspace_before(src, at)
+    if prev_at == at - 1 and prev in COMPOUND_OPERATOR_TAIL:
+        return False
+    return ">" == nonspace_after(src, offset + len(word))
 
 
 def is_comparison(src, offset, op):
@@ -595,8 +662,9 @@ def mutation_sites(src, mask, line_filter=None):
 
         m = IDENT.match(src, i)
         if m:
-            for rep in WORD_MUTATIONS.get(m.group(0), ()):
-                add(i, m.group(0), rep)
+            if not is_template_default(src, i, m.group(0)):
+                for rep in WORD_MUTATIONS.get(m.group(0), ()):
+                    add(i, m.group(0), rep)
             i = m.end()
             continue
 
@@ -665,11 +733,80 @@ def parse_lines(text):
     return lines
 
 
+# Lines that end in `;` without being a statement anyone can drop: a closing
+# brace of an initializer, a declaration the rest of the scope needs, a label.
+# Over-matching is not expensive - a deletion that does not compile is rejected
+# by the pre-filter in half a second - but a deletion that cannot compile is
+# also a mutant that tells you nothing, so the obvious ones are left out.
+NOT_A_STATEMENT = re.compile(
+    r"^(\}|\{|else\b|do\b|try\b|catch\b|template\b|using\b|typedef\b|namespace\b"
+    r"|struct\b|class\b|enum\b|static_assert\b|public:|private:|protected:|friend\b)")
+
+
+def deletion_sites(src, mask, line_filter=None):
+    """Whole statements, taken out.
+
+    The operator the token sweep cannot express, and the one the hand-written
+    bugs kept turning out to be. Nearly every bug in bugs/invariants.txt is some
+    form of "the code forgot to do this": the shift down that never happens, the
+    pop_back that is skipped, the bucket that is never repointed. None of those
+    is one token, and none of them is reachable by changing one.
+
+    Only single-line statements, and only ones whose brackets balance on that
+    line, so that what is removed is a whole statement rather than the middle of
+    one. That leaves out the multi-line calls, which is a real gap and the price
+    of not parsing C++.
+
+    Plenty of these will not compile -- a declaration something below it uses, a
+    return from a function that has to return something. That is the pre-filter's
+    half second rather than a full rebuild, so the budget stands it; what it
+    costs is a report with a larger `compiler` column.
+    """
+    sites = []
+    starts = line_starts(src)
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(src)
+        line = src[start:end].rstrip("\n")
+        # Read through the mask so that a trailing comment does not decide
+        # whether this looks like a statement.
+        code = "".join(c if mask[start + k] else " " for k, c in enumerate(line))
+        stripped = code.strip()
+        if not stripped.endswith(";") or NOT_A_STATEMENT.match(stripped):
+            continue
+        if code.count("(") != code.count(")") or code.count("{") != code.count("}"):
+            continue
+        lineno = index + 1
+        if line_filter is not None and lineno not in line_filter:
+            continue
+        offset = start + (len(line) - len(line.lstrip()))
+        text = src[offset:start + len(line)]
+        if not text:
+            continue
+        sites.append(dict(offset=offset, original=text, replacement="", line=lineno,
+                          description="delete: %s" % (stripped[:52] + ("..." if len(stripped) > 52 else ""))))
+    return sites
+
+
 def changed_lines(ref, path):
-    """Line numbers of `path` touched since `ref`, for the fast daily mode."""
-    out = subprocess.run(
-        ["git", "diff", "--unified=0", ref, "--", path],
-        cwd=REPO, capture_output=True, text=True, check=True).stdout
+    """Line numbers of `path` touched since `ref`, for the fast daily mode.
+
+    Against the merge base rather than the ref's tip, which is the difference
+    between "what did I change" and "what does this file look like compared to
+    over there". On a branch that has not caught up with main the second answer
+    includes every line main moved on without you -- lines you have never seen,
+    swept as though they were yours. For a ref that is already an ancestor, which
+    is what `HEAD` and `HEAD~1` are, the merge base is the ref itself and the two
+    readings are the same.
+
+    Falls back to the plain form where git is too old to know the flag: the
+    answer is then merely too wide, which costs time rather than correctness.
+    """
+    argv = ["git", "diff", "--unified=0", "--merge-base", ref, "--", path]
+    r = subprocess.run(argv, cwd=REPO, capture_output=True, text=True)
+    if r.returncode != 0:
+        argv.remove("--merge-base")
+        r = subprocess.run(argv, cwd=REPO, capture_output=True, text=True, check=True)
+    out = r.stdout
     lines = set()
     for hunk in re.finditer(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", out, re.M):
         start = int(hunk.group(1))
@@ -881,6 +1018,49 @@ class Lane:
         this answers that in half a second instead of ~90 translation units."""
         return self._run(self.syntax_cmd["argv"], cwd=self.syntax_cmd["cwd"],
                          timeout=timeout, env=self.env)
+
+    def compiled_lines(self, timeout):
+        """Line numbers of the mutated file that survive the preprocessor.
+
+        A mutant in a branch this configuration does not compile cannot be
+        caught by anything, and costs a full rebuild of ~90 translation units to
+        say so. `mum()` is the standing example: it picks between __uint128_t,
+        an MSVC intrinsic and a long-hand multiply, so two thirds of it is never
+        seen here -- 35 mutants of pure noise in one function.
+
+        Asked of the compiler rather than by matching `#if` in the text, because
+        the answer depends on the flags the build actually uses. `-E` emits a
+        linemarker whenever the line it is about to print is not the next one,
+        so following those and counting lines in between gives what was kept.
+
+        None when there is nothing to ask - no pre-filter TU, or the run was
+        told not to use one - which the caller reads as "do not filter".
+        """
+        if not self.syntax_cmd:
+            return None
+        argv = [a for a in self.syntax_cmd["argv"] if a != "-fsyntax-only"]
+        argv.insert(1, "-E")
+        r = self._run(argv, cwd=self.syntax_cmd["cwd"], timeout=timeout, env=self.env)
+        if r is None or r.returncode != 0:
+            return None
+        wanted = os.path.realpath(self.target)
+        lines, current, lineno = set(), None, 0
+        for out in r.stdout.splitlines():
+            marker = LINEMARKER.match(out)
+            if marker:
+                lineno = int(marker.group(1))
+                # Resolved against the directory the compile runs in, not this
+                # process's. The paths are the ones the -I flags produced, so
+                # they are relative to the build directory; resolving them here
+                # would name a file in whatever tree this script was started
+                # from rather than the one in the lane.
+                current = os.path.realpath(
+                    os.path.join(self.syntax_cmd["cwd"], marker.group(2)))
+                continue
+            if current == wanted:
+                lines.add(lineno)
+            lineno += 1
+        return lines or None
 
     def run_build(self, timeout, jobs=None):
         # jobs is overridden for the baseline, which is the one build that has
@@ -1273,6 +1453,30 @@ def lanes_for(args, wanted, log):
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+def drop_uncompiled(lane, mutants, args, log):
+    """Mutants in code this configuration does not compile, taken back out.
+
+    Said out loud rather than done quietly: a run that silently swept less than
+    it was asked to reads as "everything here is covered", and which lines were
+    dropped is the interesting half - it names the branches this build cannot
+    answer for, which is a coverage question rather than a test one.
+    """
+    compiled = lane.compiled_lines(args.build_timeout)
+    if compiled is None:
+        return mutants
+    kept = [m for m in mutants if "line" not in m or m["line"] in compiled]
+    dropped = len(mutants) - len(kept)
+    if dropped:
+        where = sorted({m["line"] for m in mutants if "line" in m and m["line"] not in compiled})
+        log("%d mutant%s dropped on %d line%s the preprocessor removes in this "
+            "build (%s%s) - nothing could catch them"
+            % (dropped, "" if dropped == 1 else "s", len(where),
+               "" if len(where) == 1 else "s",
+               ", ".join(str(l) for l in where[:8]),
+               ", ..." if len(where) > 8 else ""))
+    return kept
+
+
 def run_mutants(lanes, mutants, args, log):
     """Every mutant through a lane, reported in the order they were produced."""
     pending, results, lock = queue.Queue(), [], threading.Lock()
@@ -1374,10 +1578,14 @@ def main():
     p.add_argument("--reverse", metavar="REF",
                    help="put one bug back by reverse-applying REF's changes to "
                         "the file, keeping today's tests")
-    p.add_argument("--diff", metavar="REF",
-                   help="only mutate lines changed since REF (the fast sweep). "
-                        "Adds to --bugs or --replace rather than replacing "
-                        "them, so one run can ask both questions")
+    p.add_argument("--diff", metavar="REF", nargs="?", const="HEAD",
+                   help="only mutate lines changed since REF, measured from the "
+                        "merge base so a branch that has not caught up does not "
+                        "sweep what main moved on without it. This is the "
+                        "everyday mode: bare `--diff` means HEAD, which is "
+                        "whatever is uncommitted. Adds to --bugs or --replace "
+                        "rather than replacing them, so one run can ask both "
+                        "questions")
     p.add_argument("--lines", metavar="LINES", type=parse_lines,
                    help="only mutate these lines, and the same: it adds a sweep "
                         "to whatever bugs were named. A line, a range, or a "
@@ -1410,6 +1618,14 @@ def main():
                         "alone and is reported as 'oom', uncapped the kernel "
                         "picks a victim and it is as likely to be another lane. "
                         "0 turns the cap off")
+    p.add_argument("--deletions", action="store_true",
+                   help="also delete whole statements, one at a time. This is "
+                        "where the hand-written bugs turn out to live -- nearly "
+                        "every one of them is some form of \"the code forgot to "
+                        "do this\", which is not one token and cannot be reached "
+                        "by changing one. Roughly doubles the mutant count, but "
+                        "the ones that cannot compile are rejected by the "
+                        "pre-filter in half a second rather than a full rebuild")
     p.add_argument("--limit", type=int, help="stop after N mutants")
     p.add_argument("--shuffle-seed", type=int, default=0,
                    help="sample mutants deterministically when using --limit")
@@ -1505,6 +1721,10 @@ def main():
         line_filter = None
         if args.diff:
             line_filter = changed_lines(args.diff, args.file)
+            if line_filter:
+                print("%d line%s of %s changed since %s"
+                      % (len(line_filter), "" if len(line_filter) == 1 else "s",
+                         args.file, args.diff))
         elif args.lines:
             line_filter = args.lines
         if args.diff and not line_filter:
@@ -1514,8 +1734,12 @@ def main():
             if not mutants:
                 return 0
         else:
-            sweep = site_mutants(
-                mutation_sites(original, code_mask(original), line_filter), original)
+            mask = code_mask(original)
+            sites = mutation_sites(original, mask, line_filter)
+            if args.deletions:
+                sites += deletion_sites(original, mask, line_filter)
+                sites.sort(key=lambda s: s["offset"])
+            sweep = site_mutants(sites, original)
             if args.limit and len(sweep) > args.limit:
                 random.Random(args.shuffle_seed).shuffle(sweep)
                 sweep = sweep[:args.limit]
@@ -1558,6 +1782,14 @@ def main():
 
     started = time.time()
     with lanes_for(args, len(mutants), log) as lanes:
+        mutants = drop_uncompiled(lanes[0], mutants, args, log)
+        if not mutants:
+            # Everything asked for was in a branch this build does not compile.
+            # Not an error: the answer is "there is nothing here to ask", and
+            # the line above already said which lines those were.
+            print("\nnothing left to run - every mutant was in code this build "
+                  "does not compile")
+            return 0
         log("%d mutant%s over %d lane%s"
             % (len(mutants), "" if len(mutants) == 1 else "s",
                len(lanes), "" if len(lanes) == 1 else "s"))
