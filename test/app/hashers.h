@@ -20,6 +20,30 @@ struct transparent_hash {
     }
 };
 
+// A hash and an equality that carry a tag, so that "which instance did this table end up with"
+// is a question a test can ask at all. std::hash and std::equal_to are stateless, so a table that
+// swaps its elements and forgets its hasher answers every question about its contents correctly
+// and is still wrong.
+//
+// The tag deliberately takes no part in the hashing or the comparison. Two tables carrying
+// different tags therefore agree about every key, which is what makes the tag able to answer only
+// the question it is here for -- and what makes it safe to hand a table the "wrong" one.
+struct tagged_hash {
+    int tag = 0;
+
+    [[nodiscard]] auto operator()(int x) const noexcept -> std::uint64_t {
+        return ankerl::unordered_dense::hash<int>{}(x);
+    }
+};
+
+struct tagged_equal {
+    int tag = 0;
+
+    [[nodiscard]] auto operator()(int a, int b) const noexcept -> bool {
+        return a == b;
+    }
+};
+
 // Avalanching and 32 bit -- the combination mixed_hash() multiplies up into the high bits, because
 // that is where the bucket index is read from. Fibonacci hashing in 32 bits: genuinely avalanching,
 // genuinely too narrow.

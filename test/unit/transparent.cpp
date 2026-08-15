@@ -281,6 +281,43 @@ TEST_CASE_MAP("transparent_at_not", std::string, size_t, string_hash) {
     check(__LINE__, map, 0, 0, 3);
 }
 
+// There are four at() overloads -- const and not, transparent and not -- and the tests above only
+// ever reached the two non-const ones, because they all call at() on a map they still own by
+// value. Deleting the whole body of the const transparent one changed nothing anywhere in the
+// suite, which is the same as saying nothing called it.
+TEST_CASE_MAP("transparent_at_on_a_const_table", std::string, size_t, string_hash, string_eq) {
+    auto map = map_t();
+    map.try_emplace("asdf", 123);
+    check(__LINE__, map, 1, 0, 0);
+
+    auto const& cmap = map;
+    REQUIRE(cmap.at("asdf"sv) == 123);
+
+    // and it went through the transparent overload rather than building a std::string on the way in
+    check(__LINE__, map, 1, 1, 0);
+
+    REQUIRE_THROWS_AS(static_cast<void>(cmap.at("nope"sv)), std::out_of_range);
+    check(__LINE__, map, 1, 2, 0);
+}
+
+// Same story for try_emplace: the hint-taking overload is covered in try_emplace.cpp, but only for
+// a key of the map's own type. With a transparent hash a string_view key selects a fourth overload
+// again, and nothing was reaching it.
+TEST_CASE_MAP("transparent_try_emplace_with_a_hint", std::string, size_t, string_hash, string_eq) {
+    auto map = map_t();
+
+    auto it = map.try_emplace(map.cend(), "abc"sv, size_t{1});
+    REQUIRE(it->first == "abc");
+    REQUIRE(it->second == 1);
+    REQUIRE(map.size() == 1);
+
+    // a second go at the same key keeps the first value, which is what try_emplace promises and
+    // what tells this apart from insert_or_assign
+    auto again = map.try_emplace(map.cbegin(), "abc"sv, size_t{2});
+    REQUIRE(again->second == 1);
+    REQUIRE(map.size() == 1);
+}
+
 TEST_CASE_MAP("transparent_insert_or_assign", std::string, size_t, string_hash, string_eq) {
     auto map = map_t();
     auto r = map.insert_or_assign("asdf", 123U);

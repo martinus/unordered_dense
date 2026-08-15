@@ -63,3 +63,35 @@ TEST_CASE_MAP("max_load_factor_above_one_is_clamped", int, int) {
         REQUIRE(m.find(i) != m.end());
     }
 }
+
+// max_load_factor() does not only record the number, it also recomputes the size at which the table
+// considers itself full -- otherwise the new setting would not take effect until the next time the
+// bucket array was built. The tests above all set it on a table with no buckets yet, where that
+// recomputation has nothing to do, so deleting it changed nothing.
+//
+// Setting it on a table that is already populated is the case that tells: demanding a load factor
+// the table is already over has to make the very next insert grow it.
+TEST_CASE_MAP("lowering_max_load_factor_applies_to_an_existing_bucket_array", int, int) {
+    auto map = map_t();
+    map.reserve(100);
+    for (int i = 0; i < 50; ++i) {
+        map.try_emplace(i, i);
+    }
+    auto const before = map.bucket_count();
+    REQUIRE(map.load_factor() < 0.8F); // comfortably inside the default, so nothing is due to grow
+
+    map.max_load_factor(0.1F);
+    REQUIRE(map.max_load_factor() == 0.1F);
+
+    // One insert buys one doubling, not however many it would take to get under 0.1 -- growth is a
+    // single step per insert that finds the table full. So what is asserted is that the array grew
+    // at all, which it would not have done if the new setting had gone unnoticed.
+    map.try_emplace(1000, 1000);
+    REQUIRE(map.bucket_count() > before);
+
+    // and the table still holds everything it did
+    REQUIRE(map.size() == 51);
+    for (int i = 0; i < 50; ++i) {
+        REQUIRE(map.find(i) != map.end());
+    }
+}

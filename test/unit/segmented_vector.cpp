@@ -535,3 +535,26 @@ TEST_CASE("segmented_vector_shrink_to_fit_frees_exactly_the_empty_blocks") {
     REQUIRE(counts.size() == 0);
     REQUIRE(vec.capacity() == 12);
 }
+
+// The free swap beside the member one is what an unqualified `swap(a, b)` finds by ADL, which is
+// how generic code swaps two of these. Nothing was calling it: its body could be deleted, leaving a
+// swap that silently did nothing, with the whole suite still green. The member swap is exercised
+// through the table, so only this one-line forwarder was uncovered.
+TEST_CASE("segmented_vector_free_swap_forwards_to_the_member") {
+    auto a = ankerl::unordered_dense::segmented_vector<int>();
+    auto b = ankerl::unordered_dense::segmented_vector<int>();
+    for (int i = 0; i < 100; ++i) {
+        a.emplace_back(i);
+    }
+    b.emplace_back(-1);
+
+    using std::swap;
+    swap(a, b);
+
+    REQUIRE(a.size() == 1);
+    REQUIRE(a[0] == -1);
+    REQUIRE(b.size() == 100);
+    for (int i = 0; i < 100; ++i) {
+        REQUIRE(b[static_cast<size_t>(i)] == i);
+    }
+}
