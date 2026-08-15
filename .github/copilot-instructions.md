@@ -254,8 +254,8 @@ unordered_dense/
 - **C++17 compiler**: gcc or clang (C++20/23 for advanced features)
 
 ### Test Dependencies (auto-fetched by Meson)
-- **doctest** (2.4.11+): Unit testing framework
-- **fmt** (11.2.0+): Formatting library
+- **doctest** (2.5.3+): Unit testing framework
+- **fmt** (12.0.0+): Formatting library
 - **boost** (optional): For custom container tests
 
 ### Optional Dependencies

@@ -115,13 +115,32 @@ foreach arg : [
             '-Wold-style-cast',
             '-Wno-unused-function',
             # '-Weffc++', doesn't work with fmt
-            
+
+            # clang 22 only, and only meaningful together with the DOCTEST_COUNTER define
+            # below -- see the comment there for why one without the other does not work.
+            '-Wno-c2y-extensions',
+
             # '-march=native',
         ]
     if compiler.has_argument(arg)
         cpp_args += [arg]
     endif
 endforeach
+
+# doctest names the function behind every TEST_CASE after a counter, and from 2.5.3 that counter
+# is __LINE__ rather than __COUNTER__ on clang 22+, because C2y standardises __COUNTER__ and clang
+# started warning about it as an extension. __LINE__ is only unique within one file, so two test
+# cases that happen to sit on the same line collide as soon as a unity build puts their files in
+# one translation unit -- which unit/insert.cpp and unit/insert_or_assign.cpp did, both opening
+# with TEST_CASE_MAP on line 9. That is not a hypothetical: the unity CI leg builds this way, and
+# so does every lane of scripts/mutate/mutate.py, where the failure would look like every mutant
+# being rejected by the compiler.
+#
+# DOCTEST_COUNTER is doctest's own customisation point (it only picks a default `#if !defined`),
+# so this takes __COUNTER__ back and the -Wno-c2y-extensions above silences what doctest was
+# avoiding. Both are needed: the flag alone leaves doctest choosing __LINE__, and the define alone
+# reintroduces the warning as an error. Neither has any effect on compilers that do not warn.
+cpp_args += ['-DDOCTEST_COUNTER=__COUNTER__']
 
 if compiler.get_id() == 'msvc'
     add_global_arguments(
@@ -185,11 +204,10 @@ test_exe = executable(
 
         # see what's in the [provide] sections for the dependency names
         # As a system include, so that -Werror applies to this project's code and not to
-        # doctest's. Its DOCTEST_ANONYMOUS uses __COUNTER__, which C2y standardises and clang 22
-        # therefore warns about under -Wc2y-extensions, and the diagnostic is reported against
-        # whichever test file used INFO() or REQUIRE(). Warnings in code this project actually
-        # wrote are unaffected, including expressions handed to those macros: clang suppresses
-        # what a system macro expands to, not what is passed into it.
+        # doctest's. Note that this does not cover everything a header ships: a diagnostic about
+        # what a macro expands to is reported against the line that *used* the macro, so it
+        # counts as this project's code however the header was included. -Wc2y-extensions was
+        # exactly that case, and is handled where cpp_args is built instead.
         dependency('doctest', include_type: 'system'),
         dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
 
