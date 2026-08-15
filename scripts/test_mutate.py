@@ -182,6 +182,116 @@ class TestLineFilter(unittest.TestCase):
                 mutate.parse_lines(text)
 
 
+class TestTemplateDefaults(unittest.TestCase):
+    """`std::enable_if_t<..., bool> = true>` -- the SFINAE idiom. The parameter exists so the
+    substitution has somewhere to fail and nothing ever reads its value, so flipping it is a mutant
+    nothing can kill. There are 47 in this header and each costs a full rebuild to prove nothing."""
+
+    def flips(self, src):
+        """Whether the sweep would try to flip the true/false in `src`."""
+        word = "true" if "true" in src else "false"
+        return not mutate.is_template_default(src, src.index(word), word)
+
+    def test_the_sfinae_idiom_is_left_alone(self):
+        self.assertFalse(self.flips("std::enable_if_t<is_map_v<Q>, bool> = true>"))
+        self.assertFalse(self.flips("template <bool> = false>"))
+
+    def test_an_ordinary_assignment_is_still_mutated(self):
+        self.assertTrue(self.flips("bool key_found = false;"))
+        self.assertTrue(self.flips("return true;"))
+        self.assertTrue(self.flips("using iterator = iter_t<false>;"))
+
+    def test_a_comparison_is_not_read_as_a_default(self):
+        # The `=` that ends `==`, `<=` or `>=` is not an assignment, and the
+        # value being compared against is very much live.
+        self.assertTrue(self.flips("if (a == true>b) {"))
+        self.assertTrue(self.flips("if (a <= true>b) {"))
+
+    def test_the_bracket_that_closes_the_parameter_is_not_a_comparison(self):
+        # `bool> = true>` has a `>` before the `=`, one space away. Reading that
+        # as the tail of `>=` rejects every real instance of the idiom.
+        self.assertFalse(self.flips("typename T, bool> = true>"))
+
+
+class TestDeletionSites(unittest.TestCase):
+    """Whole statements removed -- the operator the hand-written bugs turned out to live in.
+    Nearly every one of them is "the code forgot to do this", which is not one token."""
+
+    def deletions(self, src):
+        return [s["description"] for s in mutate.deletion_sites(src, mutate.code_mask(src))]
+
+    def test_a_statement_is_a_deletion_site(self):
+        self.assertEqual(self.deletions("    m_values.pop_back();\n"),
+                         ["delete: m_values.pop_back();"])
+
+    def test_the_whole_statement_goes_including_its_comment(self):
+        src = "    foo();  // why\n"
+        site = mutate.deletion_sites(src, mutate.code_mask(src))[0]
+        self.assertEqual(src[:site["offset"]] + site["replacement"], "    ")
+
+    def test_a_closing_brace_is_not_a_statement(self):
+        self.assertEqual(self.deletions("};\n"), [])
+        self.assertEqual(self.deletions("    } while (x);\n"), [])
+
+    def test_a_declaration_of_the_scope_is_not_a_statement(self):
+        for src in ("using foo = bar;\n", "template <class T> struct x;\n",
+                    "static_assert(sizeof(T) == 8);\n", "public:\n"):
+            self.assertEqual(self.deletions(src), [], src)
+
+    def test_half_a_statement_is_not_deleted(self):
+        # A call spread over two lines would leave the other half behind, which
+        # is a syntax error rather than a question. Not parsing C++ means these
+        # are simply out of reach.
+        self.assertEqual(self.deletions("    foo(a,\n        b);\n"), [])
+
+    def test_a_line_of_a_comment_is_not_a_statement(self):
+        self.assertEqual(self.deletions("    // foo();\n"), [])
+
+    def test_the_line_filter_applies(self):
+        src = "a();\nb();\nc();\n"
+        self.assertEqual(self.deletions(src), ["delete: a();", "delete: b();", "delete: c();"])
+        got = mutate.deletion_sites(src, mutate.code_mask(src), line_filter={2})
+        self.assertEqual([s["description"] for s in got], ["delete: b();"])
+
+
+class TestDropUncompiled(unittest.TestCase):
+    """Mutants in a branch this build does not compile. `mum()` picks between __uint128_t, an MSVC
+    intrinsic and a long-hand multiply, so two thirds of it is never seen -- 35 mutants of pure
+    noise in one function, each costing a full rebuild to come back `survived`."""
+
+    class FakeLane:
+        def __init__(self, compiled):
+            self.compiled = compiled
+
+        def compiled_lines(self, timeout):
+            return self.compiled
+
+    def drop(self, compiled, mutants):
+        said = []
+        kept = mutate.drop_uncompiled(self.FakeLane(compiled), mutants,
+                                      types.SimpleNamespace(build_timeout=1), said.append)
+        return [m["name"] for m in kept], " ".join(said)
+
+    def test_a_mutant_on_a_line_that_is_not_compiled_is_dropped(self):
+        kept, said = self.drop({1, 2}, [dict(name="live", line=1), dict(name="dead", line=99)])
+        self.assertEqual(kept, ["live"])
+        self.assertIn("99", said)
+        self.assertIn("nothing could catch them", said)
+
+    def test_a_named_bug_has_no_line_and_is_always_kept(self):
+        # A bug file block can span the whole file; there is no one line to ask
+        # about, and refusing to run it would be the tool declining the request.
+        kept, _ = self.drop({1}, [dict(name="a bug")])
+        self.assertEqual(kept, ["a bug"])
+
+    def test_nothing_is_dropped_when_the_answer_is_unknown(self):
+        # No pre-filter TU, so nothing was asked. Filtering on that would drop
+        # every mutant there is.
+        kept, said = self.drop(None, [dict(name="x", line=1), dict(name="y", line=99)])
+        self.assertEqual(kept, ["x", "y"])
+        self.assertEqual(said, "")
+
+
 class TestSiteMutants(unittest.TestCase):
     def test_the_replacement_lands_where_the_site_says(self):
         src = "x = a + b;"

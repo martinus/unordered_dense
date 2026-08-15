@@ -85,10 +85,21 @@ The other mode sweeps for holes nobody thought of, mutating one token at a time.
 a change is best asked both questions at once:
 
 ```sh
-scripts/mutate/mutate.py --diff HEAD~1                   # only what this change touched
-scripts/mutate/mutate.py --lines 1278-1290 --dry-run     # how many, and how long
+scripts/mutate/mutate.py --diff                          # whatever is uncommitted
+scripts/mutate/mutate.py --diff HEAD~1                   # only what that change touched
+scripts/mutate/mutate.py --lines 1278-1290,1400 --dry-run
 scripts/mutate/mutate.py --bugs bugs.txt --lines 1278-1290 --reuse
 ```
+
+`--diff` is the everyday mode and measures from the merge base, so a branch that has not caught up
+with main does not sweep what main moved on without it. `--deletions` adds a second operator that
+removes whole statements — worth using, because nearly every bug in `bugs/invariants.txt` is a form
+of "the code forgot to do this", and none of those is one token.
+
+Mutants that could not have an effect are not generated: comments, string literals and preprocessor
+lines are not code, and `std::enable_if_t<..., bool> = true>` is the SFINAE idiom whose value is
+never read. A mutant in a branch this configuration does not compile is dropped once the lanes
+exist, and the run says which lines those were.
 
 A mutant costs one full rebuild of the test binary — all ~90 translation units include the header,
 so there is no incremental mutant build and ccache cannot help either. That is ~100 CPU-seconds of
