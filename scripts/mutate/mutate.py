@@ -629,6 +629,42 @@ def mutation_sites(src, mask, line_filter=None):
     return sites
 
 
+LINE_PART = re.compile(r"^(\d+)(?:-(\d+))?$")
+
+
+def parse_lines(text):
+    """Line numbers from `1290`, `1278-1290`, or any comma-separated mix.
+
+    The list form is what makes a second pass over the first pass's survivors one
+    run instead of one per line. Survivors land where they land - a handful of
+    lines scattered over three thousand - and the alternatives are both bad: a
+    range wide enough to cover them re-answers hundreds of mutants that were
+    answered already, and one run per line pays for lanes and a baseline every
+    time.
+
+    Matched whole rather than split on the first dash, because every loose
+    reading of a part is a silent one: `1-` would be line 1 and not "from 1
+    onwards", `20-10` would be no lines at all, and a run that sweeps less than
+    it was asked to reports a clean result for lines nobody looked at.
+    """
+    lines = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = LINE_PART.match(part)
+        if not m:
+            raise argparse.ArgumentTypeError(
+                "%r is not a line or a range - write it as 1290, 1278-1290, or "
+                "a comma-separated mix" % part)
+        first, last = int(m.group(1)), int(m.group(2) or m.group(1))
+        if last < first:
+            raise argparse.ArgumentTypeError(
+                "%r ends before it starts" % part)
+        lines.update(range(first, last + 1))
+    return lines
+
+
 def changed_lines(ref, path):
     """Line numbers of `path` touched since `ref`, for the fast daily mode."""
     out = subprocess.run(
@@ -1342,9 +1378,12 @@ def main():
                    help="only mutate lines changed since REF (the fast sweep). "
                         "Adds to --bugs or --replace rather than replacing "
                         "them, so one run can ask both questions")
-    p.add_argument("--lines", metavar="A-B",
-                   help="only mutate lines A..B, and the same: it adds a sweep "
-                        "to whatever bugs were named")
+    p.add_argument("--lines", metavar="LINES", type=parse_lines,
+                   help="only mutate these lines, and the same: it adds a sweep "
+                        "to whatever bugs were named. A line, a range, or a "
+                        "comma-separated mix of both - 1290, 1278-1290, "
+                        "'12,40-44,900'. The list form is how a second pass "
+                        "asks about exactly the survivors of a first one")
     p.add_argument("--file", metavar="PATH", default=HEADER,
                    help="repo-relative file to mutate (default the header)")
     p.add_argument("--lanes", type=int, default=os.cpu_count() or 4,
@@ -1467,8 +1506,7 @@ def main():
         if args.diff:
             line_filter = changed_lines(args.diff, args.file)
         elif args.lines:
-            a, _, b = args.lines.partition("-")
-            line_filter = set(range(int(a), int(b or a) + 1))
+            line_filter = args.lines
         if args.diff and not line_filter:
             # Nothing to sweep. Only an error when it was the whole request:
             # alongside a bug file it is a note, not a reason to run nothing.
