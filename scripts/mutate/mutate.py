@@ -46,12 +46,16 @@ the tool saying that part has been rewritten and the questions need re-deriving.
 that has not caught up, comparing against a ref's tip sweeps every line main
 moved on without you as though it were yours.
 
-`--deletions` adds a second operator that removes whole statements. It is worth
-knowing that nearly every bug in `bugs/invariants.txt` is some form of "the code
-forgot to do this" -- the shift down that never happens, the pop_back that is
-skipped -- and that none of them is one token, so the token sweep cannot reach
-any of them. It roughly doubles the count; the ones that cannot compile cost the
-pre-filter's half second rather than a rebuild.
+`--operators` picks what to change. `tokens` is the default and changes one
+token at a time; `deletions` removes whole statements. It is worth knowing that
+nearly every bug in `bugs/invariants.txt` is some form of "the code forgot to do
+this" -- the shift down that never happens, the pop_back that is skipped -- and
+that none of them is one token, so the token sweep cannot reach any of them.
+Asking for deletions alone costs *less* than the token sweep, because half of
+them are rejected by the pre-filter in half a second rather than a rebuild:
+
+    mutate.py --operators deletions            # the survey the sweep cannot do
+    mutate.py --operators tokens,deletions     # both, for a thorough pass
 
 Two kinds of mutant are never generated, because nothing could ever catch them.
 Comments, string literals and preprocessor lines are not code and are skipped by
@@ -162,10 +166,14 @@ ROOT_IGNORE = ("builddir", "build", "_build")
 # whichever lane they happen in. So the compiling is divided by the *machine*
 # and only the tail is divided by the lanes.
 #
-# Measured on a 32-thread machine, g++ at -O0: 99 CPU-seconds to rebuild all 90
-# TUs and 3.4 to run the suite. Mutants the pre-filter rejects cost half a second
-# instead of all of that, and the estimate does not model them - so --dry-run
-# reads high on a sweep, which is the direction to be wrong in.
+# Measured on a 32-thread machine, g++ at -O0. One mutant rebuild costs 67
+# CPU-seconds on an idle machine - 75 unit TUs at ~0.66s each is 85% of it, the
+# benchmarks another 9% - against 3.2 to run the suite and 1 to link. Under the
+# 32-way contention a real run creates it costs more like 110, which is what the
+# figure below is calibrated against rather than the isolated number. Mutants the
+# pre-filter rejects cost half a second instead of all of that, and the estimate
+# does not model them - so --dry-run reads high on a sweep, which is the
+# direction to be wrong in.
 CPU_SECONDS_PER_MUTANT = 100.0
 TAIL_SECONDS_PER_MUTANT = 4.0
 SECONDS_OF_SETUP = 20.0
@@ -695,6 +703,22 @@ def mutation_sites(src, mask, line_filter=None):
             i += 1
 
     return sites
+
+
+OPERATORS = ("tokens", "deletions")
+
+
+def parse_operators(text):
+    """Which mutations to make, as a set. Named rather than a pair of flags so
+    that asking for one is not spelled as turning the other off."""
+    wanted = {part.strip() for part in text.split(",") if part.strip()}
+    unknown = sorted(wanted - set(OPERATORS))
+    if unknown or not wanted:
+        raise argparse.ArgumentTypeError(
+            "%s - the operators are %s" % ("no operators given" if not wanted
+                                           else "unknown: " + ", ".join(unknown),
+                                           ", ".join(OPERATORS)))
+    return wanted
 
 
 LINE_PART = re.compile(r"^(\d+)(?:-(\d+))?$")
@@ -1618,14 +1642,18 @@ def main():
                         "alone and is reported as 'oom', uncapped the kernel "
                         "picks a victim and it is as likely to be another lane. "
                         "0 turns the cap off")
-    p.add_argument("--deletions", action="store_true",
-                   help="also delete whole statements, one at a time. This is "
-                        "where the hand-written bugs turn out to live -- nearly "
-                        "every one of them is some form of \"the code forgot to "
-                        "do this\", which is not one token and cannot be reached "
-                        "by changing one. Roughly doubles the mutant count, but "
-                        "the ones that cannot compile are rejected by the "
-                        "pre-filter in half a second rather than a full rebuild")
+    p.add_argument("--operators", type=parse_operators, default={"tokens"},
+                   metavar="LIST",
+                   help="which mutations to make, comma separated (default "
+                        "tokens). `tokens` changes one token at a time. "
+                        "`deletions` removes whole statements, which is where "
+                        "the hand-written bugs turn out to live -- nearly every "
+                        "one of them is some form of \"the code forgot to do "
+                        "this\", which is not one token and cannot be reached by "
+                        "changing one. Asking for deletions alone is worth it "
+                        "for a survey: half of them are rejected by the "
+                        "pre-filter in half a second, so it costs less than the "
+                        "token sweep, and the two answer different questions")
     p.add_argument("--limit", type=int, help="stop after N mutants")
     p.add_argument("--shuffle-seed", type=int, default=0,
                    help="sample mutants deterministically when using --limit")
@@ -1735,10 +1763,12 @@ def main():
                 return 0
         else:
             mask = code_mask(original)
-            sites = mutation_sites(original, mask, line_filter)
-            if args.deletions:
+            sites = []
+            if "tokens" in args.operators:
+                sites += mutation_sites(original, mask, line_filter)
+            if "deletions" in args.operators:
                 sites += deletion_sites(original, mask, line_filter)
-                sites.sort(key=lambda s: s["offset"])
+            sites.sort(key=lambda s: s["offset"])
             sweep = site_mutants(sites, original)
             if args.limit and len(sweep) > args.limit:
                 random.Random(args.shuffle_seed).shuffle(sweep)

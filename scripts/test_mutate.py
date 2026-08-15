@@ -213,6 +213,31 @@ class TestTemplateDefaults(unittest.TestCase):
         self.assertFalse(self.flips("typename T, bool> = true>"))
 
 
+class TestOperators(unittest.TestCase):
+    def test_the_default_is_tokens_only(self):
+        self.assertEqual(mutate.parse_operators("tokens"), {"tokens"})
+
+    def test_deletions_can_be_asked_for_alone(self):
+        # Which is the point of naming them rather than having a flag that adds
+        # to the other: a survey of deletions costs less than the token sweep,
+        # and mixing the two makes the report harder to read for no gain.
+        self.assertEqual(mutate.parse_operators("deletions"), {"deletions"})
+
+    def test_both(self):
+        self.assertEqual(mutate.parse_operators("tokens,deletions"), {"tokens", "deletions"})
+        self.assertEqual(mutate.parse_operators(" deletions , tokens "), {"tokens", "deletions"})
+
+    def test_an_unknown_operator_is_refused_by_name(self):
+        with self.assertRaises(Exception) as e:
+            mutate.parse_operators("tokens,statements")
+        self.assertIn("statements", str(e.exception))
+
+    def test_asking_for_nothing_is_refused(self):
+        # An empty set would sweep nothing and report a clean run.
+        with self.assertRaises(Exception):
+            mutate.parse_operators(",")
+
+
 class TestDeletionSites(unittest.TestCase):
     """Whole statements removed -- the operator the hand-written bugs turned out to live in.
     Nearly every one of them is "the code forgot to do this", which is not one token."""

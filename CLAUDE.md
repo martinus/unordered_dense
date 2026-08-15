@@ -92,9 +92,12 @@ scripts/mutate/mutate.py --bugs bugs.txt --lines 1278-1290 --reuse
 ```
 
 `--diff` is the everyday mode and measures from the merge base, so a branch that has not caught up
-with main does not sweep what main moved on without it. `--deletions` adds a second operator that
-removes whole statements — worth using, because nearly every bug in `bugs/invariants.txt` is a form
-of "the code forgot to do this", and none of those is one token.
+with main does not sweep what main moved on without it. `--operators` picks what to change: `tokens` (the
+default) changes one token at a time, `deletions` removes whole statements. Deletions are worth
+asking for, because nearly every bug in `bugs/invariants.txt` is a form of "the code forgot to do
+this" and none of those is one token — and `--operators deletions` costs *less* than the token
+sweep, since half of them are rejected by the `-fsyntax-only` pre-filter rather than costing a
+rebuild.
 
 Mutants that could not have an effect are not generated: comments, string literals and preprocessor
 lines are not code, and `std::enable_if_t<..., bool> = true>` is the SFINAE idiom whose value is
