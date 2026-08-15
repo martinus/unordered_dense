@@ -95,3 +95,56 @@ TEST_CASE_MAP("bucket_micro",
         REQUIRE(it->second.get() == i);
     }
 }
+
+// replace() refuses a container it could not index, and the boundary is the interesting part: the
+// guard is `>`, so a container of exactly max_size() has to be accepted. bucket_micro is what makes
+// that testable at all -- its value index is one byte, so max_size() is 256 rather than 2^32.
+namespace {
+
+using micro_map_t = ankerl::unordered_dense::map<size_t,
+                                                 size_t,
+                                                 ankerl::unordered_dense::hash<size_t>,
+                                                 std::equal_to<size_t>,
+                                                 std::allocator<std::pair<size_t, size_t>>,
+                                                 bucket_micro>;
+
+[[nodiscard]] auto container_of(size_t count) -> micro_map_t::value_container_type {
+    auto container = micro_map_t::value_container_type{};
+    for (size_t i = 0; i < count; ++i) {
+        container.emplace_back(i, i);
+    }
+    return container;
+}
+
+} // namespace
+
+TEST_CASE("replace_takes_exactly_max_size_and_refuses_one_more") {
+    auto map = micro_map_t();
+    map.replace(container_of(micro_map_t::max_size()));
+    REQUIRE(map.size() == micro_map_t::max_size());
+    for (size_t i = 0; i < micro_map_t::max_size(); ++i) {
+        REQUIRE(map.contains(i));
+    }
+
+    auto too_many = micro_map_t();
+    REQUIRE_THROWS_AS(too_many.replace(container_of(micro_map_t::max_size() + 1)), std::out_of_range);
+}
+
+// The duplicate-dropping loop closes the hole by moving the last element into it -- except when the
+// duplicate *is* the last element, which is the branch nothing was reaching. A container whose tail
+// repeats its head lands there on the final iteration.
+TEST_CASE("replace_drops_a_duplicate_that_sits_last") {
+    auto map = micro_map_t();
+    auto container = micro_map_t::value_container_type{};
+    container.emplace_back(1, 10);
+    container.emplace_back(2, 20);
+    container.emplace_back(1, 30); // the duplicate, and the last element
+
+    map.replace(std::move(container));
+    REQUIRE(map.size() == 2U);
+    REQUIRE(map.contains(1));
+    REQUIRE(map.contains(2));
+    REQUIRE(map.at(2) == 20U);
+    // The first of the duplicates is the one that stays; the later one is dropped, not merged.
+    REQUIRE(map.at(1) == 10U);
+}
