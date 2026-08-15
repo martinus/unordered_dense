@@ -155,7 +155,7 @@ endif
 
 fmt_method = 'auto'
 if get_option('cpp_args').contains('-m32')
-    # use builtin so we can compile it for 32bit. 
+    # use builtin so we can compile it for 32bit.
     # Can't use it as a default or sanitizer doesn't work...
     fmt_method = 'builtin'
 endif
@@ -177,6 +177,23 @@ endif
 #else
 #    add_global_arguments('-DANKERL_UNORDERED_DENSE_HAS_ABSL=0', language: 'cpp')
 #endif
+
+# One definition of the fmt dependency, because the fuzz targets need the same one and the two
+# used to be able to drift apart. It has to come after the add_global_arguments calls above:
+# resolving it declares the fmt subproject's target, and meson refuses a global argument once any
+# target exists.
+#
+# warning_level and werror are this project's, and a subproject inherits them unless it is told
+# otherwise -- so `werror=true` was being applied to fmt's own sources, and any warning a new fmt
+# release happens to emit becomes this project's build failure. fmt 11.2.0 was clean under MSVC's
+# /W4 /WX and 12.0.0 is not (format.h:2509, and only when targeting 32 bit), which is a fact about
+# fmt rather than about anything here. Same reasoning as the system include for doctest above:
+# -Werror is for code this project wrote. The commented-out absl line above already carried this.
+fmt_dependency = dependency(
+    'fmt',
+    method: fmt_method,
+    fallback: ['fmt', 'fmt_dep'],
+    default_options: ['warning_level=0', 'werror=false'])
 
 cpp_args += [
     #'-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION',
@@ -209,7 +226,7 @@ test_exe = executable(
         # counts as this project's code however the header was included. -Wc2y-extensions was
         # exactly that case, and is handled where cpp_args is built instead.
         dependency('doctest', include_type: 'system'),
-        dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
+        fmt_dependency,
 
         # disable these two if you don't want them
         #dependency('boost'),
@@ -288,7 +305,7 @@ if compiler.get_id() == 'clang'
             dependencies: [
                 dependency('threads'),
                 dependency('doctest', include_type: 'system'), # see above
-                dependency('fmt', method: fmt_method, fallback: ['fmt', 'fmt_dep']),
+                fmt_dependency,
             ],
             build_by_default: false)
     endforeach
