@@ -234,6 +234,48 @@ TEST_CASE("a_precomputed_hash_works_across_key_types") {
     REQUIRE(map.equal_range(std::string_view(key), from_view).first->second == 1);
 }
 
+// equal_range and count come in four overloads apiece -- exact key or transparent, const table or
+// not -- and each is a separate copy of the same two lines. The tests above reach all of them, but
+// with a single element (where `it + 1` and `end()` are the same iterator) or only for a key that
+// is present (where `? 0 : 1` gives the right answer whichever way round it is). This asks each of
+// them the two questions that tell those apart.
+TEST_CASE("precomputed_equal_range_and_count_in_every_overload") {
+    auto map = ankerl::unordered_dense::map<std::string, int, transparent_hash, std::equal_to<>>();
+    for (int i = 0; i < 100; ++i) {
+        map[long_key(std::to_string(i))] = i;
+    }
+    auto const& cmap = std::as_const(map);
+
+    // The key at begin(), so that "one past the hit" is as far from "the end" as it gets.
+    auto const key = map.begin()->first;
+    auto const view = std::string_view(key);
+    auto const absent = long_key("nowhere");
+    auto const absent_view = std::string_view(absent);
+
+    auto const hash = map.hash_for(key);
+    auto const absent_hash = map.hash_for(absent);
+
+    REQUIRE(map.equal_range(key, hash) == std::pair(map.begin(), std::next(map.begin())));
+    REQUIRE(cmap.equal_range(key, hash) == std::pair(cmap.begin(), std::next(cmap.begin())));
+    REQUIRE(map.equal_range(view, hash) == std::pair(map.begin(), std::next(map.begin())));
+    REQUIRE(cmap.equal_range(view, hash) == std::pair(cmap.begin(), std::next(cmap.begin())));
+
+    REQUIRE(map.equal_range(absent, absent_hash) == std::pair(map.end(), map.end()));
+    REQUIRE(cmap.equal_range(absent, absent_hash) == std::pair(cmap.end(), cmap.end()));
+    REQUIRE(map.equal_range(absent_view, absent_hash) == std::pair(map.end(), map.end()));
+    REQUIRE(cmap.equal_range(absent_view, absent_hash) == std::pair(cmap.end(), cmap.end()));
+
+    REQUIRE(map.count(key, hash) == 1);
+    REQUIRE(map.count(view, hash) == 1);
+    REQUIRE(map.count(absent, absent_hash) == 0);
+    REQUIRE(map.count(absent_view, absent_hash) == 0);
+
+    REQUIRE(map.contains(key, hash));
+    REQUIRE(map.contains(view, hash));
+    REQUIRE(!map.contains(absent, absent_hash));
+    REQUIRE(!map.contains(absent_view, absent_hash));
+}
+
 // Both finalizations mixed_hash() can apply, exercised through the public API. If hash_for() and
 // the lookup ever disagreed about which one to use, these would find nothing.
 TEST_CASE("finalization_matches_for_every_kind_of_hasher") {

@@ -306,3 +306,95 @@ TEST_CASE("swapping_an_unallocated_table_with_a_full_one") {
     full[1] = 2;
     REQUIRE(full.find(1)->second == 2);
 }
+
+// The three routes to "empty, and looks like it was always empty". Answering every query is the
+// easy half, and the one already covered above; the hard half is the shift, which nothing exposes
+// and which decides how big an array the next insert asks for. A table that kept the shift of the
+// table it used to be allocates that whole array again for one element.
+TEST_CASE_MAP("an_emptied_table_looks_default_constructed", int, int) {
+    SUBCASE("moved from") {
+        auto source = map_t();
+        for (int i = 0; i < 500; ++i) {
+            source[i] = i;
+        }
+        auto const sink = std::move(source);
+        REQUIRE(sink.size() == 500);
+
+        // Using a moved-from object is exactly what is being tested: the standard requires it to be
+        // valid, and this table promises more than that -- it promises to be indistinguishable from
+        // a fresh one.
+        // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+        test::require_empty_table_answers(source);
+    }
+
+    SUBCASE("a copy of a table that was cleared") {
+        auto source = map_t();
+        for (int i = 0; i < 500; ++i) {
+            source[i] = i;
+        }
+        source.clear();
+        auto copy = source;
+        test::require_empty_table_answers(copy);
+    }
+
+    SUBCASE("assigned from a table that was cleared") {
+        auto source = map_t();
+        for (int i = 0; i < 500; ++i) {
+            source[i] = i;
+        }
+        source.clear();
+
+        auto target = map_t();
+        for (int i = 0; i < 20; ++i) {
+            target[i] = i;
+        }
+        target = source;
+        test::require_empty_table_answers(target);
+    }
+}
+
+// max_load_factor is carried by hand in the copy constructor and by hand again in the move, and it
+// is the one piece of configuration a table has. A copy that quietly reverts to the default grows
+// at a different point than the table it was copied from.
+TEST_CASE_MAP("a_copy_keeps_the_max_load_factor", int, int) {
+    auto source = map_t();
+    source.max_load_factor(0.5F);
+    for (int i = 0; i < 100; ++i) {
+        source[i] = i;
+    }
+    REQUIRE(source.max_load_factor() == 0.5F);
+
+    auto const copy = source;
+    REQUIRE(copy.max_load_factor() == 0.5F);
+    // Same configuration, same number of buckets for the same elements.
+    REQUIRE(copy.bucket_count() == source.bucket_count());
+
+    auto assigned = map_t();
+    assigned[1] = 1;
+    assigned = source;
+    REQUIRE(assigned.max_load_factor() == 0.5F);
+    REQUIRE(assigned.bucket_count() == source.bucket_count());
+
+    auto const source_buckets = source.bucket_count();
+    auto const moved = std::move(source);
+    REQUIRE(moved.max_load_factor() == 0.5F);
+    REQUIRE(moved.bucket_count() == source_buckets);
+}
+
+// reserve() is a promise about the buckets as much as about the values: after it, inserting that
+// many elements must not rehash. Only the bucket count can see the difference -- the answers are
+// right either way, the table just does the growing it was asked to do in advance.
+TEST_CASE_MAP("reserve_sizes_the_buckets_not_just_the_values", int, int) {
+    auto map = map_t();
+    map[1] = 1; // so the table already has buckets, which is the case that regressed
+
+    map.reserve(1000);
+    auto const after_reserve = map.bucket_count();
+    REQUIRE(after_reserve >= 1000);
+
+    for (int i = 0; i < 1000; ++i) {
+        map[i] = i;
+    }
+    REQUIRE(map.bucket_count() == after_reserve);
+    REQUIRE(map.size() == 1000);
+}

@@ -388,3 +388,145 @@ TEST_CASE("segmented_vector_iterator_is_random_access") {
     }
     REQUIRE(std::binary_search(vec.begin(), vec.end(), 727));
 }
+
+// The rest of the random access iterator interface. The map only ever uses ++, *, - and the
+// comparisons against end(), so everything else here is reached by user code and by algorithms and
+// by nothing in these tests -- post-increment could have called operator--, -= could have added,
+// and all four relational operators could have been each other.
+//
+// The block size is four elements, so every one of these steps crosses a block boundary, which is
+// where an index-based iterator is least like a pointer.
+TEST_CASE("segmented_vector_iterator_operations") {
+    using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
+    auto vec = small_block_vec_t();
+    for (int i = 0; i < 20; ++i) {
+        vec.emplace_back(i);
+    }
+
+    auto const first = vec.begin();
+    auto const fifth = vec.begin() + 5;
+
+    // Strict, so `<` becoming `<=` is a different answer for the equal case, and becoming `>` is a
+    // different answer for the unequal one.
+    REQUIRE(first < fifth);
+    REQUIRE(!(fifth < first));
+    REQUIRE(!(first < first));
+
+    REQUIRE(fifth > first);
+    REQUIRE(!(first > fifth));
+    REQUIRE(!(first > first));
+
+    REQUIRE(first <= fifth);
+    REQUIRE(first <= first);
+    REQUIRE(!(fifth <= first));
+
+    REQUIRE(fifth >= first);
+    REQUIRE(first >= first);
+    REQUIRE(!(first >= fifth));
+
+    // Post-increment returns the old position and moves forward; post-decrement the other way.
+    auto it = vec.begin() + 3;
+    auto const before_inc = it++;
+    REQUIRE(before_inc == vec.begin() + 3);
+    REQUIRE(it == vec.begin() + 4);
+    REQUIRE(*before_inc == 3);
+    REQUIRE(*it == 4);
+
+    auto const before_dec = it--;
+    REQUIRE(before_dec == vec.begin() + 4);
+    REQUIRE(it == vec.begin() + 3);
+    REQUIRE(*it == 3);
+
+    // += and -= move by the amount given, in the direction the name says.
+    auto moving = vec.begin();
+    moving += 11;
+    REQUIRE(*moving == 11);
+    moving -= 7;
+    REQUIRE(*moving == 4);
+    REQUIRE(moving == vec.begin() + 4);
+    REQUIRE(moving - vec.begin() == 4);
+
+    // const_iterator compares against iterator, which is the pair the map's own end() checks use.
+    auto const cit = vec.cbegin() + 4;
+    REQUIRE(cit == moving);
+    REQUIRE(cit <= moving);
+    REQUIRE(cit >= moving);
+    REQUIRE(vec.cbegin() < cit);
+}
+
+TEST_CASE("segmented_vector_back_is_the_last_element") {
+    using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
+    auto vec = small_block_vec_t();
+
+    // Every size from one element to several blocks, so back() is asked both in the middle of a
+    // block and at its very first slot -- the two cases an off-by-one index lands differently in.
+    for (int i = 0; i < 20; ++i) {
+        vec.emplace_back(i * 1000 + 7);
+        REQUIRE(vec.back() == i * 1000 + 7);
+        REQUIRE(vec.back() == vec[vec.size() - 1]);
+        REQUIRE(std::as_const(vec).back() == i * 1000 + 7);
+    }
+
+    while (!vec.empty()) {
+        auto const expected = static_cast<int>(vec.size() - 1) * 1000 + 7;
+        REQUIRE(vec.back() == expected);
+        vec.pop_back();
+    }
+}
+
+// resize() growing a vector that is not empty. Every existing case grows from zero, where "how many
+// more do we need" is the same number whichever way it is worked out.
+TEST_CASE("segmented_vector_resize_grows_a_non_empty_vector") {
+    using small_block_vec_t = ankerl::unordered_dense::segmented_vector<int, std::allocator<int>, sizeof(int) * 4>;
+    auto vec = small_block_vec_t();
+    vec.resize(5, 1);
+    REQUIRE(vec.size() == 5);
+
+    vec.resize(23, 2);
+    REQUIRE(vec.size() == 23);
+    for (size_t i = 0; i < 5; ++i) {
+        REQUIRE(vec[i] == 1);
+    }
+    for (size_t i = 5; i < 23; ++i) {
+        REQUIRE(vec[i] == 2);
+    }
+
+    // ... and the value-initializing overload, from a non-empty vector as well.
+    vec.resize(30);
+    REQUIRE(vec.size() == 30);
+    for (size_t i = 23; i < 30; ++i) {
+        REQUIRE(vec[i] == 0);
+    }
+    REQUIRE(vec[22] == 2);
+}
+
+// shrink_to_fit has to actually hand blocks back -- a loop that never runs leaves the memory held,
+// and one that runs once too often frees a block that still has elements in it. The allocator is
+// what can see the first; the sanitizer legs see the second.
+TEST_CASE("segmented_vector_shrink_to_fit_frees_exactly_the_empty_blocks") {
+    auto counts = counts_for_allocator{};
+    auto vec = ankerl::unordered_dense::segmented_vector<int, counting_allocator<int>, sizeof(int) * 4>(&counts);
+
+    for (int i = 0; i < 100; ++i) {
+        vec.emplace_back(i);
+    }
+    auto const blocks_when_full = counts.size();
+    REQUIRE(blocks_when_full > 20);
+
+    vec.resize(9);
+    counts.reset();
+    vec.shrink_to_fit();
+    REQUIRE(counts.size() != 0); // something was given back
+
+    // 9 elements at 4 per block is 3 blocks, and all 9 are still readable.
+    REQUIRE(vec.size() == 9);
+    for (int i = 0; i < 9; ++i) {
+        REQUIRE(vec[static_cast<size_t>(i)] == i);
+    }
+    REQUIRE(vec.back() == 8);
+
+    // Shrinking again has nothing left to give back.
+    counts.reset();
+    vec.shrink_to_fit();
+    REQUIRE(counts.size() == 0);
+}

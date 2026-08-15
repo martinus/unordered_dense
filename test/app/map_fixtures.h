@@ -63,6 +63,20 @@ void require_empty_table_answers(Map& map) {
     map.try_emplace(7, typename Map::mapped_type(7));
     REQUIRE(map.size() == 1);
     REQUIRE(map.find(7) != map.end());
+
+    // And the array that insert just allocated is the size a fresh table's first insert allocates,
+    // not the size this table had grown to before it was emptied. The shift that decides it is the
+    // one piece of the state with no getter, so this is the only place it shows: a table that kept
+    // it answers everything above identically and then allocates the whole of its old array for one
+    // element. Every route into this state -- moved from, assignment that threw, a copy of an
+    // emptied table -- has been wrong here at some point.
+    auto fresh = Map();
+    fresh.try_emplace(7, typename Map::mapped_type(7));
+    REQUIRE(map.bucket_count() == fresh.bucket_count());
+
+    // The load factor is part of "looks default constructed" too, and it is carried separately
+    // from everything else.
+    REQUIRE(map.max_load_factor() == fresh.max_load_factor());
 }
 
 } // namespace test
