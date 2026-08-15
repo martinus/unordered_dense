@@ -1,0 +1,83 @@
+# What erase() has to put back before it returns, and what notices when it does not.
+# Erasing touches three things that have to stay in step: the bucket array shifts
+# down so no element is left stranded past its home slot, m_values closes the hole
+# it just made by moving the last element into it, and that moved element's bucket
+# has to be repointed at its new index. Any one of the three can be dropped and the
+# map still answers most questions correctly, which is what makes them worth asking
+# about.
+#
+# Run alongside a sweep over the same functions - the named bugs the tests were
+# written for, and the token-level ones nobody thought to ask:
+#
+#     scripts/mutate/mutate.py --bugs scripts/mutate/bugs/erase-path.txt \
+#                              --lines 1278-1290 --reuse
+#
+# A snapshot against the code as it was: when a block stops applying, that part has
+# been rewritten and these questions want re-deriving rather than repairing.
+
+# no shift down at all: the erased bucket is cleared and its run left stranded
+# Every element that probed past this slot is now unreachable - find() stops at the
+# empty bucket - while still being counted by size() and still walked by iteration.
+<<<
+    void erase_and_shift_down(value_idx_type bucket_idx) {
+        // cache mask in a local so the bucket stores can't alias it
+        auto const mask = m_bucket_mask;
+
+        // shift down until either empty or an element with correct spot is found
+        auto next_bucket_idx = static_cast<value_idx_type>((bucket_idx + 1U) & mask);
+        while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2) {
+            auto& next_bucket = at(m_buckets, next_bucket_idx);
+            at(m_buckets, bucket_idx) = {dist_dec(next_bucket.m_dist_and_fingerprint), next_bucket.m_value_idx};
+            bucket_idx = std::exchange(next_bucket_idx, static_cast<value_idx_type>((next_bucket_idx + 1U) & mask));
+        }
+        at(m_buckets, bucket_idx) = {};
+    }
+===
+    void erase_and_shift_down(value_idx_type bucket_idx) {
+        at(m_buckets, bucket_idx) = {};
+    }
+>>>
+
+# the shift down moves each element back a slot but keeps its old distance
+# The robin hood invariant is now a lie in one direction: every shifted element
+# claims to be one probe further from home than it is, so a later insert with a
+# genuinely larger distance no longer displaces it.
+<<<
+            at(m_buckets, bucket_idx) = {dist_dec(next_bucket.m_dist_and_fingerprint), next_bucket.m_value_idx};
+===
+            at(m_buckets, bucket_idx) = {next_bucket.m_dist_and_fingerprint, next_bucket.m_value_idx};
+>>>
+
+# the moved element's bucket is left pointing at the slot it came from
+# m_values closed its hole, but one bucket still names the index the erased value
+# used to live at, which now holds a different element entirely.
+<<<
+            at(m_buckets, bucket_idx).m_value_idx = value_idx_to_remove;
+===
+>>>
+
+# the scan for the moved element's bucket looks for an index one past the end
+# No bucket holds it, so the scan walks the whole array; what it does when it comes
+# back round to where it started is the question.
+<<<
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
+===
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size());
+>>>
+
+# the displaced element is shifted up without its distance being raised
+# The other half of the invariant, on the insert side: an element pushed one slot
+# further from home still claims the distance it had before it was pushed.
+<<<
+            bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
+===
+>>>
+
+# extract() hands back the last element rather than the erased one
+# Only visible when they differ, which is every erase but the one that happens to
+# take the element m_values already ends with.
+<<<
+        auto&& erased_value = std::move(m_values[value_idx_to_remove]);
+===
+        auto&& erased_value = std::move(m_values.back());
+>>>
