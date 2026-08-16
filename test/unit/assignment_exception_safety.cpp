@@ -145,8 +145,8 @@ struct throws_on_move {
 };
 
 using throwing_move_alloc = test::pmr_like_allocator<std::pair<int, throws_on_move>>;
-using throwing_move_map =
-    ankerl::unordered_dense::map<int, throws_on_move, ankerl::unordered_dense::hash<int>, std::equal_to<int>, throwing_move_alloc>;
+using throwing_move_map = ankerl::unordered_dense::
+    map<int, throws_on_move, ankerl::unordered_dense::hash<int>, std::equal_to<int>, throwing_move_alloc>;
 
 // The whole point of the allocator choice, asserted rather than assumed: with a nothrow move
 // assignment the recovery below is not instantiated and the test would pass vacuously.
