@@ -284,18 +284,41 @@ jobs:
           # in a deliberate order -- see allocate_buckets_from_shift -- so "has that field been
           # written yet" is a real question to be able to ask.
           #
-          # debugoptimized is what makes it cheap, and is the whole reason this needs no sharding:
-          # the same suite takes 20 seconds under valgrind optimised against just over two minutes
-          # at -O0. The timeout multiplier is because meson's default is 30 seconds per test and
-          # this is one test containing all of them.
-          - name: Linux Valgrind (gcc, C++17, 64bit)
-            id: linux-valgrind
+          # debugoptimized is what makes it affordable at all: the suite takes 20 seconds under
+          # valgrind optimised against just over two minutes at -O0. The timeout multiplier is
+          # because meson's default is 30 seconds per test and this project has one test()
+          # containing all 599 cases -- which is also why `meson test --slice` cannot split it and
+          # the split below is a doctest filter instead.
+          #
+          # Split in two because unsharded this was the slowest job in the whole matrix, 145s
+          # against 99s for the next one, so it set the wall clock for all of CI on its own.
+          # Replaying the fuzz corpora is 73% of the run and fuzz_api alone is half of that, so
+          # one shard is that single case and the other is everything else: 9s and 12s rather
+          # than 20s. It is the best two-way split available, because a test case cannot be
+          # divided and fuzz_api is the floor for any number of shards.
+          #
+          # Written as one name and its complement so it stays correct without being maintained:
+          # a fuzz target added later lands in the second shard rather than in neither.
+          - name: Linux Valgrind (gcc, fuzz_api)
+            id: linux-valgrind-fuzz-api
             os: ubuntu-latest
             cxx: g++
             apt: libboost-dev valgrind
             setup_args: --buildtype=debugoptimized
             test_args: >-
               --timeout-multiplier 20
+              --test-args=-tc=fuzz_api
+              --wrap='valgrind --error-exitcode=1 --leak-check=full
+              --errors-for-leak-kinds=definite -q'
+          - name: Linux Valgrind (gcc, everything else)
+            id: linux-valgrind-rest
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev valgrind
+            setup_args: --buildtype=debugoptimized
+            test_args: >-
+              --timeout-multiplier 20
+              --test-args=-tce=fuzz_api
               --wrap='valgrind --error-exitcode=1 --leak-check=full
               --errors-for-leak-kinds=definite -q'
     steps:
