@@ -184,3 +184,48 @@ TEST_CASE("a_count_above_the_bucket_limit_does_not_collapse_the_array") {
         }
     }
 }
+
+// reserve() clamps what it is asked for to max_size() before handing it to the value container.
+// Without that, a caller asking for more than the table could ever index reaches
+// std::vector::reserve() with the raw number and gets a std::length_error out of a call that
+// should simply have given them everything there is.
+//
+// bucket_micro is what makes this askable. On a default map max_size() is 2^32, so the clamped
+// call still reserves 2^32 pairs -- tens of gigabytes -- and the test would be indistinguishable
+// from the bug. Here the clamp lands on 256.
+TEST_CASE("reserve_clamps_to_max_size_instead_of_failing") {
+    auto map = micro_map_t();
+    map.reserve((std::numeric_limits<size_t>::max)());
+
+    REQUIRE(map.bucket_count() <= micro_map_t::max_bucket_count());
+    REQUIRE(map.values().capacity() <= micro_map_t::max_size());
+
+    // ... and it is a working table afterwards, not merely one that did not throw
+    map[1] = 10;
+    REQUIRE(map.at(1) == 10U);
+    REQUIRE(map.size() == 1U);
+}
+
+// The same clamp in rehash() is *not* tested, and deliberately: calc_shifts_for_size() saturates
+// at max_bucket_count(), so it answers the same for count and for min(count, max_size()) and the
+// clamp cannot change anything. It is the reserve() one that reaches a container.
+
+// rehash() hands the values container back whatever it is holding beyond its size. Nothing was
+// checking that, because every other rehash test asks about buckets -- and the value container is
+// the larger of the two allocations.
+TEST_CASE("rehash_shrinks_the_value_container") {
+    auto map = ankerl::unordered_dense::map<size_t, size_t>();
+    map.reserve(1000);
+    for (size_t i = 0; i < 10; ++i) {
+        map[i] = i;
+    }
+    REQUIRE(map.values().capacity() >= 1000);
+
+    map.rehash(0);
+
+    REQUIRE(map.values().capacity() < 1000);
+    REQUIRE(map.size() == 10U);
+    for (size_t i = 0; i < 10; ++i) {
+        REQUIRE(map.at(i) == i);
+    }
+}

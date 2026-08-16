@@ -8,6 +8,7 @@
 #include <array>         // for array
 #include <cstddef>       // for size_t
 #include <functional>    // for equal_to
+#include <optional>      // for optional
 #include <string>        // for basic_string, string, operator""s
 #include <string_view>   // for basic_string_view, operator""sv
 #include <type_traits>   // for add_const_t
@@ -213,6 +214,31 @@ TEST_CASE_MAP("transparent_erase", std::string, size_t, string_hash, std::equal_
     check(__LINE__, map, 5, 2, 1);
     REQUIRE(1 == map.erase("hello"s));
     check(__LINE__, map, 5, 2, 2);
+}
+
+// extract(key) has a transparent overload of its own -- the one that hands the whole value back in
+// an optional rather than counting what it removed -- and nothing was calling it. Its body could be
+// deleted in full with the suite still green, which is only possible for a template nothing
+// instantiates: erase() above is a different function, and the non-transparent extract() is reached
+// only with a key of the map's own type.
+TEST_CASE_MAP("transparent_extract", std::string, size_t, string_hash, string_eq) {
+    auto map = map_t();
+    map.try_emplace("hello", 1);
+    map.try_emplace("world", 2);
+
+    auto got = map.extract("hello"sv);
+    REQUIRE(got.has_value());
+    REQUIRE(got->first == "hello");
+    REQUIRE(got->second == 1U);
+    REQUIRE(map.size() == 1U);
+    REQUIRE(!map.contains("hello"sv));
+
+    // a miss gives an empty optional and leaves the table alone, which is what tells this apart
+    // from a version that always returns whatever it last saw
+    auto missing = map.extract("nope"sv);
+    REQUIRE(!missing.has_value());
+    REQUIRE(map.size() == 1U);
+    REQUIRE(map.at("world"sv) == 2U);
 }
 
 TEST_CASE_MAP("transparent_equal_range", std::string, size_t, string_hash, std::equal_to<>) {
