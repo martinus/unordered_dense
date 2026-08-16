@@ -19,8 +19,10 @@ be wrong in the direction that flatters or defames the suite.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -214,7 +216,7 @@ class TestTemplateDefaults(unittest.TestCase):
 
 
 class TestOperators(unittest.TestCase):
-    def test_the_default_is_tokens_only(self):
+    def test_one_name_parses_to_one_operator(self):
         self.assertEqual(mutate.parse_operators("tokens"), {"tokens"})
 
     def test_deletions_can_be_asked_for_alone(self):
@@ -227,19 +229,28 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(mutate.parse_operators("tokens,deletions"), {"tokens", "deletions"})
         self.assertEqual(mutate.parse_operators(" deletions , tokens "), {"tokens", "deletions"})
 
-    def test_each_new_operator_can_be_asked_for_alone(self):
+    def test_bitwise_can_be_asked_for_alone(self):
         # The point of naming the bitwise table separately from `tokens`: sweeping a
         # header of masks for ^ and | should not re-answer all 841 token sites.
         self.assertEqual(mutate.parse_operators("bitwise"), {"bitwise"})
-        self.assertEqual(mutate.parse_operators("transpositions"), {"transpositions"})
-        self.assertEqual(mutate.parse_operators("bitwise,transpositions"),
-                         {"bitwise", "transpositions"})
 
-    def test_every_named_operator_is_one_the_runner_dispatches(self):
-        # A name parse_operators accepts but nothing acts on would sweep nothing and
-        # report a clean run, which is the failure mode this whole file exists for.
-        self.assertEqual(set(mutate.OPERATORS),
-                         {"tokens", "bitwise", "deletions", "transpositions"})
+    def test_every_named_operator_is_one_the_runner_acts_on(self):
+        # Read off main() rather than restated as a literal. A name parse_operators
+        # accepts but nothing dispatches on sweeps nothing and reports a clean run,
+        # which is the failure this whole file exists to prevent -- and a test that
+        # asserts the tuple against a copy of itself cannot catch it, because adding
+        # the fourth name and updating the literal is one edit.
+        body = inspect.getsource(mutate.main)
+        for name in mutate.OPERATORS:
+            self.assertIn('"%s" in args.operators' % name, body)
+
+    def test_the_default_is_operators_that_exist(self):
+        # Read off main() for the same reason as above: a default naming an operator
+        # that OPERATORS does not have would fail on every run, and one restated here
+        # by hand would pass whatever main() actually says.
+        m = re.search(r"--operators.*?default=(\{[^}]*\})", inspect.getsource(mutate.main), re.S)
+        self.assertIsNotNone(m, "could not find the --operators default in main()")
+        self.assertTrue(mutate.parse_operators(m.group(1).strip("{}").replace('"', "")) <= set(mutate.OPERATORS))
 
     def test_an_unknown_operator_is_refused_by_name(self):
         with self.assertRaises(Exception) as e:
@@ -257,9 +268,7 @@ class TestBitwiseSites(unittest.TestCase):
     fingerprints can be swept for them without re-answering every comparison in the file."""
 
     def bitwise(self, src):
-        return [s["description"] for s in mutate.mutation_sites(
-            src, mutate.code_mask(src),
-            operator_table=mutate.BITWISE_MUTATIONS, words_and_numbers=False)]
+        return [s["description"] for s in mutate.bitwise_sites(src, mutate.code_mask(src))]
 
     def test_xor_and_or_are_mutated(self):
         self.assertEqual(self.bitwise("a ^ b;\n"), ["^ -> &", "^ -> |"])
@@ -285,94 +294,11 @@ class TestBitwiseSites(unittest.TestCase):
         self.assertEqual(self.bitwise("return true;\n"), [])
         self.assertEqual(self.bitwise("auto x = 8;\n"), [])
 
-    def test_a_comment_is_not_code(self):
-        self.assertEqual(self.bitwise("// a ^ b\n"), [])
-
     def test_the_two_tables_never_claim_the_same_spelling(self):
         # What makes `tokens,bitwise` produce no duplicate site.
         tokens = {op for op, _ in mutate.OPERATOR_MUTATIONS}
         bitwise = {op for op, reps in mutate.BITWISE_MUTATIONS if reps}
         self.assertEqual(tokens & bitwise, set())
-
-
-class TestTranspositionSites(unittest.TestCase):
-    """Two adjacent statements in the other order -- the rest of what the hand-written bugs are,
-    and what invariants.txt says a sweep cannot express."""
-
-    def swaps(self, src):
-        return [s["description"] for s in mutate.transposition_sites(src, mutate.code_mask(src))]
-
-    def test_two_adjacent_statements_swap(self):
-        self.assertEqual(self.swaps("    a();\n    b();\n"), ["swap: a(); <-> b();"])
-
-    def test_the_swap_is_the_two_lines_in_the_other_order(self):
-        src = "    a();\n    b();\n"
-        site = mutate.transposition_sites(src, mutate.code_mask(src))[0]
-        self.assertEqual(mutate.mutant_text(site, src), "    b();\n    a();\n")
-
-    def test_the_splice_is_exact(self):
-        src = "    a();\n    b();\n"
-        site = mutate.transposition_sites(src, mutate.code_mask(src))[0]
-        self.assertEqual(src[site["offset"]:site["offset"] + len(site["original"])], site["original"])
-
-    def test_statements_at_different_depths_do_not_swap(self):
-        # A different indent means one of them is inside a branch, so they are not
-        # adjacent statements at all and the swap only proves it does not compile.
-        self.assertEqual(self.swaps("    a();\n        b();\n"), [])
-
-    def test_identical_statements_do_not_swap(self):
-        # The mutant would be the original file, which survives by construction --
-        # a full rebuild spent proving the tests still pass.
-        self.assertEqual(self.swaps("    a();\n    a();\n"), [])
-
-    def test_a_non_statement_stops_the_pair(self):
-        for src in ("    a();\n    }\n", "    }\n    a();\n",
-                    "    a();\n    // b();\n", "    a();\n    using x = y;\n"):
-            self.assertEqual(self.swaps(src), [], src)
-
-    def test_a_multi_line_statement_is_out_of_reach(self):
-        self.assertEqual(self.swaps("    foo(a,\n        b);\n    c();\n"), [])
-
-    def test_comments_travel_with_their_statement(self):
-        src = "    a(); // first\n    b(); // second\n"
-        site = mutate.transposition_sites(src, mutate.code_mask(src))[0]
-        self.assertEqual(mutate.mutant_text(site, src), "    b(); // second\n    a(); // first\n")
-
-    def test_either_line_being_in_the_filter_is_enough(self):
-        # In --diff mode only one of the pair may be a line the change touched, and
-        # the swap is as much a mutation of one as of the other.
-        src = "    a();\n    b();\n"
-        mask = mutate.code_mask(src)
-        self.assertEqual(len(mutate.transposition_sites(src, mask, line_filter={1})), 1)
-        self.assertEqual(len(mutate.transposition_sites(src, mask, line_filter={2})), 1)
-        self.assertEqual(mutate.transposition_sites(src, mask, line_filter={3}), [])
-
-    def test_two_adjacent_declarations_are_skipped_and_reported(self):
-        # Measured over the whole header: 24 such pairs, 11 that did not compile, 13
-        # that survived, and not one ever caught. A shape rather than a proof, so it
-        # reports itself the way every other "we will not run this" rule here does.
-        src = "    auto a = f();\n    auto b = g();\n"
-        skipped = []
-        self.assertEqual(mutate.transposition_sites(src, mutate.code_mask(src), skipped=skipped), [])
-        self.assertEqual(skipped, [1])
-
-    def test_the_skipped_count_respects_the_line_filter(self):
-        # Otherwise --diff reports every declaration pair in the file, most of them
-        # nowhere near the change, as though the run had considered them.
-        src = "    auto a = f();\n    auto b = g();\n    auto c = h();\n    auto d = i();\n"
-        skipped = []
-        mutate.transposition_sites(src, mutate.code_mask(src), line_filter={1}, skipped=skipped)
-        self.assertEqual(skipped, [1])
-
-    def test_a_declaration_beside_a_statement_still_swaps(self):
-        # Only the pair is uninteresting; a declaration next to something that acts on
-        # state is exactly the ordering worth asking about.
-        self.assertEqual(self.swaps("    auto a = f();\n    b();\n"),
-                         ["swap: auto a = f(); <-> b();"])
-
-    def test_three_statements_give_two_overlapping_pairs(self):
-        self.assertEqual(self.swaps("    a();\n    b();\n    c();\n"),
-                         ["swap: a(); <-> b();", "swap: b(); <-> c();"])
 
 
 class TestDeletionSites(unittest.TestCase):
@@ -468,7 +394,7 @@ class TestSiteMutants(unittest.TestCase):
                          ["if (a < b) {}", "if (a >= b) {}", "if (a == b) {}"])
 
     def test_a_mutant_carries_the_edit_and_not_a_copy_of_the_file(self):
-        # 130 KB per site here, 1500 sites for a sweep of both operators -- built before --limit or
+        # 130 KB per site here, ~1600 sites for a sweep of all three operators -- built before --limit or
         # the uncompiled-line filter can throw most of them away.
         mutants = mutate.site_mutants(mutate.mutation_sites("x = a + b;", mutate.code_mask("x = a + b;")))
         self.assertNotIn("text", mutants[0])

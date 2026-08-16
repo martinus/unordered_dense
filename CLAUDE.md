@@ -94,40 +94,43 @@ scripts/mutate/mutate.py --bugs bugs.txt --lines 1278-1290 --reuse
 `--diff` is the everyday mode and measures from the merge base, so a branch that has not caught up
 with main does not sweep what main moved on without it.
 
-`--operators` picks what to change, and each can be asked for on its own. Measured over the whole
-header, they are not equally worth your time:
+`--operators` picks what to change, and each can be asked for on its own. The default is
+`tokens,bitwise` — the two that change one token, which together are what a `--diff` run should
+ask. `deletions` is left out of it because it doubles the cost.
+
+Swept over the whole header at 4.9.1, they are not equally worth your time. Re-measure before
+relying on these: they describe one header at one commit, and the kill rates move every time a
+test is added.
 
 | operator | mutants | time | killed | by a test | survivors to triage |
 |---|---|---|---|---|---|
-| `tokens` (default) | 841 | ~47 min | | | |
+| `tokens` | 841 | ~47 min | not re-measured | | |
 | `bitwise` | 76 | 4 min | **99%** | 87% | **1** |
 | `deletions` | 665 | 14 min | 94% | 30% | 37 |
-| `transpositions` | 181 | 7 min | 45% | 23% | 100 |
 
 `bitwise` mutates `^` and `|`, which the token table leaves alone (`&` is three operators sharing a
 spelling — bitwise and, address-of, and the reference declarator — and only a parser can tell them
-apart). It is the best value of the four in a header made of masks and fingerprints: four minutes,
-and the single survivor is `dist_inc | (hash & fingerprint_mask)` turned into `^`, which is the same
-function because the two operands share no bits — as `static_assert(fingerprint_mask < dist_inc)`
-right above it guarantees.
+apart). Few sites and a header made of masks and fingerprints is what makes it cheap and sharp. The
+mechanism worth remembering rather than the number: a *surviving* bitwise mutant usually means the
+two operands are provably disjoint, which is how the one survivor reads — `dist_inc | (hash &
+fingerprint_mask)` turned into `^` is the same function, exactly as the
+`static_assert(fingerprint_mask < dist_inc)` right above it guarantees.
 
 `deletions` removes whole statements. Nearly every bug in `bugs/invariants.txt` is a form of "the
 code forgot to do this", and none of those is one token. It costs *less* than the token sweep, since
 half of them are rejected by the `-fsyntax-only` pre-filter rather than costing a rebuild.
 
-`transpositions` puts two adjacent statements in the other order — the rest of what those
-hand-written bugs are, and something `invariants.txt` says outright a sweep cannot express. **Prefer
-it with `--diff` rather than over the whole file**: it kills less than half of what it generates, so
-a full sweep leaves a hundred survivors to read, most of which are two statements that never touched
-the same state. Over a single change it is a handful of mutants and the reading is free. Note also
-that it only reaches *adjacent* statements at the *same* indent, so the ordering bug in
-`invariants.txt` that moves `pop_back` out of its enclosing `if` is still out of reach.
+Reordering is the operator that is *not* here — it was written, measured and removed, so there is
+nothing in the tree to go and look at. Swapping two adjacent statements killed 45% of what it
+generated and left a hundred survivors, essentially all of them two statements that never touched
+the same state — member-copy chains, the run of `HASH_STATICCAST`
+macros, blocks of declarations. Triaging every one of them produced no test worth writing. Reaching
+the orderings in `bugs/invariants.txt` needs to move a statement *out of its enclosing block*, which
+adjacent-swapping cannot do, so that operator is worth building only alongside something that can.
 
 Mutants that could not have an effect are not generated: comments, string literals and preprocessor
 lines are not code, and `std::enable_if_t<..., bool> = true>` is the SFINAE idiom whose value is
-never read. Two adjacent `auto` declarations are not transposed either, which is the one rule here
-that is a measurement rather than a proof — 24 such pairs over the header, none of them ever caught
-— so it says how many it skipped rather than dropping them quietly. A mutant in a branch this configuration does not compile is dropped once the lanes
+never read. A mutant in a branch this configuration does not compile is dropped once the lanes
 exist, and the run says which lines those were.
 
 A mutant costs one full rebuild of the test binary — all ~90 translation units include the header,
