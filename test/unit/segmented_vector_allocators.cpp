@@ -150,3 +150,55 @@ TEST_CASE("segmented_vector_move_construction_takes_the_source_allocator") {
     REQUIRE(moved.get_allocator().m_id == 4);
     require_vector_holds(moved, 10);
 }
+
+// Self assignment has a second door. The copy above goes through operator=(segmented_vector const&);
+// this is the move, which guards itself separately and has to, because the body it guards would
+// clear the vector and then move its own blocks into itself. Nothing was reaching that guard: the
+// table's own operator= checks `&other != this` first, so a self-move through a segmented_map never
+// gets here, and only a segmented_vector used directly can.
+TEST_CASE("segmented_vector_self_move_assignment_keeps_the_contents") {
+    auto vec = filled<sticky_vec>(3, 10);
+
+    // Through a pointer so that this is a self-move the compiler cannot see and warn about, which
+    // is also the only way it happens in real code -- two references that turn out to be one.
+    auto* alias = &vec;
+    vec = std::move(*alias);
+
+    require_vector_holds(vec, 10);
+    REQUIRE(vec.get_allocator().m_id == 3);
+}
+
+// Taking over another vector's blocks means giving back the ones already held. Nothing checked
+// that: every move-assignment test above asks what the target ended up holding, and a target that
+// took the source's blocks without freeing its own answers all of those correctly while leaking
+// every block it had.
+//
+// Counting rather than asserting a number of blocks, so this does not have to know how many
+// elements fit in one.
+namespace {
+
+template <typename Vec>
+auto filled_counting(int allocator_id, test::alloc_counts* counts, int count) -> Vec {
+    auto vec = Vec(typename Vec::allocator_type(allocator_id, counts));
+    for (int i = 0; i < count; ++i) {
+        vec.emplace_back(i);
+    }
+    return vec;
+}
+
+} // namespace
+
+TEST_CASE("segmented_vector_move_assign_frees_the_blocks_it_replaces") {
+    auto counts = test::alloc_counts{};
+    {
+        // The same id, so the two compare equal and the blocks can be taken over -- which is the
+        // branch that has something to give back first.
+        auto source = filled_counting<sticky_vec>(7, &counts, 10);
+        auto target = filled_counting<sticky_vec>(7, &counts, 12);
+        REQUIRE(counts.allocations > 0);
+
+        target = std::move(source);
+        require_vector_holds(target, 10);
+    }
+    REQUIRE(counts.allocations == counts.deallocations);
+}
