@@ -272,6 +272,32 @@ jobs:
               -fstack-protector-strong -fstack-clash-protection -fcf-protection=full
               -Wformat -Wformat-security -Werror=format-security"
               -Dcpp_link_args="-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack"
+
+          # The one class of bug the sanitizer legs cannot see: a read of memory that was never
+          # written. ASan reports out-of-bounds and use-after-free, UBSan reports the language-level
+          # UB, and neither says a word about an uninitialised read -- that is MemorySanitizer,
+          # which needs the whole standard library rebuilt instrumented to be usable at all, which
+          # is why nobody runs it. Valgrind gets it for free.
+          #
+          # Worth having for this container in particular: the buckets are memset rather than
+          # constructed, and m_shifts, m_bucket_mask and m_max_bucket_capacity are written by hand
+          # in a deliberate order -- see allocate_buckets_from_shift -- so "has that field been
+          # written yet" is a real question to be able to ask.
+          #
+          # debugoptimized is what makes it cheap, and is the whole reason this needs no sharding:
+          # the same suite takes 20 seconds under valgrind optimised against just over two minutes
+          # at -O0. The timeout multiplier is because meson's default is 30 seconds per test and
+          # this is one test containing all of them.
+          - name: Linux Valgrind (gcc, C++17, 64bit)
+            id: linux-valgrind
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev valgrind
+            setup_args: --buildtype=debugoptimized
+            test_args: >-
+              --timeout-multiplier 20
+              --wrap='valgrind --error-exitcode=1 --leak-check=full
+              --errors-for-leak-kinds=definite -q'
     steps:
       - uses: actions/checkout@v7
       - uses: hendrikmuhs/ccache-action@v1.2
@@ -302,7 +328,7 @@ jobs:
       - run: meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++${{ matrix.cpp_std || '17' }} ${{ matrix.setup_args }}
         env:
           CXX: ${{ matrix.ccache_variant || 'ccache' }} ${{ matrix.cxx }}
-      - run: meson test -C builddir --print-errorlogs
+      - run: meson test -C builddir --print-errorlogs ${{ matrix.test_args }}
         env:
           ASAN_OPTIONS: ${{ matrix.asan_options }}
           UBSAN_OPTIONS: ${{ matrix.ubsan_options }}
