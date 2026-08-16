@@ -144,13 +144,13 @@ struct throws_on_move {
     }
 };
 
-using unequal_alloc = test::pmr_like_allocator<std::pair<int, throws_on_move>>;
-using unequal_alloc_map =
-    ankerl::unordered_dense::map<int, throws_on_move, ankerl::unordered_dense::hash<int>, std::equal_to<int>, unequal_alloc>;
+using throwing_move_alloc = test::pmr_like_allocator<std::pair<int, throws_on_move>>;
+using throwing_move_map =
+    ankerl::unordered_dense::map<int, throws_on_move, ankerl::unordered_dense::hash<int>, std::equal_to<int>, throwing_move_alloc>;
 
 // The whole point of the allocator choice, asserted rather than assumed: with a nothrow move
 // assignment the recovery below is not instantiated and the test would pass vacuously.
-static_assert(!std::is_nothrow_move_assignable_v<unequal_alloc_map>,
+static_assert(!std::is_nothrow_move_assignable_v<throwing_move_map>,
               "the recovery this file tests only exists when move assignment can throw");
 
 struct move_countdown_guard {
@@ -166,8 +166,8 @@ struct move_countdown_guard {
     }
 };
 
-auto filled_with(int count, int allocator_id) -> unequal_alloc_map {
-    auto map = unequal_alloc_map(0, unequal_alloc(allocator_id));
+auto filled_with(int count, int allocator_id) -> throwing_move_map {
+    auto map = throwing_move_map(0, throwing_move_alloc(allocator_id));
     for (int i = 0; i < count; ++i) {
         map.try_emplace(i, throws_on_move(i));
     }
