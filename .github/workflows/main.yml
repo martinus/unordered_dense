@@ -284,41 +284,25 @@ jobs:
           # in a deliberate order -- see allocate_buckets_from_shift -- so "has that field been
           # written yet" is a real question to be able to ask.
           #
-          # debugoptimized is what makes it affordable at all: the suite takes 20 seconds under
-          # valgrind optimised against just over two minutes at -O0. The timeout multiplier is
-          # because meson's default is 30 seconds per test and this project has one test()
-          # containing all 599 cases -- which is also why `meson test --slice` cannot split it and
-          # the split below is a doctest filter instead.
+          # debugoptimized is what makes it affordable: the suite takes 20 seconds under valgrind
+          # optimised against just over two minutes at -O0. The timeout multiplier is because
+          # meson's default is 30 seconds per test and this project has one test() containing all
+          # 599 cases.
           #
-          # Split in two because unsharded this was the slowest job in the whole matrix, 145s
-          # against 99s for the next one, so it set the wall clock for all of CI on its own.
-          # Replaying the fuzz corpora is 73% of the run and fuzz_api alone is half of that, so
-          # one shard is that single case and the other is everything else: 9s and 12s rather
-          # than 20s. It is the best two-way split available, because a test case cannot be
-          # divided and fuzz_api is the floor for any number of shards.
-          #
-          # Written as one name and its complement so it stays correct without being maintained:
-          # a fuzz target added later lands in the second shard rather than in neither.
-          - name: Linux Valgrind (gcc, fuzz_api)
-            id: linux-valgrind-fuzz-api
+          # Deliberately not sharded, and worth writing down because the job's total time invites
+          # it. `meson test` builds before it tests, so the single step below is compile plus run,
+          # and on the cold ccache any new leg starts with, the compile is the large majority of
+          # it. Measured by actually splitting it: the shard running one test case took 127s and
+          # the shard running the other 598 took 128s. Sharding a job whose cost is the build buys
+          # nothing and pays for a second cold cache.
+          - name: Linux Valgrind (gcc, C++17, 64bit)
+            id: linux-valgrind
             os: ubuntu-latest
             cxx: g++
             apt: libboost-dev valgrind
             setup_args: --buildtype=debugoptimized
             test_args: >-
               --timeout-multiplier 20
-              --test-args=-tc=fuzz_api
-              --wrap='valgrind --error-exitcode=1 --leak-check=full
-              --errors-for-leak-kinds=definite -q'
-          - name: Linux Valgrind (gcc, everything else)
-            id: linux-valgrind-rest
-            os: ubuntu-latest
-            cxx: g++
-            apt: libboost-dev valgrind
-            setup_args: --buildtype=debugoptimized
-            test_args: >-
-              --timeout-multiplier 20
-              --test-args=-tce=fuzz_api
               --wrap='valgrind --error-exitcode=1 --leak-check=full
               --errors-for-leak-kinds=definite -q'
     steps:
