@@ -244,13 +244,13 @@ class TestOperators(unittest.TestCase):
         for name in mutate.OPERATORS:
             self.assertIn('"%s" in args.operators' % name, body)
 
-    def test_the_default_is_operators_that_exist(self):
-        # Read off main() for the same reason as above: a default naming an operator
-        # that OPERATORS does not have would fail on every run, and one restated here
-        # by hand would pass whatever main() actually says.
-        m = re.search(r"--operators.*?default=(\{[^}]*\})", inspect.getsource(mutate.main), re.S)
+    def test_the_default_is_every_operator_and_is_derived(self):
+        # Derived from OPERATORS rather than spelled out, so an operator added later
+        # is in the default by construction. A restated list is the same trap as the
+        # test above: it can only ever agree with whatever was typed beside it.
+        m = re.search(r"--operators.*?default=([^,]+),", inspect.getsource(mutate.main), re.S)
         self.assertIsNotNone(m, "could not find the --operators default in main()")
-        self.assertTrue(mutate.parse_operators(m.group(1).strip("{}").replace('"', "")) <= set(mutate.OPERATORS))
+        self.assertEqual(m.group(1).strip(), "set(OPERATORS)")
 
     def test_an_unknown_operator_is_refused_by_name(self):
         with self.assertRaises(Exception) as e:
