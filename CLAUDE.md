@@ -81,8 +81,8 @@ scripts/mutate/mutate.py --bugs scripts/mutate/bugs/erase-path.txt
 scripts/mutate/mutate.py --reverse HEAD                  # undo a fix, keep today's tests
 ```
 
-The other mode sweeps for holes nobody thought of, mutating one token at a time. Both compose, and
-a change is best asked both questions at once:
+The other mode sweeps for holes nobody thought of, changing the header one place at a time. The two
+modes compose, and a change is best asked both questions at once:
 
 ```sh
 scripts/mutate/mutate.py --diff                          # whatever is uncommitted
@@ -94,9 +94,11 @@ scripts/mutate/mutate.py --bugs bugs.txt --lines 1278-1290 --reuse
 `--diff` is the everyday mode and measures from the merge base, so a branch that has not caught up
 with main does not sweep what main moved on without it.
 
-`--operators` picks what to change, and each can be asked for on its own. The default is
-`tokens,bitwise` — the two that change one token, which together are what a `--diff` run should
-ask. `deletions` is left out of it because it doubles the cost.
+`--operators` picks what to change. The default is all of them, so a plain run asks every question
+this knows how to ask — which is what you want from `--diff`, where the cost is proportional to the
+lines you touched. Over the whole header that default is ~1600 mutants and something like an hour
+and a half, so a full sweep is usually worth naming one operator instead. That is the reason they
+are named at all.
 
 Swept over the whole header at 4.9.1, they are not equally worth your time. Re-measure before
 relying on these: they describe one header at one commit, and the kill rates move every time a

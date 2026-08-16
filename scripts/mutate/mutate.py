@@ -34,7 +34,7 @@ Bug files worth keeping live in `scripts/mutate/bugs/`. They are snapshots
 against the code as it was, so one that stops applying is not a failure - it is
 the tool saying that part has been rewritten and the questions need re-deriving.
 
-**Or sweep for holes you have not thought of**, mutating one token at a time:
+**Or sweep for holes you have not thought of**, changing one place at a time:
 
     mutate.py --diff                           # whatever is uncommitted
     mutate.py --diff HEAD~1                    # only what that change touched
@@ -46,11 +46,12 @@ the tool saying that part has been rewritten and the questions need re-deriving.
 that has not caught up, comparing against a ref's tip sweeps every line main
 moved on without you as though it were yours.
 
-`--operators` picks what to change, and each can be asked for on its own.
-`tokens` changes one token at a time and `bitwise` does the same for `^` and `|`
--- the two spellings the token table leaves alone -- which is what the default
-runs. `deletions` removes whole statements, and is not in the default because it
-doubles the cost of a sweep.
+`--operators` picks what to change. The default is all of them, so a plain run
+asks every question this knows how to ask; naming one sweeps for that alone,
+which is the cheaper thing to do and the reason they are named at all. `tokens`
+changes one token at a time, `bitwise` does the same for `^` and `|` -- the two
+spellings the token table leaves alone -- and `deletions` removes whole
+statements.
 
 It is worth knowing that nearly every bug in `bugs/invariants.txt` is some form
 of "the code forgot to do this" -- the shift down that never happens, the
@@ -1748,10 +1749,13 @@ def main():
                         "alone and is reported as 'oom', uncapped the kernel "
                         "picks a victim and it is as likely to be another lane. "
                         "0 turns the cap off")
-    p.add_argument("--operators", type=parse_operators, default={"tokens", "bitwise"},
+    p.add_argument("--operators", type=parse_operators, default=set(OPERATORS),
                    metavar="LIST",
-                   help="which mutations to make, comma separated (default "
-                        "tokens). `tokens` changes one token at a time. "
+                   help="which mutations to make, comma separated. The "
+                        "default is all of them; name one to sweep for that "
+                        "alone, which is the cheaper thing to do and the reason "
+                        "they are named at all. `tokens` changes one token at a "
+                        "time. "
                         "`bitwise` does the same for ^ and | , which the token "
                         "table leaves alone; kept separate so a header full of "
                         "masks and fingerprints can be swept for them without "
