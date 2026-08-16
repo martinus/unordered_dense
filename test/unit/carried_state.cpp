@@ -179,14 +179,14 @@ TEST_CASE_MAP("move_assignment_takes_the_growth_threshold", int, int, test::tagg
 // -- which is why it needs an allocator whose instances differ.
 namespace {
 
-using unequal_alloc = test::pmr_like_allocator<std::pair<int, int>>;
-using unequal_alloc_map = ankerl::unordered_dense::map<int, int, test::tagged_hash, test::tagged_equal, unequal_alloc>;
+using carried_state_alloc = test::pmr_like_allocator<std::pair<int, int>>;
+using carried_state_map = ankerl::unordered_dense::map<int, int, test::tagged_hash, test::tagged_equal, carried_state_alloc>;
 
 } // namespace
 
 TEST_CASE("move_assignment_between_unequal_allocators_takes_the_carried_state") {
-    auto a = unequal_alloc_map(0, test::tagged_hash{tag_a}, test::tagged_equal{tag_a}, unequal_alloc(1));
-    auto b = unequal_alloc_map(0, test::tagged_hash{tag_b}, test::tagged_equal{tag_b}, unequal_alloc(2));
+    auto a = carried_state_map(0, test::tagged_hash{tag_a}, test::tagged_equal{tag_a}, carried_state_alloc(1));
+    auto b = carried_state_map(0, test::tagged_hash{tag_b}, test::tagged_equal{tag_b}, carried_state_alloc(2));
     a.max_load_factor(load_a);
     b.max_load_factor(load_b);
     for (int i = 0; i < 20; ++i) {
