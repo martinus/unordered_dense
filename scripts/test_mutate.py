@@ -42,21 +42,21 @@ SCRIPT = Path(__file__).resolve().parent / "mutate" / "mutate.py"
 CORE = SCRIPT.parent / "mutate_core.py"
 
 
-def load_script(path=None):
+def load_script(path):
     """A fresh module object, so a test that patches a global cannot leak into the next one."""
-    path = path or CORE
     spec = importlib.util.spec_from_file_location("mutate_under_test_%s" % path.stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-mutate = load_script()
-# The adapter, which is the whole of what this repository answers for itself. Loaded through the
-# core's own import machinery -- `mutate.py` puts its directory on sys.path before importing
-# `mutate_core`, so this is the one place the two halves are seen together the way a real run sees
-# them.
+# The adapter is loaded first and the core is taken from *it*, rather than loaded again from the
+# same path. Two module objects off one file share no class identity -- `isinstance(PROJECT,
+# separately_loaded.Project)` is False -- so the second copy would make every test here pass by
+# duck typing while the first `isinstance` check added to the core failed for a reason that has
+# nothing to do with the code. This is also how a real run sees the two halves.
 adapter = load_script(SCRIPT)
+mutate = adapter.mutate_core
 PROJECT = adapter.UnorderedDense()
 
 
@@ -567,15 +567,14 @@ class TestProjectSeam(unittest.TestCase):
     The half of the vendored core that only shows up when there are two projects: a default that
     is wrong for the other one is invisible here until nanobench runs it."""
 
-    def args(self, file):
-        return types.SimpleNamespace(file=file)
+    def lane(self):
+        return types.SimpleNamespace(dir="/lane", build="/lane/builddir")
 
     def test_the_default_target_gets_the_projects_prefilter_tu(self):
-        self.assertEqual(PROJECT.default_syntax_tu(self.args(PROJECT.target)),
-                         PROJECT.syntax_tu)
+        self.assertEqual(PROJECT.default_syntax_tu(PROJECT.target), PROJECT.syntax_tu)
 
     def test_mutating_a_tu_checks_that_tu(self):
-        self.assertEqual(PROJECT.default_syntax_tu(self.args("test/unit/counter.cpp")),
+        self.assertEqual(PROJECT.default_syntax_tu("test/unit/counter.cpp"),
                          "test/unit/counter.cpp")
 
     def test_mutating_anything_else_turns_the_prefilter_off(self):
@@ -583,31 +582,131 @@ class TestProjectSeam(unittest.TestCase):
         # something the mutation cannot reach, passes every time, and filters
         # nothing -- which is worse than not having one, because it looks like a
         # working filter.
-        self.assertIsNone(PROJECT.default_syntax_tu(self.args("meson.build")))
+        self.assertIsNone(PROJECT.default_syntax_tu("meson.build"))
 
     def test_the_suite_runs_in_the_lane_by_default(self):
-        lane = types.SimpleNamespace(dir="/lane", build="/lane/builddir")
-        self.assertEqual(PROJECT.test_cwd(lane), "/lane")
+        self.assertEqual(PROJECT.test_cwd(self.lane()), "/lane")
 
-    def test_a_project_can_move_the_suites_working_directory(self):
-        # nanobench must: running `nb` writes example artifacts into the current
-        # directory, so it runs from the build directory the way CI runs it.
+    def test_the_suite_runs_where_the_project_says(self):
+        # Through Lane.run_tests rather than by calling the hook and asserting
+        # what it returned, which would only be a test that python dispatches
+        # overrides. nanobench needs this one: `nb` writes its example artifacts
+        # into the working directory.
         class FromTheBuildDir(adapter.UnorderedDense):
             def test_cwd(self, lane):
                 return lane.build
 
-        lane = types.SimpleNamespace(dir="/lane", build="/lane/builddir")
-        self.assertEqual(FromTheBuildDir().test_cwd(lane), "/lane/builddir")
+        lane = mutate.Lane.__new__(mutate.Lane)
+        lane.project, lane.dir, lane.build = FromTheBuildDir(), "/lane", "/lane/builddir"
+        lane.memory, lane.env, lane.test_args = 0, {}, []
+        seen = []
+        lane._run = lambda cmd, timeout, cwd=None, env=None, memory=None: seen.append(cwd)
+        lane.run_tests(timeout=1)
+        self.assertEqual(seen, ["/lane/builddir"])
 
     def test_this_projects_environment_points_the_corpus_at_the_lane(self):
         # The one input the suite reads from outside the binary. A lane silently
         # replaying nothing would show up as a wall of survivors in exactly the
         # code the fuzzers cover best.
-        self.assertEqual(PROJECT.lane_env("/lane")["FUZZ_CORPUS_BASE_DIR"],
+        self.assertEqual(PROJECT.lane_env(self.lane())["FUZZ_CORPUS_BASE_DIR"],
                          os.path.join("/lane", "data", "fuzz"))
 
     def test_a_project_that_says_nothing_gets_an_empty_environment(self):
-        self.assertEqual(mutate.Project().lane_env("/lane"), {})
+        self.assertEqual(mutate.Project().lane_env(self.lane()), {})
+
+
+class TestSanitizerOptions(unittest.TestCase):
+    """UBSAN_OPTIONS, which is the core's to own.
+
+    `halt_on_error=1` is what makes UBSan fail a run rather than print and exit 0. Without it a
+    mutant only UBSan can see is reported as a survivor -- the one direction this tool must never
+    be wrong in -- so a project adding a suppressions file must not be able to drop it."""
+
+    def env_for(self, project):
+        lane = mutate.Lane.__new__(mutate.Lane)
+        lane.dir, lane.build = "/lane", "/lane/builddir"
+        env = dict(os.environ)
+        env.pop("UBSAN_OPTIONS", None)
+        for key, value in project.lane_env(lane).items():
+            env.setdefault(key, value)
+        ubsan = ["print_stacktrace=1", "halt_on_error=1"]
+        suppressions = project.ubsan_suppressions(lane)
+        if suppressions:
+            ubsan.append("suppressions=" + suppressions)
+        env.setdefault("UBSAN_OPTIONS", ":".join(ubsan))
+        return env
+
+    def test_the_core_options_are_there_without_a_project_saying_anything(self):
+        got = self.env_for(mutate.Project())["UBSAN_OPTIONS"]
+        self.assertIn("halt_on_error=1", got)
+        self.assertIn("print_stacktrace=1", got)
+
+    def test_a_projects_suppressions_are_added_rather_than_substituted(self):
+        class WithSuppressions(mutate.Project):
+            def ubsan_suppressions(self, lane):
+                return os.path.join(lane.dir, "ubsan.supp")
+
+        got = self.env_for(WithSuppressions())["UBSAN_OPTIONS"]
+        self.assertIn("suppressions=/lane/ubsan.supp", got)
+        # The half that matters: a project that had been handed the whole
+        # variable would have dropped these two without anything noticing.
+        self.assertIn("halt_on_error=1", got)
+        self.assertIn("print_stacktrace=1", got)
+
+    def test_a_project_cannot_reach_the_variable_through_lane_env(self):
+        # Not a style rule: lane_env is applied with setdefault *before* the
+        # core's own value, so a project setting it here would win silently.
+        # Both adapters go through ubsan_suppressions instead.
+        class Wrong(mutate.Project):
+            def lane_env(self, lane):
+                return {"UBSAN_OPTIONS": "print_stacktrace=1"}
+
+        self.assertNotIn("halt_on_error", self.env_for(Wrong())["UBSAN_OPTIONS"])
+
+
+class TestProjectProblems(unittest.TestCase):
+    """The adapter checked against the core, which every run does before copying a lane.
+
+    Each of these is silent at runtime: a `syntax_tu` naming a file that has moved makes the
+    pre-filter fail for every mutant, and the whole run comes back `compiler` -- a verdict in the
+    flattering direction."""
+
+    def test_this_repositorys_adapter_is_well_formed(self):
+        self.assertEqual(PROJECT.problems(), [])
+
+    def test_a_bare_project_is_missing_everything_it_needs(self):
+        problems = " ".join(mutate.Project().problems(repo=str(SCRIPT.parent)))
+        # `slug` is not in here: it only names temporary directories, so the base
+        # class can and does supply one.
+        for attribute in ("repo", "target", "test_binary", "backend"):
+            self.assertIn(attribute, problems)
+
+    def test_a_project_with_no_backend_is_refused_by_name(self):
+        class NoBackend(adapter.UnorderedDense):
+            backend = None
+
+        self.assertTrue(any("backend" in p for p in NoBackend().problems()))
+
+    def test_a_target_that_has_moved_is_named(self):
+        class Moved(adapter.UnorderedDense):
+            target = "include/ankerl/moved.h"
+
+        problems = Moved().problems()
+        self.assertTrue(any("moved.h" in p for p in problems), problems)
+
+    def test_a_prefilter_tu_that_has_moved_is_named(self):
+        class Moved(adapter.UnorderedDense):
+            syntax_tu = "test/unit/moved.cpp"
+
+        problems = Moved().problems()
+        self.assertTrue(any("moved.cpp" in p for p in problems), problems)
+
+    def test_a_project_with_no_prefilter_tu_at_all_is_fine(self):
+        # None means "do not pre-filter", which is a choice rather than a fault.
+        class NoPrefilter(adapter.UnorderedDense):
+            syntax_tu = None
+
+        self.assertEqual(NoPrefilter().problems(), [])
 
 
 class TestRootIgnore(unittest.TestCase):
@@ -738,8 +837,9 @@ class TestMesonSetupArgs(unittest.TestCase):
     def setUp(self):
         self.backend = mutate.MesonBackend()
 
-    def args(self, buildtype="debug", configure_arg=()):
-        return types.SimpleNamespace(buildtype=buildtype, configure_arg=list(configure_arg))
+    def args(self, buildtype="debug", configure_arg=(), unity=True):
+        return types.SimpleNamespace(buildtype=buildtype, configure_arg=list(configure_arg),
+                                     unity=unity)
 
     def test_debug_info_is_off_by_default(self):
         # -O0 without -g: a third of the compile time and two thirds of each
@@ -764,6 +864,13 @@ class TestMesonSetupArgs(unittest.TestCase):
     def test_an_explicit_unity_setting_wins(self):
         got = self.backend.setup_args(self.args(configure_arg=["--unity=off"]))
         self.assertNotIn("--unity=on", got)
+
+    def test_a_project_that_has_not_proved_its_tree_survives_unity_does_not_get_it(self):
+        # Whether a tree *builds* as a unity is not a general fact: an anonymous
+        # namespace stops isolating a file once its neighbours share the chunk.
+        # Forced on, such a project gets a baseline that will not compile and the
+        # message "fix the tree first".
+        self.assertNotIn("--unity=on", self.backend.setup_args(self.args(unity=False)))
 
     def test_extra_arguments_come_last_so_they_can_override(self):
         got = self.backend.setup_args(self.args(configure_arg=["-Db_sanitize=address"]))
@@ -791,7 +898,33 @@ class TestCMakeBackend(unittest.TestCase):
         self.backend = mutate.CMakeBackend()
 
     def args(self, buildtype="release", configure_arg=()):
-        return types.SimpleNamespace(buildtype=buildtype, configure_arg=list(configure_arg))
+        return types.SimpleNamespace(buildtype=buildtype, configure_arg=list(configure_arg),
+                                     unity=False)
+
+    def test_an_untranslatable_buildtype_is_refused_rather_than_passed_through(self):
+        # cmake accepts an unknown CMAKE_BUILD_TYPE *silently* and drops every
+        # per-configuration flag with it, so meson's `debugoptimized` would
+        # configure a lane with no optimisation at all -- and nanobench's suite
+        # asserts on measured time, so that is a wall of verdicts about the
+        # wrong binary rather than an error anyone would see.
+        with self.assertRaises(RuntimeError) as e:
+            self.backend.configure_argv(self.args("plain"), "/s", "/b", False)
+        self.assertIn("plain", str(e.exception))
+
+    def test_the_buildtypes_that_do_translate(self):
+        self.assertEqual(self.backend.build_type("debugoptimized"), "RelWithDebInfo")
+        self.assertEqual(self.backend.build_type("minsize"), "MinSizeRel")
+
+    def test_a_cmake_project_that_has_not_said_does_not_claim_to_be_unsanitized(self):
+        # The fingerprint prints "no sanitizer in this build" off this answer,
+        # and that is a claim about what the run could observe. meson has one
+        # spelling for every project; a cmake project has whatever it called its
+        # own switch, so the honest answer here is that this cannot tell.
+        self.assertEqual(self.backend.sanitizer(["-DWHATEVER=ON"]), "unknown")
+
+    def test_meson_reads_its_own_spelling(self):
+        self.assertEqual(mutate.MesonBackend().sanitizer(["-Db_sanitize=address"]), "address")
+        self.assertEqual(mutate.MesonBackend().sanitizer([]), "none")
 
     def test_the_source_and_build_directories_are_named(self):
         got = self.backend.configure_argv(self.args(), "/src", "/src/build", False)
@@ -832,18 +965,18 @@ class TestCMakeBackend(unittest.TestCase):
 
 
 class TestFingerprint(unittest.TestCase):
-    def facts(self, **kwargs):
+    def facts(self, project=PROJECT, **kwargs):
         args = types.SimpleNamespace(buildtype="debug", configure_arg=[], test_suite=None,
                                      exclude_suite=None, test_filter=None,
-                                     exclude_filter=None,
-                                     file=PROJECT.target, lanes=4, jobs=2,
+                                     exclude_filter=None, unity=project.unity,
+                                     file=project.target, lanes=4, jobs=2,
                                      memory_limit=2 * mutate.GIB, memory_note="")
         for key, value in kwargs.items():
             setattr(args, key, value)
-        return mutate.fingerprint(PROJECT, args)
+        return mutate.fingerprint(project, args)
 
-    def rendered(self, **kwargs):
-        return mutate.render_fingerprint(PROJECT, self.facts(**kwargs))
+    def rendered(self, project=PROJECT, **kwargs):
+        return mutate.render_fingerprint(project, self.facts(project, **kwargs))
 
     def test_a_plain_build_says_it_has_no_sanitizer(self):
         # The one the report must not stay quiet about: without a sanitizer, a
@@ -896,18 +1029,9 @@ class TestFingerprint(unittest.TestCase):
             def extra_fingerprint(self, facts):
                 return ["perf counters   no"], ["NOTE: those verdicts mean nothing here."]
 
-        project = WithCounters()
-        facts = mutate.fingerprint(project, _args_for(project))
-        rendered = mutate.render_fingerprint(project, facts)
+        rendered = self.rendered(WithCounters())
         self.assertIn("perf counters   no", rendered)
         self.assertIn("mean nothing here", rendered)
-
-
-def _args_for(project):
-    return types.SimpleNamespace(buildtype="debug", configure_arg=[], test_suite=None,
-                                 exclude_suite=None, test_filter=None, exclude_filter=None,
-                                 file=project.target, lanes=4, jobs=2,
-                                 memory_limit=2 * mutate.GIB, memory_note="")
 
 
 class TestSyncTree(unittest.TestCase):

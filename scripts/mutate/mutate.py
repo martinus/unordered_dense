@@ -1,57 +1,23 @@
 #!/usr/bin/env python3
-"""Mutation testing for unordered_dense.
+"""What mutation testing means for unordered_dense in particular.
 
-Coverage says a line ran. This says something would have noticed it misbehaving.
-It breaks `unordered_dense.h`, rebuilds, runs the suite, and asks whether anything
-went red. What nothing notices is a hole in the tests.
+`--help` prints the shared manual from mutate_core.py first; this is the part
+underneath it. The file mutated by default is `include/ankerl/unordered_dense.h`,
+the suite is `udm-test`, and meson configures the lanes.
 
-Two ways to use it, and the first is the everyday one.
+    scripts/mutate/mutate.py --bugs scripts/mutate/bugs/erase-path.txt
+    scripts/mutate/mutate.py --replace OLD NEW
+    scripts/mutate/mutate.py --diff                # whatever is uncommitted
+    scripts/mutate/mutate.py --lines 1200-1260,1300
 
-**Put specific bugs back.** The check that decides whether a new test is worth
-keeping: break the thing it covers and confirm it goes red. Bugs are independent,
-so a batch runs across lanes at once rather than one rebuild after another.
+Nearly every bug in `bugs/invariants.txt` is some form of "the code forgot to do
+this" -- the shift down that never happens, the pop_back that is skipped -- and
+none of them is one token, so the token sweep cannot reach any of them. Asking
+for deletions alone costs *less* than the token sweep here, because half of them
+are rejected by the pre-filter in half a second rather than a rebuild:
 
-    mutate.py --bugs bugs.txt                  # a file of them, in parallel
-    mutate.py --replace OLD NEW                # one, repeatable
-    mutate.py --reverse HEAD                   # undo a fix, keep today's tests
-    mutate.py --bugs bugs.txt --reuse          # again, against an edited test
-
-`--reuse` keeps the lanes and syncs only what changed next time, which saves the
-copying and the configuring - not the compiling, see below.
-
-A bug file is a name and a block each. Old text must match exactly once, and a
-block that does not apply stops the run - otherwise a typo substitutes nothing,
-the suite stays green, and the report blames your tests for it:
-
-    # the erase moved the last element without fixing up its bucket
-    <<<
-        auto mh = mixed_hash(get_key(m_values.back()));
-    ===
-        auto mh = mixed_hash(get_key(*it));
-    >>>
-
-Bug files worth keeping live in `scripts/mutate/bugs/`. They are snapshots
-against the code as it was, so one that stops applying is not a failure - it is
-the tool saying that part has been rewritten and the questions need re-deriving.
-
-**Or sweep for holes you have not thought of**, changing one place at a time:
-
-    mutate.py --diff                           # whatever is uncommitted
-    mutate.py --diff HEAD~1                    # only what that change touched
-    mutate.py --lines 1200-1260,1300           # a function, or a scattering
-    mutate.py                                  # the whole header
-    mutate.py --diff --dry-run                 # how many, and how long
-
-It is worth knowing that nearly every bug in `bugs/invariants.txt` is some form
-of "the code forgot to do this" -- the shift down that never happens, the
-pop_back that is skipped -- and that none of them is one token, so the token
-sweep cannot reach any of them. Asking for deletions alone costs *less* than the
-token sweep, because half of them are rejected by the pre-filter in half a
-second rather than a rebuild:
-
-    mutate.py --operators deletions            # the survey the sweep cannot do
-    mutate.py --operators bitwise              # ^ and | alone, four minutes
-    mutate.py --operators tokens,deletions     # both, for a thorough pass
+    scripts/mutate/mutate.py --operators deletions
+    scripts/mutate/mutate.py --operators bitwise   # ^ and | alone, four minutes
 
 **What a mutant costs here is one full rebuild of the test binary.** Every one of
 the ~90 translation units includes the header, so there is no such thing as an
@@ -60,11 +26,12 @@ preprocessed source nothing has ever seen. That is around 100 CPU-seconds of
 compiling against 3 of running the suite, which is why the lanes default to one
 job each (the machine is already full) and why a single named bug instead gets
 all the cores to itself. It is also why the -fsyntax-only pre-filter earns its
-keep: half a second to reject what would otherwise cost a full rebuild.
+keep: half a second to reject what would otherwise cost a full rebuild, and why
+the lanes build `--unity=on`, which is 2.5x less compiling for the same work.
 
-Everything above this line is the same in nanobench, and the code that does it
-lives in `mutate_core.py`, which is a vendored copy shared with that repository.
-What is below is only what this project has to answer for itself.
+Without a sanitizer, a mutant that reads one slot past a bucket comes back
+`survived` however good the tests are, so re-run anything surprising with
+`--meson-arg=-Db_sanitize=address,undefined` before believing it.
 """
 
 import os
@@ -93,6 +60,10 @@ class UnorderedDense(mutate_core.Project):
     test_binary = os.path.join("test", "udm-test")
     backend = mutate_core.MesonBackend()
 
+    # The tree is known to survive merged translation units: a CI leg builds it
+    # that way on purpose, which is what makes it safe to ask for here.
+    unity = True
+
     # Copied per lane, so this is about keeping the copy to the sources and the
     # fuzz corpora. `subprojects` deliberately stays: it holds the
     # already-downloaded doctest and the packagecache, and a lane without them
@@ -101,7 +72,8 @@ class UnorderedDense(mutate_core.Project):
     ignore = mutate_core.Project.ignore + ("fuzz-findings",)
     root_ignore = ("builddir", "build", "_build")
 
-    lane_bytes = 90 * mutate_core.MIB  # ~21 MB of sources and corpora, ~64 MB of build
+    # Measured: ~21 MB of sources and corpora, ~64 MB of build directory.
+    lane_bytes = 90 * mutate_core.MIB
 
     # Measured on a 32-thread machine, g++ at -O0. One mutant rebuild costs 67
     # CPU-seconds on an idle machine - 75 unit TUs at ~0.66s each is 85% of it,
@@ -117,13 +89,13 @@ class UnorderedDense(mutate_core.Project):
     setup_seconds = 20.0
     setup_seconds_per_lane = 1.5
 
-    def lane_env(self, lane_dir):
+    def lane_env(self, lane):
         # The corpus replay walks up from the working directory looking for
         # `.fuzz-corpus-base-dir`, which would find the lane's copy anyway. Said
         # outright because it is the one input the suite reads from outside the
         # binary, and a lane silently replaying nothing would show up as a wall
         # of survivors in exactly the code the fuzzers cover best.
-        return {"FUZZ_CORPUS_BASE_DIR": os.path.join(lane_dir, "data", "fuzz")}
+        return {"FUZZ_CORPUS_BASE_DIR": os.path.join(lane.dir, "data", "fuzz")}
 
 
 if __name__ == "__main__":
