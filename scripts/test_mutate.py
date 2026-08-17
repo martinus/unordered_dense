@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for scripts/mutate/mutate.py.
+"""Regression tests for scripts/mutate/mutate_core.py and the adapter beside it.
 
     scripts/test_mutate.py            # run them
     scripts/test_mutate.py -v         # ... naming each one
@@ -14,6 +14,12 @@ and read as a hole in the tests.
 
 So the rule these encode is the one from the tool's own docstring -- when it is wrong, it must not
 be wrong in the direction that flatters or defames the suite.
+
+`mutate_core.py` is vendored: nanobench holds a byte-identical copy and drives it through an
+adapter of its own. That is the reason the cmake backend is tested here, in a repository that
+builds with meson and will never run it -- a backend covered only where it is used is exactly as
+untested as it was before the two tools were merged, and re-vendoring a core whose other half is
+broken is how one repository's green suite would ship the other one a fault.
 """
 
 from __future__ import annotations
@@ -33,17 +39,25 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "mutate" / "mutate.py"
+CORE = SCRIPT.parent / "mutate_core.py"
 
 
-def load_script():
+def load_script(path=None):
     """A fresh module object, so a test that patches a global cannot leak into the next one."""
-    spec = importlib.util.spec_from_file_location("mutate_under_test", SCRIPT)
+    path = path or CORE
+    spec = importlib.util.spec_from_file_location("mutate_under_test_%s" % path.stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 mutate = load_script()
+# The adapter, which is the whole of what this repository answers for itself. Loaded through the
+# core's own import machinery -- `mutate.py` puts its directory on sys.path before importing
+# `mutate_core`, so this is the one place the two halves are seen together the way a real run sees
+# them.
+adapter = load_script(SCRIPT)
+PROJECT = adapter.UnorderedDense()
 
 
 def sites(src, line_filter=None):
@@ -240,7 +254,7 @@ class TestOperators(unittest.TestCase):
         # which is the failure this whole file exists to prevent -- and a test that
         # asserts the tuple against a copy of itself cannot catch it, because adding
         # the fourth name and updating the literal is one edit.
-        body = inspect.getsource(mutate.main)
+        body = inspect.getsource(mutate.collect_mutants)
         for name in mutate.OPERATORS:
             self.assertIn('"%s" in args.operators' % name, body)
 
@@ -248,8 +262,9 @@ class TestOperators(unittest.TestCase):
         # Derived from OPERATORS rather than spelled out, so an operator added later
         # is in the default by construction. A restated list is the same trap as the
         # test above: it can only ever agree with whatever was typed beside it.
-        m = re.search(r"--operators.*?default=([^,]+),", inspect.getsource(mutate.main), re.S)
-        self.assertIsNotNone(m, "could not find the --operators default in main()")
+        m = re.search(r"--operators.*?default=([^,]+),",
+                      inspect.getsource(mutate.build_parser), re.S)
+        self.assertIsNotNone(m, "could not find the --operators default in build_parser()")
         self.assertEqual(m.group(1).strip(), "set(OPERATORS)")
 
     def test_an_unknown_operator_is_refused_by_name(self):
@@ -419,7 +434,8 @@ class TestBugFiles(unittest.TestCase):
 
     def test_a_block_becomes_a_bug(self):
         bugs = self.parse("# the name\n<<<\nold line\n===\nnew line\n>>>\n")
-        self.assertEqual(bugs, [dict(name="the name", old="old line", new="new line")])
+        self.assertEqual(bugs, [dict(name="the name", old="old line", new="new line",
+                                     additive=False)])
 
     def test_the_name_is_the_first_comment_line_of_a_run(self):
         # The lines after it are room to explain the bug without any of it
@@ -483,6 +499,146 @@ class TestBugMutants(unittest.TestCase):
                                 dict(name="second", old="elsewhere", new="y")], "src")
         self.assertIn("first", str(e.exception))
         self.assertIn("second", str(e.exception))
+
+
+class TestAdditiveBugs(unittest.TestCase):
+    """A replacement that still contains what it replaced.
+
+    Almost always a mistake -- the way a *move* gets written wrongly, with the whole span in `old`
+    including the line that stays -- and it is the mistake that cannot be seen in the output: the
+    block applies, the suite runs, and `caught` or `SURVIVED` is reported about a file that never
+    changed. woswoar shipped three of these in one session before it started refusing them.
+
+    The exception is real, so there is a way to say it, and saying it wrong has to be an error
+    rather than a shrug: a misspelled flag that quietly meant "not additive" would put the trap
+    back with a marker beside it claiming otherwise."""
+
+    def parse(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bugs.txt"
+            path.write_text(text)
+            return mutate.parse_bug_file(str(path))
+
+    def test_an_ordinary_fence_is_not_additive(self):
+        self.assertFalse(self.parse("<<<\na\n===\nb\n>>>\n")[0]["additive"])
+
+    def test_the_fence_carries_the_flag(self):
+        self.assertTrue(self.parse("<<< additive\na\n===\nx\na\n>>>\n")[0]["additive"])
+
+    def test_an_unknown_flag_is_refused_by_name(self):
+        with self.assertRaises(RuntimeError) as e:
+            self.parse("<<< addative\na\n===\nb\n>>>\n")
+        self.assertIn("addative", str(e.exception))
+        self.assertIn("additive", str(e.exception))
+
+    def test_the_flag_does_not_leak_into_the_next_block(self):
+        # Two blocks in one file, and only the first says it. State that
+        # survives a block would let one marker excuse every later mistake.
+        bugs = self.parse("<<< additive\na\n===\nxa\n>>>\n\n<<<\nb\n===\nc\n>>>\n")
+        self.assertEqual([b["additive"] for b in bugs], [True, False])
+
+    def test_a_replacement_containing_its_original_is_refused(self):
+        with self.assertRaises(RuntimeError) as e:
+            mutate.bug_mutants([dict(name="a move written wrongly", old="keep();",
+                                     new="added();\nkeep();")], "keep();\n")
+        self.assertIn("does not change", str(e.exception))
+        self.assertIn("additive", str(e.exception))  # names the way out
+
+    def test_an_additive_block_is_allowed_through(self):
+        # nanobench has one: a `-` sign accepted in front of a digit check that
+        # stays, which is how "-1" becomes 18446744073709551615.
+        got = mutate.bug_mutants([dict(name="sign accepted", old="if (digit) {",
+                                       new="if (sign) { }\nif (digit) {",
+                                       additive=True)], "if (digit) {\n")
+        self.assertEqual(got[0]["text"], "if (sign) { }\nif (digit) {\n")
+
+    def test_a_no_op_is_still_refused_even_when_additive(self):
+        # `additive` says the new text may *contain* the old, not that a block
+        # which changes nothing at all is now acceptable.
+        with self.assertRaises(RuntimeError) as e:
+            mutate.bug_mutants([dict(name="says nothing", old="x;", new="x;",
+                                     additive=True)], "x;\n")
+        self.assertIn("no-op", str(e.exception))
+
+
+class TestProjectSeam(unittest.TestCase):
+    """What a project has to answer, and what it gets for free.
+
+    The half of the vendored core that only shows up when there are two projects: a default that
+    is wrong for the other one is invisible here until nanobench runs it."""
+
+    def args(self, file):
+        return types.SimpleNamespace(file=file)
+
+    def test_the_default_target_gets_the_projects_prefilter_tu(self):
+        self.assertEqual(PROJECT.default_syntax_tu(self.args(PROJECT.target)),
+                         PROJECT.syntax_tu)
+
+    def test_mutating_a_tu_checks_that_tu(self):
+        self.assertEqual(PROJECT.default_syntax_tu(self.args("test/unit/counter.cpp")),
+                         "test/unit/counter.cpp")
+
+    def test_mutating_anything_else_turns_the_prefilter_off(self):
+        # Against a file the pre-filter TU does not include, the check compiles
+        # something the mutation cannot reach, passes every time, and filters
+        # nothing -- which is worse than not having one, because it looks like a
+        # working filter.
+        self.assertIsNone(PROJECT.default_syntax_tu(self.args("meson.build")))
+
+    def test_the_suite_runs_in_the_lane_by_default(self):
+        lane = types.SimpleNamespace(dir="/lane", build="/lane/builddir")
+        self.assertEqual(PROJECT.test_cwd(lane), "/lane")
+
+    def test_a_project_can_move_the_suites_working_directory(self):
+        # nanobench must: running `nb` writes example artifacts into the current
+        # directory, so it runs from the build directory the way CI runs it.
+        class FromTheBuildDir(adapter.UnorderedDense):
+            def test_cwd(self, lane):
+                return lane.build
+
+        lane = types.SimpleNamespace(dir="/lane", build="/lane/builddir")
+        self.assertEqual(FromTheBuildDir().test_cwd(lane), "/lane/builddir")
+
+    def test_this_projects_environment_points_the_corpus_at_the_lane(self):
+        # The one input the suite reads from outside the binary. A lane silently
+        # replaying nothing would show up as a wall of survivors in exactly the
+        # code the fuzzers cover best.
+        self.assertEqual(PROJECT.lane_env("/lane")["FUZZ_CORPUS_BASE_DIR"],
+                         os.path.join("/lane", "data", "fuzz"))
+
+    def test_a_project_that_says_nothing_gets_an_empty_environment(self):
+        self.assertEqual(mutate.Project().lane_env("/lane"), {})
+
+
+class TestRootIgnore(unittest.TestCase):
+    """Build directories are matched at the repository root only, and as patterns.
+
+    Both halves have cost something. `build*` everywhere eats `scripts/build.sh`, and `docs`
+    everywhere eats the `src/docs` nanobench's unit_templates reads its expected output from -- a
+    lane without it fails the baseline for a reason that has nothing to do with any mutant."""
+
+    def ignore_for(self, root_ignore):
+        class Rooted(mutate.Project):
+            repo = "/repo"
+        Rooted.root_ignore = root_ignore
+        return mutate.lane_ignore_for(Rooted())
+
+    def test_a_pattern_matches_at_the_root(self):
+        ignore = self.ignore_for(("build*",))
+        self.assertIn("build-san", ignore("/repo", ["build-san", "src"]))
+
+    def test_the_same_pattern_does_not_match_deeper(self):
+        ignore = self.ignore_for(("build*",))
+        self.assertNotIn("build.sh", ignore("/repo/src/scripts", ["build.sh"]))
+
+    def test_an_exact_name_still_works(self):
+        ignore = self.ignore_for(("docs",))
+        self.assertIn("docs", ignore("/repo", ["docs", "src"]))
+        self.assertNotIn("docs", ignore("/repo/src", ["docs"]))
+
+    def test_the_ordinary_patterns_apply_everywhere(self):
+        ignore = self.ignore_for(())
+        self.assertIn("__pycache__", ignore("/repo/scripts", ["__pycache__"]))
 
 
 class TestTestOutput(unittest.TestCase):
@@ -579,77 +735,141 @@ class TestNameRendering(unittest.TestCase):
 
 
 class TestMesonSetupArgs(unittest.TestCase):
-    def args(self, **kwargs):
-        return types.SimpleNamespace(buildtype="debug", meson_arg=[], **kwargs)
+    def setUp(self):
+        self.backend = mutate.MesonBackend()
+
+    def args(self, buildtype="debug", configure_arg=()):
+        return types.SimpleNamespace(buildtype=buildtype, configure_arg=list(configure_arg))
 
     def test_debug_info_is_off_by_default(self):
         # -O0 without -g: a third of the compile time and two thirds of each
         # lane's build directory, and nothing here reads a symbol.
-        self.assertIn("-Ddebug=false", mutate.meson_setup_args(self.args()))
+        self.assertIn("-Ddebug=false", self.backend.setup_args(self.args()))
 
     def test_an_explicit_debug_option_wins(self):
-        got = mutate.meson_setup_args(
-            types.SimpleNamespace(buildtype="debug", meson_arg=["-Ddebug=true"]))
+        got = self.backend.setup_args(self.args(configure_arg=["-Ddebug=true"]))
         self.assertNotIn("-Ddebug=false", got)
         self.assertIn("-Ddebug=true", got)
 
     def test_the_buildtype_is_passed_through(self):
-        got = mutate.meson_setup_args(
-            types.SimpleNamespace(buildtype="release", meson_arg=[]))
+        got = self.backend.setup_args(self.args(buildtype="release"))
         self.assertEqual(got[:2], ["--buildtype", "release"])
 
     def test_the_lanes_build_as_one_unity(self):
         # 2.5x less compiling for the same work, and the usual objection --
         # touching one file recompiles its whole chunk -- cannot apply to a
         # mutant, which recompiles every file anyway.
-        self.assertIn("--unity=on", mutate.meson_setup_args(self.args()))
+        self.assertIn("--unity=on", self.backend.setup_args(self.args()))
 
     def test_an_explicit_unity_setting_wins(self):
-        got = mutate.meson_setup_args(
-            types.SimpleNamespace(buildtype="debug", meson_arg=["--unity=off"]))
+        got = self.backend.setup_args(self.args(configure_arg=["--unity=off"]))
         self.assertNotIn("--unity=on", got)
 
     def test_extra_arguments_come_last_so_they_can_override(self):
-        got = mutate.meson_setup_args(
-            types.SimpleNamespace(buildtype="debug", meson_arg=["-Db_sanitize=address"]))
+        got = self.backend.setup_args(self.args(configure_arg=["-Db_sanitize=address"]))
         self.assertEqual(got[-1], "-Db_sanitize=address")
+
+    def test_an_existing_build_directory_is_reconfigured_rather_than_refused(self):
+        # meson setup on a directory it has already configured is an error
+        # unless it is told, and every --reuse run is exactly that.
+        got = self.backend.configure_argv(self.args(), "/src", "/src/builddir", True)
+        self.assertIn("--reconfigure", got)
+        self.assertEqual(got[-2:], ["/src/builddir", "/src"])
+
+    def test_a_fresh_lane_is_not_told_to_reconfigure(self):
+        self.assertNotIn("--reconfigure",
+                         self.backend.configure_argv(self.args(), "/src", "/src/builddir", False))
+
+
+class TestCMakeBackend(unittest.TestCase):
+    """The other half of the vendored core, which this repository never runs.
+
+    Tested here because that is the point of sharing the file: nanobench drives these lines, and a
+    backend covered only where it is used is exactly as untested as it was before."""
+
+    def setUp(self):
+        self.backend = mutate.CMakeBackend()
+
+    def args(self, buildtype="release", configure_arg=()):
+        return types.SimpleNamespace(buildtype=buildtype, configure_arg=list(configure_arg))
+
+    def test_the_source_and_build_directories_are_named(self):
+        got = self.backend.configure_argv(self.args(), "/src", "/src/build", False)
+        self.assertEqual(got[:5], ["cmake", "-S", "/src", "-B", "/src/build"])
+
+    def test_an_existing_build_directory_needs_nothing_extra(self):
+        # cmake re-runs in place, which is the difference from meson - and the
+        # reason a --reuse lane does not have to be told anything.
+        fresh = self.backend.configure_argv(self.args(), "/src", "/src/build", False)
+        again = self.backend.configure_argv(self.args(), "/src", "/src/build", True)
+        self.assertEqual(fresh, again)
+
+    def test_the_buildtype_reaches_cmakes_spelling_of_it(self):
+        # The shared flag is one word in lower case; CMAKE_BUILD_TYPE is
+        # capitalised, and `-DCMAKE_BUILD_TYPE=release` silently configures a
+        # build with no optimisation flags at all rather than failing.
+        self.assertIn("-DCMAKE_BUILD_TYPE=Release",
+                      self.backend.configure_argv(self.args(), "/s", "/b", False))
+        self.assertIn("-DCMAKE_BUILD_TYPE=Debug",
+                      self.backend.configure_argv(self.args("debug"), "/s", "/b", False))
+
+    def test_the_compile_database_is_asked_for(self):
+        # Without it there is no compile_commands.json, the pre-filter turns
+        # itself off, and every mutant that is not valid C++ costs a full
+        # rebuild instead of half a second.
+        self.assertIn("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                      self.backend.configure_argv(self.args(), "/s", "/b", False))
+
+    def test_extra_arguments_come_last_so_they_can_override(self):
+        got = self.backend.setup_args(self.args(configure_arg=["-DNB_sanitizer=ON"]))
+        self.assertEqual(got[-1], "-DNB_sanitizer=ON")
+
+    def test_the_pass_through_flag_is_named_after_the_tool(self):
+        # It is in both projects' CLAUDE.md by name, and a renamed flag breaks
+        # the documented invocation rather than anything a test would see.
+        self.assertEqual(mutate.CMakeBackend().arg_flag, "--cmake-arg")
+        self.assertEqual(mutate.MesonBackend().arg_flag, "--meson-arg")
 
 
 class TestFingerprint(unittest.TestCase):
     def facts(self, **kwargs):
-        args = types.SimpleNamespace(buildtype="debug", meson_arg=[], test_suite=None,
+        args = types.SimpleNamespace(buildtype="debug", configure_arg=[], test_suite=None,
                                      exclude_suite=None, test_filter=None,
-                                     file=mutate.HEADER, lanes=4, jobs=2,
+                                     exclude_filter=None,
+                                     file=PROJECT.target, lanes=4, jobs=2,
                                      memory_limit=2 * mutate.GIB, memory_note="")
         for key, value in kwargs.items():
             setattr(args, key, value)
-        return mutate.fingerprint(args)
+        return mutate.fingerprint(PROJECT, args)
+
+    def rendered(self, **kwargs):
+        return mutate.render_fingerprint(PROJECT, self.facts(**kwargs))
 
     def test_a_plain_build_says_it_has_no_sanitizer(self):
         # The one the report must not stay quiet about: without a sanitizer, a
         # mutant that reads one slot too far comes back survived.
         self.assertEqual(self.facts()["sanitizer"], "none")
-        self.assertIn("no sanitizer", mutate.render_fingerprint(self.facts()))
+        self.assertIn("no sanitizer", self.rendered())
 
     def test_a_sanitizer_build_says_which(self):
-        facts = self.facts(meson_arg=["-Db_sanitize=address,undefined"])
+        facts = self.facts(configure_arg=["-Db_sanitize=address,undefined"])
         self.assertEqual(facts["sanitizer"], "address,undefined")
-        self.assertNotIn("no sanitizer", mutate.render_fingerprint(facts))
+        self.assertNotIn("no sanitizer", mutate.render_fingerprint(PROJECT, facts))
 
     def test_the_test_filters_are_recorded(self):
         self.assertEqual(self.facts(exclude_suite="fuzz")["tests"], "-tse=fuzz")
+        self.assertEqual(self.facts(exclude_filter="flaky_one")["tests"], "-tce=flaky_one")
         self.assertEqual(self.facts()["tests"], "all")
 
     def test_a_capped_run_says_how_much_and_warns_about_nothing(self):
-        self.assertIn("2.0 GiB per lane", mutate.render_fingerprint(self.facts()))
-        self.assertNotIn("nothing caps", mutate.render_fingerprint(self.facts()))
+        self.assertIn("2.0 GiB per lane", self.rendered())
+        self.assertNotIn("nothing caps", self.rendered())
 
     def test_an_uncapped_run_says_so_and_says_why(self):
         # The one the report must not stay quiet about either: without a cap a
         # runaway mutant takes down whatever the kernel picks, and the verdicts
         # of the lanes beside it are then guesses.
-        facts = self.facts(memory_limit=0, memory_note="Failed to connect to bus")
-        rendered = mutate.render_fingerprint(facts)
+        rendered = self.rendered(memory_limit=0, memory_note="Failed to connect to bus")
         self.assertIn("memory          off", rendered)
         self.assertIn("nothing caps", rendered)
         self.assertIn("Failed to connect to bus", rendered)
@@ -657,8 +877,37 @@ class TestFingerprint(unittest.TestCase):
     def test_a_cap_turned_off_on_purpose_still_warns(self):
         # --memory-limit 0 leaves no reason to print, and the warning is about
         # the consequence rather than the cause.
-        self.assertIn("nothing caps",
-                      mutate.render_fingerprint(self.facts(memory_limit=0)))
+        self.assertIn("nothing caps", self.rendered(memory_limit=0))
+
+    def test_the_build_system_is_named_in_the_line_that_shows_its_arguments(self):
+        # Two projects share this file and configure with different tools, so
+        # "setup" alone would leave the reader guessing which one produced the
+        # flags underneath it.
+        self.assertIn("meson setup", self.rendered())
+
+    def test_a_project_can_add_what_only_it_can_observe(self):
+        # nanobench's performance counters are the case: where the kernel
+        # refuses them the counter columns come back survived however good the
+        # tests are, and only that project knows to ask.
+        class WithCounters(adapter.UnorderedDense):
+            def extra_facts(self, args):
+                return dict(perf_counters=False)
+
+            def extra_fingerprint(self, facts):
+                return ["perf counters   no"], ["NOTE: those verdicts mean nothing here."]
+
+        project = WithCounters()
+        facts = mutate.fingerprint(project, _args_for(project))
+        rendered = mutate.render_fingerprint(project, facts)
+        self.assertIn("perf counters   no", rendered)
+        self.assertIn("mean nothing here", rendered)
+
+
+def _args_for(project):
+    return types.SimpleNamespace(buildtype="debug", configure_arg=[], test_suite=None,
+                                 exclude_suite=None, test_filter=None, exclude_filter=None,
+                                 file=project.target, lanes=4, jobs=2,
+                                 memory_limit=2 * mutate.GIB, memory_note="")
 
 
 class TestSyncTree(unittest.TestCase):
@@ -675,19 +924,24 @@ class TestSyncTree(unittest.TestCase):
         (self.src / "include").mkdir(parents=True)
         (self.src / "include" / "h.h").write_text("original\n")
         (self.src / "keep.txt").write_text("same\n")
-        self._repo = mutate.REPO
-        mutate.REPO = str(self.src)  # lane_ignore keys the root-only skips off this
+        # A project rooted at the fake tree, because the root-only skips are
+        # keyed off where the repository is.
+        class Rooted(adapter.UnorderedDense):
+            repo = str(self.src)
+        self.ignore = mutate.lane_ignore_for(Rooted())
         shutil.copytree(self.src, self.dst)
 
     def tearDown(self):
-        mutate.REPO = self._repo
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def sync(self):
+        mutate.sync_tree(str(self.src), str(self.dst), self.ignore)
 
     def test_a_changed_file_is_copied_and_stamped_now(self):
         header = self.src / "include" / "h.h"
         header.write_text("mutated\n")
         os.utime(header, (1, 1))  # an old mtime, as a checkout or a git op leaves
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         copy = self.dst / "include" / "h.h"
         self.assertEqual(copy.read_text(), "mutated\n")
         self.assertGreater(copy.stat().st_mtime, time.time() - 60)
@@ -697,7 +951,7 @@ class TestSyncTree(unittest.TestCase):
         # full rebuild in every lane, which is most of what reuse saves.
         keep = self.dst / "keep.txt"
         os.utime(keep, (1000, 1000))
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertEqual(keep.stat().st_mtime, 1000)
 
     def test_a_file_with_the_same_size_but_different_bytes_is_copied(self):
@@ -706,19 +960,19 @@ class TestSyncTree(unittest.TestCase):
         (self.src / "keep.txt").write_text("SAME\n")
         os.utime(self.src / "keep.txt", (1000, 1000))
         os.utime(self.dst / "keep.txt", (1000, 1000))
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertEqual((self.dst / "keep.txt").read_text(), "SAME\n")
 
     def test_a_deleted_file_is_removed_from_the_lane(self):
         # Or it keeps being compiled, and the lane builds a test file that the
         # working tree no longer has.
         (self.src / "keep.txt").unlink()
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertFalse((self.dst / "keep.txt").exists())
 
     def test_a_new_file_arrives(self):
         (self.src / "new.cpp").write_text("int main() {}\n")
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertTrue((self.dst / "new.cpp").exists())
 
     def test_the_lane_build_directory_is_not_touched(self):
@@ -727,7 +981,7 @@ class TestSyncTree(unittest.TestCase):
         build = self.dst / "builddir"
         build.mkdir()
         (build / "build.ninja").write_text("rules\n")
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertTrue((build / "build.ninja").exists())
 
     def test_ignored_directories_are_not_copied(self):
@@ -735,7 +989,7 @@ class TestSyncTree(unittest.TestCase):
         (self.src / ".git" / "HEAD").write_text("ref\n")
         (self.src / "builddir").mkdir()
         (self.src / "builddir" / "junk").write_text("x\n")
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertFalse((self.dst / ".git").exists())
         self.assertFalse((self.dst / "builddir" / "junk").exists())
 
@@ -744,7 +998,7 @@ class TestSyncTree(unittest.TestCase):
         # the build directories are matched at the repo root only.
         (self.src / "scripts").mkdir()
         (self.src / "scripts" / "build.py").write_text("#!/usr/bin/env python3\n")
-        mutate.sync_tree(str(self.src), str(self.dst))
+        self.sync()
         self.assertTrue((self.dst / "scripts" / "build.py").exists())
 
 
@@ -899,17 +1153,17 @@ class TestLaneRoom(unittest.TestCase):
         # Half a copy leaves meson failing for a reason that never says "disk".
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(RuntimeError) as e:
-                mutate.check_room_for(tmp, 10 ** 6, lambda message: None)
+                mutate.check_room_for(PROJECT, tmp, 10 ** 6, lambda message: None)
             self.assertIn("free", str(e.exception))
             self.assertIn("--lanes", str(e.exception))
 
     def test_room_for_one_lane_is_not_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mutate.check_room_for(tmp, 1, lambda message: None)
+            mutate.check_room_for(PROJECT, tmp, 1, lambda message: None)
 
     def test_reusing_every_lane_asks_for_no_room_at_all(self):
         # And so cannot fail on a workdir already holding exactly what it needs.
-        mutate.check_room_for("/nonexistent", 0, lambda message: None)
+        mutate.check_room_for(PROJECT, "/nonexistent", 0, lambda message: None)
 
     def test_a_tmpfs_workdir_is_named_as_memory(self):
         # The line about it is the difference between "the disk is full" and
@@ -919,7 +1173,7 @@ class TestLaneRoom(unittest.TestCase):
         try:
             said = []
             with tempfile.TemporaryDirectory() as tmp:
-                mutate.check_room_for(tmp, 1, said.append)
+                mutate.check_room_for(PROJECT, tmp, 1, said.append)
             self.assertIn("memory", said[0])
         finally:
             mutate.memory_backed = real
@@ -990,6 +1244,7 @@ class TestMemoryCap(unittest.TestCase):
         lane = mutate.Lane.__new__(mutate.Lane)
         lane.dir, lane.build, lane.jobs = "/lane", "/lane/builddir", 8
         lane.memory, lane.env, lane.test_args = mutate.GIB, {}, []
+        lane.project = PROJECT
         seen = []
         lane._run = lambda cmd, timeout, cwd=None, env=None, memory=None: seen.append(memory)
         lane.run_build(timeout=1)
@@ -1089,20 +1344,20 @@ class TestEvaluate(unittest.TestCase):
 class TestEstimate(unittest.TestCase):
     def test_more_lanes_is_never_slower(self):
         self.assertLessEqual(
-            mutate.estimate_seconds(500, lanes=32, cores=32),
-            mutate.estimate_seconds(500, lanes=1, cores=32))
+            mutate.estimate_seconds(PROJECT, 500, lanes=32, cores=32),
+            mutate.estimate_seconds(PROJECT, 500, lanes=1, cores=32))
 
     def test_the_compiling_is_divided_by_the_machine_not_the_lanes(self):
         # The distinction this whole tool is shaped around: every mutant
         # rebuilds every TU, so lanes overlap the tail and nothing else.
-        many_cores = mutate.estimate_seconds(500, lanes=8, cores=64)
-        few_cores = mutate.estimate_seconds(500, lanes=8, cores=8)
+        many_cores = mutate.estimate_seconds(PROJECT, 500, lanes=8, cores=64)
+        few_cores = mutate.estimate_seconds(PROJECT, 500, lanes=8, cores=8)
         self.assertLess(many_cores, few_cores / 2)
 
     def test_it_reads_as_a_duration(self):
-        self.assertTrue(mutate.estimate(1, 1, 32).endswith("s"))
-        self.assertTrue(mutate.estimate(500, 32, 32).endswith("min"))
-        self.assertTrue(mutate.estimate(100000, 32, 32).endswith("h"))
+        self.assertTrue(mutate.estimate(PROJECT, 1, 1, 32).endswith("s"))
+        self.assertTrue(mutate.estimate(PROJECT, 500, 32, 32).endswith("min"))
+        self.assertTrue(mutate.estimate(PROJECT, 100000, 32, 32).endswith("h"))
 
 
 class TestCommandLine(unittest.TestCase):

@@ -72,6 +72,28 @@ misbehaving: it breaks the header, rebuilds, runs the suite and asks whether any
 What nothing notices is a hole in the tests. It never touches the working tree — every build
 happens in a throwaway copy of the repo.
 
+**The tool is two files, and one of them is shared with nanobench.** `mutate_core.py` is everything
+that is not about any one project — the lanes, the mutants, the baseline discipline, the verdicts,
+the report — and nanobench holds a byte-identical copy of it. `mutate.py` beside it is this
+project's adapter: where the header is, that meson configures the build, that the binary is
+`udm-test`, that a lane needs `FUZZ_CORPUS_BASE_DIR`, and the measured constants behind `--dry-run`.
+Roughly 1800 lines shared against 100 of adapter.
+
+That arrangement is what makes `scripts/test_mutate.py` worth its length: it covers the code *both*
+repositories run, including the cmake backend this project will never execute. So a change to the
+core is only half a change — make it here, run that suite, copy the file into nanobench, and record
+the new hash in both:
+
+```sh
+sha256sum scripts/mutate/mutate_core.py                    # write it into mutate_core.sha256
+cp scripts/mutate/mutate_core.py ../nanobench/src/scripts/mutate/   # ... and into its .sha256 too
+```
+
+`lint-mutate-core.py` fails if this copy has been edited without that hash moving with it, which is
+the one failure vendoring introduces: a convenient local fix here leaves the other repository
+running something nothing tests. Comparing the two `.sha256` files is how "are they in sync?" gets
+answered; no lint in either repository can see the other one.
+
 The everyday use is putting a *specific* bug back, which is the check that decides whether a new
 test earns its place. Bugs worth keeping live in `scripts/mutate/bugs/`:
 
@@ -80,6 +102,13 @@ scripts/mutate/mutate.py --replace OLD NEW               # one, must match exact
 scripts/mutate/mutate.py --bugs scripts/mutate/bugs/erase-path.txt
 scripts/mutate/mutate.py --reverse HEAD                  # undo a fix, keep today's tests
 ```
+
+A block whose replacement is *meant* to contain what it replaced — an inserted call, an early
+return in front of code that stays — needs `<<< additive` on its fence. Without the flag such a
+block is refused, because the code under test does not change and `caught` or `SURVIVED` would be a
+verdict about nothing. That check came from woswoar, where three of them shipped in one session
+before it existed; the one legitimate case in these two repositories is a nanobench bug that accepts
+a `-` sign in front of a digit check that stays.
 
 The other mode sweeps for holes nobody thought of, changing the header one place at a time. The two
 modes compose, and a change is best asked both questions at once:
@@ -165,8 +194,14 @@ mutant rebuild of the whole suite: 67 CPU-seconds separately, 27 merged. The usu
 unity builds (touching one file recompiles its whole chunk) cannot apply to a mutant, which
 recompiles every file anyway. `--meson-arg=--unity=off` turns it off.
 
+One flaky case is enough to stop a run: the baseline refuses to score until the suite is green
+twice, which is the point of it. `--exclude-filter NAME` (doctest's `-tce=`) is the honest way past
+that — it names what was skipped in the fingerprint, where lowering `--baseline-runs` would not.
+
 `scripts/test_mutate.py` covers the half of the tool that decides what a verdict *means*, and runs
-in CI. It is hermetic: no compiler, no meson, no lanes, no cgroups.
+in CI. It is hermetic: no compiler, no meson, no lanes, no cgroups. Since the core became shared it
+also covers nanobench's half — the cmake backend, the project seam, the root-only ignore patterns —
+because a backend tested only where it is used is exactly as untested as it was before.
 
 ## Fuzzing
 
