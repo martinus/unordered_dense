@@ -15,11 +15,13 @@ and read as a hole in the tests.
 So the rule these encode is the one from the tool's own docstring -- when it is wrong, it must not
 be wrong in the direction that flatters or defames the suite.
 
-`mutate_core.py` is vendored: nanobench holds a byte-identical copy and drives it through an
-adapter of its own. That is the reason the cmake backend is tested here, in a repository that
-builds with meson and will never run it -- a backend covered only where it is used is exactly as
-untested as it was before the two tools were merged, and re-vendoring a core whose other half is
-broken is how one repository's green suite would ship the other one a fault.
+`mutate_core.py` is vendored: nanobench and oans each hold a byte-identical copy and drive it
+through an adapter of their own. That is the reason the cmake and make backends are tested here,
+in a repository that builds with meson and will never run either -- a backend covered only where
+it is used is exactly as untested as it was before the tools were merged, and re-vendoring a core
+whose other half is broken is how one repository's green suite would ship the others a fault. The
+same goes for the minunit harness, which only oans runs: a harness that cannot see a failure
+scores it `survived`, and that is the one direction this tool must never be wrong in.
 """
 
 from __future__ import annotations
@@ -742,12 +744,12 @@ class TestRootIgnore(unittest.TestCase):
 
 class TestTestOutput(unittest.TestCase):
     def test_a_green_run_has_no_failures(self):
-        self.assertEqual(mutate.parse_test_output(finished(0, "anything at all")), [])
+        self.assertEqual(mutate.DoctestHarness().parse_output(finished(0, "anything at all")), [])
 
     def test_a_failed_assertion_names_its_test_case(self):
         out = ("TEST CASE:  erase_the_last_element\n"
                "some/file.cpp:12: ERROR: CHECK( a == b ) is NOT correct!\n")
-        self.assertEqual(mutate.parse_test_output(finished(1, out)),
+        self.assertEqual(mutate.DoctestHarness().parse_output(finished(1, out)),
                          ["erase_the_last_element"])
 
     def test_a_banner_without_an_error_is_not_a_failure(self):
@@ -757,29 +759,29 @@ class TestTestOutput(unittest.TestCase):
                "some/file.cpp:12: MESSAGE: hello\n"
                "TEST CASE:  the_real_one\n"
                "some/file.cpp:13: ERROR: CHECK( x ) is NOT correct!\n")
-        self.assertEqual(mutate.parse_test_output(finished(1, out)), ["the_real_one"])
+        self.assertEqual(mutate.DoctestHarness().parse_output(finished(1, out)), ["the_real_one"])
 
     def test_a_case_is_named_once_however_many_assertions_it_failed(self):
         out = ("TEST CASE:  noisy\n"
                "f.cpp:1: ERROR: a\n"
                "f.cpp:2: ERROR: b\n")
-        self.assertEqual(mutate.parse_test_output(finished(1, out)), ["noisy"])
+        self.assertEqual(mutate.DoctestHarness().parse_output(finished(1, out)), ["noisy"])
 
     def test_a_sanitizer_abort_names_the_sanitizer(self):
         # Nonzero exit with no failed assertion. Under -Db_sanitize the thing
         # that noticed is not a test at all, and which runtime complained is the
         # whole answer.
         err = "SUMMARY: AddressSanitizer: heap-buffer-overflow /src/x.h:99 in foo\n"
-        self.assertEqual(mutate.parse_test_output(finished(1, "", err)),
+        self.assertEqual(mutate.DoctestHarness().parse_output(finished(1, "", err)),
                          ["AddressSanitizer heap-buffer-overflow /src/x.h:99 in foo"])
 
     def test_a_ubsan_runtime_error_is_recognised(self):
         err = "/src/x.h:12:7: runtime error: index 8 out of bounds\n"
-        self.assertEqual(mutate.parse_test_output(finished(1, "", err)),
+        self.assertEqual(mutate.DoctestHarness().parse_output(finished(1, "", err)),
                          ["index 8 out of bounds"])
 
     def test_a_bare_crash_still_counts_as_caught(self):
-        got = mutate.parse_test_output(finished(-11))
+        got = mutate.DoctestHarness().parse_output(finished(-11))
         self.assertEqual(got, ["exit -11, no assertion failed"])
         self.assertTrue(got, "a crash must not read as an empty failure list")
 
@@ -792,16 +794,16 @@ class TestCountTestCases(unittest.TestCase):
 
     def test_the_summary_is_read(self):
         out = "[doctest] test cases:     501 |     501 passed | 0 failed | 27 skipped\n"
-        self.assertEqual(mutate.count_test_cases(out), 501)
+        self.assertEqual(mutate.DoctestHarness().count_cases(out), 501)
 
     def test_a_filter_that_matched_nothing_counts_zero(self):
         out = "[doctest] test cases: 0 | 0 passed | 0 failed | 528 skipped\n"
-        self.assertEqual(mutate.count_test_cases(out), 0)
+        self.assertEqual(mutate.DoctestHarness().count_cases(out), 0)
 
     def test_output_without_a_summary_is_unknown_rather_than_zero(self):
         # A crash before the summary must not be read as "ran no tests", which
         # would abort the run instead of reporting the kill.
-        self.assertIsNone(mutate.count_test_cases("Segmentation fault\n"))
+        self.assertIsNone(mutate.DoctestHarness().count_cases("Segmentation fault\n"))
 
 
 class TestNameRendering(unittest.TestCase):
@@ -809,28 +811,28 @@ class TestNameRendering(unittest.TestCase):
     instantiation with the useful 25 at the front."""
 
     def test_a_plain_name_is_untouched(self):
-        self.assertEqual(mutate.short_test_name("erase_and_shift_down"), "erase_and_shift_down")
+        self.assertEqual(mutate.DoctestHarness().short_name("erase_and_shift_down"), "erase_and_shift_down")
 
     def test_an_instantiation_is_collapsed_but_kept_as_a_marker(self):
         self.assertEqual(
-            mutate.short_test_name("bucket_micro<ankerl::unordered_dense::map<int, int>>"),
+            mutate.DoctestHarness().short_name("bucket_micro<ankerl::unordered_dense::map<int, int>>"),
             "bucket_micro<...>")
 
     def test_nested_instantiations_collapse_to_one_marker(self):
-        self.assertEqual(mutate.short_test_name("t<a<b<c>>>"), "t<...>")
+        self.assertEqual(mutate.DoctestHarness().short_name("t<a<b<c>>>"), "t<...>")
 
     def test_a_long_name_is_truncated(self):
-        self.assertEqual(len(mutate.short_test_name("x" * 200)), 52)
+        self.assertEqual(len(mutate.DoctestHarness().short_name("x" * 200)), 52)
 
     def test_the_first_few_tests_are_shown_and_the_rest_counted(self):
-        self.assertEqual(mutate.render_caught(["a", "b", "c", "d", "e"]),
+        self.assertEqual(mutate.DoctestHarness().render_caught(["a", "b", "c", "d", "e"]),
                          "a, b, c (+2 more)")
 
     def test_exactly_the_limit_is_not_followed_by_a_count(self):
-        self.assertEqual(mutate.render_caught(["a", "b", "c"]), "a, b, c")
+        self.assertEqual(mutate.DoctestHarness().render_caught(["a", "b", "c"]), "a, b, c")
 
     def test_nothing_caught_it_renders_as_nothing(self):
-        self.assertEqual(mutate.render_caught([]), "")
+        self.assertEqual(mutate.DoctestHarness().render_caught([]), "")
 
 
 class TestMesonSetupArgs(unittest.TestCase):
@@ -962,6 +964,300 @@ class TestCMakeBackend(unittest.TestCase):
         # the documented invocation rather than anything a test would see.
         self.assertEqual(mutate.CMakeBackend().arg_flag, "--cmake-arg")
         self.assertEqual(mutate.MesonBackend().arg_flag, "--meson-arg")
+
+
+class TestMakeBackend(unittest.TestCase):
+    """make: no configure step, and everything else different because of it.
+
+    Not run in this repository, and that is the point of testing it here. The two generators
+    remember what they were configured with; make remembers nothing, so a pass-through argument
+    that lands in the wrong place is silently dropped -- a lane asked for a sanitizer build and
+    given a plain one scores every memory-safety mutant `survived`."""
+
+    def args(self, configure_arg=()):
+        return types.SimpleNamespace(buildtype="release", configure_arg=list(configure_arg),
+                                     unity=False)
+
+    def test_the_pass_through_flag_is_named_after_the_tool(self):
+        self.assertEqual(mutate.MakeBackend().arg_flag, "--make-arg")
+
+    def test_the_target_is_built_and_not_the_default_goal(self):
+        # A project whose suite is one binary should not pay for the rest of the
+        # tree on every mutant, and `all` is what make builds when asked for
+        # nothing.
+        got = mutate.MakeBackend("test").build_argv("/lane", 4, self.args())
+        self.assertEqual(got, ["make", "-C", "/lane", "-j", "4", "test"])
+
+    def test_no_target_leaves_make_to_its_default_goal(self):
+        got = mutate.MakeBackend().build_argv("/lane", 1, self.args())
+        self.assertEqual(got, ["make", "-C", "/lane", "-j", "1"])
+
+    def test_pass_through_arguments_ride_on_the_build_line(self):
+        # The difference that matters. meson and cmake put `--make-arg`'s
+        # equivalent into a configured build directory once; make has no such
+        # place, so an argument that only reached a configure step would apply
+        # to nothing at all and the fingerprint would still print it.
+        got = mutate.MakeBackend("test").build_argv(
+            "/lane", 2, self.args(["CC=clang", "SANITIZE=address"]))
+        self.assertEqual(got, ["make", "-C", "/lane", "-j", "2",
+                               "CC=clang", "SANITIZE=address", "test"])
+
+    def test_an_existing_tree_counts_as_configured(self):
+        # Answered off build.ninja by the base class, which for an in-tree build
+        # says "never" -- and a --reuse lane would then rewrite its compilation
+        # database on every run for nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(mutate.MakeBackend().is_configured(tmp))
+        self.assertFalse(mutate.MakeBackend().is_configured("/no/such/tree"))
+
+    def test_a_make_project_does_not_claim_to_be_unsanitized(self):
+        # There is no portable spelling, so the honest answer is that this
+        # cannot tell -- the fingerprint's "no sanitizer in this build" is a
+        # claim about what the run could observe.
+        self.assertEqual(mutate.MakeBackend().sanitizer(["SANITIZE=address"]), "unknown")
+
+    def test_configure_writes_a_compilation_database_from_what_make_would_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane = types.SimpleNamespace(dir=tmp, build=tmp, env=dict(os.environ))
+            printed = "cc -O2 -Isrc -c -o src/x.o src/x.c\n"
+            real = mutate.subprocess.run
+            mutate.subprocess.run = lambda *a, **k: finished(0, printed)
+            try:
+                mutate.MakeBackend("test").configure(lane, self.args())
+            finally:
+                mutate.subprocess.run = real
+            with open(os.path.join(tmp, "compile_commands.json")) as f:
+                entries = json.load(f)
+        self.assertEqual([e["file"] for e in entries], ["src/x.c"])
+
+    def test_a_dry_run_that_fails_stops_the_lane_rather_than_writing_nothing(self):
+        # An empty database reads as "no pre-filter", which is a survivable
+        # answer -- so a broken makefile would cost every mutant a full rebuild
+        # and never say why.
+        with tempfile.TemporaryDirectory() as tmp:
+            lane = types.SimpleNamespace(dir=tmp, build=tmp, env=dict(os.environ))
+            real = mutate.subprocess.run
+            mutate.subprocess.run = lambda *a, **k: finished(2, "", "no rule to make target")
+            try:
+                with self.assertRaises(RuntimeError) as e:
+                    mutate.MakeBackend().configure(lane, self.args())
+            finally:
+                mutate.subprocess.run = real
+        self.assertIn("no rule to make target", str(e.exception))
+
+
+class TestCompileCommandsFromMake(unittest.TestCase):
+    """`make --dry-run`, read as a compilation database.
+
+    This is where the syntax pre-filter's flags come from under make, and a wrong reading is
+    silent both ways: a line mistaken for a compile makes the pre-filter check the wrong thing,
+    and a real compile missed turns the filter off and costs a full rebuild per mutant."""
+
+    def files(self, output, directory="/lane"):
+        return [e["file"] for e in mutate.compile_commands_from_make(output, directory)]
+
+    def command(self, output, directory="/lane"):
+        return mutate.compile_commands_from_make(output, directory)[0]["command"]
+
+    def test_a_plain_compile_line_is_read(self):
+        # `-c` stays, the way a generator's own database keeps it: this is a
+        # compile_commands entry, and it is `_syntax_command` that strips the
+        # arguments a syntax check cannot have.
+        got = mutate.compile_commands_from_make("cc -O2 -c -o src/x.o src/x.c\n", "/lane")
+        self.assertEqual(got, [dict(directory="/lane", file="src/x.c",
+                                    command="cc -O2 -c src/x.c")])
+
+    def test_a_line_that_is_not_a_compile_is_skipped(self):
+        # `make -n` prints everything it would run: the binary itself, an echo,
+        # an install. None of them is a compile, and one read as one would have
+        # the pre-filter running the test suite.
+        output = ("make: Entering directory '/lane'\n"
+                  "./test\n"
+                  "echo building src/x.c\n"
+                  "install -D -m 0755 oans /usr/local/bin/oans\n")
+        self.assertEqual(self.files(output), [])
+
+    def test_a_compiler_is_recognised_by_name_and_not_by_substring(self):
+        self.assertTrue(mutate.looks_like_compiler("cc"))
+        self.assertTrue(mutate.looks_like_compiler("/usr/lib/ccache/gcc"))
+        self.assertTrue(mutate.looks_like_compiler("clang-18"))
+        self.assertTrue(mutate.looks_like_compiler("x86_64-linux-gnu-gcc"))
+        self.assertTrue(mutate.looks_like_compiler("g++-14"))
+        # These mention a compiler without being one, and a substring test on
+        # "cc" alone matches most of them.
+        self.assertFalse(mutate.looks_like_compiler("ccache"))
+        self.assertFalse(mutate.looks_like_compiler("echo"))
+        self.assertFalse(mutate.looks_like_compiler("install"))
+
+    def test_link_only_arguments_are_dropped(self):
+        # The one that fails loudly if it is missed and silently if it is not
+        # understood: with -fsyntax-only, gcc warns "linker input file unused"
+        # for every -l, and a tree built with -Werror then fails its own
+        # pre-filter for every mutant -- all of them scored `compiler`.
+        got = self.command("cc -O2 -c -o x.o x.c -Wl,-z,relro -lm -lglib-2.0 -L/opt/lib\n")
+        self.assertEqual(got, "cc -O2 -c x.c")
+
+    def test_an_output_that_looks_like_a_source_is_not_read_as_one(self):
+        # `-o` takes the next word whatever it is. A makefile writing
+        # `-o generated.c` would otherwise put its own output in the database.
+        self.assertEqual(self.files("cc -c -o build/generated.c src/real.c\n"),
+                         ["src/real.c"])
+
+    def test_the_first_entry_for_a_file_wins(self):
+        # `--always-make` over a tree with several targets compiles the same
+        # file more than once, exactly as a generator's own database resolves it.
+        output = ("cc -DFIRST -c -o a.o src/a.c\n"
+                  "cc -DSECOND -c -o b.o src/a.c\n")
+        got = mutate.compile_commands_from_make(output, "/lane")
+        self.assertEqual(len(got), 1)
+        self.assertIn("-DFIRST", got[0]["command"])
+
+    def test_a_link_and_compile_in_one_line_is_still_a_compile(self):
+        # The shape a single-TU test binary is built with, and the one the
+        # pre-filter needs most: there is no `-c` anywhere on it.
+        got = mutate.compile_commands_from_make(
+            "cc -Wall -std=gnu11 src/tests.c -o test -lm\n", "/lane")
+        self.assertEqual(got[0]["file"], "src/tests.c")
+        self.assertEqual(got[0]["command"], "cc -Wall -std=gnu11 src/tests.c")
+
+    def test_an_unbalanced_quote_is_skipped_rather_than_raising(self):
+        # A makefile echoing a shell fragment is not a compile, and one bad line
+        # must not take the lane's whole setup with it.
+        self.assertEqual(self.files("echo \"unterminated\ncc -c -o x.o x.c\n"), ["x.c"])
+
+    def test_a_flag_carrying_a_source_suffix_is_not_a_source(self):
+        self.assertEqual(self.files("cc -Wa,--defsym=x.c -c -o x.o real.c\n"), ["real.c"])
+
+
+class TestMinunitHarness(unittest.TestCase):
+    """The C runner oans uses. Only its failing path names anything, so this is where a
+    misread costs a `caught`."""
+
+    def setUp(self):
+        self.harness = mutate.MinunitHarness()
+
+    def test_a_green_run_has_no_failures(self):
+        out = "......\n\n31 tests, 5910 assertions, 0 failures\n"
+        self.assertEqual(self.harness.parse_output(finished(0, out)), [])
+
+    def test_a_failed_check_names_its_test_function(self):
+        out = ("...F\n"
+               "test_glob_basename failed:\n"
+               "\tsrc/tests.c:1061: glob_matches(set, \"a\", false)\n"
+               "\n\n31 tests, 12 assertions, 1 failures\n")
+        self.assertEqual(self.harness.parse_output(finished(1, out)),
+                         ["test_glob_basename"])
+
+    def test_a_test_is_named_once_however_many_ways_it_failed(self):
+        out = ("F\ntest_a failed:\n\tx\nF\ntest_a failed:\n\ty\n")
+        self.assertEqual(self.harness.parse_output(finished(1, out)), ["test_a"])
+
+    def test_the_word_failed_inside_a_message_does_not_invent_a_failure(self):
+        # minunit prints the asserted expression verbatim, so a test *about*
+        # failure quotes the word. Anchoring on the whole line is what keeps a
+        # `compiler` or an assertion message from being read as a test name.
+        out = ("F\n"
+               "test_real failed:\n"
+               "\tsrc/tests.c:9: restore_from(bad) failed:\n")
+        self.assertEqual(self.harness.parse_output(finished(1, out)), ["test_real"])
+
+    def test_a_crash_with_no_failed_assertion_still_counts_as_caught(self):
+        got = self.harness.parse_output(finished(-11))
+        self.assertEqual(got, ["exit -11, no assertion failed"])
+        self.assertTrue(got, "a crash must not read as an empty failure list")
+
+    def test_a_sanitizer_abort_names_the_sanitizer(self):
+        err = "SUMMARY: AddressSanitizer: heap-buffer-overflow src/x.c:9 in foo\n"
+        self.assertEqual(self.harness.parse_output(finished(1, "", err)),
+                         ["AddressSanitizer heap-buffer-overflow src/x.c:9 in foo"])
+
+    def test_the_tally_says_how_many_ran(self):
+        self.assertEqual(self.harness.count_cases("\n\n31 tests, 5910 assertions, 0 failures\n"),
+                         31)
+
+    def test_a_suite_that_ran_nothing_counts_zero_rather_than_unknown(self):
+        # The guard the baseline refuses on. Zero cases is green, and every
+        # mutant under it survives.
+        self.assertEqual(self.harness.count_cases("\n\n0 tests, 0 assertions, 0 failures\n"), 0)
+
+    def test_output_without_a_tally_is_unknown_rather_than_zero(self):
+        # A crash before the report must not be read as "ran no tests", which
+        # would abort the run instead of reporting the kill.
+        self.assertIsNone(self.harness.count_cases("Segmentation fault\n"))
+
+    def test_a_single_test_is_read_despite_the_singular(self):
+        self.assertEqual(self.harness.count_cases("\n\n1 test, 1 assertion, 0 failures\n"), 1)
+
+    def test_it_takes_no_filter_arguments(self):
+        # minunit's binary accepts none. Passing one would be accepted by the
+        # binary, ignored, and printed in the fingerprint as though it applied.
+        self.assertFalse(self.harness.filters)
+        self.assertEqual(self.harness.test_args(types.SimpleNamespace()), [])
+
+    def test_a_name_is_shortened_but_not_treated_as_a_template(self):
+        self.assertEqual(self.harness.short_name("test_fiemap_maps_share"),
+                         "test_fiemap_maps_share")
+        self.assertEqual(len(self.harness.short_name("t" * 200)), 52)
+
+
+class TestHarnessSeam(unittest.TestCase):
+    """Which runner a project gets, and what the parser offers because of it."""
+
+    def make_project(self, harness):
+        class WithHarness(adapter.UnorderedDense):
+            pass
+        WithHarness.harness = harness
+        return WithHarness()
+
+    def test_a_project_that_says_nothing_gets_doctest(self):
+        self.assertIsInstance(mutate.Project.harness, mutate.DoctestHarness)
+
+    def test_a_project_with_no_harness_is_refused(self):
+        class NoHarness(mutate.Project):
+            harness = None
+        self.assertTrue(any("harness" in p for p in NoHarness().problems()))
+
+    def test_a_runner_without_filters_is_not_offered_the_filter_flags(self):
+        # Offering them would be worse than useless: the binary takes no
+        # arguments, so the filter applies to nothing while the fingerprint
+        # prints it as though it had.
+        parser = mutate.build_parser(self.make_project(mutate.MinunitHarness()), "")
+        with open(os.devnull, "w") as quiet:  # argparse prints its usage on the way out
+            stderr, sys.stderr = sys.stderr, quiet
+            try:
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(["--test-filter", "whatever"])
+            finally:
+                sys.stderr = stderr
+        # Still readable by everything that asks, so nothing downstream has to
+        # learn which runner it is talking to.
+        self.assertIsNone(parser.parse_args([]).test_filter)
+
+    def test_a_runner_with_filters_still_has_them(self):
+        parser = mutate.build_parser(self.make_project(mutate.DoctestHarness()), "")
+        self.assertEqual(parser.parse_args(["--test-filter", "x"]).test_filter, "x")
+
+    def test_the_fingerprint_names_the_runner(self):
+        project = self.make_project(mutate.MinunitHarness())
+        args = types.SimpleNamespace(buildtype="debug", configure_arg=[], test_suite=None,
+                                     exclude_suite=None, test_filter=None,
+                                     exclude_filter=None, unity=project.unity,
+                                     file=project.target, lanes=1, jobs=1,
+                                     memory_limit=mutate.GIB, memory_note="")
+        self.assertIn("minunit", mutate.render_fingerprint(project, mutate.fingerprint(project, args)))
+
+    def test_a_c_project_probes_its_own_compiler_variable(self):
+        # CXX on a C project names something that may not even be installed, and
+        # the fingerprint is what a survivor is judged against later.
+        self.assertEqual(mutate.Project.compiler_env, "CXX")
+
+        class CProject(mutate.Project):
+            compiler_env = "CC"
+            compiler_probe = "cc"
+        self.assertEqual(CProject.compiler_probe, "cc")
+
+    def test_a_c_source_is_its_own_prefilter_tu(self):
+        self.assertEqual(mutate.Project().default_syntax_tu("src/csum.c"), "src/csum.c")
 
 
 class TestFingerprint(unittest.TestCase):
@@ -1369,6 +1665,9 @@ class TestMemoryCap(unittest.TestCase):
         lane.dir, lane.build, lane.jobs = "/lane", "/lane/builddir", 8
         lane.memory, lane.env, lane.test_args = mutate.GIB, {}, []
         lane.project = PROJECT
+        # A make lane carries its pass-through arguments on the build line, so
+        # the build command is assembled from `args` and not from the lane alone.
+        lane.args = types.SimpleNamespace(configure_arg=[])
         seen = []
         lane._run = lambda cmd, timeout, cwd=None, env=None, memory=None: seen.append(memory)
         lane.run_build(timeout=1)
@@ -1395,6 +1694,9 @@ class TestEvaluate(unittest.TestCase):
             self.syntax_cmd = dict(argv=["cc"], cwd=".") if has_syntax_cmd else None
             self.canned = dict(syntax=syntax, build=build, tests=tests)
             self.written = None
+            # `evaluate` reads the verdict out of the project's harness, so a
+            # lane without one would answer every mutant `survived`.
+            self.project = PROJECT
 
         def write_target(self, text):
             self.written = text
