@@ -72,27 +72,35 @@ misbehaving: it breaks the header, rebuilds, runs the suite and asks whether any
 What nothing notices is a hole in the tests. It never touches the working tree — every build
 happens in a throwaway copy of the repo.
 
-**The tool is two files, and one of them is shared with nanobench.** `mutate_core.py` is everything
-that is not about any one project — the lanes, the mutants, the baseline discipline, the verdicts,
-the report — and nanobench holds a byte-identical copy of it. `mutate.py` beside it is this
-project's adapter: where the header is, that meson configures the build, that the binary is
-`udm-test`, that a lane needs `FUZZ_CORPUS_BASE_DIR`, and the measured constants behind `--dry-run`.
-Roughly 1800 lines shared against 100 of adapter.
+**The tool is two files, and one of them is shared with nanobench and oans.** `mutate_core.py` is
+everything that is not about any one project — the lanes, the mutants, the baseline discipline, the
+verdicts, the report — and both of those repositories hold a byte-identical copy of it. `mutate.py`
+beside it is this project's adapter: where the header is, that meson configures the build, that the
+binary is `udm-test`, that a lane needs `FUZZ_CORPUS_BASE_DIR`, and the measured constants behind
+`--dry-run`. Roughly 1900 lines shared against 100 of adapter.
 
-That arrangement is what makes `scripts/test_mutate.py` worth its length: it covers the code *both*
-repositories run, including the cmake backend this project will never execute. So a change to the
-core is only half a change — make it here, run that suite, copy the file into nanobench, and record
-the new hash in both:
+Three build systems and two test runners live in the core, and only one of each is exercised here:
+meson + doctest. cmake is nanobench's, and `make` + minunit is oans's — a C project whose suite is
+one `minunit` binary, which is why `Backend.build_argv` takes the whole argument namespace (make
+remembers nothing, so `--make-arg CC=clang` has to ride on every build line) and why a `Harness`
+that takes no filter arguments does not get offered the `--test-filter` flags at all. A flag
+accepted and then ignored would run the whole suite while the fingerprint claimed otherwise.
+
+That arrangement is what makes `scripts/test_mutate.py` worth its length: it covers the code *all
+three* repositories run, including the cmake and make backends and the minunit harness this project
+will never execute. So a change to the core is only part of a change — make it here, run that suite,
+copy the file into the other two, and record the new hash in all three:
 
 ```sh
 sha256sum scripts/mutate/mutate_core.py                    # write it into mutate_core.sha256
 cp scripts/mutate/mutate_core.py ../nanobench/src/scripts/mutate/   # ... and into its .sha256 too
+cp scripts/mutate/mutate_core.py ../oans/scripts/mutate/           # ... and that one's
 ```
 
 `lint-mutate-core.py` fails if this copy has been edited without that hash moving with it, which is
-the one failure vendoring introduces: a convenient local fix here leaves the other repository
-running something nothing tests. Comparing the two `.sha256` files is how "are they in sync?" gets
-answered; no lint in either repository can see the other one.
+the one failure vendoring introduces: a convenient local fix here leaves the other repositories
+running something nothing tests. Comparing the `.sha256` files is how "are they in sync?" gets
+answered; no lint in any of the repositories can see the others.
 
 The everyday use is putting a *specific* bug back, which is the check that decides whether a new
 test earns its place. Bugs worth keeping live in `scripts/mutate/bugs/`:
@@ -200,8 +208,14 @@ that — it names what was skipped in the fingerprint, where lowering `--baselin
 
 `scripts/test_mutate.py` covers the half of the tool that decides what a verdict *means*, and runs
 in CI. It is hermetic: no compiler, no meson, no lanes, no cgroups. Since the core became shared it
-also covers nanobench's half — the cmake backend, the project seam, the root-only ignore patterns —
-because a backend tested only where it is used is exactly as untested as it was before.
+also covers the other repositories' halves — the cmake and make backends, the minunit harness, the
+project seam, the root-only ignore patterns — because a backend tested only where it is used is
+exactly as untested as it was before. The make backend gets the most of that attention, because it
+is the one with no configure step: its compilation database is read out of `make --dry-run`, and
+every way that reading can be wrong is silent. A line mistaken for a compile has the pre-filter
+checking the wrong thing; a real compile missed turns the filter off and costs a full rebuild per
+mutant; and a `-l` left on a line that a syntax check cannot link makes every mutant come back
+`compiler` under `-Werror`, which is the flattering direction.
 
 ## Fuzzing
 

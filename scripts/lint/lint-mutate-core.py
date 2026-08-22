@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """`scripts/mutate/mutate_core.py` is vendored, and this is what says so out loud.
 
-nanobench holds a byte-identical copy of that file and drives it through an adapter of its own.
-Sharing it is what lets one test suite -- `scripts/test_mutate.py`, in this repository -- cover the
-code both projects run. A copy edited in place ends that quietly: the suite here stays green, the
-other repository runs something nothing tests, and the two drift apart one convenient local fix at
-a time.
+nanobench and oans each hold a byte-identical copy of that file and drive it through an adapter of
+their own. Sharing it is what lets one test suite -- `scripts/test_mutate.py`, in this repository --
+cover the code all three projects run, including the cmake and make backends and the minunit
+harness that this one never executes. A copy edited in place ends that quietly: the suite here
+stays green, the other repositories run something nothing tests, and they drift apart one
+convenient local fix at a time.
 
 There is no way for a lint in one repository to see the other one, so this checks the next best
 thing: that the core still hashes to what was recorded when it was last vendored. Editing the core
-means updating `mutate_core.sha256` in the same commit, and then the two repositories hold the same
+means updating `mutate_core.sha256` in the same commit, and then every repository holds the same
 recorded hash -- which makes "are these in sync?" a question `diff` can answer:
 
     diff <(cat unordered_dense/scripts/mutate/mutate_core.sha256) \\
          <(cat nanobench/src/scripts/mutate/mutate_core.sha256)
+    diff <(cat unordered_dense/scripts/mutate/mutate_core.sha256) \\
+         <(cat oans/scripts/mutate/mutate_core.sha256)
 
 That is deliberately a hand check rather than a promise. What this can enforce is that nobody
 changed the shared file without noticing that it is shared.
@@ -46,8 +49,9 @@ def main():
         print("%s has changed since it was last vendored.\n"
               "  recorded  %s\n"
               "  actual    %s\n"
-              "It is shared with nanobench, so a change here is only half of one. Copy the file "
-              "into that repository, run its lints, and record the new hash in both:\n"
+              "It is shared with nanobench and oans, so a change here is only part of one. Copy "
+              "the file into those repositories, run their lints, and record the new hash in "
+              "all three:\n"
               "  echo %s > %s"
               % (CORE.relative_to(REPO), recorded, digest, digest,
                  RECORDED.relative_to(REPO)))
