@@ -59,6 +59,7 @@ class UnorderedDense(mutate_core.Project):
     build_dir = "builddir"
     test_binary = os.path.join("test", "udm-test")
     backend = mutate_core.MesonBackend()
+    harness = mutate_core.DoctestHarness()
 
     # The tree is known to survive merged translation units: a CI leg builds it
     # that way on purpose, which is what makes it safe to ask for here.
