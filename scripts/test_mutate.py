@@ -1759,6 +1759,82 @@ class TestMemoryCap(unittest.TestCase):
         self.assertFalse(mutate.killed_for_memory(None))
 
 
+class TestTargetIsBuilt(unittest.TestCase):
+    """Refusing a file the binary under test is not built from.
+
+    This is the check for the one way this tool can be wrong that looks like a
+    finding: a file no test binary includes scores every mutant `survived`, and
+    the report says the tests are decoration when nothing was ever measured.
+    The probe appends an #error and asks whether the build notices."""
+
+    class ProbeLane:
+        def __init__(self, tmp, build_returncode):
+            self.target = os.path.join(tmp, "target.c")
+            with open(self.target, "w", encoding="utf-8") as f:
+                f.write("int answer(void) { return 42; }\n")
+            self.build_returncode = build_returncode
+            self.seen = []          # what the file held at each build
+            self.project = PROJECT
+
+        def write_target(self, text):
+            with open(self.target, "w", encoding="utf-8") as f:
+                f.write(text)
+
+        def run_build(self, timeout, jobs=None):
+            with open(self.target, encoding="utf-8") as f:
+                self.seen.append(f.read())
+            if self.build_returncode is None:
+                return None
+            return finished(self.build_returncode)
+
+    def check(self, build_returncode):
+        with tempfile.TemporaryDirectory() as tmp:
+            lane = self.ProbeLane(tmp, build_returncode)
+            args = types.SimpleNamespace(build_timeout=1, file="src/target.c")
+            try:
+                mutate.check_target_is_built(lane, args, lambda _m: None)
+                raised = None
+            except RuntimeError as exc:
+                raised = str(exc)
+            with open(lane.target, encoding="utf-8") as f:
+                left = f.read()
+            return raised, lane.seen, left
+
+    def test_a_file_nothing_includes_is_refused(self):
+        # The build shrugged off an #error, so the compiler never saw the file.
+        raised, _seen, _left = self.check(0)
+        self.assertIsNotNone(raised)
+        self.assertIn("not compiled into", raised)
+        self.assertIn("src/target.c", raised)
+        # Names the consequence, not just the condition - the whole point is
+        # that `survived` would otherwise be read as a fact about the tests.
+        self.assertIn("survived", raised)
+
+    def test_a_file_the_build_compiles_is_accepted(self):
+        raised, _seen, _left = self.check(1)
+        self.assertIsNone(raised)
+
+    def test_the_probe_really_puts_an_error_in_the_file(self):
+        # Without this the check would pass for the wrong reason on any tree
+        # whose build happens to fail, and nothing here would notice.
+        _raised, seen, _left = self.check(1)
+        self.assertEqual(1, len(seen))
+        self.assertIn("#error", seen[0])
+        self.assertIn(mutate.PROBE_MARKER, seen[0])
+        self.assertIn("int answer(void)", seen[0])   # appended, not replaced
+
+    def test_the_file_is_restored_either_way(self):
+        for rc in (0, 1, None):
+            with self.subTest(build_returncode=rc):
+                _raised, _seen, left = self.check(rc)
+                self.assertEqual("int answer(void) { return 42; }\n", left)
+
+    def test_a_timeout_does_not_refuse(self):
+        # A slow machine must not become a wrong answer about the tests.
+        raised, _seen, _left = self.check(None)
+        self.assertIsNone(raised)
+
+
 class TestEvaluate(unittest.TestCase):
     """Which verdict a mutant gets, given how its build and its suite ended.
 
