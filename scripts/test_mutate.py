@@ -246,6 +246,9 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(mutate.parse_operators("tokens,deletions"), {"tokens", "deletions"})
         self.assertEqual(mutate.parse_operators(" deletions , tokens "), {"tokens", "deletions"})
 
+    def test_negation_can_be_asked_for_alone(self):
+        self.assertEqual(mutate.parse_operators("negation"), {"negation"})
+
     def test_bitwise_can_be_asked_for_alone(self):
         # The point of naming the bitwise table separately from `tokens`: sweeping a
         # header of masks for ^ and | should not re-answer all 841 token sites.
@@ -279,6 +282,51 @@ class TestOperators(unittest.TestCase):
         # An empty set would sweep nothing and report a clean run.
         with self.assertRaises(Exception):
             mutate.parse_operators(",")
+
+
+class TestNegationSites(unittest.TestCase):
+    """A dropped logical `!`, which is the one edit that removes a token rather than
+    exchanging one. Named separately for the reason bitwise is: an operator worth asking
+    for on its own is worth measuring on its own."""
+
+    def negation(self, src):
+        return [s["description"] for s in mutate.negation_sites(src, mutate.code_mask(src))]
+
+    def test_a_logical_not_is_dropped(self):
+        self.assertEqual(self.negation("if (!a) {}\n"), ["drop: !"])
+
+    def test_not_equal_is_consumed_rather_than_split(self):
+        # The bug this guards, and the reason `!=` is in the table with no replacements:
+        # matching the bare `!` first turns `a != b` into `a = b`. That compiles, it is an
+        # assignment inside a condition, and the mutant is then about a question nobody
+        # asked - the same shape as `||` being consumed in the bitwise table.
+        self.assertEqual(self.negation("if (a != b) {}\n"), [])
+
+    def test_each_not_in_a_double_negation_is_its_own_site(self):
+        self.assertEqual(self.negation("x = !!y;\n"), ["drop: !", "drop: !"])
+
+    def test_a_deletion_is_described_as_a_drop(self):
+        # "! -> " with nothing after the arrow is what the substitution wording produces
+        # for an empty replacement, and these strings are what a person reads in the
+        # report and what report.py groups by. Worth the special case.
+        self.assertEqual(self.negation("if (!a) {}\n"), ["drop: !"])
+
+    def test_comments_and_strings_are_not_touched(self):
+        # code_mask covers this for every operator; asserted here because a `!` inside a
+        # message is far more common than a stray `^`, so this table meets more of them.
+        self.assertEqual(self.negation('const char *s = "!oops";\n'), [])
+        self.assertEqual(self.negation("// !nope\n"), [])
+
+    def test_words_and_numbers_are_not_touched(self):
+        self.assertEqual(self.negation("bool b = true; int i = 3;\n"), [])
+
+    def test_the_mutant_text_removes_the_character(self):
+        # The whole operator rests on an empty replacement splicing correctly, which no
+        # other operator exercises.
+        src = "if (!a) {}\n"
+        site = mutate.negation_sites(src, mutate.code_mask(src))[0]
+        self.assertEqual("if (a) {}\n",
+                         mutate.mutant_text(mutate.site_mutants([site])[0], src))
 
 
 class TestBitwiseSites(unittest.TestCase):
