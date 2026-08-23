@@ -22,6 +22,20 @@ there is one copy of it rather than one per repository: this docstring is for
 whoever opens this file, MANUAL is for whoever runs the tool.
 """
 
+#: Bumped by hand on every change to this file, and never otherwise. The
+#: `.sha256` beside each copy already answers "has this copy been edited?"
+#: precisely; what it cannot answer is "which of two copies is older", because
+#: hashes do not order. That question is the one that went unanswered for weeks:
+#: two of the three repositories sat on a stale core with their own lints green,
+#: since each records the hash of whatever it has committed and no lint in any
+#: of them can see the other two. A version in the run fingerprint makes the
+#: staleness legible from one run's output instead of from three checkouts.
+#:
+#: sync-core.py refuses to propagate a changed file whose version did not move,
+#: which is the guard on forgetting to bump: two different files claiming one
+#: version would be worse than no version at all.
+CORE_VERSION = 2
+
 import argparse
 import bisect
 import concurrent.futures
@@ -2117,7 +2131,8 @@ def fingerprint(project, args):
     setup_args = project.backend.setup_args(args)
     compiler = project.backend.compiler(project, args)
     tests = " ".join(project.harness.test_args(args))
-    facts = dict(compiler=compiler, sanitizer=project.sanitizer(setup_args),
+    facts = dict(core_version=CORE_VERSION,
+                 compiler=compiler, sanitizer=project.sanitizer(setup_args),
                  cores=os.cpu_count(), backend=project.backend.name,
                  setup_label=project.backend.setup_label,
                  harness=project.harness.name,
@@ -2130,7 +2145,8 @@ def fingerprint(project, args):
 
 
 def render_fingerprint(project, facts):
-    lines = ["compiler        %s" % facts["compiler"],
+    lines = ["core            v%s (mutate_core.py, shared)" % facts["core_version"],
+             "compiler        %s" % facts["compiler"],
              "cores           %s" % (facts["cores"] or "?"),
              "lanes           %d, %d job%s each"
              % (facts["lanes"], facts["jobs"], "" if facts["jobs"] == 1 else "s"),
