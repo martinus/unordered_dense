@@ -44,6 +44,11 @@ SIBLINGS = {
     "oans": "scripts/mutate",
 }
 
+#: The branch each sibling's change is pushed to, unless --branch says
+#: otherwise. It is an option because the first real use of this script could
+#: not use it: the session doing the sync was allowed to push one named branch
+#: and nothing else, so the copying was done by hand instead. A tool worked
+#: around on its first outing has a gap worth closing.
 BRANCH = "sync-mutate-core"
 
 
@@ -108,6 +113,8 @@ def main(argv=None):
     ap.add_argument("--siblings-root", type=Path, default=REPO.parent,
                     help="directory holding the sibling checkouts "
                          "(default: %(default)s)")
+    ap.add_argument("--branch", default=BRANCH,
+                    help="branch to push in each sibling (default: %(default)s)")
     ap.add_argument("--no-test", action="store_true",
                     help="skip this repository's own core test suite")
     args = ap.parse_args(argv)
@@ -156,23 +163,23 @@ def main(argv=None):
             print(f"  SKIPPED: {s.root} has uncommitted changes")
             continue
         if args.dry_run:
-            print(f"  would branch {BRANCH}, copy, commit, push and open a PR")
+            print(f"  would branch {args.branch}, copy, commit, push and open a PR")
             continue
         git(s.root, "fetch", "origin")
         default = git(s.root, "symbolic-ref", "--short",
                       "refs/remotes/origin/HEAD", check=False).stdout.strip()
         default = default.split("/")[-1] if default else "main"
-        git(s.root, "checkout", "-B", BRANCH, f"origin/{default}")
+        git(s.root, "checkout", "-B", args.branch, f"origin/{default}")
         shutil.copy2(CANON, s.core)
         s.hashfile.write_text(sha256(s.core) + "\n")
         git(s.root, "add", str(s.core), str(s.hashfile))
         git(s.root, "commit", "-m", commit_message(canon_text))
-        git(s.root, "push", "-u", "--force-with-lease", "origin", BRANCH)
-        print(f"  pushed {BRANCH}")
+        git(s.root, "push", "-u", "--force-with-lease", "origin", args.branch)
+        print(f"  pushed {args.branch}")
         if shutil.which("gh"):
             r = subprocess.run(
                 ["gh", "pr", "create", "--repo", f"martinus/{s.name}",
-                 "--base", default, "--head", BRANCH,
+                 "--base", default, "--head", args.branch,
                  "--title", f"Sync mutate_core.py to v{core_version(canon_text)}",
                  "--body", pr_body(canon_text)],
                 capture_output=True, text=True, cwd=s.root)
@@ -183,7 +190,7 @@ def main(argv=None):
             # to prevent.
             print(f"  NO PR OPENED - gh not on PATH. Run:\n"
                   f"    gh pr create --repo martinus/{s.name} "
-                  f"--base {default} --head {BRANCH}")
+                  f"--base {default} --head {args.branch}")
     return 0
 
 
