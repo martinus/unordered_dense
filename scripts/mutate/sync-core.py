@@ -101,6 +101,34 @@ class Sibling:
     def dirty(self):
         return bool(git(self.root, "status", "--porcelain").stdout.strip())
 
+    def default_branch(self):
+        """The sibling's default branch, or None rather than a guess.
+
+        This used to fall back to "main" when refs/remotes/origin/HEAD was
+        unset - which is the ordinary state of a plain `git clone` in CI and in
+        a fresh container - and nanobench's default is `master`. The first real
+        run of this script died on `origin/main` not existing, after the core
+        suite had passed and before anything was copied.
+
+        So: ask the ref, then ask the remote, then look at what is actually
+        there, and refuse rather than guess. A wrong answer here checks out the
+        wrong base and opens a pull request against it.
+        """
+        head = git(self.root, "symbolic-ref", "--short",
+                   "refs/remotes/origin/HEAD", check=False).stdout.strip()
+        if head:
+            return head.split("/")[-1]
+        ls = git(self.root, "ls-remote", "--symref", "origin", "HEAD",
+                 check=False).stdout
+        for line in ls.split("\n"):
+            if line.startswith("ref:"):
+                return line.split()[1].split("/")[-1]
+        for name in ("main", "master"):
+            if git(self.root, "rev-parse", "--verify", "-q",
+                   f"refs/remotes/origin/{name}", check=False).returncode == 0:
+                return name
+        return None
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
@@ -166,9 +194,10 @@ def main(argv=None):
             print(f"  would branch {args.branch}, copy, commit, push and open a PR")
             continue
         git(s.root, "fetch", "origin")
-        default = git(s.root, "symbolic-ref", "--short",
-                      "refs/remotes/origin/HEAD", check=False).stdout.strip()
-        default = default.split("/")[-1] if default else "main"
+        default = s.default_branch()
+        if default is None:
+            print("  SKIPPED: cannot tell which branch is the default here")
+            continue
         git(s.root, "checkout", "-B", args.branch, f"origin/{default}")
         shutil.copy2(CANON, s.core)
         s.hashfile.write_text(sha256(s.core) + "\n")
