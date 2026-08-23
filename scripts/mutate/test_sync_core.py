@@ -10,6 +10,7 @@ bumping its version.
 """
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -73,6 +74,59 @@ class TestState(unittest.TestCase):
     def test_a_missing_checkout_is_reported_not_crashed(self):
         s = sync_core.Sibling("sib", "scripts/mutate", Path("/nonexistent"))
         self.assertEqual("missing", s.state(core_text(3), "x")[0])
+
+
+class TestDefaultBranch(unittest.TestCase):
+    """Resolving it, not guessing it.
+
+    The first real run of this script died here: refs/remotes/origin/HEAD is
+    unset in an ordinary clone, the code fell back to "main", and nanobench's
+    default is `master`. It failed after the core suite had passed and before
+    anything was copied - loud, but only by accident, and a *wrong* guess would
+    have been worse: it checks out the base a pull request is opened against.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name) / "repo"
+        self.root.mkdir()
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@t")
+        self.git("config", "user.name", "t")
+        (self.root / "f").write_text("x")
+        self.git("add", "f")
+        self.git("commit", "-qm", "c")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def git(self, *args):
+        # Not `run`: unittest calls TestCase.run() to run the test, so a helper
+        # by that name shadows it and every case dies before its body.
+        subprocess.run(["git", "-C", str(self.root), *args],
+                       capture_output=True, check=True)
+
+    def sibling(self):
+        return sync_core.Sibling("s", ".", self.root)
+
+    def test_a_remote_branch_named_master_is_found(self):
+        # No origin/HEAD, no reachable remote: this is the case that broke.
+        self.git("update-ref", "refs/remotes/origin/master", "HEAD")
+        self.assertEqual("master", self.sibling().default_branch())
+
+    def test_a_remote_branch_named_main_is_found(self):
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.assertEqual("main", self.sibling().default_branch())
+
+    def test_origin_head_wins_when_it_is_set(self):
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/trunk", "HEAD")
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD",
+                 "refs/remotes/origin/trunk")
+        self.assertEqual("trunk", self.sibling().default_branch())
+
+    def test_neither_present_answers_none_rather_than_a_guess(self):
+        self.assertIsNone(self.sibling().default_branch())
 
 
 class TestCoreVersion(unittest.TestCase):
