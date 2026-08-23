@@ -68,6 +68,12 @@ jobs:
       # compiler, no meson, no lanes, no cgroups.
       - run: ./scripts/test_mutate.py
 
+      # sync-core.py is what carries that file to the repositories vendoring it, and this covers
+      # the only part of it that can be wrong quietly: whether a sibling is in sync, stale, or
+      # must be refused. The refusal exists because a changed core at an unchanged CORE_VERSION
+      # would leave two different files claiming one version -- worse than no version at all.
+      - run: ./scripts/mutate/test_sync_core.py
+
   # Linux, macOS, Windows, the sanitizers and the hardened build used to be four jobs repeating
   # the same ten lines of checkout, python, cache and artifact setup. They differ only in the
   # runner, the compiler and the meson arguments, which is what the matrix carries. The displayed
