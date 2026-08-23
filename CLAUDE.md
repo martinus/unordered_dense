@@ -131,6 +131,14 @@ scripts/mutate/mutate.py --bugs bugs.txt --lines 1278-1290 --reuse
 `--diff` is the everyday mode and measures from the merge base, so a branch that has not caught up
 with main does not sweep what main moved on without it.
 
+`--dry-run` sizes a run, and reports a *range* rather than one number: the
+per-mutant constants describe a mutant that **compiles**, and one the
+`-fsyntax-only` pre-filter throws out costs about a tenth of that. The single
+figure it used to print read high by an order of magnitude wherever most mutants
+are invalid - measured, the `negation` sweep below was estimated at 11 minutes
+and took **51 seconds**. Which end applies is decided by the operator and the
+code, not by the machine, so it is knowable before running anything.
+
 `--operators` picks what to change. The default is all of them, so a plain run asks every question
 this knows how to ask — which is what you want from `--diff`, where the cost is proportional to the
 lines you touched. Over the whole header that default is ~1600 mutants and something like an hour

@@ -1988,6 +1988,36 @@ class TestEstimate(unittest.TestCase):
         self.assertTrue(mutate.estimate(PROJECT, 500, 32, 32).endswith("min"))
         self.assertTrue(mutate.estimate(PROJECT, 100000, 32, 32).endswith("h"))
 
+    def test_a_rejected_mutant_costs_a_fraction_of_one_that_builds(self):
+        # The per-mutant constants describe a mutant that compiles; one the
+        # -fsyntax-only pre-filter throws out does not pay for a build.
+        builds = mutate.estimate_seconds(PROJECT, 500, 8, 8, rejected=0.0)
+        refused = mutate.estimate_seconds(PROJECT, 500, 8, 8, rejected=1.0)
+        self.assertLess(refused, builds / 5)
+
+    def test_half_rejected_lands_between_the_two(self):
+        args = (PROJECT, 500, 8, 8)
+        low = mutate.estimate_seconds(*args, rejected=1.0)
+        high = mutate.estimate_seconds(*args, rejected=0.0)
+        self.assertLess(low, mutate.estimate_seconds(*args, rejected=0.5))
+        self.assertLess(mutate.estimate_seconds(*args, rejected=0.5), high)
+
+    def test_the_range_is_printed_only_when_a_pre_filter_exists(self):
+        # Without one every mutant builds, so a second figure would be noise.
+        self.assertNotIn("refuses", mutate.estimate(PROJECT, 500, 8, 8))
+        self.assertIn("refuses", mutate.estimate(PROJECT, 500, 8, 8,
+                                                 pre_filter=True))
+
+    def test_the_low_end_is_the_smaller_number(self):
+        # It reads "roughly X, or Y if the compiler refuses them", and a Y
+        # above X would be worse than printing nothing.
+        text = mutate.estimate(PROJECT, 500, 8, 8, pre_filter=True)
+        high, low = text.split(", or ")
+        self.assertLess(mutate.estimate_seconds(PROJECT, 500, 8, 8, 1.0),
+                        mutate.estimate_seconds(PROJECT, 500, 8, 8, 0.0))
+        self.assertIn("if the compiler refuses them", low)
+        self.assertTrue(high.strip())
+
 
 class TestCommandLine(unittest.TestCase):
     """The argument rules, checked by running the script -- these are the paths a typo reaches."""
