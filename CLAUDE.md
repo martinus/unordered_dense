@@ -146,6 +146,21 @@ test is added.
 | `tokens` | 841 | ~47 min | not re-measured | | |
 | `bitwise` | 76 | 4 min | **99%** | 87% | **1** |
 | `deletions` | 665 | 14 min | 94% | 30% | 37 |
+| `negation` | 24 | **51 s** | 100% | **0%** | 0 |
+
+`negation` drops a logical `!`, and its row is the one worth reading twice: **every one of
+its 24 mutants is rejected by the compiler, and not one reaches a test.** That is not a weak
+operator, it is a fact about this header. Nearly every `!` here sits in type-level code -
+`static_assert(!is_detected_v<...>)`, `enable_if_t<!is_map_v<Q> && ...>`, `if constexpr
+(!std::is_trivially_destructible_v<T>)` - where dropping it makes the program *ill-formed*
+rather than merely wrong. In oans, a C project, the same operator is 14 sites with 13 caught
+and one real finding (the `!` excluding DELALLOC extents from a shared-byte count, which no
+test held).
+
+It stays in the default set anyway, and the reason is the 51 seconds: the `-fsyntax-only`
+pre-filter rejects all 24 at about 2 s each rather than a rebuild each, so an operator that
+is useless here is also nearly free here. Expect that unevenness between projects rather
+than a uniform number - the same lesson the property tests taught, from the other side.
 
 `bitwise` mutates `^` and `|`, which the token table leaves alone (`&` is three operators sharing a
 spelling — bitwise and, address-of, and the reference declarator — and only a parser can tell them
