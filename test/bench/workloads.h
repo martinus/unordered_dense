@@ -59,7 +59,9 @@ inline void set_key(uint64_t v, std::string* key) {
     static_assert(key_filler.size() >= max_key_len);
     // Square a byte of a mixed value: uniform in, skewed towards short out.
     auto const spread = (v * UINT64_C(0x9E3779B97F4A7C15)) >> 56U;
-    auto const len = min_key_len + ((spread * spread) >> 9U);
+    // At most 8 + 127, so the cast to size_t cannot lose anything, and size_t is what a
+    // 32 bit std::string takes.
+    auto const len = min_key_len + static_cast<size_t>((spread * spread) >> 9U);
     key->assign(key_filler.data(), len);
     std::memcpy(key->data(), &v, sizeof(v));
 }
