@@ -1368,10 +1368,10 @@ private:
                 auto* gp = m_buckets.data() + place;
                 auto lo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp));     // NOLINT
                 auto hi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 2)); // NOLINT
-                auto const dists = _mm_castps_si128(
-                    _mm_shuffle_ps(_mm_castsi128_ps(lo), _mm_castsi128_ps(hi), _MM_SHUFFLE(2, 0, 2, 0)));
-                auto const empty = static_cast<unsigned>(
-                    _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(dists, _mm_setzero_si128()))));
+                auto const dists =
+                    _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(lo), _mm_castsi128_ps(hi), _MM_SHUFFLE(2, 0, 2, 0)));
+                auto const empty =
+                    static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(dists, _mm_setzero_si128()))));
                 if (ANKERL_UNORDERED_DENSE_LIKELY(empty != 0)) {
                     // how many occupied buckets come before the first empty one: 0 to 3
                     auto const run = detail::countr_zero(empty);
@@ -1384,14 +1384,15 @@ private:
                     auto const moved_hi = _mm_add_epi32(_mm_or_si128(_mm_slli_si128(hi, 8), _mm_srli_si128(lo, 8)),
                                                         _mm_setr_epi32(inc, 0, inc, 0));
                     // buckets 0..run take the moved contents, the rest keep theirs
-                    alignas(16) static constexpr std::int32_t keep[4][8] = {
-                        {-1, -1, 0, 0, 0, 0, 0, 0},
-                        {-1, -1, -1, -1, 0, 0, 0, 0},
-                        {-1, -1, -1, -1, -1, -1, 0, 0},
-                        {-1, -1, -1, -1, -1, -1, -1, -1},
-                    };
-                    auto const keep_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(&keep[run][0])); // NOLINT
-                    auto const keep_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(&keep[run][4])); // NOLINT
+                    // rows are 32 bytes, so with the table aligned both halves of every row are
+                    alignas(16) static constexpr std::array<std::array<std::int32_t, 8>, 4> keep = {
+                        { {{-1, -1, 0, 0, 0, 0, 0, 0}},
+                          {{-1, -1, -1, -1, 0, 0, 0, 0}},
+                          {{-1, -1, -1, -1, -1, -1, 0, 0}},
+                          {{-1, -1, -1, -1, -1, -1, -1, -1}},
+                        }};
+                    auto const keep_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(keep[run].data()));     // NOLINT
+                    auto const keep_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(keep[run].data() + 4)); // NOLINT
                     lo = _mm_or_si128(_mm_and_si128(keep_lo, moved_lo), _mm_andnot_si128(keep_lo, lo));
                     hi = _mm_or_si128(_mm_and_si128(keep_hi, moved_hi), _mm_andnot_si128(keep_hi, hi));
                     _mm_storeu_si128(reinterpret_cast<__m128i*>(gp), lo);     // NOLINT
