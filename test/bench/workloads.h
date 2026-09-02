@@ -221,10 +221,14 @@ inline auto hash_keys() -> std::vector<std::string> const& {
 
 // Hashing alone, over the keys the string workloads use.
 //
-// A whole lookup is ~224 instructions and only ~60 of them are the hash, and a hash change that
+// A whole lookup is ~167 instructions and only ~59 of them are the hash, and a hash change that
 // touches one length range is diluted further by the share of keys in it. This makes the hash the
 // whole measurement instead. The keys are built before the loop, so what is timed is hashing and
 // not the making of a key.
+//
+// It resolves a large change and not a small one. A loop this tight with nothing else in it is
+// more sensitive to code layout than to a few percent of hashing, and the A/B harness builds two
+// of them. See the note in scripts/ab/README.md before believing a small result here.
 template <typename Map>
 auto hash_strings() -> uint64_t {
     typename Map::hasher const hash{};
