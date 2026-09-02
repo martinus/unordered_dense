@@ -226,9 +226,9 @@ inline auto hash_keys() -> std::vector<std::string> const& {
 // whole measurement instead. The keys are built before the loop, so what is timed is hashing and
 // not the making of a key.
 template <typename Map>
-auto hash_strings() -> size_t {
+auto hash_strings() -> uint64_t {
     typename Map::hasher const hash{};
-    size_t checksum = 0;
+    uint64_t checksum = 0; // the hash is 64 bits wide whatever size_t is here
     for (auto const& key : hash_keys()) {
         checksum += hash(key);
     }
