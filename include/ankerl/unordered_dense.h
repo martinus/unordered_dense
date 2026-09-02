@@ -1414,6 +1414,59 @@ private:
     void erase_and_shift_down(value_idx_type bucket_idx) {
         // cache mask in a local so the bucket stores can't alias it
         auto const mask = m_bucket_mask;
+#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
+        // NOLINTBEGIN(portability-simd-intrinsics) -- this is the x86 path, on purpose
+        if constexpr (has_simd_scan) {
+            // The mirror of place_and_shift_up: the four buckets after the one being erased, read
+            // at once. A bucket moves back one if it is displaced, that is at distance two or
+            // more; the run of displaced buckets after the victim all move back by one, and the
+            // slot where the run ends becomes the empty one. Measured, the run is empty 73% of
+            // the time and one long 11%, so asking per bucket was a coin flip per erase.
+            //
+            // The bound keeps the four wide store off the sentinels. As with the insert, a
+            // mutation sweep found it is hygiene and not correctness: a sentinel inside the
+            // window reads as displaced, which only ever sends the erase to the loop below.
+            if (ANKERL_UNORDERED_DENSE_LIKELY(std::size_t{bucket_idx} + 4 <= mask)) {
+                auto* gp = m_buckets.data() + bucket_idx;
+                auto const rlo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 1)); // NOLINT  [b1, b2]
+                auto const rhi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 3)); // NOLINT  [b3, b4]
+                auto const dists =
+                    _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(rlo), _mm_castsi128_ps(rhi), _MM_SHUFFLE(2, 0, 2, 0)));
+                // at home or empty: distance below two, which is the value below 2 * dist_inc
+                static_assert(Bucket::dist_inc == (1U << 8U));
+                auto const settled = static_cast<unsigned>(
+                    _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(_mm_srli_epi32(dists, 9), _mm_setzero_si128()))));
+                if (ANKERL_UNORDERED_DENSE_LIKELY(settled != 0)) {
+                    auto const run = detail::countr_zero(settled); // displaced buckets after the victim, 0..3
+                    auto const inc = static_cast<int>(Bucket::dist_inc);
+                    // every bucket one closer to home, in the victim's window
+                    auto const moved_lo = _mm_sub_epi32(rlo, _mm_setr_epi32(inc, 0, inc, 0));
+                    auto const moved_hi = _mm_sub_epi32(rhi, _mm_setr_epi32(inc, 0, inc, 0));
+                    // what the window holds now, for the buckets past the run: [victim, b1] and [b2, b3]
+                    auto const old_lo = _mm_slli_si128(rlo, 8);
+                    auto const old_hi = _mm_or_si128(_mm_slli_si128(rhi, 8), _mm_srli_si128(rlo, 8));
+                    // buckets below run move, the one at run empties, the ones above stay
+                    alignas(16) static constexpr std::array<std::array<std::int32_t, 8>, 5> below = {
+                        { {{0, 0, 0, 0, 0, 0, 0, 0}},
+                          {{-1, -1, 0, 0, 0, 0, 0, 0}},
+                          {{-1, -1, -1, -1, 0, 0, 0, 0}},
+                          {{-1, -1, -1, -1, -1, -1, 0, 0}},
+                          {{-1, -1, -1, -1, -1, -1, -1, -1}},
+                        }};
+                    auto const take_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run].data()));         // NOLINT
+                    auto const take_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run].data() + 4));     // NOLINT
+                    auto const gone_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run + 1].data()));     // NOLINT
+                    auto const gone_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run + 1].data() + 4)); // NOLINT
+                    auto const lo = _mm_or_si128(_mm_and_si128(take_lo, moved_lo), _mm_andnot_si128(gone_lo, old_lo));
+                    auto const hi = _mm_or_si128(_mm_and_si128(take_hi, moved_hi), _mm_andnot_si128(gone_hi, old_hi));
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(gp), lo);     // NOLINT
+                    _mm_storeu_si128(reinterpret_cast<__m128i*>(gp + 2), hi); // NOLINT
+                    return;
+                }
+            }
+        }
+        // NOLINTEND(portability-simd-intrinsics)
+#    endif
 
         // shift down until either empty or an element with correct spot is found
         auto next_bucket_idx = static_cast<value_idx_type>((bucket_idx + 1U) & mask);

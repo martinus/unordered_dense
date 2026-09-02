@@ -62,6 +62,17 @@ difference. 200 bytes also put every key on the heap, where a real workload keep
 them inside the `std::string`. The keys now run from 8 to 135 bytes, skewed towards short. Scores
 from before that change are not comparable with scores after it.
 
+**Integer keys must not be small sequential values.** `insert_erase` and `iterate` draw their
+values from a range that grows to 20000, and until 2026-09-02 the value was the key. The hash of a
+`uint64_t` is one multiply, and the top bits of a multiple of a small integer walk a lattice: 10000
+such keys in 16384 buckets landed at most one to a bucket, with 39% of the buckets empty where a
+uniform hash leaves 54%. Nothing collided, so the probe never probed and the shifts never shifted
+-- 82% of erases moved nothing against 58% for the same values as strings -- and two changes to
+the shift loops read as losses on `ie64` that were wins on every honest table. The value is now
+scrambled through a 64 bit bijection before it becomes a key, so every checksum is as it was and
+`ie64` sees the same table `iestr` does. A benchmark that rewards a hash for the one input it is
+perfect on is measuring the input.
+
 **Inserting has to grow the table somewhere.** Until 2026-09-02 no workload in the score did.
 `insert_erase` draws its keys from a range that grows to 20000, so the map hovers at ~10k entries
 and doubles its bucket array about a dozen times in eight million operations. Growth is not a
@@ -109,9 +120,11 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   conditional moves and one combined test does not help: written as `a == 0 || b == 0` it is still
   two branches, written as a bitwise or it is one branch that mispredicts just as often
   (0.608 per insert, ten more instructions). What did work is the vector version now in the
-  header, which settles four buckets from one mask -- the same trade the probe made. A two bucket
-  vector version was also tried and lost to it (49.7 against 46.3 cycles per insert): its second
-  slot is still a branch.
+  header, which settles four buckets from one mask -- the same trade the probe made, and the same
+  again for the shift down on erase. A two bucket vector version was also tried and lost to it
+  (49.7 against 46.3 cycles per insert): its second slot is still a branch. Both vector shifts
+  first read as ~1% *losses* on `ie64`, and that was the benchmark: its integer keys hashed to a
+  lattice with no chains to shift (see "Where the time goes"). With honest keys they are 1.07x.
 
 ## Testing
 

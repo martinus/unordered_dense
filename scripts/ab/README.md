@@ -48,32 +48,37 @@ Numbers from that session, paired against main (ms; boost for scale). The string
 | rhit64 | 145 | 80 | 50 |
 | rmiss64 | 48 | 35 | 28 |
 
-## Where inserting stands (2026-09-02)
+## Where inserting and erasing stand (2026-09-02)
 
 `build64` is the weakest workload the score has, and it was added because nothing in the score grew
-a table. Paired against `boost::unordered_flat_map` with the same hash, before and after the vector
-shift in `place_and_shift_up`:
+a table. Paired against `boost::unordered_flat_map` with the same hash, before the two vector
+shifts in `place_and_shift_up` and `erase_and_shift_down` and after, with the integer keys
+scrambled (see CLAUDE.md: the old ones hashed to a lattice and had nothing to shift):
 
 | workload | before | after | boost |
 |---|---|---|---|
-| build64 | 6.62 ms | **6.02 ms** | 4.66 ms |
-| buildstr | 11.14 ms | **10.64 ms** | 13.24 ms |
-| ie64 | 15.14 M op/s | 15.14 M op/s | 17.90 M op/s |
-| iestr | 4.54 M op/s | 4.60 M op/s | 5.17 M op/s |
+| build64 | 6.88 ms | **6.14 ms** | 4.83 ms |
+| buildstr | 11.26 ms | **10.66 ms** | 13.36 ms |
+| ie64 | 10.79 M op/s | **11.61 M op/s** | 13.89 M op/s |
+| iestr | 4.53 M op/s | **4.70 M op/s** | 5.19 M op/s |
 
 Growth is not the whole of it. Inserting 200000 `uint64_t` keys into a table that already reserved
 the room cost 52.4 cycles and 101.5 instructions here against boost's 22.6 and 73.5, and the
-difference was **0.61 branch mispredictions per insert against 0.10**. They came from the robin
-hood shift: measured over 8 million inserts, 73% shift no bucket, 11% shift one, and the rest
-spread out, so "is this bucket occupied", asked once per bucket, is a coin flip the predictor
-cannot win. boost never moves an element once placed.
+difference was **0.61 branch mispredictions per insert against 0.10**; erasing them again cost
+63.6 cycles and 0.60 mispredictions against boost's 25.0 and 0.10. Both came from the robin hood
+shift. Measured over 8 million of each, 73% shift no bucket, 11% shift one, and the rest spread
+out, so "is this bucket occupied", asked once per bucket, is a coin flip the predictor cannot win.
+boost never moves an element once placed.
 
-The vector shift asks it once for four buckets and blends the answer, the same trade the probe
-made: 0.24 mispredictions and 46.3 cycles per insert, for 126 instructions. That is why `ie64`
-does not move -- its map is small and often under its load factor, so fewer inserts shift at all
-and the extra instructions cost what the mispredictions saved. What is left of the gap to boost is
-the second container and the shifting itself; see the dead ends in CLAUDE.md for what did not
-work on it.
+The vector shifts ask it once for four buckets and blend the answer, the same trade the probe
+made: 0.24 mispredictions and 46.3 cycles per insert for 126 instructions, 0.26 and 54.5 per erase
+for 133. The gain grows as the table gets more chains to shift, and on a table erased from full to
+empty it is 27% at 10000 entries and 7% at 200000. What is left of the gap to boost is the second
+container and the shifting itself; see the dead ends in CLAUDE.md for what did not work on it.
+
+A harness that erases the same keys in the same order every repetition reports 0.003
+mispredictions per erase and no gain from any of this: the predictor learns the order. Shuffle per
+repetition.
 
 `perf stat -e cycles,instructions,branch-misses` on a single-workload runner is what separates
 "more instructions" from "more mispredictions"; `perf record -e cycles:pp` for annotate.
