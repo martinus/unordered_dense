@@ -41,19 +41,68 @@ Benchmarking practices:
 
 - Always benchmark a `--buildtype release` build (never debug).
 - Record a baseline score on the unmodified code first, then compare after each change. Run each measurement 2–3 times; treat differences within run-to-run noise (~1–2%) as no change.
-- On noisy/shared machines, don't compare runs made at different times — the machine can drift by >10% over minutes. Instead keep a baseline binary around (copy `udm-test` elsewhere before rebuilding) and run baseline and candidate **interleaved** (A B A B A B), then compare paired runs. A change is real when it wins in (almost) every pair.
+- Don't compare runs made at different times — even a desktop drifts by a few percent over minutes. `scripts/ab/run.sh` (see below) runs baseline and candidate interleaved in one process and reports a confidence interval for the ratio; believe a change when the interval excludes 100%.
 - Beware code-layout luck: any edit (even to never-executed code) can shift alignment and move individual sub-benchmarks by ±3%. Judge micro-optimizations by mechanism plus a focused microbenchmark, and confirm on the paired geomean, not on a single sub-benchmark delta.
 - nanobench prints per-benchmark `err%`; rerun if it's high (> ~3%). A warning about CPU governor/turbo is normal on non-tuned machines — it just means more noise.
 - Other useful benchmarks in `test/bench/` (e.g. `bench_copy`, `bench_game_of_life`, find variants) can be run the same way via `-tc=<name>`; run all with `-ns -ts=bench`. List all test cases with `-ltc`.
 
-## Optimization dead ends (verified with interleaved A/B runs; re-test before assuming they still hold)
+## Where the time goes (measured 2026-09 on a Ryzen 9 7950X, clang 22, default `-march`)
 
-Measured on a shared x86-64 VM with clang 18, default `-march` (baseline x86-64, so no BMI2/AVX2 in generated code). The `bench_quick_overall_udm` hot paths are close to machine limits: a lookup is hash + two dependent cache accesses (~10 ns map-side), and hashing the 200-byte string keys (~42 cycles each) is ~45% of the wall time of the string sub-benchmarks. Ideas that consistently **regressed** and were reverted:
+The cost model that predicted every experiment within a cycle or two: **cycles per operation ≈
+16 × branch mispredictions + instructions / ~3.5**. The hot loops are front-end bound between
+mispredictions, so both terms matter and nothing else does -- the whole working set of the
+benchmark sits in L2.
+
+- **u64 lookups are bounded by branch mispredictions.** The scalar probe branched once per
+  bucket, so the *position* of a hit leaked into the branch pattern. The SSE2 probe (four
+  buckets per step, lowest deciding lane via `ctz`) makes the outcome one data-dependent branch
+  regardless of position. On lookups whose hit/miss sequence is random that is worth 35-80% on
+  u64 keys. The old, replayed find of `bench_quick_overall_udm` showed only ~6% (see below).
+- **String workloads are latency bound.** At ~250 instructions per lookup -- ~150 of them the
+  200 byte wyhash -- the reorder buffer holds barely one lookup, so anything on the dependency
+  chain shows directly. The vector decision (`movmskps` → `tzcnt` → index load) adds ~10 cycles
+  before the value load can issue where the scalar path's predicted branch let it issue at
+  once. That is the -4% of `findstr` under clang; gcc shows +7% instead. Random string lookups
+  win 5-12% either way.
+- **Hashing is 42-45% of the string workloads**, at ~40 cycles per 200 byte key: 0.5 uops per
+  byte, nothing to do with multiply count. With a trivial 8 byte hash, insert/erase time equals
+  boost's exactly -- the rest of the gap there is that a robin hood erase hashes the moved last
+  element too.
+
+Paired measurements: `scripts/ab/run.sh` builds the working-tree header against any revision of
+itself (renamed into a second namespace) and optionally `boost::unordered_flat_map`, and runs
+nanobench's `compare()` -- interleaved, with a confidence interval on the *ratio*, which is what
+makes a 2% change believable on a desktop that drifts by more than that. It also has all-hits
+and no-hits lookup workloads (`rhit64`, `rmiss64`, and the `str` variants).
+
+**Lookup benchmarks must not replay.** Until 2026-09 the find workload of
+`bench_quick_overall_udm` reset its search rng to the insertion rng's seed, so its sequence of hits
+and misses repeated and a TAGE-style predictor learned much of it: 0.6 mispredictions per lookup
+where a random sequence costs the scalar probe 1.35. That under-reported the cost of branchy
+probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The workload now
+decides every lookup with an rng of its own. `find_random.cpp` still replays.
+
+## Optimization dead ends (verified with paired A/B runs; re-test before assuming they still hold)
+
+The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that consistently
+**regressed** and were reverted:
 
 - Force-inlining `wyhash::hash` into the map (icache/register pressure outweighs saved call overhead).
 - A branchless `do_find` fast path for scalar keys (unconditional key compare + conditional-move result): the speculative value load doubles cache misses on the ~50% miss lookups.
 - Explicit `__builtin_prefetch` of `m_values[bucket->m_value_idx]` in `do_find`, and computing the moved element's hash early + prefetching its home bucket in `do_erase`: out-of-order execution already hides these latencies.
 - Replacing wyhash with rapidhash (v3, 2025): the wyhash implementation here is *faster* for inputs ≥ 24 bytes in both latency and throughput; rapidhash only won at ≤ 16 bytes, and that trick (two plain 8-byte reads instead of building `a`/`b` from four 4-byte reads) has been adopted.
+- An AES-NI hash (a port of gxhash, compiled with `-maes`, no dispatch): 30% *slower* than this
+  wyhash on 200 byte keys and 27-55% slower in the map. Its serial `aesenc` chain has worse latency,
+  and latency is what the string loop pays for. Fewer uops do not help a chain.
+- SIMD probe variants: an *aligned* group of four (1-4 lanes visible from home) left the "nothing
+  decided, next group" branch random and won nothing; deciding hit-vs-miss with two branches
+  (scalar home probe, then the vector for the rest) mispredicted *more* than one vector decision
+  (0.90 vs 0.70 per lookup) although each branch is more biased; keeping the key comparison inside
+  the vector loop made the compiler spill the xmm state around `bcmp` on every string hit.
+- Storing the top 32 hash bits per value so an erase never re-hashes the moved element: only the
+  successful half of the erases move one, so the bound is ~7% of `iestr`, and it measured 1.4%
+  for 4 bytes per element and a second container to keep consistent.
+- Caching the bucket data pointer in the shift loops (the compiler already hoists it).
 
 ## Testing
 

@@ -44,6 +44,15 @@ inline void randomize_key(ankerl::nanobench::Rng* rng, int n, std::string* key) 
     std::memcpy(key->data(), &k, sizeof(k));
 }
 
+template <typename T>
+inline void set_key(uint64_t v, T* key) {
+    *key = static_cast<T>(v);
+}
+
+inline void set_key(uint64_t v, std::string* key) {
+    std::memcpy(key->data(), &v, sizeof(v));
+}
+
 // Random insert & erase
 template <typename Map>
 void bench_random_insert_erase(ankerl::nanobench::Bench* bench, std::string_view name) {
@@ -98,56 +107,49 @@ void bench_iterate(ankerl::nanobench::Bench* bench, std::string_view name) {
     });
 }
 
-// 111.903 222
-// 112.023 123123
+// Random finds against a map that grows to ~50k entries while it is searched. Half of the
+// lookups find a key that is in the map, chosen at random among those; the other half look for a
+// key that cannot be. Which of the two each lookup is, is decided by an rng of its own, so nothing
+// here repeats. It used to: the searches replayed the insertion sequence from the same seed, and
+// a branch predictor with a long history learned half of the outcomes (0.6 mispredictions per
+// lookup where a random sequence costs 1.35). A change that trades instructions for
+// mispredictions looked worse here than it was.
 template <typename Map>
 void bench_random_find(ankerl::nanobench::Bench* bench, std::string_view name) {
-
     bench->run(fmt::format("{} 50% probability to find", name), [&] {
-        uint64_t const seed = 123123;
-        ankerl::nanobench::Rng numbers_insert_rng(seed);
-        size_t numbers_insert_rng_calls = 0;
+        ankerl::nanobench::Rng insert_rng(123123);
+        ankerl::nanobench::Rng search_rng(987654321);
+        constexpr auto never_inserted = uint64_t{1} << 63U;
 
-        ankerl::nanobench::Rng numbers_search_rng(seed);
-        size_t numbers_search_rng_calls = 0;
-
-        ankerl::nanobench::Rng insertion_rng(123);
-
+        std::vector<uint64_t> inserted;
         size_t checksum = 0;
-        size_t found = 0;
-        size_t not_found = 0;
-
         Map map;
         auto key = init_key<typename Map::key_type>();
         for (size_t i = 0; i < 100000; ++i) {
-            randomize_key(&numbers_insert_rng, 1000000, &key);
-            ++numbers_insert_rng_calls;
-
-            if (insertion_rng() & 1U) {
-                map[key] = i;
+            // half of the candidates go in; the first one always, so there is something to find
+            auto candidate = insert_rng() & ~never_inserted;
+            if (inserted.empty() || (insert_rng() & 1U) != 0) {
+                set_key(candidate, &key);
+                if (map.emplace(key, i).second) {
+                    inserted.push_back(candidate);
+                }
             }
 
             // search 100 entries in the map
             for (size_t search = 0; search < 100; ++search) {
-                randomize_key(&numbers_search_rng, 1000000, &key);
-                ++numbers_search_rng_calls;
-
+                auto r = search_rng();
+                if ((r & 1U) != 0) {
+                    set_key(inserted[((r >> 32U) * inserted.size()) >> 32U], &key);
+                } else {
+                    set_key(r | never_inserted, &key);
+                }
                 auto it = map.find(key);
                 if (it != map.end()) {
                     checksum += it->second;
-                    ++found;
-                } else {
-                    ++not_found;
-                }
-                if (numbers_insert_rng_calls == numbers_search_rng_calls) {
-                    numbers_search_rng = ankerl::nanobench::Rng(seed);
-                    numbers_search_rng_calls = 0;
                 }
             }
         }
-        ankerl::nanobench::doNotOptimizeAway(checksum);
-        ankerl::nanobench::doNotOptimizeAway(found);
-        ankerl::nanobench::doNotOptimizeAway(not_found);
+        CHECK(checksum == 124865472559U);
     });
 }
 

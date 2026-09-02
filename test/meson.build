@@ -74,6 +74,7 @@ test_sources = [
     'unit/not_moveable.cpp',
     'unit/pmr_move_with_allocators.cpp',
     'unit/precomputed_hash.cpp',
+    'unit/probe_wrap.cpp',
     'unit/pmr.cpp',
     'unit/reentrant.cpp',
     'unit/rehash.cpp',
