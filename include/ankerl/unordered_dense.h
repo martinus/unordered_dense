@@ -77,6 +77,18 @@
 #    define ANKERL_UNORDERED_DENSE_PREFETCH(addr) static_cast<void>(addr) // NOLINT(cppcoreguidelines-macro-usage)
 #endif
 
+// SSE2 is part of the x86-64 baseline, so the four-buckets-at-a-time probe below is available on
+// every x86-64 build without asking for it. Elsewhere the scalar probe is used.
+#if defined(__SSE2__) || (defined(_MSC_VER) && (defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)))
+#    define ANKERL_UNORDERED_DENSE_HAS_SSE2 1 // NOLINT(cppcoreguidelines-macro-usage)
+#    include <emmintrin.h>
+#    if defined(_MSC_VER)
+#        include <intrin.h>
+#    endif
+#else
+#    define ANKERL_UNORDERED_DENSE_HAS_SSE2 0 // NOLINT(cppcoreguidelines-macro-usage)
+#endif
+
 #if defined(__clang__) && defined(__has_attribute)
 #    if __has_attribute(__no_sanitize__)
 #        define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK \
@@ -156,6 +168,21 @@ namespace detail {
 } // namespace detail
 
 // hash ///////////////////////////////////////////////////////////////////////
+
+namespace detail {
+
+// Index of the lowest set bit. x must not be zero.
+[[nodiscard]] inline auto countr_zero(std::uint32_t x) -> unsigned {
+#    if defined(_MSC_VER)
+    unsigned long idx{};
+    _BitScanForward(&idx, x);
+    return static_cast<unsigned>(idx);
+#    else
+    return static_cast<unsigned>(__builtin_ctz(x));
+#    endif
+}
+
+} // namespace detail
 
 // This is a stripped-down implementation of wyhash: https://github.com/wangyi-fudan/wyhash
 // No big-endian support (because different values on different machines don't matter),
@@ -1149,6 +1176,20 @@ private:
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets
     static constexpr float default_max_load_factor = 0.8F;
 
+    // The probe can read four buckets at once where the bucket array is contiguous -- the default
+    // container, a std::vector -- and the bucket is the standard 8 byte one, on a platform with SSE2.
+    static constexpr bool has_simd_scan = ANKERL_UNORDERED_DENSE_HAS_SSE2 && !IsSegmented &&
+                                          std::is_same_v<BucketContainer, detail::default_container_t> &&
+                                          std::is_same_v<Bucket, ankerl::unordered_dense::bucket_type::standard>;
+
+    // Four buckets read from any bucket index reach up to three past the end of the array, so the
+    // array carries that many extra. They hold a dist_and_fingerprint no key can expect and no
+    // bucket can hold less than, and the value index of an empty bucket, so a scan passes over
+    // them as it would over occupied buckets that are not the answer -- and the wrap to bucket
+    // zero is taken only where a scan moves on, which is rare. bucket_count() does not count them.
+    static constexpr std::size_t bucket_padding = has_simd_scan ? 3 : 0;
+    static constexpr std::uint32_t sentinel_dist_and_fingerprint = 0x7FFFFFFFU;
+
     // Named, and covering both containers, so that the promise and the recovery that exists for
     // when the promise cannot be made are spelled the same way and cannot drift apart -- the same
     // reason segmented_vector names its propagation traits. Covering only m_values would be wrong
@@ -1351,7 +1392,7 @@ private:
                 // exactly wrong.
                 m_buckets.assign(other.m_buckets.begin(), other.m_buckets.end());
                 m_shifts = other.m_shifts;
-                describe_buckets(m_buckets.size());
+                describe_buckets(bucket_count());
             }
         }
     }
@@ -1482,7 +1523,11 @@ private:
             // no buckets to find them by, which is not a state anything can recover from without
             // allocating again.
             auto fresh = bucket_container_type(m_buckets.get_allocator());
-            fresh.resize(num_buckets);
+            fresh.resize(num_buckets + bucket_padding);
+            for (std::size_t i = 0; i < bucket_padding; ++i) {
+                fresh[num_buckets + i].m_dist_and_fingerprint =
+                    static_cast<dist_and_fingerprint_type>(sentinel_dist_and_fingerprint);
+            }
             m_buckets = std::move(fresh);
         }
         // All three commit here, together, and only once the array they describe exists. They have
@@ -1593,10 +1638,37 @@ private:
             // update the values_idx of the moved entry. No need to play the info game, just look until we find the values_idx
             auto bucket_idx = bucket_idx_from_hash(mixed_hash(get_key(val)));
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
-            while (values_idx_back != at(m_buckets, bucket_idx).m_value_idx) {
-                bucket_idx = next(bucket_idx);
+#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
+            // NOLINTBEGIN(portability-simd-intrinsics)
+            if constexpr (has_simd_scan) {
+                // four buckets at a time, matching the value index this time: only one bucket in the
+                // table holds it, so its lane is the answer
+                auto const mask = m_bucket_mask;
+                auto* data = m_buckets.data();
+                auto const wanted = _mm_set1_epi32(static_cast<int>(values_idx_back));
+                while (true) {
+                    auto* gp = data + bucket_idx;
+                    auto lo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp));     // NOLINT
+                    auto hi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 2)); // NOLINT
+                    auto v =
+                        _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(lo), _mm_castsi128_ps(hi), _MM_SHUFFLE(3, 1, 3, 1)));
+                    auto eq = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(v, wanted))));
+                    if (ANKERL_UNORDERED_DENSE_LIKELY(eq != 0)) {
+                        gp[detail::countr_zero(eq)].m_value_idx = value_idx_to_remove;
+                        break;
+                    }
+                    auto lanes = (std::min)(std::size_t{4}, std::size_t{mask} + 1 - bucket_idx);
+                    bucket_idx = static_cast<value_idx_type>((bucket_idx + lanes) & mask);
+                }
+            } else
+            // NOLINTEND(portability-simd-intrinsics)
+#    endif
+            {
+                while (values_idx_back != at(m_buckets, bucket_idx).m_value_idx) {
+                    bucket_idx = next(bucket_idx);
+                }
+                at(m_buckets, bucket_idx).m_value_idx = value_idx_to_remove;
             }
-            at(m_buckets, bucket_idx).m_value_idx = value_idx_to_remove;
         }
         m_values.pop_back();
     }
@@ -1634,18 +1706,11 @@ private:
             return 0;
         }
 
-        auto [dist_and_fingerprint, bucket_idx] = next_while_less(key);
-
-        while (dist_and_fingerprint == at(m_buckets, bucket_idx).m_dist_and_fingerprint &&
-               !m_equal(key, get_key(m_values[at(m_buckets, bucket_idx).m_value_idx]))) {
-            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-            bucket_idx = next(bucket_idx);
-        }
-
-        if (dist_and_fingerprint != at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+        auto r = probe(key, mixed_hash(key));
+        if (!r.found) {
             return 0;
         }
-        do_erase(bucket_idx, handle_erased_value);
+        do_erase(r.bucket_idx, handle_erased_value);
         return 1;
     }
 
@@ -1681,26 +1746,15 @@ private:
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         allocate_buckets_if_none();
-        auto hash = mixed_hash(key);
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
-        auto bucket_idx = bucket_idx_from_hash(hash);
-
-        while (true) {
-            auto* bucket = &at(m_buckets, bucket_idx);
-            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
-                if (m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
-                    return {begin() + static_cast<difference_type>(bucket->m_value_idx), false};
-                }
-            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
-                return do_place_element(dist_and_fingerprint,
-                                        bucket_idx,
-                                        std::piecewise_construct,
-                                        std::forward_as_tuple(std::forward<K>(key)),
-                                        std::forward_as_tuple(std::forward<Args>(args)...));
-            }
-            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-            bucket_idx = next(bucket_idx);
+        auto r = probe(key, mixed_hash(key));
+        if (r.found) {
+            return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
+        return do_place_element(r.dist_and_fingerprint,
+                                r.bucket_idx,
+                                std::piecewise_construct,
+                                std::forward_as_tuple(std::forward<K>(key)),
+                                std::forward_as_tuple(std::forward<Args>(args)...));
     }
 
     template <typename K>
@@ -1716,13 +1770,112 @@ private:
     // Same lookup with the hashing already done. Requires the bucket array to be allocated, which
     // !empty() implies; the callers test empty() rather than this function so that a lookup in an
     // empty table returns without hashing anything.
+    // Where a probe for a key stopped. Found: the bucket holding it, and the value it points to.
+    // Not found: the bucket the key would be placed in, and the dist_and_fingerprint it would carry
+    // there -- exactly what an insert needs next. dist_and_fingerprint is meaningful only then.
+    struct probe_result {
+        dist_and_fingerprint_type dist_and_fingerprint;
+        value_idx_type bucket_idx;
+        value_idx_type value_idx;
+        bool found;
+    };
+
+    // One bucket at a time, from any point of a probe sequence.
     template <typename K>
-    auto do_find_hashed(K const& key, std::uint64_t mh) -> iterator {
+    auto probe_scalar(K const& key, dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx) const
+        -> probe_result {
+        while (true) {
+            auto const* bucket = &at(m_buckets, bucket_idx);
+            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
+                if (m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
+                    return {dist_and_fingerprint, bucket_idx, bucket->m_value_idx, true};
+                }
+            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
+                return {dist_and_fingerprint, bucket_idx, 0, false};
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+    }
+
+#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
+    // NOLINTBEGIN(portability-simd-intrinsics) -- this is the x86 path, on purpose
+    // Four consecutive buckets per step, starting at the home bucket. For each lane the
+    // dist_and_fingerprint this key would have there is compared: equal is a fingerprint match
+    // worth a key comparison, less is the robin hood proof that the key is absent -- and where it
+    // would go. The lowest lane that is either decides, which makes the outcome independent of
+    // *where* in the probe sequence it happened: one data dependent branch per probe instead of one
+    // per bucket. The last three buckets of the array have no four buckets after them, and hand
+    // over to the scalar probe.
+    template <typename K>
+    auto probe_simd(K const& key, std::uint64_t mh) const -> probe_result {
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
         auto bucket_idx = bucket_idx_from_hash(mh);
+        auto const mask = m_bucket_mask;
+        auto const* data = m_buckets.data();
+
+        auto expected = _mm_add_epi32(_mm_set1_epi32(static_cast<int>(dist_and_fingerprint)),
+                                      _mm_setr_epi32(0,
+                                                     static_cast<int>(Bucket::dist_inc),
+                                                     static_cast<int>(2 * Bucket::dist_inc),
+                                                     static_cast<int>(3 * Bucket::dist_inc)));
+        auto const step = _mm_set1_epi32(static_cast<int>(4 * Bucket::dist_inc));
+
+        while (true) {
+            auto const* gp = data + bucket_idx;
+            auto lo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp));     // NOLINT
+            auto hi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 2)); // NOLINT
+            auto d = _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(lo), _mm_castsi128_ps(hi), _MM_SHUFFLE(2, 0, 2, 0)));
+
+            // Two lane masks from the sign bits: bucket - expected is negative where the bucket
+            // holds less (both are far below 2^31, so the difference cannot wrap), and a compare
+            // for equality is all ones where they are equal. Their or has a sign bit set in every
+            // lane that is either.
+            auto eqv = _mm_cmpeq_epi32(d, expected);
+            auto lessv = _mm_sub_epi32(d, expected);
+            auto candidates = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(_mm_or_si128(eqv, lessv))));
+            auto less = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(lessv)));
+            if (ANKERL_UNORDERED_DENSE_LIKELY(candidates != 0)) {
+                auto j = detail::countr_zero(candidates);
+                auto idx = static_cast<value_idx_type>(bucket_idx + j);
+                if (0 != ((less >> j) & 1U)) {
+                    return {
+                        static_cast<dist_and_fingerprint_type>(dist_and_fingerprint + (j * Bucket::dist_inc)), idx, 0, false};
+                }
+                auto value_idx = gp[j].m_value_idx;
+                if (ANKERL_UNORDERED_DENSE_LIKELY(m_equal(key, get_key(m_values[value_idx])))) {
+                    return {dist_and_fingerprint, idx, value_idx, true};
+                }
+                // A fingerprint collision. Rare enough that the scalar probe can take it from the
+                // next bucket on, which also keeps the vector state from having to survive the
+                // key comparison above.
+                return probe_scalar(
+                    key,
+                    static_cast<dist_and_fingerprint_type>(dist_and_fingerprint + ((j + 1) * Bucket::dist_inc)),
+                    next(idx));
+            }
+            // Nothing decided in these four. Move on by as many buckets as were real -- fewer than
+            // four only where the padding was among them, which is also where the index wraps.
+            auto lanes = (std::min)(std::size_t{4}, std::size_t{mask} + 1 - bucket_idx);
+            bucket_idx = static_cast<value_idx_type>((bucket_idx + lanes) & mask);
+            dist_and_fingerprint = static_cast<dist_and_fingerprint_type>(dist_and_fingerprint + (lanes * Bucket::dist_inc));
+            if (ANKERL_UNORDERED_DENSE_UNLIKELY(lanes != 4 || dist_and_fingerprint >=
+                                                                  sentinel_dist_and_fingerprint - (4 * Bucket::dist_inc))) {
+                // a wrap, or a distance the lane arithmetic could not hold: the scalar probe takes it
+                return probe_scalar(key, dist_and_fingerprint, bucket_idx);
+            }
+            expected = _mm_add_epi32(expected, step);
+        }
+    }
+    // NOLINTEND(portability-simd-intrinsics)
+#    endif
+
+    // The find of a configuration without the vector probe: one bucket at a time, the first two
+    // unrolled. *Always* checking a few directly before entering the loop measured faster.
+    template <typename K>
+    auto do_find_scalar(K const& key, dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx) -> iterator {
         auto* bucket = &at(m_buckets, bucket_idx);
 
-        // unrolled loop. *Always* check a few directly, then enter the loop. This is faster.
         if (dist_and_fingerprint == bucket->m_dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
             return begin() + static_cast<difference_type>(bucket->m_value_idx);
         }
@@ -1748,6 +1901,26 @@ private:
             dist_and_fingerprint = dist_inc(dist_and_fingerprint);
             bucket_idx = next(bucket_idx);
             bucket = &at(m_buckets, bucket_idx);
+        }
+    }
+
+    template <typename K>
+    auto probe(K const& key, std::uint64_t mh) const -> probe_result {
+#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
+        if constexpr (has_simd_scan) {
+            return probe_simd(key, mh);
+        }
+#    endif
+        return probe_scalar(key, dist_and_fingerprint_from_hash(mh), bucket_idx_from_hash(mh));
+    }
+
+    template <typename K>
+    auto do_find_hashed(K const& key, std::uint64_t mh) -> iterator {
+        if constexpr (has_simd_scan) {
+            auto r = probe(key, mh);
+            return r.found ? begin() + static_cast<difference_type>(r.value_idx) : end();
+        } else {
+            return do_find_scalar(key, dist_and_fingerprint_from_hash(mh), bucket_idx_from_hash(mh));
         }
     }
 
@@ -2694,7 +2867,7 @@ public:
     // bucket interface ///////////////////////////////////////////////////////
 
     auto bucket_count() const noexcept -> std::size_t { // NOLINT(modernize-use-nodiscard)
-        return m_buckets.size();
+        return m_buckets.empty() ? 0 : m_buckets.size() - bucket_padding;
     }
 
     static constexpr auto max_bucket_count() noexcept -> std::size_t { // NOLINT(modernize-use-nodiscard)
