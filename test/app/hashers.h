@@ -55,4 +55,14 @@ struct narrow_avalanching_hash {
     }
 };
 
+// Returns the key: a test that wants to choose the bucket a key lands in, and its fingerprint,
+// spells them out in the key. Avalanching, so that mixed_hash() passes it through untouched.
+struct identity_hash {
+    using is_avalanching = void;
+
+    [[nodiscard]] auto operator()(std::uint64_t key) const noexcept -> std::uint64_t {
+        return key;
+    }
+};
+
 } // namespace test
