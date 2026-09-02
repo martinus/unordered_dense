@@ -39,6 +39,7 @@ test_sources = [
     'unit/empty.cpp',
     'unit/equal_range.cpp',
     'unit/erase_if.cpp',
+    'unit/erase_churn.cpp',
     'unit/erase_range.cpp',
     'unit/erase_throwing_move.cpp',
     'unit/erase.cpp',
