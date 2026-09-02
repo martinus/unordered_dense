@@ -14,11 +14,6 @@
 
 namespace workloads {
 
-template <typename K>
-inline auto init_key() -> K {
-    return {};
-}
-
 // How long a string key is.
 //
 // Real string keys are identifiers, field names or paths. Most of them are short, a few are long,
@@ -43,35 +38,55 @@ inline constexpr std::string_view key_filler =
     "service.name/attribute.count/http.status_code/db.query.duration_ms/net.peer.address.family/"
     "process.runtime.description/log.record.uid/k8s.pod.namespace";
 
+// The key that stands for the value v.
+//
+// For a string this is a reference to one of a set of buffers prepared once, one per length, and
+// making it costs the 8 bytes of the value. Building it with `std::string::assign` instead cost
+// far more than the map: `perf` put 17.9% of `findstr` in libstdc++'s `_M_replace` and another
+// 15.8% in the `memmove` under it, against 3.3% in the key comparison. What the score compares is
+// the map, so a workload must not spend a third of itself making keys.
+//
+// The buffers are shared, so a key is only valid until the next call for the same length. Every
+// workload here uses a key and is done with it.
+template <typename K>
+struct key_source {
+    [[nodiscard]] static auto get(uint64_t v) -> K {
+        return static_cast<K>(v);
+    }
+};
+
 template <>
-inline auto init_key<std::string>() -> std::string {
-    std::string str;
-    str.reserve(max_key_len); // once, so that set_key never has to allocate again
-    return str;
+struct key_source<std::string> {
+    [[nodiscard]] static auto get(uint64_t v) -> std::string const& {
+        static_assert(key_filler.size() >= max_key_len);
+        static auto buffers = [] {
+            std::vector<std::string> prepared;
+            prepared.reserve(max_key_len - min_key_len + 1);
+            for (size_t n = min_key_len; n <= max_key_len; ++n) {
+                prepared.emplace_back(key_filler.data(), n);
+            }
+            return prepared;
+        }();
+
+        // Square a byte of a mixed value: uniform in, skewed towards short out.
+        auto const spread = (v * UINT64_C(0x9E3779B97F4A7C15)) >> 56U;
+        auto& key = buffers[static_cast<size_t>((spread * spread) >> 9U)];
+        std::memcpy(key.data(), &v, sizeof(v));
+        return key;
+    }
+};
+
+template <typename Map>
+[[nodiscard]] auto key_for(uint64_t v) -> decltype(auto) {
+    return key_source<typename Map::key_type>::get(v);
 }
 
-template <typename T>
-inline void set_key(uint64_t v, T* key) {
-    *key = static_cast<T>(v);
-}
-
-inline void set_key(uint64_t v, std::string* key) {
-    static_assert(key_filler.size() >= max_key_len);
-    // Square a byte of a mixed value: uniform in, skewed towards short out.
-    auto const spread = (v * UINT64_C(0x9E3779B97F4A7C15)) >> 56U;
-    // At most 8 + 127, so the cast to size_t cannot lose anything, and size_t is what a
-    // 32 bit std::string takes.
-    auto const len = min_key_len + static_cast<size_t>((spread * spread) >> 9U);
-    key->assign(key_filler.data(), len);
-    std::memcpy(key->data(), &v, sizeof(v));
-}
-
-// a random key in [0, n)
-template <typename T>
-inline void randomize_key(ankerl::nanobench::Rng* rng, int n, T* key) {
+// the key for a random value in [0, n)
+template <typename Map>
+[[nodiscard]] auto random_key(ankerl::nanobench::Rng* rng, int n) -> decltype(auto) {
     // we limit ourselves to 32bit n
-    auto limited = (((*rng)() >> 32U) * static_cast<uint64_t>(n)) >> 32U;
-    set_key(limited, key);
+    auto const limited = (((*rng)() >> 32U) * static_cast<uint64_t>(n)) >> 32U;
+    return key_for<Map>(limited);
 }
 
 struct insert_erase_result {
@@ -85,13 +100,10 @@ auto insert_erase() -> insert_erase_result {
     ankerl::nanobench::Rng rng(123);
     size_t erased{};
     Map map;
-    auto key = init_key<typename Map::key_type>();
     for (int n = 1; n < 20000; ++n) {
         for (int i = 0; i < 200; ++i) {
-            randomize_key(&rng, n, &key);
-            map[key];
-            randomize_key(&rng, n, &key);
-            erased += map.erase(key);
+            map[random_key<Map>(&rng, n)];
+            erased += map.erase(random_key<Map>(&rng, n));
         }
     }
     return {erased, map.size()};
@@ -101,13 +113,11 @@ auto insert_erase() -> insert_erase_result {
 template <typename Map>
 auto iterate() -> size_t {
     size_t const num_elements = 5000;
-    auto key = init_key<typename Map::key_type>();
     ankerl::nanobench::Rng rng(555);
     Map map;
     size_t result = 0;
     for (size_t n = 0; n < num_elements; ++n) {
-        randomize_key(&rng, 1000000, &key);
-        map[key] = n;
+        map[random_key<Map>(&rng, 1000000)] = n;
         for (auto const& key_val : map) {
             result += key_val.second;
         }
@@ -115,8 +125,7 @@ auto iterate() -> size_t {
 
     rng = ankerl::nanobench::Rng(555);
     do {
-        randomize_key(&rng, 1000000, &key);
-        map.erase(key);
+        map.erase(random_key<Map>(&rng, 1000000));
         for (auto const& key_val : map) {
             result += key_val.second;
         }
@@ -141,13 +150,11 @@ auto find_50() -> size_t {
     inserted.reserve(100000);
     size_t checksum = 0;
     Map map;
-    auto key = init_key<typename Map::key_type>();
     for (size_t i = 0; i < 100000; ++i) {
         // half of the candidates go in; the first one always, so there is something to find
         auto candidate = insert_rng() & ~never_inserted;
         if (inserted.empty() || (insert_rng() & 1U) != 0) {
-            set_key(candidate, &key);
-            if (map.emplace(key, i).second) {
+            if (map.emplace(key_for<Map>(candidate), i).second) {
                 inserted.push_back(candidate);
             }
         }
@@ -155,11 +162,8 @@ auto find_50() -> size_t {
         // search 100 entries in the map
         for (size_t search = 0; search < 100; ++search) {
             auto r = search_rng();
-            if ((r & 1U) != 0) {
-                set_key(inserted[((r >> 32U) * inserted.size()) >> 32U], &key);
-            } else {
-                set_key(r | never_inserted, &key);
-            }
+            auto const& key = (r & 1U) != 0 ? key_for<Map>(inserted[((r >> 32U) * inserted.size()) >> 32U])
+                                            : key_for<Map>(r | never_inserted);
             auto it = map.find(key);
             if (it != map.end()) {
                 checksum += it->second;
@@ -178,11 +182,9 @@ auto find_all() -> size_t {
     Map map;
     std::vector<uint64_t> keys;
     keys.reserve(50000);
-    auto key = init_key<typename Map::key_type>();
     while (map.size() < 50000) {
         auto v = rng() & ~never_inserted;
-        set_key(v, &key);
-        if (map.emplace(key, keys.size()).second) {
+        if (map.emplace(key_for<Map>(v), keys.size()).second) {
             keys.push_back(v);
         }
     }
@@ -190,7 +192,7 @@ auto find_all() -> size_t {
     auto const num_keys = keys.size();
     for (size_t i = 0; i < 10000000; ++i) {
         auto r = rng();
-        set_key(Hits ? keys[((r >> 32U) * num_keys) >> 32U] : (r | never_inserted), &key);
+        auto const& key = key_for<Map>(Hits ? keys[((r >> 32U) * num_keys) >> 32U] : (r | never_inserted));
         auto it = map.find(key);
         if (it != map.end()) {
             checksum += it->second;
@@ -209,10 +211,8 @@ inline auto hash_keys() -> std::vector<std::string> const& {
         std::vector<std::string> built;
         built.reserve(10000);
         ankerl::nanobench::Rng rng(4711);
-        auto key = init_key<std::string>();
         for (size_t i = 0; i < 10000; ++i) {
-            set_key(rng(), &key);
-            built.push_back(key);
+            built.push_back(key_source<std::string>::get(rng()));
         }
         return built;
     }();
