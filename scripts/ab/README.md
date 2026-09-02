@@ -7,7 +7,8 @@ renamed into a second namespace -- and runs nanobench's `compare()`: the alterna
 interleaved in the same slice of time, so drift cancels out of the ratios, and the interval it
 prints is about the ratio. `-b` adds `boost::unordered_flat_map` (needs its headers). The
 workloads are `test/bench/workloads.h`, the ones `bench_quick_overall_udm` scores, plus all-hits
-and no-hits lookups. Believe a change when the interval excludes 100%.
+and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
+would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 
@@ -20,23 +21,24 @@ working set of the benchmark sits in L2.
   so the *position* of a hit leaked into the branch pattern; on random lookups that was 1.35
   mispredictions per lookup, against 0.42 for boost's grouped scan. The SSE2 probe makes the
   outcome one data-dependent branch regardless of position: 0.70, and 35-80% faster.
-- **String workloads are latency bound.** At ~250 instructions per lookup -- ~150 of them the
-  200 byte wyhash -- the reorder buffer holds barely one lookup, so anything on the dependency
-  chain shows directly. The vector decision (`movmskps` → `tzcnt` → index load) adds ~10 cycles
-  before the value load can issue where the scalar path's predicted branch let it issue at once.
-- **Hashing is 42-45% of the string workloads**, at ~40 cycles per 200 byte key: 0.5 uops per
-  byte, nothing to do with multiply count. With a trivial 8 byte hash, insert/erase time equals
-  boost's exactly -- the rest of the gap there is that a robin hood erase hashes the moved last
-  element too (only the successful half of the erases, so at most ~7% of that workload).
+- **String workloads are latency bound.** At ~224 instructions and ~116 cycles per lookup the
+  reorder buffer holds barely one lookup, so anything on the dependency chain shows directly. The
+  vector decision (`movmskps` → `tzcnt` → index load) adds ~10 cycles before the value load can
+  issue where the scalar path's predicted branch let it issue at once.
+- **Hashing is 32-35% of the string workloads**, measured against an 8 byte hash of the same keys:
+  findstr 261 → 170 ms, iestr 252 → 172 ms. That is ~60 of the 224 instructions and ~41 of the
+  116 cycles, for keys averaging ~50 bytes.
 
-Numbers from that session, paired against main (ms; boost for scale):
+Numbers from that session, paired against main (ms; boost for scale). The string rows predate
+2026-09-02: they were measured when every string key was 200 bytes, and the keys now run from 8 to
+135. The u64 rows are unaffected.
 
 | workload | main | SSE2 probe | boost |
 |---|---|---|---|
 | find64 | 78.6 | 48.0 | 40.1 |
-| findstr | 218 | 210 | 182 |
+| findstr (200 byte keys) | 218 | 210 | 182 |
 | ie64 | 62.0 | 65.3 | 57.1 |
-| iestr | 226 | 212 | 188 |
+| iestr (200 byte keys) | 226 | 212 | 188 |
 | rhit64 | 145 | 80 | 50 |
 | rmiss64 | 48 | 35 | 28 |
 
