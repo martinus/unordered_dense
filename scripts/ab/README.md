@@ -51,23 +51,29 @@ Numbers from that session, paired against main (ms; boost for scale). The string
 ## Where inserting stands (2026-09-02)
 
 `build64` is the weakest workload the score has, and it was added because nothing in the score grew
-a table. Paired against `boost::unordered_flat_map` with the same hash:
+a table. Paired against `boost::unordered_flat_map` with the same hash, before and after the vector
+shift in `place_and_shift_up`:
 
-| workload | unordered_dense | boost |
-|---|---|---|
-| build64 | 6.65 ms | **4.70 ms** |
-| buildstr | **11.25 ms** | 13.91 ms |
-| ie64 | 15.46 M op/s | **17.76 M op/s** |
-| iestr | 4.52 M op/s | **5.17 M op/s** |
+| workload | before | after | boost |
+|---|---|---|---|
+| build64 | 6.62 ms | **6.02 ms** | 4.66 ms |
+| buildstr | 11.14 ms | **10.64 ms** | 13.24 ms |
+| ie64 | 15.14 M op/s | 15.14 M op/s | 17.90 M op/s |
+| iestr | 4.54 M op/s | 4.60 M op/s | 5.17 M op/s |
 
 Growth is not the whole of it. Inserting 200000 `uint64_t` keys into a table that already reserved
-the room costs 52.4 cycles and 101.5 instructions here against boost's 22.6 and 73.5, and the
-difference is **0.611 branch mispredictions per insert against 0.097**. They come from the robin
+the room cost 52.4 cycles and 101.5 instructions here against boost's 22.6 and 73.5, and the
+difference was **0.61 branch mispredictions per insert against 0.10**. They came from the robin
 hood shift: measured over 8 million inserts, 73% shift no bucket, 11% shift one, and the rest
-spread out, so "is this bucket occupied" is a coin flip the predictor cannot win. boost does not
-shift at all -- it never moves an element once placed -- so this is the price of the distance
-ordering rather than something to tune away. Settling the first two buckets without a branch was
-tried and lost; see the dead ends in CLAUDE.md.
+spread out, so "is this bucket occupied", asked once per bucket, is a coin flip the predictor
+cannot win. boost never moves an element once placed.
+
+The vector shift asks it once for four buckets and blends the answer, the same trade the probe
+made: 0.24 mispredictions and 46.3 cycles per insert, for 126 instructions. That is why `ie64`
+does not move -- its map is small and often under its load factor, so fewer inserts shift at all
+and the extra instructions cost what the mispredictions saved. What is left of the gap to boost is
+the second container and the shifting itself; see the dead ends in CLAUDE.md for what did not
+work on it.
 
 `perf stat -e cycles,instructions,branch-misses` on a single-workload runner is what separates
 "more instructions" from "more mispredictions"; `perf record -e cycles:pp` for annotate.

@@ -98,13 +98,20 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   successful half of the erases move one, so the bound is ~7% of `iestr`, and it measured 1.4%
   for 4 bytes per element and a second container to keep consistent.
 - Caching the bucket data pointer in the shift loops (the compiler already hoists it).
-- Three attempts at the insert path, all measured against `build64` and `buildstr` (2026-09-02):
-  skipping the `memset` in `clear_and_fill_buckets_from_values`, which is redundant because
+- Two attempts at the rehash, measured against `build64` and `buildstr` (2026-09-02): skipping the
+  `memset` in `clear_and_fill_buckets_from_values`, which is redundant because
   `allocate_buckets_from_shift` hands back a freshly zeroed vector (0.7% on `build64`, ~1% *worse*
-  on `iestr`); hashing eight elements ahead in the rehash loop and prefetching the bucket each will
-  land in (nothing on `build64`, ~1% worse on `buildstr`); and settling the first two buckets of
-  `place_and_shift_up` without a branch, since 73% of inserts shift nothing and 11% shift one
-  (mispredictions 0.611 to 0.606 per insert, instructions 101.5 to 111.3, so it lost).
+  on `iestr`); and hashing eight elements ahead in the rehash loop and prefetching the bucket each
+  will land in (nothing on `build64`, ~1% worse on `buildstr`).
+- Scalar attempts to take the branch out of `place_and_shift_up`. The robin hood shift asks "is this
+  bucket occupied" once per bucket and the answer is a coin flip (73% of inserts shift nothing, 11%
+  shift one), which cost 0.61 mispredictions per insert. Settling the first two buckets with
+  conditional moves and one combined test does not help: written as `a == 0 || b == 0` it is still
+  two branches, written as a bitwise or it is one branch that mispredicts just as often
+  (0.608 per insert, ten more instructions). What did work is the vector version now in the
+  header, which settles four buckets from one mask -- the same trade the probe made. A two bucket
+  vector version was also tried and lost to it (49.7 against 46.3 cycles per insert): its second
+  slot is still a branch.
 
 ## Testing
 
