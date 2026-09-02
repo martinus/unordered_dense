@@ -49,7 +49,7 @@ Benchmarking practices:
 ## Where the time goes
 
 The u64 workloads are bound by branch mispredictions, the string workloads by the latency of a
-~224 instruction lookup of which the hash is ~60, and a model of 16 cycles per misprediction plus
+~167 instruction lookup of which the hash is ~59, and a model of 16 cycles per misprediction plus
 instructions at ~3.5 per cycle predicts changes within a cycle or two. The measurements behind
 that, and the per-workload numbers, are in `scripts/ab/README.md` with the paired A/B harness that
 produced them.

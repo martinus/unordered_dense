@@ -21,13 +21,19 @@ working set of the benchmark sits in L2.
   so the *position* of a hit leaked into the branch pattern; on random lookups that was 1.35
   mispredictions per lookup, against 0.42 for boost's grouped scan. The SSE2 probe makes the
   outcome one data-dependent branch regardless of position: 0.70, and 35-80% faster.
-- **String workloads are latency bound.** At ~224 instructions and ~116 cycles per lookup the
+- **String workloads are latency bound.** At ~167 instructions and ~110 cycles per lookup the
   reorder buffer holds barely one lookup, so anything on the dependency chain shows directly. The
   vector decision (`movmskps` → `tzcnt` → index load) adds ~10 cycles before the value load can
   issue where the scalar path's predicted branch let it issue at once.
-- **Hashing is 32-35% of the string workloads**, measured against an 8 byte hash of the same keys:
-  findstr 261 → 170 ms, iestr 252 → 172 ms. That is ~60 of the 224 instructions and ~41 of the
-  116 cycles, for keys averaging ~50 bytes.
+- **Hashing is 33-38% of the string workloads**, measured against an 8 byte hash of the same keys:
+  findstr 167 → 108 instructions and 110 → 68 cycles, iestr 187 → 121 and 120 → 80. Keys average
+  ~50 bytes.
+- **`hashstr` resolves a large change and not a small one.** It is a tight loop with nothing else
+  in it, so which of the two hashes the A/B builds gets the better code layout matters more than a
+  few percent of hashing. For the six-lane threshold it reported 1.01x *slower* twice, where the
+  same two headers in separate binaries came out 2.6% faster in five pairs of five and `findstr`
+  and `iestr` both resolved 1.01-1.02x faster. It resolved the short-path return, which was 5%,
+  cleanly. Check a small change against the map workloads.
 
 Numbers from that session, paired against main (ms; boost for scale). The string rows predate
 2026-09-02: they were measured when every string key was 200 bytes, and the keys now run from 8 to
