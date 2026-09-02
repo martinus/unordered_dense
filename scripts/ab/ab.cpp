@@ -83,6 +83,12 @@ struct find_50 {
     }
 };
 template <typename Map>
+struct hash_strings {
+    static auto run() {
+        return workloads::hash_strings<Map>();
+    }
+};
+template <typename Map>
 struct find_hits {
     static auto run() {
         return workloads::find_all<Map, true>();
@@ -101,7 +107,8 @@ auto main(int argc, char** argv) -> int {
     if (argc < 2) {
         std::printf("usage: %s <workload|all> [epochs=12] [boost=0]\n"
                     "workloads: it64 ie64 find64 itstr iestr findstr (bench_quick_overall_udm)\n"
-                    "           rhit64 rmiss64 rhitstr rmissstr (all hits / no hits)\n",
+                    "           rhit64 rmiss64 rhitstr rmissstr (all hits / no hits)\n"
+                    "           hashstr (the string hash on its own)\n",
                     argv[0]);
         return 1;
     }
@@ -133,5 +140,6 @@ auto main(int argc, char** argv) -> int {
     U64("rmiss64", find_misses);
     STR("rhitstr", find_hits);
     STR("rmissstr", find_misses);
+    STR("hashstr", hash_strings);
     return 0;
 }

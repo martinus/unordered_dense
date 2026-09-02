@@ -197,4 +197,40 @@ auto find_all() -> size_t {
     return checksum;
 }
 
+// The keys the hash-only workload runs over, built once and shared by every caller.
+//
+// One set, not one per instantiation: the A/B harness runs two hashes interleaved, and giving each
+// of them its own megabytes of keys measures the cache and not the hash. Ten thousand of them is
+// more than a branch predictor can remember and still small enough to stay warm.
+inline auto hash_keys() -> std::vector<std::string> const& {
+    static auto const keys = [] {
+        std::vector<std::string> built;
+        built.reserve(10000);
+        ankerl::nanobench::Rng rng(4711);
+        auto key = init_key<std::string>();
+        for (size_t i = 0; i < 10000; ++i) {
+            set_key(rng(), &key);
+            built.push_back(key);
+        }
+        return built;
+    }();
+    return keys;
+}
+
+// Hashing alone, over the keys the string workloads use.
+//
+// A whole lookup is ~224 instructions and only ~60 of them are the hash, and a hash change that
+// touches one length range is diluted further by the share of keys in it. This makes the hash the
+// whole measurement instead. The keys are built before the loop, so what is timed is hashing and
+// not the making of a key.
+template <typename Map>
+auto hash_strings() -> size_t {
+    typename Map::hasher const hash{};
+    size_t checksum = 0;
+    for (auto const& key : hash_keys()) {
+        checksum += hash(key);
+    }
+    return checksum;
+}
+
 } // namespace workloads
