@@ -71,7 +71,7 @@ benchmark sits in L2.
 
 Paired measurements: `scripts/ab/run.sh` builds the working-tree header against any revision of
 itself (renamed into a second namespace) and optionally `boost::unordered_flat_map`, and runs
-nanobench's `compare()` -- interleaved, with a confidence interval on the *ratio*, which is what
+the vendored nanobench's `compare()` (4.6, `test/third-party/nanobench.h`) -- interleaved, with a confidence interval on the *ratio*, which is what
 makes a 2% change believable on a desktop that drifts by more than that. It also has all-hits
 and no-hits lookup workloads (`rhit64`, `rmiss64`, and the `str` variants).
 

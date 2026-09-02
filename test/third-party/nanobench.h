@@ -7,7 +7,7 @@
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2019-2022 Martin Ankerl <martin.ankerl@gmail.com>
+// Copyright (c) 2019-2023 Martin Leitner-Ankerl <martin.ankerl@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -32,22 +32,32 @@
 
 // see https://semver.org/
 #define ANKERL_NANOBENCH_VERSION_MAJOR 4 // incompatible API changes
-#define ANKERL_NANOBENCH_VERSION_MINOR 3 // backwards-compatible changes
-#define ANKERL_NANOBENCH_VERSION_PATCH 7 // backwards-compatible bug fixes
+#define ANKERL_NANOBENCH_VERSION_MINOR 6 // backwards-compatible changes
+#define ANKERL_NANOBENCH_VERSION_PATCH 0 // backwards-compatible bug fixes
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // public facing api - as minimal as possible
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include <chrono>  // high_resolution_clock
-#include <cstring> // memcpy
-#include <iosfwd>  // for std::ostream* custom output target in Config
-#include <string>  // all names
-#include <vector>  // holds all results
+#include <chrono>        // high_resolution_clock
+#include <cmath>         // log & exp for the paired A/B statistics
+#include <cstring>       // memcpy
+#include <iosfwd>        // for std::ostream* custom output target in Config
+#include <string>        // all names
+#include <unordered_map> // holds context information of results
+#include <vector>        // holds all results
 
 #define ANKERL_NANOBENCH(x) ANKERL_NANOBENCH_PRIVATE_##x()
 
-#define ANKERL_NANOBENCH_PRIVATE_CXX() __cplusplus
+// MSVC reports __cplusplus as 199711L whatever /std: says, unless /Zc:__cplusplus is passed - and it
+// is not passed by default. _MSVC_LANG carries the real value. Getting this wrong does not fail to
+// compile, it silently takes the pre-C++17 branch on MSVC, which is how [[nodiscard]] was missing
+// there.
+#if defined(_MSVC_LANG)
+#    define ANKERL_NANOBENCH_PRIVATE_CXX() _MSVC_LANG
+#else
+#    define ANKERL_NANOBENCH_PRIVATE_CXX() __cplusplus
+#endif
 #define ANKERL_NANOBENCH_PRIVATE_CXX98() 199711L
 #define ANKERL_NANOBENCH_PRIVATE_CXX11() 201103L
 #define ANKERL_NANOBENCH_PRIVATE_CXX14() 201402L
@@ -55,8 +65,14 @@
 
 #if ANKERL_NANOBENCH(CXX) >= ANKERL_NANOBENCH(CXX17)
 #    define ANKERL_NANOBENCH_PRIVATE_NODISCARD() [[nodiscard]]
+#    define ANKERL_NANOBENCH_PRIVATE_HAS_STRING_VIEW() 1
 #else
 #    define ANKERL_NANOBENCH_PRIVATE_NODISCARD()
+#    define ANKERL_NANOBENCH_PRIVATE_HAS_STRING_VIEW() 0
+#endif
+
+#if ANKERL_NANOBENCH(HAS_STRING_VIEW)
+#    include <string_view> // the name() and run() overloads
 #endif
 
 #if defined(__clang__)
@@ -91,7 +107,7 @@
 #define ANKERL_NANOBENCH_PRIVATE_PERF_COUNTERS() 0
 #if defined(__linux__) && !defined(ANKERL_NANOBENCH_DISABLE_PERF_COUNTERS)
 #    include <linux/version.h>
-#    if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+#    if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 3, 0)
 // PERF_COUNT_HW_REF_CPU_CYCLES only available since kernel 3.3
 // PERF_FLAG_FD_CLOEXEC since kernel 3.14
 #        undef ANKERL_NANOBENCH_PRIVATE_PERF_COUNTERS
@@ -111,12 +127,39 @@
 #    define ANKERL_NANOBENCH_PRIVATE_NOINLINE() __attribute__((noinline))
 #endif
 
+// Whether doNotOptimizeAway can use GCC-style inline assembly, which is both faster and a stronger barrier than the
+// function call it falls back to. Testing for _MSC_VER is not enough to rule it out: clang-cl and clang in MSVC
+// compatibility mode define _MSC_VER but not __GNUC__, even though they do understand the assembly.
+// See https://github.com/martinus/nanobench/issues/111
+#if defined(__clang__) || defined(__GNUC__)
+#    define ANKERL_NANOBENCH_PRIVATE_ASM_DONT_OPTIMIZE_AWAY() 1
+#else
+#    define ANKERL_NANOBENCH_PRIVATE_ASM_DONT_OPTIMIZE_AWAY() 0
+#endif
+
 // workaround missing "is_trivially_copyable" in g++ < 5.0
 // See https://stackoverflow.com/a/31798726/48181
 #if defined(__GNUC__) && __GNUC__ < 5
 #    define ANKERL_NANOBENCH_IS_TRIVIALLY_COPYABLE(...) __has_trivial_copy(__VA_ARGS__)
 #else
 #    define ANKERL_NANOBENCH_IS_TRIVIALLY_COPYABLE(...) std::is_trivially_copyable<__VA_ARGS__>::value
+#endif
+
+// noexcept may be missing for std::string.
+// See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58265
+#define ANKERL_NANOBENCH_PRIVATE_NOEXCEPT_STRING_MOVE() std::is_nothrow_move_assignable<std::string>::value
+
+// nanobench throws only for programming errors in a render template - a tag that does not exist, a
+// section in the wrong place. With exceptions turned off there is nothing sensible left to do but
+// stop, so the argument is never evaluated and the message building disappears entirely.
+//
+// std::abort() rather than a per-compiler intrinsic on purpose: the branch that would pick one is
+// the branch no CI leg can reach, and an untested call into CRT internals is exactly the kind of
+// thing that turns out not to compile the first time someone actually needs it.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+#    define ANKERL_NANOBENCH_THROW(...) throw __VA_ARGS__
+#else
+#    define ANKERL_NANOBENCH_THROW(...) std::abort()
 #endif
 
 // declarations ///////////////////////////////////////////////////////////////////////////////////
@@ -131,6 +174,44 @@ struct Config;
 class Result;
 class Rng;
 class BigO;
+class CompareResult;
+
+namespace detail {
+template <typename SetupOp>
+class SetupRunner;
+
+// One of compare()'s alternatives, with its type forgotten so that they can live in a vector.
+//
+// The alternatives all have different types, so holding them needs either type erasure or a template
+// recursion that walks the pack at every step. This is the erasure, and it costs nothing that
+// matters: `run` points at an instantiation that knows the concrete type, so the measuring loop is
+// inside a function where the operation still inlines exactly as it would otherwise. What is added
+// is one indirect call per *epoch*, against an epoch of a millisecond.
+//
+// std::function would not do, because it would put that indirection in the inner loop instead.
+struct ErasedOp {
+    void (*run)(void* op, uint64_t numIters); // NOLINT(misc-non-private-member-variables-in-classes)
+    void* op;                                 // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+template <typename Op>
+void runErasedOp(void* op, uint64_t numIters) {
+    auto& concrete = *static_cast<Op*>(op);
+    for (uint64_t i = 0; i < numIters; ++i) {
+        concrete();
+    }
+}
+
+template <typename Op>
+ErasedOp eraseOp(Op&& op) {
+    using Bare = typename std::remove_reference<Op>::type;
+    // The operation is only ever called, never written to, so casting a const one back to non-const
+    // to fit it through void* is safe - a const lambda's operator() is const or it could not be
+    // called at all.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+    return ErasedOp{&runErasedOp<Bare>, const_cast<void*>(static_cast<void const*>(&op))};
+}
+} // namespace detail
 
 /**
  * @brief Renders output from a mustache-like template and benchmark results.
@@ -144,44 +225,52 @@ class BigO;
  * * `{{#result}}` Marks the begin of the result layer. Whatever comes after this will be instantiated as often as
  *   a benchmark result is available. Within it, you can use these tags:
  *
- *    * `{{title}}` See Bench::title().
+ *    * `{{title}}` See Bench::title.
  *
- *    * `{{name}}` Benchmark name, usually directly provided with Bench::run(), but can also be set with Bench::name().
+ *    * `{{name}}` Benchmark name, usually directly provided with Bench::run, but can also be set with Bench::name.
  *
- *    * `{{unit}}` Unit, e.g. `byte`. Defaults to `op`, see Bench::title().
+ *    * `{{unit}}` Unit, e.g. `byte`. Defaults to `op`, see Bench::unit.
  *
- *    * `{{batch}}` Batch size, see Bench::batch().
+ *    * `{{batch}}` Batch size, see Bench::batch.
  *
- *    * `{{complexityN}}` Value used for asymptotic complexity calculation. See Bench::complexityN().
+ *    * `{{complexityN}}` Value used for asymptotic complexity calculation. See Bench::complexityN.
  *
- *    * `{{epochs}}` Number of epochs, see Bench::epochs().
+ *    * `{{epochs}}` Number of epochs, see Bench::epochs.
  *
  *    * `{{clockResolution}}` Accuracy of the clock, i.e. what's the smallest time possible to measure with the clock.
  *      For modern systems, this can be around 20 ns. This value is automatically determined by nanobench at the first
  *      benchmark that is run, and used as a static variable throughout the application's runtime.
  *
- *    * `{{clockResolutionMultiple}}` Configuration multiplier for `clockResolution`. See Bench::clockResolutionMultiple().
+ *    * `{{clockResolutionMultiple}}` Configuration multiplier for `clockResolution`. See Bench::clockResolutionMultiple.
  *      This is the target runtime for each measurement (epoch). That means the more accurate your clock is, the faster
  *      will be the benchmark. Basing the measurement's runtime on the clock resolution is the main reason why nanobench is so fast.
  *
  *    * `{{maxEpochTime}}` Configuration for a maximum time each measurement (epoch) is allowed to take. Note that at least
- *      a single iteration will be performed, even when that takes longer than maxEpochTime. See Bench::maxEpochTime().
+ *      a single iteration will be performed, even when that takes longer than maxEpochTime. See Bench::maxEpochTime.
  *
- *    * `{{minEpochTime}}` Minimum epoch time, defaults to 1ms. See Bench::minEpochTime().
+ *    * `{{minEpochTime}}` Minimum epoch time, defaults to 1ms. See Bench::minEpochTime.
  *
- *    * `{{minEpochIterations}}` See Bench::minEpochIterations().
+ *    * `{{minEpochIterations}}` See Bench::minEpochIterations.
  *
- *    * `{{epochIterations}}` See Bench::epochIterations().
+ *    * `{{epochIterations}}` See Bench::epochIterations.
  *
- *    * `{{warmup}}` Number of iterations used before measuring starts. See Bench::warmup().
+ *    * `{{warmup}}` Number of iterations used before measuring starts. See Bench::warmup.
  *
- *    * `{{relative}}` True or false, depending on the setting you have used. See Bench::relative().
+ *    * `{{relative}}` True or false, depending on the setting you have used. See Bench::relative.
+ *
+ *    * `{{context(variableName)}}` See Bench::context.
  *
  *    Apart from these tags, it is also possible to use some mathematical operations on the measurement data. The operations
  *    are of the form `{{command(name)}}`.  Currently `name` can be one of `elapsed`, `iterations`. If performance counters
  *    are available (currently only on current Linux systems), you also have `pagefaults`, `cpucycles`,
- *    `contextswitches`, `instructions`, `branchinstructions`, and `branchmisses`. All the measuers (except `iterations`) are
+ *    `contextswitches`, `instructions`, `branchinstructions`, and `branchmisses`. All the measures (except `iterations`) are
  *    provided for a single iteration (so `elapsed` is the time a single iteration took). The following tags are available:
+ *
+ *    `elapsed` is in **seconds**, which is rarely the unit a report wants. Since the template language has no arithmetic
+ *    to scale it afterwards, the time measure also comes in `elapsedms`, `elapsedus` and `elapsedns` — the same value in
+ *    milliseconds, microseconds and nanoseconds. So `{{minimum(elapsedms)}}` is the fastest iteration in milliseconds.
+ *    Note this is unrelated to Bench::timeUnit(), which only sets the unit of the `ns/op` column in the table.
+ *    `{{medianAbsolutePercentError(...)}}` is a relative error, so it is the same number whichever of them you ask for.
  *
  *    * `{{median(<name>)}}` Calculate median of a measurement data set, e.g. `{{median(elapsed)}}`.
  *
@@ -201,7 +290,7 @@ class BigO;
  *      This measurement is a bit hard to interpret, but it is very robust against outliers. E.g. a value of 5% means that half of the
  *      measurements deviate less than 5% from the median, and the other deviate more than 5% from the median.
  *
- *    * `{{sum(<name>)}}` Sums of all the measurements. E.g. `{{sum(iterations)}}` will give you the total number of iterations
+ *    * `{{sum(<name>)}}` Sum of all the measurements. E.g. `{{sum(iterations)}}` will give you the total number of iterations
 *        measured in this benchmark.
  *
  *    * `{{minimum(<name>)}}` Minimum of all measurements.
@@ -244,21 +333,21 @@ class BigO;
  *  For the layer tags *result* and *measurement* you additionally can use these special markers:
  *
  *  * ``{{#-first}}`` - Begin marker of a template that will be instantiated *only for the first* entry in the layer. Use is only
- *    allowed between the begin and end marker of the layer allowed. So between ``{{#result}}`` and ``{{/result}}``, or between
+ *    allowed between the begin and end marker of the layer. So between ``{{#result}}`` and ``{{/result}}``, or between
  *    ``{{#measurement}}`` and ``{{/measurement}}``. Finish the template with ``{{/-first}}``.
  *
  *  * ``{{^-first}}`` - Begin marker of a template that will be instantiated *for each except the first* entry in the layer. This,
- *    this is basically the inversion of ``{{#-first}}``. Use is only allowed between the begin and end marker of the layer allowed.
+ *    this is basically the inversion of ``{{#-first}}``. Use is only allowed between the begin and end marker of the layer.
  *    So between ``{{#result}}`` and ``{{/result}}``, or between ``{{#measurement}}`` and ``{{/measurement}}``.
  *
  *  * ``{{/-first}}`` - End marker for either ``{{#-first}}`` or ``{{^-first}}``.
  *
  *  * ``{{#-last}}`` - Begin marker of a template that will be instantiated *only for the last* entry in the layer. Use is only
- *    allowed between the begin and end marker of the layer allowed. So between ``{{#result}}`` and ``{{/result}}``, or between
+ *    allowed between the begin and end marker of the layer. So between ``{{#result}}`` and ``{{/result}}``, or between
  *    ``{{#measurement}}`` and ``{{/measurement}}``. Finish the template with ``{{/-last}}``.
  *
  *  * ``{{^-last}}`` - Begin marker of a template that will be instantiated *for each except the last* entry in the layer. This,
- *    this is basically the inversion of ``{{#-last}}``. Use is only allowed between the begin and end marker of the layer allowed.
+ *    this is basically the inversion of ``{{#-last}}``. Use is only allowed between the begin and end marker of the layer.
  *    So between ``{{#result}}`` and ``{{/result}}``, or between ``{{#measurement}}`` and ``{{/measurement}}``.
  *
  *  * ``{{/-last}}`` - End marker for either ``{{#-last}}`` or ``{{^-last}}``.
@@ -316,7 +405,7 @@ char const* csv() noexcept;
   See the tutorial at :ref:`tutorial-template-html` for an example.
   @endverbatim
 
-  @see ankerl::nanobench::render()
+  @see also ankerl::nanobench::render()
  */
 char const* htmlBoxplot() noexcept;
 
@@ -378,30 +467,36 @@ struct PerfCountSet {
 ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
 struct Config {
     // actual benchmark config
-    std::string mBenchmarkTitle = "benchmark";
-    std::string mBenchmarkName = "noname";
-    std::string mUnit = "op";
-    double mBatch = 1.0;
-    double mComplexityN = -1.0;
-    size_t mNumEpochs = 11;
-    size_t mClockResolutionMultiple = static_cast<size_t>(1000);
-    std::chrono::nanoseconds mMaxEpochTime = std::chrono::milliseconds(100);
-    std::chrono::nanoseconds mMinEpochTime = std::chrono::milliseconds(1);
-    uint64_t mMinEpochIterations{1};
-    uint64_t mEpochIterations{0}; // If not 0, run *exactly* these number of iterations per epoch.
-    uint64_t mWarmup = 0;
-    std::ostream* mOut = nullptr;
-    std::chrono::duration<double> mTimeUnit = std::chrono::nanoseconds{1};
-    std::string mTimeUnitName = "ns";
-    bool mShowPerformanceCounters = true;
-    bool mIsRelative = false;
+    std::string mBenchmarkTitle = "benchmark";                               // NOLINT(misc-non-private-member-variables-in-classes)
+    std::string mBenchmarkName = "noname";                                   // NOLINT(misc-non-private-member-variables-in-classes)
+    std::string mUnit = "op";                                                // NOLINT(misc-non-private-member-variables-in-classes)
+    double mBatch = 1.0;                                                     // NOLINT(misc-non-private-member-variables-in-classes)
+    double mComplexityN = -1.0;                                              // NOLINT(misc-non-private-member-variables-in-classes)
+    size_t mNumEpochs = 11;                                                  // NOLINT(misc-non-private-member-variables-in-classes)
+    size_t mClockResolutionMultiple = static_cast<size_t>(1000);             // NOLINT(misc-non-private-member-variables-in-classes)
+    std::chrono::nanoseconds mMaxEpochTime = std::chrono::milliseconds(100); // NOLINT(misc-non-private-member-variables-in-classes)
+    std::chrono::nanoseconds mMinEpochTime = std::chrono::milliseconds(1);   // NOLINT(misc-non-private-member-variables-in-classes)
+    uint64_t mMinEpochIterations{1};                                         // NOLINT(misc-non-private-member-variables-in-classes)
+    // If not 0, run *exactly* these number of iterations per epoch.
+    uint64_t mEpochIterations{0};                                          // NOLINT(misc-non-private-member-variables-in-classes)
+    uint64_t mWarmup = 0;                                                  // NOLINT(misc-non-private-member-variables-in-classes)
+    std::ostream* mOut = nullptr;                                          // NOLINT(misc-non-private-member-variables-in-classes)
+    std::chrono::duration<double> mTimeUnit = std::chrono::nanoseconds{1}; // NOLINT(misc-non-private-member-variables-in-classes)
+    std::string mTimeUnitName = "ns";                                      // NOLINT(misc-non-private-member-variables-in-classes)
+    bool mShowPerformanceCounters = true;                                  // NOLINT(misc-non-private-member-variables-in-classes)
+    bool mIsRelative = false;                                              // NOLINT(misc-non-private-member-variables-in-classes)
+    std::unordered_map<std::string, std::string> mContext{};               // NOLINT(misc-non-private-member-variables-in-classes)
+    // One bit per Column, set when that column is hidden - so the default of 0 shows everything and
+    // stays the table nanobench has always printed.
+    uint32_t mHiddenColumns{};                  // NOLINT(misc-non-private-member-variables-in-classes)
+    std::vector<std::string> mContextColumns{}; // NOLINT(misc-non-private-member-variables-in-classes)
 
     Config();
     ~Config();
-    Config& operator=(Config const&);
-    Config& operator=(Config&&);
-    Config(Config const&);
-    Config(Config&&) noexcept;
+    Config& operator=(Config const& other);
+    Config& operator=(Config&& other) noexcept(ANKERL_NANOBENCH(NOEXCEPT_STRING_MOVE));
+    Config(Config const& other);
+    Config(Config&& other) noexcept;
 };
 ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 
@@ -418,16 +513,19 @@ public:
         instructions,
         branchinstructions,
         branchmisses,
+
+        /// Number of measures, and what fromString() returns for a name it does not know. Passing it
+        /// to the accessors below is not an error: it reads as a measure that was never recorded.
         _size
     };
 
-    explicit Result(Config const& benchmarkConfig);
+    explicit Result(Config benchmarkConfig);
 
     ~Result();
-    Result& operator=(Result const&);
-    Result& operator=(Result&&);
-    Result(Result const&);
-    Result(Result&&) noexcept;
+    Result& operator=(Result const& other);
+    Result& operator=(Result&& other) noexcept(ANKERL_NANOBENCH(NOEXCEPT_STRING_MOVE));
+    Result(Result const& other);
+    Result(Result&& other) noexcept;
 
     // adds new measurement results
     // all values are scaled by iters (except iters...)
@@ -442,6 +540,8 @@ public:
     ANKERL_NANOBENCH(NODISCARD) double sumProduct(Measure m1, Measure m2) const noexcept;
     ANKERL_NANOBENCH(NODISCARD) double minimum(Measure m) const noexcept;
     ANKERL_NANOBENCH(NODISCARD) double maximum(Measure m) const noexcept;
+    ANKERL_NANOBENCH(NODISCARD) std::string const& context(char const* variableName) const;
+    ANKERL_NANOBENCH(NODISCARD) std::string const& context(std::string const& variableName) const;
 
     ANKERL_NANOBENCH(NODISCARD) bool has(Measure m) const noexcept;
     ANKERL_NANOBENCH(NODISCARD) double get(size_t idx, Measure m) const;
@@ -452,10 +552,96 @@ public:
     static Measure fromString(std::string const& str);
 
 private:
+    // The per-epoch values of one measure. Every accessor above goes through this, so how the
+    // measures are stored - including the extra slot the constructor explains - is written down once
+    // rather than asserted at a dozen call sites.
+    ANKERL_NANOBENCH(NODISCARD) std::vector<double> const& measurements(Measure m) const;
+
     Config mConfig{};
     std::vector<std::vector<double>> mNameToMeasurements{};
 };
 ANKERL_NANOBENCH(IGNORE_PADDED_POP)
+
+/**
+ * @brief The outcome of a paired comparison, see Bench::compare().
+ *
+   @verbatim embed:rst
+   :cpp:func:`relative() <ankerl::nanobench::Bench::relative()>` compares the median of one benchmark
+   run entirely before another, which measures the machine's drift as much as the code: nanobench's
+   own test suite has a case where two *identical* workloads came out 38% apart on a CI runner, while
+   each reported an ``err%`` of 0.5. Whatever ``err%`` is measuring there, it is not the uncertainty
+   of the comparison.
+
+   A paired comparison measures the alternatives against each other within the same slice of time, so
+   anything that affects all of them - a frequency ramp, a noisy neighbour, thermal throttling -
+   cancels out of the ratios. What is reported is therefore an uncertainty about *the ratio*, which
+   is the number the caller actually wanted.
+
+   Entry 0 is the baseline that everything else is measured against.
+   @endverbatim
+ */
+ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
+class CompareResult {
+public:
+    /// One alternative: its measurements, and how it compares to the baseline.
+    ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
+    struct Entry {
+        // noexcept because it only moves, and both std::string's and Result's move constructors are:
+        // gcc's -Wnoexcept fails the build over the vector growth path otherwise.
+        Entry(std::string entryName, Result entryResult, double entryRelative, double entryRelativeLow, double entryRelativeHigh,
+              size_t entryTiedRounds) noexcept;
+
+        std::string name;    // NOLINT(misc-non-private-member-variables-in-classes)
+        Result result;       // NOLINT(misc-non-private-member-variables-in-classes)
+        double relative;     // NOLINT(misc-non-private-member-variables-in-classes)
+        double relativeLow;  // NOLINT(misc-non-private-member-variables-in-classes)
+        double relativeHigh; // NOLINT(misc-non-private-member-variables-in-classes)
+        size_t tiedRounds;   // NOLINT(misc-non-private-member-variables-in-classes)
+    };
+    ANKERL_NANOBENCH(IGNORE_PADDED_POP)
+
+    CompareResult(std::vector<Entry> entries, size_t numRounds);
+
+    /// Number of alternatives compared, including the baseline.
+    ANKERL_NANOBENCH(NODISCARD) size_t size() const noexcept;
+
+    /// Entry 0 is the baseline.
+    ANKERL_NANOBENCH(NODISCARD) Entry const& operator[](size_t idx) const;
+
+    /// Number of paired rounds each alternative was measured over.
+    ANKERL_NANOBENCH(NODISCARD) size_t rounds() const noexcept;
+
+    /**
+     * @brief How many comparisons the intervals were corrected for: one per alternative besides the
+     *        baseline.
+     *
+       @verbatim embed:rst
+       With ten alternatives there are nine chances to be wrong at 5% each, so the intervals are
+       widened to keep the *whole table* at 95% rather than each row separately. See
+       :ref:`ab-comparison` for what that costs - less than it sounds, because the binomial tail is
+       steep.
+       @endverbatim
+     */
+    ANKERL_NANOBENCH(NODISCARD) size_t comparisons() const noexcept;
+
+    /**
+     * @brief True when this alternative's interval excludes the baseline, i.e. the measurement told
+     *        them apart. Always false for the baseline itself.
+     */
+    ANKERL_NANOBENCH(NODISCARD) bool isSignificant(size_t idx) const;
+
+    /// Index of the alternative with the lowest median time.
+    ANKERL_NANOBENCH(NODISCARD) size_t fastest() const;
+
+private:
+    std::vector<Entry> mEntries{};
+    size_t mRounds{};
+};
+ANKERL_NANOBENCH(IGNORE_PADDED_POP)
+
+/// Writes the comparison as a markdown table, in the same shape as an ordinary benchmark table, with
+/// a summary line under it.
+std::ostream& operator<<(std::ostream& os, CompareResult const& compareResult);
 
 /**
  * An extremely fast random generator. Currently, this implements *RomuDuoJr*, developed by Mark Overton. Source:
@@ -485,9 +671,9 @@ public:
     static constexpr uint64_t(max)();
 
     /**
-     * As a safety precausion, we don't allow copying. Copying a PRNG would mean you would have two random generators that produce the
+     * As a safety precaution, we don't allow copying. Copying a PRNG would mean you would have two random generators that produce the
      * same sequence, which is generally not what one wants. Instead create a new rng with the default constructor Rng(), which is
-     * automatically seeded from `std::random_device`. If you really need a copy, use copy().
+     * automatically seeded from `std::random_device`. If you really need a copy, use `copy()`.
      */
     Rng(Rng const&) = delete;
 
@@ -528,7 +714,7 @@ public:
      */
     explicit Rng(uint64_t seed) noexcept;
     Rng(uint64_t x, uint64_t y) noexcept;
-    Rng(std::vector<uint64_t> const& data);
+    explicit Rng(std::vector<uint64_t> const& data);
 
     /**
      * Creates a copy of the Rng, thus the copy provides exactly the same random sequence as the original.
@@ -543,8 +729,6 @@ public:
      * @return uint64_t The next 64 bit random value.
      */
     inline uint64_t operator()() noexcept;
-
-    // This is slightly biased. See
 
     /**
      * Generates a random number between 0 and range (excluding range).
@@ -561,9 +745,6 @@ public:
      * @return uint32_t Generated random values in range [0, range(.
      */
     inline uint32_t bounded(uint32_t range) noexcept;
-
-    // random double in range [0, 1(
-    // see http://prng.di.unimi.it/
 
     /**
      * Provides a random uniform double value between 0 and 1. This uses the method described in [Generating uniform doubles in the
@@ -589,13 +770,36 @@ public:
      *
      * @return Vector containing the full state:
      */
-    std::vector<uint64_t> state() const;
+    ANKERL_NANOBENCH(NODISCARD) std::vector<uint64_t> state() const;
 
 private:
     static constexpr uint64_t rotl(uint64_t x, unsigned k) noexcept;
 
     uint64_t mX;
     uint64_t mY;
+};
+
+/**
+ * @brief A column of the markdown table, for Bench::hideColumn() and Bench::showColumn().
+ *
+ * The names in brackets are the headers the column is printed with; `op` follows Bench::unit(), and the
+ * time unit follows Bench::timeUnit().
+ *
+ * @see ankerl::nanobench::Bench::hideColumn()
+ */
+enum class Column : size_t {
+    relative,      ///< `relative` - only shown when Bench::relative() is set.
+    complexityN,   ///< `complexityN` - only shown when Bench::complexityN() is set.
+    timePerUnit,   ///< `ns/op` - time for one unit.
+    unitPerSecond, ///< `op/s` - units per second.
+    error,         ///< `err%` - median absolute percentage error over the epochs.
+    instructions,  ///< `ins/op` - retired instructions, Linux only.
+    cycles,        ///< `cyc/op` - CPU cycles, Linux only.
+    ipc,           ///< `IPC` - instructions per cycle, Linux only.
+    branches,      ///< `bra/op` - retired branch instructions, Linux only.
+    branchMisses,  ///< `miss%` - percentage of branches mispredicted, Linux only.
+    total,         ///< `total` - wall clock time spent measuring this row.
+    _size          ///< Not a column; the number of them.
 };
 
 /**
@@ -620,8 +824,8 @@ public:
      */
     Bench();
 
-    Bench(Bench&& other);
-    Bench& operator=(Bench&& other);
+    Bench(Bench&& other) noexcept;
+    Bench& operator=(Bench&& other) noexcept(ANKERL_NANOBENCH(NOEXCEPT_STRING_MOVE));
     Bench(Bench const& other);
     Bench& operator=(Bench const& other);
     ~Bench() noexcept;
@@ -652,6 +856,14 @@ public:
     ANKERL_NANOBENCH(NOINLINE)
     Bench& run(std::string const& benchmarkName, Op&& op);
 
+#if ANKERL_NANOBENCH(HAS_STRING_VIEW)
+    /// Same as run(char const* benchmarkName, Op op), for a std::string_view name. Only available
+    /// when compiling as C++17 or newer.
+    template <typename Op>
+    ANKERL_NANOBENCH(NOINLINE)
+    Bench& run(std::string_view benchmarkName, Op&& op);
+#endif
+
     /**
      * @brief Same as run(char const* benchmarkName, Op op), but instead uses the previously set name.
      * @tparam Op The code to benchmark.
@@ -661,18 +873,116 @@ public:
     Bench& run(Op&& op);
 
     /**
+     * @brief Compares alternatives against each other, paired and interleaved.
+     *
+     * Takes `name, op` pairs - two or more of them. The first is the baseline everything else is
+     * measured against, exactly as with relative(), but measured against it *at the same time*
+     * rather than one after the other. Drift the machine introduces - a frequency ramp, a noisy
+     * neighbour, thermal throttling - then hits every alternative alike and cancels out of the
+     * ratios.
+     *
+     * @code
+     * ankerl::nanobench::Bench().epochs(52).compare(
+     *     "std::mt19937", [&] { ... },     // the baseline
+     *     "sfc4",         [&] { ... },
+     *     "romu",         [&] { ... });
+     * @endcode
+     *
+     * Prints an ordinary nanobench table with two extra columns - the ratio to the baseline and a
+     * confidence interval for it - and a summary line underneath.
+     *
+     @verbatim embed:rst
+     A worked example with output, and the reasoning behind each choice below, is in the tutorial at
+     :ref:`ab-comparison`.
+
+     What it does, in order:
+
+     #. Calibrates an iteration count once, up front, and uses the **same** count for every
+        alternative for the whole run. An epoch's fixed overhead is divided by that count, so two
+        different counts would amortize it differently and bias the ratio - 1.2% on 200us epochs, and
+        no amount of pairing removes it. The shared count is the slowest alternative's, raised where
+        that would leave the fastest one's epoch too short for the clock to resolve, and capped so
+        the slowest one still fits in maxEpochTime().
+     #. Runs one epoch of each per round, interleaved, so drift is common to the round.
+     #. Orders each block of N rounds as a randomly chosen cyclic Latin square, so every alternative
+        occupies every position exactly once per block and their mean positions are equal - which is
+        what cancels a drift that is linear over the block. For two alternatives this is exactly
+        ABBA/BAAB.
+     #. Reduces each round to ``ln(t_baseline) - ln(t_alternative)``, dropping rounds where either
+        side measured zero.
+     #. Reports the median of those as the ratio, with a sign-test interval around it, widened to
+        keep the whole table at 95% rather than each row separately.
+
+     .. note::
+
+        Use more rounds than the default 11. An epoch is about a millisecond, so ``epochs(52)`` costs
+        a tenth of a second per alternative and buys an interval narrow enough to act on. The count is
+        rounded up to a whole number of blocks, and raised if it is too small to support an interval
+        at all.
+
+     .. warning::
+
+        Interleaving means each alternative runs with the others' cache and branch predictor state.
+        That is usually the more honest measurement for "which should I ship", but it is a different
+        measurement from running one alone - use :cpp:func:`run() <ankerl::nanobench::Bench::run()>`
+        for that.
+
+     @endverbatim
+     *
+     * @tparam Args Alternating names and operations.
+     * @param args `name, op` pairs; at least two.
+     * @return The ratios and their intervals; also written to output() unless that is nullptr.
+     */
+    template <typename... Args>
+    ANKERL_NANOBENCH(NOINLINE)
+    CompareResult compare(Args&&... args);
+
+    /**
      * @brief Title of the benchmark, will be shown in the table header. Changing the title will start a new markdown table.
      *
      * @param benchmarkTitle The title of the benchmark.
      */
     Bench& title(char const* benchmarkTitle);
     Bench& title(std::string const& benchmarkTitle);
+
+    /**
+     * @brief Gets the title of the benchmark
+     */
     ANKERL_NANOBENCH(NODISCARD) std::string const& title() const noexcept;
 
     /// Name of the benchmark, will be shown in the table row.
     Bench& name(char const* benchmarkName);
     Bench& name(std::string const& benchmarkName);
+#if ANKERL_NANOBENCH(HAS_STRING_VIEW)
+    /// Only available when compiling as C++17 or newer. @see name()
+    Bench& name(std::string_view benchmarkName);
+#endif
     ANKERL_NANOBENCH(NODISCARD) std::string const& name() const noexcept;
+
+    /**
+     * @brief Set context information.
+     *
+     * The information can be accessed using custom render templates via `{{context(variableName)}}`.
+     * Trying to render a variable that hasn't been set before raises an exception.
+     * Not included in (default) markdown table.
+     *
+     * @see clearContext, render
+     *
+     * @param variableName The name of the context variable.
+     * @param variableValue The value of the context variable.
+     */
+    Bench& context(char const* variableName, char const* variableValue);
+    Bench& context(std::string const& variableName, std::string const& variableValue);
+
+    /**
+     * @brief Reset context information.
+     *
+     * This may improve efficiency when using many context entries,
+     * or improve robustness by removing spurious context entries.
+     *
+     * @see context
+     */
+    Bench& clearContext();
 
     /**
      * @brief Sets the batch size.
@@ -766,10 +1076,10 @@ public:
     /**
      * @brief Upper limit for the runtime of each epoch.
      *
-     * As a safety precausion if the clock is not very accurate, we can set an upper limit for the maximum evaluation time per
+     * As a safety precaution if the clock is not very accurate, we can set an upper limit for the maximum evaluation time per
      * epoch. Default is 100ms. At least a single evaluation of the benchmark is performed.
      *
-     * @see minEpochTime(), minEpochIterations()
+     * @see minEpochTime, minEpochIterations
      *
      * @param t Maximum target runtime for a single epoch.
      */
@@ -779,10 +1089,10 @@ public:
     /**
      * @brief Minimum time each epoch should take.
      *
-     * Default is zero, so we are fully relying on clockResolutionMultiple(). In most cases this is exactly what you want. If you see
+     * Default is 1ms, so we are mostly relying on clockResolutionMultiple(). In most cases this is exactly what you want. If you see
      * that the evaluation is unreliable with a high `err%`, you can increase either minEpochTime() or minEpochIterations().
      *
-     * @see maxEpochTime(), minEpochIterations()
+     * @see maxEpochTime, minEpochIterations
      *
      * @param t Minimum time each epoch should take.
      */
@@ -793,9 +1103,9 @@ public:
      * @brief Sets the minimum number of iterations each epoch should take.
      *
      * Default is 1, and we rely on clockResolutionMultiple(). If the `err%` is high and you want a more smooth result, you might want
-     * to increase the minimum number or iterations, or increase the minEpochTime().
+     * to increase the minimum number of iterations, or increase the minEpochTime().
      *
-     * @see minEpochTime(), maxEpochTime(), minEpochIterations()
+     * @see minEpochTime, maxEpochTime, minEpochIterations
      *
      * @param numIters Minimum number of iterations per epoch.
      */
@@ -826,10 +1136,11 @@ public:
     /**
      * @brief Marks the next run as the baseline.
      *
-     * Call `relative(true)` to mark the run as the baseline. Successive runs will be compared to this run. It is calculated by
+     * Call `relative(true)` to mark the run as the baseline. Successive runs will be compared to this run. Just like all the
+     * other columns, the comparison is per unit, so it stays meaningful when the runs use a different Bench::batch:
      *
      * @f[
-     * 100\% * \frac{baseline}{runtime}
+     * 100\% * \frac{baseline / baselineBatch}{runtime / batch}
      * @f]
      *
      *  * 100% means it is exactly as fast as the baseline
@@ -853,6 +1164,51 @@ public:
      */
     Bench& performanceCounters(bool showPerformanceCounters) noexcept;
     ANKERL_NANOBENCH(NODISCARD) bool performanceCounters() const noexcept;
+
+    /**
+     * @brief Removes a column from the table.
+     *
+     * The full table is over 150 characters wide, which wraps in most terminals. Hide what you are not
+     * reading:
+     *
+     *     bench.hideColumn(Column::instructions)
+     *          .hideColumn(Column::cycles)
+     *          .hideColumn(Column::ipc);
+     *
+     * Hiding a column only changes what is printed - the measurement still happens, and results() and
+     * the render templates are unaffected. To stop *measuring* the performance counters as well, use
+     * performanceCounters(false), which hides all five of their columns at once.
+     *
+     * @param column The column to hide.
+     */
+    Bench& hideColumn(Column column) noexcept;
+
+    /// Shows a column hidden with hideColumn() again. @see hideColumn()
+    Bench& showColumn(Column column) noexcept;
+
+    /// True when @p column is not hidden. A column can still be absent from the table for other
+    /// reasons - `relative` without relative(), or the counter columns off Linux. @see hideColumn()
+    ANKERL_NANOBENCH(NODISCARD) bool isColumnVisible(Column column) const noexcept;
+
+    /**
+     * @brief Adds a column showing the value of a context variable.
+     *
+     * Context variables set with context() are otherwise only reachable from a render template, which
+     * makes parameterised benchmarks awkward to read on the console. This puts one in the table:
+     *
+     *     bench.context("threads", std::to_string(n))
+     *          .contextColumn("threads")
+     *          .run(...);
+     *
+     * The column is added once per name, in the order given, before the benchmark name. A row whose
+     * context does not have the variable is left blank.
+     *
+     * @param variableName Name of the context variable to show. @see context()
+     */
+    Bench& contextColumn(std::string const& variableName);
+
+    /// Removes all columns added with contextColumn(). @see contextColumn()
+    Bench& clearContextColumns() noexcept;
 
     /**
      * @brief Retrieves all benchmark results collected by the bench object so far.
@@ -886,10 +1242,10 @@ public:
       @endverbatim
 
       @tparam T Any type is cast to `double`.
-      @param b Length of N for the next benchmark run, so it is possible to calculate `bigO`.
+      @param n Length of N for the next benchmark run, so it is possible to calculate `bigO`.
      */
     template <typename T>
-    Bench& complexityN(T b) noexcept;
+    Bench& complexityN(T n) noexcept;
     ANKERL_NANOBENCH(NODISCARD) double complexityN() const noexcept;
 
     /*!
@@ -967,7 +1323,85 @@ public:
     Bench& config(Config const& benchmarkConfig);
     ANKERL_NANOBENCH(NODISCARD) Config const& config() const noexcept;
 
+    /*!
+      @brief Runs `setupOp()` once before each epoch, without measuring it.
+
+      Use this to restore whatever state your benchmark consumes, when that restoration would otherwise
+      pollute the measurement:
+
+      @code
+      bench.setup([&] { data = pristine; })
+           .run("consume data", [&] { consume(data); });
+      @endcode
+
+      @verbatim embed:rst
+      .. important::
+
+         The setup runs **once per epoch, not once per iteration**. An epoch calls ``op()`` many times
+         (see :cpp:func:`epochIterations() <ankerl::nanobench::Bench::epochIterations()>`), and the setup
+         does not run again in between. So this helps when your operation can be repeated as-is and only
+         the *starting* state has to be established - and it does **not** help when every single call
+         mutates the data such that the next call would measure something different.
+
+         For that second case, set :cpp:func:`epochIterations(1) <ankerl::nanobench::Bench::epochIterations()>`
+         so an epoch is a single call, which makes setup effectively per-iteration - at the cost of much
+         noisier results, since one call is then timed against the clock's resolution. The alternative,
+         and usually the better measurement, is to time the setup separately and subtract it.
+
+         Timers are deliberately not started and stopped around each iteration: for anything fast that
+         costs more than the thing being measured, and the performance counters would have to be
+         restarted too.
+
+      .. note::
+
+         The returned object keeps a reference to this ``Bench``, so don't let it outlive it - call
+         ``run()`` on the same expression, as above.
+
+      @endverbatim
+
+      @tparam SetupOp The untimed code to run before each epoch.
+      @param setupOp The setup to run.
+     */
+    template <typename SetupOp>
+    detail::SetupRunner<SetupOp> setup(SetupOp setupOp);
+
 private:
+    // Collects the `name, op` pack into two flat vectors, once. Everything after this point is
+    // ordinary index-based code in the implementation block rather than more template recursion.
+    static void compareCollect(std::vector<std::string>& /*names*/, std::vector<detail::ErasedOp>& /*ops*/) {}
+
+    template <typename Name, typename Op, typename... Rest>
+    static void compareCollect(std::vector<std::string>& names, std::vector<detail::ErasedOp>& ops, Name&& name, Op&& op,
+                               Rest&&... rest) {
+        names.emplace_back(std::forward<Name>(name));
+        ops.push_back(detail::eraseOp(op));
+        compareCollect(names, ops, std::forward<Rest>(rest)...);
+    }
+
+    // The measuring half, which no longer needs to know the operations' types.
+    ANKERL_NANOBENCH(NODISCARD)
+    CompareResult compareImpl(std::vector<std::string> const& names, std::vector<detail::ErasedOp> const& ops);
+
+    // Number of iterations of `op` that makes one epoch last at least `target`.
+    ANKERL_NANOBENCH(NODISCARD)
+    uint64_t compareCalibrate(detail::ErasedOp const& op, Clock::duration target) const;
+
+    // The one iteration count the whole experiment runs at. Fixed for every alternative and every
+    // round: a count that drifted between them would be a second thing changing while the comparison
+    // is being made, and an epoch's fixed overhead is divided by it, so two different counts amortize
+    // that overhead differently and bias the ratio.
+    ANKERL_NANOBENCH(NODISCARD)
+    uint64_t compareIterations(std::vector<detail::ErasedOp> const& ops) const;
+
+    // Runs `numIters` iterations of `op` as one epoch, appending the measurement to `result`.
+    static void compareEpoch(detail::ErasedOp const& op, uint64_t numIters, Result& result);
+
+    template <typename SetupOp, typename Op>
+    Bench& runImpl(SetupOp& setupOp, Op&& op);
+
+    template <typename SetupOp>
+    friend class detail::SetupRunner;
+
     Config mConfig{};
     std::vector<Result> mResults{};
 };
@@ -984,7 +1418,7 @@ void doNotOptimizeAway(Arg&& arg);
 
 namespace detail {
 
-#if defined(_MSC_VER)
+#if !ANKERL_NANOBENCH(ASM_DONT_OPTIMIZE_AWAY)
 void doNotOptimizeAwaySink(void const*);
 
 template <typename T>
@@ -994,7 +1428,7 @@ void doNotOptimizeAway(T const& val);
 
 // These assembly magic is directly from what Google Benchmark is doing. I have previously used what facebook's folly was doing, but
 // this seemed to have compilation problems in some cases. Google Benchmark seemed to be the most well tested anyways.
-// see https://github.com/google/benchmark/blob/master/include/benchmark/benchmark.h#L307
+// see https://github.com/google/benchmark/blob/v1.7.1/include/benchmark/benchmark.h#L443-L446
 template <typename T>
 void doNotOptimizeAway(T const& val) {
     // NOLINTNEXTLINE(hicpp-no-assembler)
@@ -1019,7 +1453,11 @@ void doNotOptimizeAway(T& val) {
 ANKERL_NANOBENCH(IGNORE_EFFCPP_PUSH)
 class IterationLogic {
 public:
-    explicit IterationLogic(Bench const& config) noexcept;
+    explicit IterationLogic(Bench const& bench);
+    IterationLogic(IterationLogic&&) = delete;
+    IterationLogic& operator=(IterationLogic&&) = delete;
+    IterationLogic(IterationLogic const&) = delete;
+    IterationLogic& operator=(IterationLogic const&) = delete;
     ~IterationLogic();
 
     ANKERL_NANOBENCH(NODISCARD) uint64_t numIters() const noexcept;
@@ -1036,7 +1474,9 @@ ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
 class PerformanceCounters {
 public:
     PerformanceCounters(PerformanceCounters const&) = delete;
+    PerformanceCounters(PerformanceCounters&&) = delete;
     PerformanceCounters& operator=(PerformanceCounters const&) = delete;
+    PerformanceCounters& operator=(PerformanceCounters&&) = delete;
 
     PerformanceCounters();
     ~PerformanceCounters();
@@ -1060,6 +1500,133 @@ ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 // Gets the singleton
 PerformanceCounters& performanceCounters();
 
+// How long one epoch should take: the clock's resolution multiplied up until the measurement sits
+// well above the clock's own noise, then clamped into [minEpochTime, maxEpochTime]. The minimum is
+// applied last, so it wins when the two bounds conflict.
+//
+// Both run() and compare() size their epochs with this. It is a function rather than a line in each
+// of them because it is a rule, and a rule with two copies is a rule with two behaviours.
+Clock::duration targetRuntimePerEpoch(Bench const& bench);
+
+// Whether hideColumn() left this column visible. Takes the Config rather than the Bench because the
+// table writers only have the Config - every Result carries a copy of the one it was measured under.
+ANKERL_NANOBENCH(NODISCARD) bool isColumnVisible(Config const& config, Column column) noexcept;
+
+// The frequency-scaling and pyperf warnings, and the note that the kernel refused the performance
+// counters. Declared up here because compare() is a template defined above the implementation block
+// and has to be able to call them - a program whose only nanobench call is compare() needs the
+// warning at least as much as one that calls run().
+void printStabilityInformationOnce(std::ostream* outStream);
+void printPerformanceCounterHintOnce(std::ostream* outStream, bool wantsPerformanceCounters);
+
+// The last table settings written to this stream. When they change, a new header is written.
+uint64_t& streamHeaderHash(std::ostream& os);
+
+// The arithmetic that turns what the kernel hands back into the numbers of the ins/op, cyc/op, IPC,
+// bra/op and miss% columns. It lives out here, rather than inside the Linux-only counter class,
+// because it is the part that can be silently wrong: a counter that is quietly 5% low looks exactly
+// like a correct one. Out here it is compiled and testable on every platform, while
+// perf_event_open() - which cannot be exercised in a container at all - stays where it is.
+//
+// All of these saturate at 0 rather than wrapping: a correction larger than the measurement means
+// the measurement was noise, not that the value is enormous.
+
+// a - b, or 0 when b is the larger. The one place that saturation is written down: hand-rolled, it
+// was six ternaries that had already drifted between '>' and '>=' without anyone noticing, because at
+// a == b the two spellings agree.
+uint64_t saturatingSub(uint64_t a, uint64_t b) noexcept;
+
+// Rounded integer division, for spreading a measured overhead over the iterations it covers.
+uint64_t divRounded(uint64_t a, uint64_t divisor) noexcept;
+
+// How many uint64_t a PERF_FORMAT_GROUP | PERF_FORMAT_ID read needs for `numEvents` events: three
+// header words (nr, time_enabled, time_running), then a value and an id per event. That layout used
+// to be written down separately at the buffer sizing, at the buffer initialization and here - three
+// places to keep in step on a code path most containers and VMs cannot run at all.
+size_t perfReadFormatSize(size_t numEvents) noexcept;
+
+// Index of the i-th event's value in such a read, which is exactly where the i events before it end.
+size_t perfValueIndex(uint64_t i) noexcept;
+
+// Extrapolates a counter that the kernel could only keep active for part of the measurement, the way
+// `perf stat` does. Returns the value unchanged when it was active throughout.
+uint64_t scaleMultiplexed(uint64_t value, uint64_t timeEnabled, uint64_t timeRunning) noexcept;
+
+// Subtracts the calibrated overhead of measuring, plus the per-iteration overhead of the loop doing
+// the measuring, from a raw counter value. Pass 0 for a correction that does not apply.
+uint64_t correctOverhead(uint64_t value, uint64_t measuringOverhead, uint64_t loopOverheadPerIteration, uint64_t numIters) noexcept;
+
+// The loop's own per-iteration cost, from a calibration run of `numIters` operations and one of
+// twice as many: whatever the second run did not cost twice over is the loop rather than the work.
+uint64_t loopOverheadPerIteration(uint64_t single, uint64_t doubled, uint64_t measuringOverhead, uint64_t numIters) noexcept;
+
+// Removes the branch that the measuring loop itself takes once per iteration, plus the one that ends
+// it, from a raw branch count.
+uint64_t correctBranchInstructions(uint64_t rawBranchInstructions, uint64_t numIters) noexcept;
+
+// Paired statistics, for Bench::compare(). Pure functions over the per-round measurements, so they are
+// testable without running a benchmark at all - which matters, because the alternative is judging a
+// confidence interval by looking at it.
+
+// ln(a[i]) - ln(b[i]) for each round. Working in log space turns a speedup, which is multiplicative,
+// into a difference, which is what every statistic below assumes. Rounds where either side measured
+// 0 - a clock too coarse for the operation - carry no ratio and are dropped.
+std::vector<double> pairedLogRatios(std::vector<double> const& a, std::vector<double> const& b);
+
+// The same, over two Results' per-round elapsed times. compare() runs one epoch of every alternative
+// per round, so their measurements line up round for round and can be paired directly - not only
+// against the baseline, but between any two of them.
+std::vector<double> pairedLogRatios(Result const& a, Result const& b);
+
+// Median of a copy of the values. 0.0 when there are none.
+double medianOf(std::vector<double> values);
+
+// The pair of 0-based order statistics that bracket the median with at least `confidence`
+// probability: the largest k with P(Bin(n, 1/2) < k) <= (1 - confidence) / 2 gives the interval
+// [x_(k), x_(n+1-k)]. Returns {1, 0} - an empty range - when no such interval exists, which is the
+// case for fewer than six observations at 95%.
+std::pair<size_t, size_t> medianIntervalIndices(size_t n, double confidence);
+
+// Rounds whose two sides measured the same time to the last tick the clock could report, i.e. a log
+// ratio of exactly 0. Not evidence of equality - evidence that the clock ran out of resolution.
+size_t countTiedRounds(std::vector<double> const& logRatios);
+
+// Confidence each individual interval is built at, so that all `numComparisons` of them together
+// hold at 95%. Bonferroni: simple, assumption-free, and conservative here because the comparisons
+// share a baseline and are therefore correlated. One function, because the table and the summary
+// line underneath it must not be able to report intervals at two different confidences.
+double bonferroniConfidence(size_t numComparisons) noexcept;
+
+// Distribution-free confidence interval for the median, from those order statistics.
+//
+// The sign test, and it is chosen for what it does *not* assume. It needs the observations to be
+// independent and nothing else - no shape, no symmetry, no finite variance, no asymptotics - and it
+// is exact at every n rather than approximately right for large ones. The alternatives all want
+// more: a t-interval wants normality, a bootstrap wants its own asymptotics and converges slowly
+// for a median in particular, and Wilcoxon wants the differences to be symmetric about their
+// median. That last one is exactly what paired timings do not give you, because an operation can be
+// arbitrarily slower but never faster than its floor, so the differences are skewed whenever one
+// side has the heavier tail. Measured on such data: sign 96.7% coverage of a nominal 95%, Wilcoxon
+// 91.5%.
+//
+// The price is width - roughly 10% wider than a bootstrap - and slight over-coverage from the
+// discreteness. Both err towards saying "no difference resolved", which is the right direction for
+// a tool whose output ends up in a pull request.
+std::pair<double, double> medianInterval(std::vector<double> values, double confidence);
+
+// Branch misses cannot exceed the branches they were taken from, and the loop is assumed to mispredict
+// its own exit once - so at least one miss is always attributed to it.
+double correctBranchMisses(uint64_t rawBranchMisses, double correctedBranchInstructions) noexcept;
+
+// Applies a "key=value,key=value" string - the contents of NANOBENCH_CONFIG - to bench, by calling
+// the setter each key is named after. Separate from reading the environment so that it can be tested
+// by handing it a string, rather than through a variable that is spelled putenv on one platform and
+// _putenv_s on another.
+//
+// An entry that cannot be applied appends one message to errors and is skipped; every other entry
+// still applies. Nothing throws, so a typo behaves the same for a consumer built -fno-exceptions.
+void applyConfigString(Bench& bench, std::string const& configStr, std::vector<std::string>& errors);
+
 } // namespace detail
 
 class BigO {
@@ -1081,11 +1648,11 @@ public:
         : BigO(bigOName, mapRangeMeasure(rangeMeasure, rangeToN)) {}
 
     template <typename Op>
-    BigO(std::string const& bigOName, RangeMeasure const& rangeMeasure, Op rangeToN)
-        : BigO(bigOName, mapRangeMeasure(rangeMeasure, rangeToN)) {}
+    BigO(std::string bigOName, RangeMeasure const& rangeMeasure, Op rangeToN)
+        : BigO(std::move(bigOName), mapRangeMeasure(rangeMeasure, rangeToN)) {}
 
     BigO(char const* bigOName, RangeMeasure const& scaledRangeMeasure);
-    BigO(std::string const& bigOName, RangeMeasure const& scaledRangeMeasure);
+    BigO(std::string bigOName, RangeMeasure const& scaledRangeMeasure);
     ANKERL_NANOBENCH(NODISCARD) std::string const& name() const noexcept;
     ANKERL_NANOBENCH(NODISCARD) double constant() const noexcept;
     ANKERL_NANOBENCH(NODISCARD) double normalizedRootMeanSquare() const noexcept;
@@ -1127,7 +1694,7 @@ uint64_t Rng::operator()() noexcept {
 
 ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
 uint32_t Rng::bounded(uint32_t range) noexcept {
-    uint64_t r32 = static_cast<uint32_t>(operator()());
+    uint64_t const r32 = static_cast<uint32_t>(operator()());
     auto multiresult = r32 * range;
     return static_cast<uint32_t>(multiresult >> 32U);
 }
@@ -1136,18 +1703,23 @@ double Rng::uniform01() noexcept {
     auto i = (UINT64_C(0x3ff) << 52U) | (operator()() >> 12U);
     // can't use union in c++ here for type puning, it's undefined behavior.
     // std::memcpy is optimized anyways.
-    double d;
+    double d{};
     std::memcpy(&d, &i, sizeof(double));
     return d - 1.0;
 }
 
 template <typename Container>
 void Rng::shuffle(Container& container) noexcept {
-    auto size = static_cast<uint32_t>(container.size());
-    for (auto i = size; i > 1U; --i) {
+    auto i = container.size();
+    while (i > 1U) {
         using std::swap;
-        auto p = bounded(i); // number in [0, i)
-        swap(container[i - 1], container[p]);
+        auto n = operator()();
+        // using decltype(i) instead of size_t to be compatible to containers with 32bit index (see #80)
+        auto b1 = static_cast<decltype(i)>((static_cast<uint32_t>(n) * static_cast<uint64_t>(i)) >> 32U);
+        swap(container[--i], container[b1]);
+
+        auto b2 = static_cast<decltype(i)>(((n >> 32U) * static_cast<uint64_t>(i)) >> 32U);
+        swap(container[--i], container[b2]);
     }
 }
 
@@ -1156,26 +1728,93 @@ constexpr uint64_t Rng::rotl(uint64_t x, unsigned k) noexcept {
     return (x << k) | (x >> (64U - k));
 }
 
+namespace detail {
+
+// A setup lambda that captures little - or nothing - is smaller than the alignment of the Bench
+// reference next to it, so this pads. That is unavoidable here and harmless, but a consumer building
+// with -Weverything sees it as an error in nanobench's own header.
+ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
+template <typename SetupOp>
+class SetupRunner {
+public:
+    explicit SetupRunner(SetupOp setupOp, Bench& bench)
+        : mSetupOp(std::move(setupOp))
+        , mBench(bench) {}
+
+    template <typename Op>
+    ANKERL_NANOBENCH_NO_SANITIZE("integer")
+    Bench& run(Op&& op) {
+        return mBench.runImpl(mSetupOp, std::forward<Op>(op));
+    }
+
+    // Bench::run() takes a name, so setup().run() has to as well - otherwise adding a setup to an
+    // existing benchmark means rewriting its call site to use name() separately.
+    template <typename Op>
+    Bench& run(char const* benchmarkName, Op&& op) {
+        mBench.name(benchmarkName);
+        return run(std::forward<Op>(op));
+    }
+
+    template <typename Op>
+    Bench& run(std::string const& benchmarkName, Op&& op) {
+        mBench.name(benchmarkName);
+        return run(std::forward<Op>(op));
+    }
+
+private:
+    SetupOp mSetupOp;
+    Bench& mBench;
+};
+ANKERL_NANOBENCH(IGNORE_PADDED_POP)
+} // namespace detail
+
 template <typename Op>
 ANKERL_NANOBENCH_NO_SANITIZE("integer")
 Bench& Bench::run(Op&& op) {
+    auto setupOp = [] {};
+    return runImpl(setupOp, std::forward<Op>(op));
+}
+
+template <typename SetupOp, typename Op>
+ANKERL_NANOBENCH_NO_SANITIZE("integer")
+Bench& Bench::runImpl(SetupOp& setupOp, Op&& op) {
     // It is important that this method is kept short so the compiler can do better optimizations/ inlining of op()
     detail::IterationLogic iterationLogic(*this);
     auto& pc = detail::performanceCounters();
 
     while (auto n = iterationLogic.numIters()) {
+        setupOp();
+
         pc.beginMeasure();
-        Clock::time_point before = Clock::now();
+        Clock::time_point const before = Clock::now();
         while (n-- > 0) {
             op();
         }
-        Clock::time_point after = Clock::now();
+        Clock::time_point const after = Clock::now();
         pc.endMeasure();
         pc.updateResults(iterationLogic.numIters());
         iterationLogic.add(after - before, pc);
     }
     iterationLogic.moveResultTo(mResults);
     return *this;
+}
+
+template <typename... Args>
+CompareResult Bench::compare(Args&&... args) {
+    static_assert(sizeof...(args) % 2 == 0, "compare() takes `name, op` pairs");
+    static_assert(sizeof...(args) >= 4, "compare() needs at least two alternatives to compare");
+
+    std::vector<std::string> names;
+    std::vector<detail::ErasedOp> ops;
+    names.reserve(sizeof...(args) / 2);
+    ops.reserve(sizeof...(args) / 2);
+    compareCollect(names, ops, std::forward<Args>(args)...);
+    return compareImpl(names, ops);
+}
+
+template <typename SetupOp>
+detail::SetupRunner<SetupOp> Bench::setup(SetupOp setupOp) {
+    return detail::SetupRunner<SetupOp>(std::move(setupOp), *this);
 }
 
 // Performs all evaluations.
@@ -1190,6 +1829,14 @@ Bench& Bench::run(std::string const& benchmarkName, Op&& op) {
     name(benchmarkName);
     return run(std::forward<Op>(op));
 }
+
+#if ANKERL_NANOBENCH(HAS_STRING_VIEW)
+template <typename Op>
+Bench& Bench::run(std::string_view benchmarkName, Op&& op) {
+    name(benchmarkName);
+    return run(std::forward<Op>(op));
+}
+#endif
 
 template <typename Op>
 BigO Bench::complexityBigO(char const* benchmarkName, Op op) const {
@@ -1231,7 +1878,7 @@ void doNotOptimizeAway(Arg&& arg) {
 
 namespace detail {
 
-#if defined(_MSC_VER)
+#if !ANKERL_NANOBENCH(ASM_DONT_OPTIMIZE_AWAY)
 template <typename T>
 void doNotOptimizeAway(T const& val) {
     doNotOptimizeAwaySink(&val);
@@ -1256,11 +1903,11 @@ void doNotOptimizeAway(T const& val) {
 #    include <fstream>   // ifstream to parse proc files
 #    include <iomanip>   // setw, setprecision
 #    include <iostream>  // cout
+#    include <limits>    // numeric_limits, to parse NANOBENCH_CONFIG without overflowing
 #    include <numeric>   // accumulate
 #    include <random>    // random_device
 #    include <sstream>   // to_s in Number
 #    include <stdexcept> // throw for rendering templates
-#    include <tuple>     // std::tie
 #    if defined(__linux__)
 #        include <unistd.h> //sysconf
 #    endif
@@ -1270,7 +1917,6 @@ void doNotOptimizeAway(T const& val) {
 #        include <linux/perf_event.h>
 #        include <sys/ioctl.h>
 #        include <sys/syscall.h>
-#        include <unistd.h>
 #    endif
 
 // declarations ///////////////////////////////////////////////////////////////////////////////////
@@ -1281,12 +1927,12 @@ namespace nanobench {
 // helper stuff that is only intended to be used internally
 namespace detail {
 
-struct TableInfo;
-
 // formatting utilities
 namespace fmt {
 
-class NumSep;
+// groups the integer digits of an already formatted number in threes
+std::string addThousandsSeparators(std::string str, char sep);
+
 class StreamStateRestorer;
 class Number;
 class MarkDownColumn;
@@ -1313,6 +1959,18 @@ inline double d(T t) noexcept {
 }
 inline double d(Clock::duration duration) noexcept {
     return std::chrono::duration_cast<std::chrono::duration<double>>(duration).count();
+}
+
+// Rounds to the nearest uint64_t. Casting a double that doesn't fit is undefined behavior, so the value is clamped
+// into a safe range first. The comparisons are written so that a NaN takes the same path as a negative value.
+inline uint64_t u64(double val) noexcept {
+    auto const maxVal = d((std::numeric_limits<uint64_t>::max)() / 2U);
+    if (!(val > 0.0)) {
+        return 0;
+    }
+    // +0.5 for correct rounding when casting
+    // NOLINTNEXTLINE(bugprone-incorrect-roundings)
+    return static_cast<uint64_t>((val < maxVal ? val : maxVal) + 0.5);
 }
 
 // Calculates clock resolution once, and remembers the result
@@ -1436,31 +2094,48 @@ struct Node {
     template <size_t N>
     // NOLINTNEXTLINE(hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
     bool operator==(char const (&str)[N]) const noexcept {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
         return static_cast<size_t>(std::distance(begin, end) + 1) == N && 0 == strncmp(str, begin, N - 1);
     }
 };
 ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 
+// A node points into the template rather than owning its text, and these two are the only places that
+// have to know it: everywhere else asks for the text or writes it out. Free functions rather than
+// members, so Node stays the plain aggregate that parseMustacheTemplate() brace-initializes.
+static std::string text(Node const& n) {
+    return {n.begin, n.end};
+}
+
+static void writeTo(Node const& n, std::ostream& out) {
+    out.write(n.begin, std::distance(n.begin, n.end));
+}
+
+// NOLINTNEXTLINE(misc-no-recursion)
 static std::vector<Node> parseMustacheTemplate(char const** tpl) {
     std::vector<Node> nodes;
 
     while (true) {
-        auto begin = std::strstr(*tpl, "{{");
-        auto end = begin;
+        auto const* begin = std::strstr(*tpl, "{{");
+        auto const* end = begin;
         if (begin != nullptr) {
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
             begin += 2;
             end = std::strstr(begin, "}}");
         }
 
         if (begin == nullptr || end == nullptr) {
             // nothing found, finish node
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
             nodes.emplace_back(Node{*tpl, *tpl + std::strlen(*tpl), std::vector<Node>{}, Node::Type::content});
             return nodes;
         }
 
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         nodes.emplace_back(Node{*tpl, begin - 2, std::vector<Node>{}, Node::Type::content});
 
         // we found a tag
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         *tpl = end + 2;
         switch (*begin) {
         case '/':
@@ -1468,10 +2143,12 @@ static std::vector<Node> parseMustacheTemplate(char const** tpl) {
             return nodes;
 
         case '#':
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
             nodes.emplace_back(Node{begin + 1, end, parseMustacheTemplate(tpl), Node::Type::section});
             break;
 
         case '^':
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
             nodes.emplace_back(Node{begin + 1, end, parseMustacheTemplate(tpl), Node::Type::inverted_section});
             break;
 
@@ -1484,8 +2161,8 @@ static std::vector<Node> parseMustacheTemplate(char const** tpl) {
 
 static bool generateFirstLast(Node const& n, size_t idx, size_t size, std::ostream& out) {
     ANKERL_NANOBENCH_LOG("n.type=" << static_cast<int>(n.type));
-    bool matchFirst = n == "-first";
-    bool matchLast = n == "-last";
+    bool const matchFirst = n == "-first";
+    bool const matchLast = n == "-last";
     if (!matchFirst && !matchLast) {
         return false;
     }
@@ -1500,7 +2177,7 @@ static bool generateFirstLast(Node const& n, size_t idx, size_t size, std::ostre
     if (doWrite) {
         for (auto const& child : n.children) {
             if (child.type == Node::Type::content) {
-                out.write(child.begin, std::distance(child.begin, child.end));
+                writeTo(child, out);
             }
         }
     }
@@ -1518,7 +2195,7 @@ static bool matchCmdArgs(std::string const& str, std::vector<std::string>& match
     matchResult.emplace_back(str.substr(0, idxOpen));
 
     // split by comma
-    matchResult.emplace_back(std::string{});
+    matchResult.emplace_back();
     for (size_t i = idxOpen + 1; i != idxClose; ++i) {
         if (str[i] == ' ' || str[i] == '\t') {
             // skip whitespace
@@ -1526,7 +2203,7 @@ static bool matchCmdArgs(std::string const& str, std::vector<std::string>& match
         }
         if (str[i] == ',') {
             // got a comma => new string
-            matchResult.emplace_back(std::string{});
+            matchResult.emplace_back();
             continue;
         }
         // no whitespace no comma, append
@@ -1535,50 +2212,96 @@ static bool matchCmdArgs(std::string const& str, std::vector<std::string>& match
     return true;
 }
 
+// One tag: writes `value` when the node names it, and reports whether it did.
+template <size_t N, typename T>
+// NOLINTNEXTLINE(hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
+static bool writeTag(Node const& n, char const (&tagName)[N], T const& value, std::ostream& out) {
+    if (!(n == tagName)) {
+        return false;
+    }
+    out << value;
+    return true;
+}
+
 static bool generateConfigTag(Node const& n, Config const& config, std::ostream& out) {
     using detail::d;
 
-    if (n == "title") {
-        out << config.mBenchmarkTitle;
-        return true;
-    } else if (n == "name") {
-        out << config.mBenchmarkName;
-        return true;
-    } else if (n == "unit") {
-        out << config.mUnit;
-        return true;
-    } else if (n == "batch") {
-        out << config.mBatch;
-        return true;
-    } else if (n == "complexityN") {
-        out << config.mComplexityN;
-        return true;
-    } else if (n == "epochs") {
-        out << config.mNumEpochs;
-        return true;
-    } else if (n == "clockResolution") {
+    // Not part of the chain below: the chain evaluates the arguments of every tag up to the one that
+    // matches, and measuring the clock's resolution the first time is the one that is not free.
+    if (n == "clockResolution") {
         out << d(detail::clockResolution());
         return true;
-    } else if (n == "clockResolutionMultiple") {
-        out << config.mClockResolutionMultiple;
+    }
+
+    // '||' short-circuits, so at most one of these writes anything and nothing past the match is even
+    // evaluated. Written out as fourteen copies of writeTag()'s body, this was a four-line stanza per
+    // tag whose only compiler-visible mistake - forgetting the `return true` - fell through to
+    // "command not understood" at runtime.
+    return writeTag(n, "title", config.mBenchmarkTitle, out) || writeTag(n, "name", config.mBenchmarkName, out) ||
+           writeTag(n, "unit", config.mUnit, out) || writeTag(n, "batch", config.mBatch, out) ||
+           writeTag(n, "complexityN", config.mComplexityN, out) || writeTag(n, "epochs", config.mNumEpochs, out) ||
+           writeTag(n, "clockResolutionMultiple", config.mClockResolutionMultiple, out) ||
+           writeTag(n, "maxEpochTime", d(config.mMaxEpochTime), out) || writeTag(n, "minEpochTime", d(config.mMinEpochTime), out) ||
+           writeTag(n, "minEpochIterations", config.mMinEpochIterations, out) ||
+           writeTag(n, "epochIterations", config.mEpochIterations, out) || writeTag(n, "warmup", config.mWarmup, out) ||
+           writeTag(n, "relative", config.mIsRelative, out);
+}
+
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+// `elapsed` is seconds, which is rarely the unit anyone wants in a report, and the template language
+// has no arithmetic to fix that afterwards (issue #107). So a time measure may carry a unit suffix -
+// `elapsedms`, `elapsedus`, `elapsedns` - and this resolves it to the measure plus the factor to
+// multiply by. Plain `elapsed` keeps its meaning, so existing templates render byte for byte as
+// before.
+static Result::Measure measureFromString(std::string const& str, double& scale) {
+    scale = 1.0;
+    auto m = Result::fromString(str);
+    if (Result::Measure::_size != m) {
+        return m;
+    }
+
+    if (str == "elapsedms") {
+        scale = 1e3;
+        return Result::Measure::elapsed;
+    }
+    if (str == "elapsedus") {
+        scale = 1e6;
+        return Result::Measure::elapsed;
+    }
+    if (str == "elapsedns") {
+        scale = 1e9;
+        return Result::Measure::elapsed;
+    }
+    return Result::Measure::_size;
+}
+
+// The one-argument measure commands - {{median(elapsed)}} and friends. Split out of
+// generateResultTag so that adding the unit-scaled measures did not push its cognitive complexity
+// past what clang-tidy accepts.
+static bool generateMeasureTag(std::string const& command, Result const& r, Result::Measure m, double scale, std::ostream& out) {
+    if (command == "median") {
+        out << r.median(m) * scale;
         return true;
-    } else if (n == "maxEpochTime") {
-        out << d(config.mMaxEpochTime);
+    }
+    if (command == "average") {
+        out << r.average(m) * scale;
         return true;
-    } else if (n == "minEpochTime") {
-        out << d(config.mMinEpochTime);
+    }
+    if (command == "medianAbsolutePercentError") {
+        // a relative error is the same number whatever the unit, so this one is not scaled
+        out << r.medianAbsolutePercentError(m);
         return true;
-    } else if (n == "minEpochIterations") {
-        out << config.mMinEpochIterations;
+    }
+    if (command == "sum") {
+        out << r.sum(m) * scale;
         return true;
-    } else if (n == "epochIterations") {
-        out << config.mEpochIterations;
+    }
+    if (command == "minimum") {
+        out << r.minimum(m) * scale;
         return true;
-    } else if (n == "warmup") {
-        out << config.mWarmup;
-        return true;
-    } else if (n == "relative") {
-        out << config.mIsRelative;
+    }
+    if (command == "maximum") {
+        out << r.maximum(m) * scale;
         return true;
     }
     return false;
@@ -1594,40 +2317,31 @@ static std::ostream& generateResultTag(Node const& n, Result const& r, std::ostr
     // std::cmatch matchResult;
     // if (std::regex_match(n.begin, n.end, matchResult, regOpArg1)) {
     std::vector<std::string> matchResult;
-    if (matchCmdArgs(std::string(n.begin, n.end), matchResult)) {
+    if (matchCmdArgs(text(n), matchResult)) {
         if (matchResult.size() == 2) {
-            auto m = Result::fromString(matchResult[1]);
+            if (matchResult[0] == "context") {
+                return out << r.context(matchResult[1]);
+            }
+
+            double scale = 1.0;
+            auto m = measureFromString(matchResult[1], scale);
             if (m == Result::Measure::_size) {
                 return out << 0.0;
             }
-
-            if (matchResult[0] == "median") {
-                return out << r.median(m);
-            }
-            if (matchResult[0] == "average") {
-                return out << r.average(m);
-            }
-            if (matchResult[0] == "medianAbsolutePercentError") {
-                return out << r.medianAbsolutePercentError(m);
-            }
-            if (matchResult[0] == "sum") {
-                return out << r.sum(m);
-            }
-            if (matchResult[0] == "minimum") {
-                return out << r.minimum(m);
-            }
-            if (matchResult[0] == "maximum") {
-                return out << r.maximum(m);
+            if (generateMeasureTag(matchResult[0], r, m, scale, out)) {
+                return out;
             }
         } else if (matchResult.size() == 3) {
-            auto m1 = Result::fromString(matchResult[1]);
-            auto m2 = Result::fromString(matchResult[2]);
+            double scale1 = 1.0;
+            double scale2 = 1.0;
+            auto m1 = measureFromString(matchResult[1], scale1);
+            auto m2 = measureFromString(matchResult[2], scale2);
             if (m1 == Result::Measure::_size || m2 == Result::Measure::_size) {
                 return out << 0.0;
             }
 
             if (matchResult[0] == "sumProduct") {
-                return out << r.sumProduct(m1, m2);
+                return out << r.sumProduct(m1, m2) * scale1 * scale2;
             }
         }
     }
@@ -1636,7 +2350,7 @@ static std::ostream& generateResultTag(Node const& n, Result const& r, std::ostr
     // static std::regex const regOpArg2("^([a-zA-Z]+)\\(([a-zA-Z]*)\\s*,\\s+([a-zA-Z]*)\\)$");
 
     // nothing matches :(
-    throw std::runtime_error("command '" + std::string(n.begin, n.end) + "' not understood");
+    ANKERL_NANOBENCH_THROW(std::runtime_error("command '" + text(n) + "' not understood"));
 }
 
 static void generateResultMeasurement(std::vector<Node> const& nodes, size_t idx, Result const& r, std::ostream& out) {
@@ -1645,21 +2359,22 @@ static void generateResultMeasurement(std::vector<Node> const& nodes, size_t idx
             ANKERL_NANOBENCH_LOG("n.type=" << static_cast<int>(n.type));
             switch (n.type) {
             case Node::Type::content:
-                out.write(n.begin, std::distance(n.begin, n.end));
+                writeTo(n, out);
                 break;
 
             case Node::Type::inverted_section:
-                throw std::runtime_error("got a inverted section inside measurement");
+                ANKERL_NANOBENCH_THROW(std::runtime_error("got a inverted section inside measurement"));
 
             case Node::Type::section:
-                throw std::runtime_error("got a section inside measurement");
+                ANKERL_NANOBENCH_THROW(std::runtime_error("got a section inside measurement"));
 
             case Node::Type::tag: {
-                auto m = Result::fromString(std::string(n.begin, n.end));
+                double scale = 1.0;
+                auto m = measureFromString(text(n), scale);
                 if (m == Result::Measure::_size || !r.has(m)) {
                     out << 0.0;
                 } else {
-                    out << r.get(idx, m);
+                    out << r.get(idx, m) * scale;
                 }
                 break;
             }
@@ -1675,11 +2390,11 @@ static void generateResult(std::vector<Node> const& nodes, size_t idx, std::vect
             ANKERL_NANOBENCH_LOG("n.type=" << static_cast<int>(n.type));
             switch (n.type) {
             case Node::Type::content:
-                out.write(n.begin, std::distance(n.begin, n.end));
+                writeTo(n, out);
                 break;
 
             case Node::Type::inverted_section:
-                throw std::runtime_error("got a inverted section inside result");
+                ANKERL_NANOBENCH_THROW(std::runtime_error("got a inverted section inside result"));
 
             case Node::Type::section:
                 if (n == "measurement") {
@@ -1687,7 +2402,7 @@ static void generateResult(std::vector<Node> const& nodes, size_t idx, std::vect
                         generateResultMeasurement(n.children, i, r, out);
                     }
                 } else {
-                    throw std::runtime_error("got a section inside result");
+                    ANKERL_NANOBENCH_THROW(std::runtime_error("got a section inside result"));
                 }
                 break;
 
@@ -1708,33 +2423,20 @@ char const* getEnv(char const* name);
 bool isEndlessRunning(std::string const& name);
 bool isWarningsEnabled();
 
+// Applies NANOBENCH_CONFIG to a freshly built Bench, printing whatever it could not use. Every Bench
+// re-reads and re-parses the variable; only the complaining is once per process.
+void applyEnvConfig(Bench& bench);
+
 template <typename T>
-T parseFile(std::string const& filename);
+T parseFile(std::string const& filename, bool* fail);
 
 void gatherStabilityInformation(std::vector<std::string>& warnings, std::vector<std::string>& recommendations);
-void printStabilityInformationOnce(std::ostream* os);
-
-// remembers the last table settings used. When it changes, a new table header is automatically written for the new entry.
-uint64_t& singletonHeaderHash() noexcept;
 
 // determines resolution of the given clock. This is done by measuring multiple times and returning the minimum time difference.
 Clock::duration calcClockResolution(size_t numEvaluations) noexcept;
 
 // formatting utilities
 namespace fmt {
-
-// adds thousands separator to numbers
-ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
-class NumSep : public std::numpunct<char> {
-public:
-    explicit NumSep(char sep);
-    char do_thousands_sep() const override;
-    std::string do_grouping() const override;
-
-private:
-    char mSep;
-};
-ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 
 // RAII to save & restore a stream's state
 ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
@@ -1766,8 +2468,7 @@ ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 class Number {
 public:
     Number(int width, int precision, double value);
-    Number(int width, int precision, int64_t value);
-    std::string to_s() const;
+    ANKERL_NANOBENCH(NODISCARD) std::string to_s() const;
 
 private:
     friend std::ostream& operator<<(std::ostream& os, Number const& n);
@@ -1779,25 +2480,34 @@ private:
 };
 
 // helper replacement for std::to_string of signed/unsigned numbers so we are locale independent
-std::string to_s(uint64_t s);
+std::string to_s(uint64_t n);
 
 std::ostream& operator<<(std::ostream& os, Number const& n);
 
+ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
 class MarkDownColumn {
 public:
-    MarkDownColumn(int w, int prec, std::string const& tit, std::string const& suff, double val);
-    std::string title() const;
-    std::string separator() const;
-    std::string invalid() const;
-    std::string value() const;
+    MarkDownColumn(int w, int prec, std::string tit, std::string suff, double val) noexcept;
+    // a column holding text instead of a number, for the context columns
+    MarkDownColumn(int w, std::string tit, std::string text) noexcept;
+    ANKERL_NANOBENCH(NODISCARD) std::string title() const;
+    ANKERL_NANOBENCH(NODISCARD) std::string separator() const;
+    ANKERL_NANOBENCH(NODISCARD) std::string invalid() const;
+    ANKERL_NANOBENCH(NODISCARD) std::string value() const;
 
 private:
+    // the column's padding convention, stated once: right aligned in mWidth, one trailing space
+    ANKERL_NANOBENCH(NODISCARD) std::string padded(std::string const& text) const;
+
     int mWidth;
     int mPrecision;
     std::string mTitle;
     std::string mSuffix;
     double mValue;
+    std::string mText{};
+    bool mIsText{false};
 };
+ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 
 // Formats any text as markdown code, escaping backticks.
 class MarkDownCode {
@@ -1823,8 +2533,9 @@ std::ostream& operator<<(std::ostream& os, MarkDownCode const& mdCode);
 namespace ankerl {
 namespace nanobench {
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void render(char const* mustacheTemplate, std::vector<Result> const& results, std::ostream& out) {
-    detail::fmt::StreamStateRestorer restorer(out);
+    detail::fmt::StreamStateRestorer const restorer(out);
 
     out.precision(std::numeric_limits<double>::digits10);
     auto nodes = templates::parseMustacheTemplate(&mustacheTemplate);
@@ -1833,11 +2544,11 @@ void render(char const* mustacheTemplate, std::vector<Result> const& results, st
         ANKERL_NANOBENCH_LOG("n.type=" << static_cast<int>(n.type));
         switch (n.type) {
         case templates::Node::Type::content:
-            out.write(n.begin, std::distance(n.begin, n.end));
+            templates::writeTo(n, out);
             break;
 
         case templates::Node::Type::inverted_section:
-            throw std::runtime_error("unknown list '" + std::string(n.begin, n.end) + "'");
+            ANKERL_NANOBENCH_THROW(std::runtime_error("unknown list '" + templates::text(n) + "'"));
 
         case templates::Node::Type::section:
             if (n == "result") {
@@ -1847,9 +2558,9 @@ void render(char const* mustacheTemplate, std::vector<Result> const& results, st
                 }
             } else if (n == "measurement") {
                 if (results.size() != 1) {
-                    throw std::runtime_error(
+                    ANKERL_NANOBENCH_THROW(std::runtime_error(
                         "render: can only use section 'measurement' here if there is a single result, but there are " +
-                        detail::fmt::to_s(results.size()));
+                        detail::fmt::to_s(results.size())));
                 }
                 // when we only have a single result, we can immediately go into its measurement.
                 auto const& r = results.front();
@@ -1857,7 +2568,7 @@ void render(char const* mustacheTemplate, std::vector<Result> const& results, st
                     generateResultMeasurement(n.children, i, r, out);
                 }
             } else {
-                throw std::runtime_error("render: unknown section '" + std::string(n.begin, n.end) + "'");
+                ANKERL_NANOBENCH_THROW(std::runtime_error("render: unknown section '" + templates::text(n) + "'"));
             }
             break;
 
@@ -1868,7 +2579,7 @@ void render(char const* mustacheTemplate, std::vector<Result> const& results, st
             } else {
                 // This just uses the last result's config.
                 if (!generateConfigTag(n, results.back().config(), out)) {
-                    throw std::runtime_error("unknown tag '" + std::string(n.begin, n.end) + "'");
+                    ANKERL_NANOBENCH_THROW(std::runtime_error("unknown tag '" + templates::text(n) + "'"));
                 }
             }
             break;
@@ -1902,21 +2613,39 @@ PerformanceCounters& performanceCounters() {
     return pc;
 }
 
+Clock::duration targetRuntimePerEpoch(Bench const& bench) {
+    auto target = detail::clockResolution() * bench.clockResolutionMultiple();
+    if (target > bench.maxEpochTime()) {
+        target = bench.maxEpochTime();
+    }
+    if (target < bench.minEpochTime()) {
+        target = bench.minEpochTime();
+    }
+    return target;
+}
+
 // Windows version of doNotOptimizeAway
-// see https://github.com/google/benchmark/blob/master/include/benchmark/benchmark.h#L307
-// see https://github.com/facebook/folly/blob/master/folly/Benchmark.h#L280
-// see https://docs.microsoft.com/en-us/cpp/preprocessor/optimize
-#    if defined(_MSC_VER)
-#        pragma optimize("", off)
+// see https://github.com/google/benchmark/blob/v1.7.1/include/benchmark/benchmark.h#L514
+// see https://github.com/facebook/folly/blob/v2023.01.30.00/folly/lang/Hint-inl.h#L54-L58
+// see https://learn.microsoft.com/en-us/cpp/preprocessor/optimize
+#    if !ANKERL_NANOBENCH(ASM_DONT_OPTIMIZE_AWAY)
+#        if defined(_MSC_VER)
+#            pragma optimize("", off)
+#        endif
 void doNotOptimizeAwaySink(void const*) {}
-#        pragma optimize("", on)
+#        if defined(_MSC_VER)
+#            pragma optimize("", on)
+#        endif
 #    endif
 
 template <typename T>
-T parseFile(std::string const& filename) {
-    std::ifstream fin(filename);
+T parseFile(std::string const& filename, bool* fail) {
+    std::ifstream fin(filename); // NOLINT(misc-const-correctness)
     T num{};
     fin >> num;
+    if (fail != nullptr) {
+        *fail = fin.fail();
+    }
     return num;
 }
 
@@ -1925,32 +2654,293 @@ char const* getEnv(char const* name) {
 #        pragma warning(push)
 #        pragma warning(disable : 4996) // getenv': This function or variable may be unsafe.
 #    endif
-    return std::getenv(name);
+    return std::getenv(name); // NOLINT(concurrency-mt-unsafe)
 #    if defined(_MSC_VER)
 #        pragma warning(pop)
 #    endif
 }
 
 bool isEndlessRunning(std::string const& name) {
-    auto endless = getEnv("NANOBENCH_ENDLESS");
+    auto const* const endless = getEnv("NANOBENCH_ENDLESS");
     return nullptr != endless && endless == name;
 }
 
 // True when environment variable NANOBENCH_SUPPRESS_WARNINGS is either not set at all, or set to "0"
 bool isWarningsEnabled() {
-    auto suppression = getEnv("NANOBENCH_SUPPRESS_WARNINGS");
+    auto const* const suppression = getEnv("NANOBENCH_SUPPRESS_WARNINGS");
     return nullptr == suppression || suppression == std::string("0");
+}
+
+// NANOBENCH_CONFIG ///////////////////////////////////////////////////////////////////////////////
+//
+// The parsing below reports a bad value by returning the reason for it as a string, empty when the
+// value was fine. That is what keeps this usable from a Bench constructor: throwing would be worse
+// than the mistake it reports, and impossible for a consumer built with -fno-exceptions.
+//
+// The numbers are parsed by hand rather than through a stream or std::stoull. Both of those accept
+// "-1" as a uint64_t - the standard has them read a signed value and negate it - which would turn a
+// typo into 18446744073709551615 epochs. Doing it here also keeps the decimal point out of the
+// hands of the global locale, and lets a duration be scaled by an exact power of ten instead of a
+// double multiplication that turns 1.5s into 1499999999ns.
+
+// Everything before the unit of a duration, and every count: "1.5" gives digits 15 and one fraction
+// digit. A sign, an exponent, a second dot and anything that does not fit are all rejected - these
+// are epoch times and iteration counts, not a general purpose number format.
+static std::string parseDecimal(std::string const& str, uint64_t& digits, int& fractionDigits) {
+    digits = 0;
+    fractionDigits = 0;
+    bool seenDot = false;
+    bool seenDigit = false;
+    for (auto ch : str) {
+        if ('.' == ch) {
+            if (seenDot) {
+                return "is not a number";
+            }
+            seenDot = true;
+            continue;
+        }
+        if (ch < '0' || ch > '9') {
+            return "is not a number";
+        }
+        auto const digit = static_cast<uint64_t>(ch - '0');
+        if (digits > (std::numeric_limits<uint64_t>::max() - digit) / 10U) {
+            return "is too large";
+        }
+        digits = digits * 10U + digit;
+        seenDigit = true;
+        if (seenDot) {
+            ++fractionDigits;
+        }
+    }
+    return seenDigit ? std::string() : std::string("is not a number");
+}
+
+// Multiplies by ten `exponent` times, or divides that often when it is negative. Only the last
+// division rounds, so that the digits thrown away before it cannot round up twice.
+static bool scaleByPowerOfTen(uint64_t& value, int exponent) {
+    while (exponent > 0) {
+        if (value > std::numeric_limits<uint64_t>::max() / 10U) {
+            return false;
+        }
+        value *= 10U;
+        --exponent;
+    }
+    while (exponent < 0) {
+        auto const remainder = value % 10U;
+        value /= 10U;
+        if (-1 == exponent && remainder >= 5U) {
+            ++value;
+        }
+        ++exponent;
+    }
+    return true;
+}
+
+// The trailing ns/us/ms/s of a duration. exponent is then the power of ten that turns that unit into
+// nanoseconds, and numberLen how much of value is left in front of it.
+//
+// Every unit is an "s" with an optional metric prefix, which is worth saying that way rather than as
+// a list of four suffixes to try: a list has to put the two character units first, since every one
+// of them also ends in a match for "s", and nothing about the list says so.
+static bool splitTimeUnit(std::string const& value, int& exponent, size_t& numberLen) {
+    if (value.empty() || 's' != value[value.size() - 1]) {
+        return false;
+    }
+    numberLen = value.size() - 1;
+    exponent = 9;
+    if (numberLen > 0) {
+        auto const prefix = value[numberLen - 1];
+        if ('n' == prefix) {
+            exponent = 0;
+            --numberLen;
+        } else if ('u' == prefix) {
+            exponent = 3;
+            --numberLen;
+        } else if ('m' == prefix) {
+            exponent = 6;
+            --numberLen;
+        }
+    }
+    return true;
+}
+
+// A whole number of iterations or epochs.
+static std::string parseCount(std::string const& value, uint64_t& out) {
+    int fractionDigits = 0;
+    std::string reason = parseDecimal(value, out, fractionDigits);
+    if (reason.empty() && fractionDigits > 0) {
+        reason = "is not a whole number";
+    }
+    return reason;
+}
+
+// A number with a required unit, e.g. "1.5s". The unit is required because a bare number reads as
+// whatever the writer had in mind and would be taken as nanoseconds, so "minEpochTime=5" would
+// quietly become a 5ns floor - which is the trap that made one variable per setting, in nanoseconds,
+// the wrong shape for this.
+static std::string parseDuration(std::string const& value, std::chrono::nanoseconds& out) {
+    int unitExponent = 0;
+    size_t numberLen = 0;
+    if (!splitTimeUnit(value, unitExponent, numberLen)) {
+        return "is missing a time unit - use ns, us, ms or s";
+    }
+
+    // Nested, rather than the flatter chain of early returns this wants to be. `return reason;` is
+    // only elided when it is the *only* return of a named local, and clang's -Wnrvo is an error
+    // here; the early return above is fine because it returns a temporary built from a literal.
+    uint64_t digits = 0;
+    int fractionDigits = 0;
+    std::string reason = parseDecimal(value.substr(0, numberLen), digits, fractionDigits);
+    if (reason.empty()) {
+        using Rep = std::chrono::nanoseconds::rep;
+        if (scaleByPowerOfTen(digits, unitExponent - fractionDigits) &&
+            digits <= static_cast<uint64_t>(std::numeric_limits<Rep>::max())) {
+            out = std::chrono::nanoseconds(static_cast<Rep>(digits));
+        } else {
+            reason = "is too large";
+        }
+    }
+    return reason;
+}
+
+// One key, applied by calling the Bench setter it is named after. Going through the setter is what
+// "the keys are the Bench setter names" has to mean to be worth writing down: minEpochIterations
+// turns 0 into 1, and a setter that grows a rule later gets it for a value from the environment too.
+//
+// Arg is spelled at the call site rather than deduced. Every one of these names a setter *and* a
+// getter, and naming the parameter type outright makes picking between them ordinary overload
+// resolution rather than deduction against an overload set.
+template <typename Arg>
+static bool setCount(Bench& bench, std::string const& key, char const* name, Bench& (Bench::*setter)(Arg), std::string const& value,
+                     std::string& reason) {
+    if (key != name) {
+        return false;
+    }
+    uint64_t parsed = 0;
+    reason = parseCount(value, parsed);
+    // size_t is 32 bits on a third of the matrix, and a count that does not survive the trip would
+    // otherwise run a quietly different benchmark than the one that was asked for
+    if (reason.empty() && static_cast<uint64_t>(static_cast<Arg>(parsed)) != parsed) {
+        reason = "is too large";
+    }
+    if (reason.empty()) {
+        (bench.*setter)(static_cast<Arg>(parsed));
+    }
+    return true;
+}
+
+static bool setDuration(Bench& bench, std::string const& key, char const* name, Bench& (Bench::*setter)(std::chrono::nanoseconds),
+                        std::string const& value, std::string& reason) {
+    if (key != name) {
+        return false;
+    }
+    std::chrono::nanoseconds parsed{};
+    reason = parseDuration(value, parsed);
+    if (reason.empty()) {
+        (bench.*setter)(parsed);
+    }
+    return true;
+}
+
+// Everything NANOBENCH_CONFIG understands, each key named exactly once. '||' short-circuits, so at
+// most one of these runs and nothing past the match is even evaluated.
+//
+// This is the shape generateConfigTag() uses for the same seven names in the other direction, and
+// for the reason its comment gives: as a stanza per key, the one mistake the compiler cannot see is
+// a key you classified and then forgot to assign, which falls through to whichever branch was last.
+static bool applyKnownKey(Bench& bench, std::string const& key, std::string const& value, std::string& reason) {
+    return setDuration(bench, key, "minEpochTime", &Bench::minEpochTime, value, reason) ||
+           setDuration(bench, key, "maxEpochTime", &Bench::maxEpochTime, value, reason) ||
+           setCount<size_t>(bench, key, "epochs", &Bench::epochs, value, reason) ||
+           setCount<uint64_t>(bench, key, "warmup", &Bench::warmup, value, reason) ||
+           setCount<uint64_t>(bench, key, "minEpochIterations", &Bench::minEpochIterations, value, reason) ||
+           setCount<uint64_t>(bench, key, "epochIterations", &Bench::epochIterations, value, reason) ||
+           setCount<size_t>(bench, key, "clockResolutionMultiple", &Bench::clockResolutionMultiple, value, reason);
+}
+
+// Sorted, and next to the chain above so that a key added to one and not the other is visible on one
+// screen. Only tuning knobs are there at all: name, title, unit, batch and timeUnit say what a
+// benchmark *is*, and letting a shell variable change those for a whole process would change what
+// the numbers mean rather than how long they take.
+static char const* configKeyList() {
+    return "clockResolutionMultiple, epochIterations, epochs, maxEpochTime, minEpochIterations, minEpochTime, warmup";
+}
+
+static void applyConfigEntry(Bench& bench, std::string const& key, std::string const& value, std::vector<std::string>& errors) {
+    std::string reason;
+    if (!applyKnownKey(bench, key, value, reason)) {
+        errors.push_back("NANOBENCH_CONFIG: unknown key '" + key + "' - valid keys are " + configKeyList());
+    } else if (!reason.empty()) {
+        errors.push_back("NANOBENCH_CONFIG: '" + key + "=" + value + "' " + reason);
+    }
+}
+
+// Whitespace around a key or a value is somebody laying the variable out to be read, not part of
+// what they typed.
+static std::string trimWhitespace(std::string const& str) {
+    char const* const spaces = " \t\n\r\f\v";
+    auto const first = str.find_first_not_of(spaces);
+    if (std::string::npos == first) {
+        return {};
+    }
+    return str.substr(first, str.find_last_not_of(spaces) - first + 1);
+}
+
+void applyConfigString(Bench& bench, std::string const& configStr, std::vector<std::string>& errors) {
+    size_t pos = 0;
+    while (pos < configStr.size()) {
+        auto const comma = configStr.find(',', pos);
+        auto const end = std::string::npos == comma ? configStr.size() : comma;
+        auto const entry = trimWhitespace(configStr.substr(pos, end - pos));
+        pos = end + 1;
+
+        // an empty variable, or a trailing comma, is nothing to complain about
+        if (entry.empty()) {
+            continue;
+        }
+        auto const equals = entry.find('=');
+        if (std::string::npos == equals) {
+            errors.push_back("NANOBENCH_CONFIG: '" + entry + "' is not a key=value pair");
+            continue;
+        }
+        applyConfigEntry(bench, trimWhitespace(entry.substr(0, equals)), trimWhitespace(entry.substr(equals + 1)), errors);
+    }
+}
+
+// Applies NANOBENCH_CONFIG to a freshly built Bench, so that anything the benchmark sets afterwards
+// still wins: the environment moves the default, it does not overrule a benchmark that needs a
+// particular setting to mean anything.
+void applyEnvConfig(Bench& bench) {
+    auto const* const configStr = getEnv("NANOBENCH_CONFIG");
+    if (nullptr == configStr) {
+        return;
+    }
+
+    std::vector<std::string> errors;
+    applyConfigString(bench, configStr, errors);
+
+    // Every Bench parses the variable, but a typo in it is one mistake and gets one message. This is
+    // deliberately not behind NANOBENCH_SUPPRESS_WARNINGS: that hides statements about the machine
+    // being unsuitable, whereas this is a mistake in something the user typed moments ago, and
+    // swallowing it is how somebody ends up believing a sweep ran when it did not.
+    static bool isFirstBench = true;
+    if (isFirstBench) {
+        isFirstBench = false;
+        for (auto const& error : errors) {
+            std::cerr << error << std::endl;
+        }
+    }
 }
 
 void gatherStabilityInformation(std::vector<std::string>& warnings, std::vector<std::string>& recommendations) {
     warnings.clear();
     recommendations.clear();
 
-    bool recommendCheckFlags = false;
-
 #    if defined(DEBUG)
     warnings.emplace_back("DEBUG defined");
-    recommendCheckFlags = true;
+    bool const recommendCheckFlags = true;
+#    else
+    bool const recommendCheckFlags = false;
 #    endif
 
     bool recommendPyPerf = false;
@@ -1959,16 +2949,15 @@ void gatherStabilityInformation(std::vector<std::string>& warnings, std::vector<
     if (nprocs <= 0) {
         warnings.emplace_back("couldn't figure out number of processors - no governor, turbo check possible");
     } else {
-
         // check frequency scaling
         for (long id = 0; id < nprocs; ++id) {
             auto idStr = detail::fmt::to_s(static_cast<uint64_t>(id));
             auto sysCpu = "/sys/devices/system/cpu/cpu" + idStr;
-            auto minFreq = parseFile<int64_t>(sysCpu + "/cpufreq/scaling_min_freq");
-            auto maxFreq = parseFile<int64_t>(sysCpu + "/cpufreq/scaling_max_freq");
+            auto minFreq = parseFile<int64_t>(sysCpu + "/cpufreq/scaling_min_freq", nullptr);
+            auto maxFreq = parseFile<int64_t>(sysCpu + "/cpufreq/scaling_max_freq", nullptr);
             if (minFreq != maxFreq) {
-                auto minMHz = static_cast<double>(minFreq) / 1000.0;
-                auto maxMHz = static_cast<double>(maxFreq) / 1000.0;
+                auto minMHz = d(minFreq) / 1000.0;
+                auto maxMHz = d(maxFreq) / 1000.0;
                 warnings.emplace_back("CPU frequency scaling enabled: CPU " + idStr + " between " +
                                       detail::fmt::Number(1, 1, minMHz).to_s() + " and " + detail::fmt::Number(1, 1, maxMHz).to_s() +
                                       " MHz");
@@ -1977,13 +2966,15 @@ void gatherStabilityInformation(std::vector<std::string>& warnings, std::vector<
             }
         }
 
-        auto currentGovernor = parseFile<std::string>("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor");
-        if ("performance" != currentGovernor) {
+        auto fail = false;
+        auto currentGovernor = parseFile<std::string>("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", &fail);
+        if (!fail && "performance" != currentGovernor) {
             warnings.emplace_back("CPU governor is '" + currentGovernor + "' but should be 'performance'");
             recommendPyPerf = true;
         }
 
-        if (0 == parseFile<int>("/sys/devices/system/cpu/intel_pstate/no_turbo")) {
+        auto noTurbo = parseFile<int>("/sys/devices/system/cpu/intel_pstate/no_turbo", &fail);
+        if (!fail && noTurbo == 0) {
             warnings.emplace_back("Turbo is enabled, CPU frequency will fluctuate");
             recommendPyPerf = true;
         }
@@ -2000,7 +2991,7 @@ void gatherStabilityInformation(std::vector<std::string>& warnings, std::vector<
 
 void printStabilityInformationOnce(std::ostream* outStream) {
     static bool shouldPrint = true;
-    if (shouldPrint && outStream && isWarningsEnabled()) {
+    if (shouldPrint && (nullptr != outStream) && isWarningsEnabled()) {
         auto& os = *outStream;
         shouldPrint = false;
         std::vector<std::string> warnings;
@@ -2022,10 +3013,75 @@ void printStabilityInformationOnce(std::ostream* outStream) {
     }
 }
 
-// remembers the last table settings used. When it changes, a new table header is automatically written for the new entry.
-uint64_t& singletonHeaderHash() noexcept {
-    static uint64_t sHeaderHash{};
-    return sHeaderHash;
+// When perf_event_open is refused, the table simply comes out five columns narrower. That reads like a
+// nanobench bug rather than a setting of the machine, and people have gone looking for it more than once
+// (issues #106, #123). So say what happened - but only where those columns could have appeared at all:
+// on a platform that has no perf events in the first place nothing is wrong, and a note on every single
+// run would be pure noise.
+void printPerformanceCounterHintOnce(std::ostream* outStream, bool wantsPerformanceCounters) {
+#    if ANKERL_NANOBENCH(PERF_COUNTERS)
+    static bool shouldPrint = true;
+    if (!shouldPrint || !wantsPerformanceCounters || (nullptr == outStream) || !isWarningsEnabled()) {
+        return;
+    }
+    shouldPrint = false;
+
+    auto const& has = performanceCounters().has();
+    if (has.instructions || has.cpuCycles || has.branchInstructions || has.branchMisses) {
+        return;
+    }
+
+    *outStream << "Note: perf_event_open failed, so the ins/op, cyc/op, IPC, bra/op and miss% columns are missing." << std::endl
+               << "This is usually a container or VM without virtualized performance counters, or" << std::endl
+               << "/proc/sys/kernel/perf_event_paranoid being too restrictive." << std::endl
+               << std::endl;
+#    else
+    (void)outStream;
+    (void)wantsPerformanceCounters;
+#    endif
+}
+
+// Which index of the pword/iword array every stream carries is ours. Allocated once per process.
+static int streamHeaderHashIndex() {
+    static int const index = std::ios_base::xalloc();
+    return index;
+}
+
+// pword holds a raw void*, so what it points at has to be freed when the stream goes away.
+static void streamHeaderHashCallback(std::ios_base::event ev, std::ios_base& ios, int index) {
+    if (std::ios_base::erase_event == ev) {
+        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+        delete static_cast<uint64_t*>(ios.pword(index));
+        ios.pword(index) = nullptr;
+    } else if (std::ios_base::copyfmt_event == ev) {
+        // copyfmt just copied our pointer into this stream; only one of the two may own it
+        ios.pword(index) = nullptr;
+    }
+}
+
+// This used to be a single process-wide value, so two Bench objects writing to different streams
+// overwrote each other's settings and the second table came out with no header at all (issue #112).
+//
+// The obvious fix - a static map keyed on the ostream* - grows for the lifetime of the process and,
+// worse, hands a freshly constructed stream the state of a destroyed one that happened to be
+// allocated at the same address, which shows up as a header going missing at random. iostreams
+// already provide per-stream storage whose lifetime is exactly the stream's, which is what this
+// wants.
+uint64_t& streamHeaderHash(std::ostream& os) {
+    auto const index = streamHeaderHashIndex();
+    void*& slot = os.pword(index);
+    if (nullptr == slot) {
+        // iword is a separate array at the same index; it records that the callback is registered so
+        // a stream never registers it twice. copyfmt copies iword and the callbacks together, so a
+        // stream copied from another is already covered.
+        if (0 == os.iword(index)) {
+            os.iword(index) = 1;
+            os.register_callback(streamHeaderHashCallback, index);
+        }
+        // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
+        slot = new uint64_t{};
+    }
+    return *static_cast<uint64_t*>(slot);
 }
 
 ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
@@ -2050,8 +3106,130 @@ Clock::duration calcClockResolution(size_t numEvaluations) noexcept {
 
 // Calculates clock resolution once, and remembers the result
 Clock::duration clockResolution() noexcept {
-    static Clock::duration sResolution = calcClockResolution(20);
+    static Clock::duration const sResolution = calcClockResolution(20);
     return sResolution;
+}
+
+// Appends a column unless hideColumn() switched it off.
+//
+// Whether a column *can* be shown - is the counter available at all - and whether the caller wants it
+// are different questions, and interleaving them at every site made it easy to answer one where the
+// other was meant. The availability checks stay next to the values; the visibility policy is here,
+// for every builder below, so a change to how a column is gated is one edit rather than three.
+static void addColumn(std::vector<fmt::MarkDownColumn>& columns, Config const& config, Column column, int width, int precision,
+                      std::string title, std::string suffix, double value) {
+    if (isColumnVisible(config, column)) {
+        columns.emplace_back(width, precision, std::move(title), std::move(suffix), value);
+    }
+}
+
+// The ratio-to-baseline column both table writers put in front of the measurements. Its geometry is
+// here rather than at the two call sites: a header written at one width above rows written at
+// another lines up nowhere.
+static fmt::MarkDownColumn relativeColumn(double percent) {
+    return {11, 1, "relative", "%", percent};
+}
+
+// The performance counter columns of a row, empty when the counters are switched off or the kernel
+// refused them. Split out of measurementColumns() below only to keep both of them under clang-tidy's
+// cognitive complexity limit - the two are read as one list.
+static std::vector<fmt::MarkDownColumn> counterColumns(Config const& config, Result const& result) {
+    std::vector<fmt::MarkDownColumn> columns;
+    if (!config.mShowPerformanceCounters) {
+        return columns;
+    }
+
+    auto const hasIns = result.has(Result::Measure::instructions);
+    auto const hasCyc = result.has(Result::Measure::cpucycles);
+    double const rInsMedian = hasIns ? result.median(Result::Measure::instructions) : 0.0;
+    double const rCycMedian = hasCyc ? result.median(Result::Measure::cpucycles) : 0.0;
+
+    if (hasIns) {
+        addColumn(columns, config, Column::instructions, 18, 2, "ins/" + config.mUnit, "", rInsMedian / config.mBatch);
+    }
+    if (hasCyc) {
+        addColumn(columns, config, Column::cycles, 18, 2, "cyc/" + config.mUnit, "", rCycMedian / config.mBatch);
+    }
+
+    // Which columns a row has must depend only on what the machine can measure, never on what it
+    // measured: keying IPC off the values instead meant a row whose op reported zero instructions
+    // came out one cell short of the header it sits under, and the rest of the table with it.
+    if (hasIns && hasCyc) {
+        addColumn(columns, config, Column::ipc, 9, 3, "IPC", "", rCycMedian <= 0.0 ? 0.0 : rInsMedian / rCycMedian);
+    }
+
+    if (result.has(Result::Measure::branchinstructions)) {
+        double const rBraMedian = result.median(Result::Measure::branchinstructions);
+        addColumn(columns, config, Column::branches, 17, 2, "bra/" + config.mUnit, "", rBraMedian / config.mBatch);
+        if (result.has(Result::Measure::branchmisses)) {
+            double const misses = result.median(Result::Measure::branchmisses);
+            addColumn(columns, config, Column::branchMisses, 10, 1, "miss%", "%",
+                      rBraMedian < 1e-9 ? 0.0 : 100.0 * misses / rBraMedian);
+        }
+    }
+    return columns;
+}
+
+// The columns that describe what was measured, as opposed to how one row relates to another. Both
+// table writers are built out of these: IterationLogic prepends `relative`, a comparison prepends
+// `relative` and `95% CI`, and everything from here on is the same table in both.
+//
+// It is one function because it used to be two copies, and the copies drifted exactly the way copies
+// do: the comparison table silently lost the performance counters it collects anyway and the context
+// columns, and hideColumn() went inert there until it was patched separately. Adding a column here
+// adds it to both.
+//
+// Takes the Config rather than the Bench because a comparison has no Bench to ask - every Result
+// carries a copy of the config it was measured under, which is the same object either way.
+static std::vector<fmt::MarkDownColumn> measurementColumns(Config const& config, Result const& result) {
+    std::vector<fmt::MarkDownColumn> columns;
+
+    auto const median = result.median(Result::Measure::elapsed);
+
+    if (config.mComplexityN > 0.0) {
+        addColumn(columns, config, Column::complexityN, 14, 0, "complexityN", "", config.mComplexityN);
+    }
+
+    // context columns come before the measurements: they say which benchmark this row is, and that
+    // reads better on the left. A row without the variable gets a blank cell rather than a missing
+    // column, so the table stays rectangular.
+    for (auto const& variableName : config.mContextColumns) {
+        auto it = config.mContext.find(variableName);
+        auto const width = static_cast<int>((std::max)(variableName.size() + 3, static_cast<size_t>(11)));
+        columns.emplace_back(width, variableName, it == config.mContext.end() ? std::string() : it->second);
+    }
+
+    addColumn(columns, config, Column::timePerUnit, 22, 2, config.mTimeUnitName + "/" + config.mUnit, "",
+              median / (config.mTimeUnit.count() * config.mBatch));
+    addColumn(columns, config, Column::unitPerSecond, 22, 2, config.mUnit + "/s", "", median <= 0.0 ? 0.0 : config.mBatch / median);
+    addColumn(columns, config, Column::error, 10, 1, "err%", "%", result.medianAbsolutePercentError(Result::Measure::elapsed) * 100.0);
+
+    auto const counters = counterColumns(config, result);
+    columns.insert(columns.end(), counters.begin(), counters.end());
+
+    addColumn(columns, config, Column::total, 12, 2, "total", "",
+              result.sumProduct(Result::Measure::iterations, Result::Measure::elapsed));
+    return columns;
+}
+
+// The markdown table's header and separator lines.
+//
+// Both table writers go through this, because the table is not rectangular in the obvious sense: the
+// last cell holds the table's title on the header line and a benchmark's name on a data line, and the
+// separator's last cell is one dash per title character, so it is one character wider than the header
+// cell above it. What lines up - and what the tests assert on - is the offset of the last '|'. Two
+// spellings of that convention agree only until one of them changes.
+static void writeTableHeaderLines(std::ostream& os, std::vector<fmt::MarkDownColumn> const& columns, std::string const& title) {
+    os << std::endl;
+    for (auto const& col : columns) {
+        os << col.title();
+    }
+    os << "| " << title << std::endl;
+
+    for (auto const& col : columns) {
+        os << col.separator();
+    }
+    os << "|:" << std::string(title.size() + 1U, '-') << std::endl;
 }
 
 ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
@@ -2062,15 +3240,10 @@ struct IterationLogic::Impl {
         : mBench(bench)
         , mResult(bench.config()) {
         printStabilityInformationOnce(mBench.output());
+        printPerformanceCounterHintOnce(mBench.output(), mBench.performanceCounters());
 
         // determine target runtime per epoch
-        mTargetRuntimePerEpoch = detail::clockResolution() * mBench.clockResolutionMultiple();
-        if (mTargetRuntimePerEpoch > mBench.maxEpochTime()) {
-            mTargetRuntimePerEpoch = mBench.maxEpochTime();
-        }
-        if (mTargetRuntimePerEpoch < mBench.minEpochTime()) {
-            mTargetRuntimePerEpoch = mBench.minEpochTime();
-        }
+        mTargetRuntimePerEpoch = detail::targetRuntimePerEpoch(mBench);
 
         if (isEndlessRunning(mBench.name())) {
             std::cerr << "NANOBENCH_ENDLESS set: running '" << mBench.name() << "' endlessly" << std::endl;
@@ -2079,8 +3252,7 @@ struct IterationLogic::Impl {
         } else if (0 != mBench.warmup()) {
             mNumIters = mBench.warmup();
             mState = State::warmup;
-        } else if (0 != mBench.epochIterations()) {
-            // exact number of iterations
+        } else if (hasExactNumIters()) {
             mNumIters = mBench.epochIterations();
             mState = State::measuring;
         } else {
@@ -2089,27 +3261,39 @@ struct IterationLogic::Impl {
         }
     }
 
-    // directly calculates new iters based on elapsed&iters, and adds a 10% noise. Makes sure we don't underflow.
+    // True when an exact number of iterations per epoch was requested, which overrides any calculated one.
+    ANKERL_NANOBENCH(NODISCARD) bool hasExactNumIters() const noexcept {
+        return 0 != mBench.epochIterations();
+    }
+
+    // The number of iterations the next epoch should run, honoring an exact count if one was requested.
+    ANKERL_NANOBENCH(NODISCARD) uint64_t calcNextNumIters(std::chrono::nanoseconds elapsed, uint64_t iters) noexcept {
+        return hasExactNumIters() ? mBench.epochIterations() : calcBestNumIters(elapsed, iters);
+    }
+
+    // directly calculates new iters based on elapsed&iters, and stretches the epoch by 0-20% of random noise so epochs
+    // don't get into lockstep with periodic disturbances. Makes sure we don't under- or overflow.
     ANKERL_NANOBENCH(NODISCARD) uint64_t calcBestNumIters(std::chrono::nanoseconds elapsed, uint64_t iters) noexcept {
         auto doubleElapsed = d(elapsed);
         auto doubleTargetRuntimePerEpoch = d(mTargetRuntimePerEpoch);
         auto doubleNewIters = doubleTargetRuntimePerEpoch / doubleElapsed * d(iters);
 
+        // An elapsed time of 0 (possible with a coarse clock) makes the division above produce infinity, or even NaN
+        // when the target runtime is 0 as well. Comparing with '!(a >= b)' instead of 'a < b' replaces NaN with the
+        // minimum too, so an epoch never ends up with a nonsensical number of iterations.
         auto doubleMinEpochIters = d(mBench.minEpochIterations());
-        if (doubleNewIters < doubleMinEpochIters) {
+        if (!(doubleNewIters >= doubleMinEpochIters)) {
             doubleNewIters = doubleMinEpochIters;
         }
         doubleNewIters *= 1.0 + 0.2 * mRng.uniform01();
 
-        // +0.5 for correct rounding when casting
-        // NOLINTNEXTLINE(bugprone-incorrect-roundings)
-        return static_cast<uint64_t>(doubleNewIters + 0.5);
+        return u64(doubleNewIters);
     }
 
     ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined") void upscale(std::chrono::nanoseconds elapsed) {
         if (elapsed * 10 < mTargetRuntimePerEpoch) {
             // we are far below the target runtime. Multiply iterations by 10 (with overflow check)
-            if (mNumIters * 10 < mNumIters) {
+            if (mNumIters > (std::numeric_limits<uint64_t>::max)() / 10) {
                 // overflow :-(
                 showResult("iterations overflow. Maybe your code got optimized away?");
                 mNumIters = 0;
@@ -2128,11 +3312,12 @@ struct IterationLogic::Impl {
 
         switch (mState) {
         case State::warmup:
-            if (isCloseEnoughForMeasurements(elapsed)) {
+            // an exact number of iterations makes upscaling pointless, so warmup is over either way
+            if (hasExactNumIters() || isCloseEnoughForMeasurements(elapsed)) {
                 // if elapsed is close enough, we can skip upscaling and go right to measurements
                 // still, we don't add the result to the measurements.
                 mState = State::measuring;
-                mNumIters = calcBestNumIters(elapsed, mNumIters);
+                mNumIters = calcNextNumIters(elapsed, mNumIters);
             } else {
                 // not close enough: switch to upscaling
                 mState = State::upscaling_runtime;
@@ -2147,7 +3332,7 @@ struct IterationLogic::Impl {
                 mTotalElapsed += elapsed;
                 mTotalNumIters += mNumIters;
                 mResult.add(elapsed, mNumIters, pc);
-                mNumIters = calcBestNumIters(mTotalElapsed, mTotalNumIters);
+                mNumIters = calcNextNumIters(mTotalElapsed, mTotalNumIters);
             } else {
                 upscale(elapsed);
             }
@@ -2159,11 +3344,7 @@ struct IterationLogic::Impl {
             mTotalElapsed += elapsed;
             mTotalNumIters += mNumIters;
             mResult.add(elapsed, mNumIters, pc);
-            if (0 != mBench.epochIterations()) {
-                mNumIters = mBench.epochIterations();
-            } else {
-                mNumIters = calcBestNumIters(mTotalElapsed, mTotalNumIters);
-            }
+            mNumIters = calcNextNumIters(mTotalElapsed, mTotalNumIters);
             break;
 
         case State::endless:
@@ -2177,147 +3358,112 @@ struct IterationLogic::Impl {
             mNumIters = 0;
         }
 
-        ANKERL_NANOBENCH_LOG(mBench.name() << ": " << detail::fmt::Number(20, 3, static_cast<double>(elapsed.count())) << " elapsed, "
-                                           << detail::fmt::Number(20, 3, static_cast<double>(mTargetRuntimePerEpoch.count()))
-                                           << " target. oldIters=" << oldIters << ", mNumIters=" << mNumIters
-                                           << ", mState=" << static_cast<int>(mState));
+        ANKERL_NANOBENCH_LOG(mBench.name() << ": " << detail::fmt::Number(20, 3, d(elapsed.count())) << " elapsed, "
+                                           << detail::fmt::Number(20, 3, d(mTargetRuntimePerEpoch.count())) << " target. oldIters="
+                                           << oldIters << ", mNumIters=" << mNumIters << ", mState=" << static_cast<int>(mState));
     }
 
     void showResult(std::string const& errorMessage) const {
         ANKERL_NANOBENCH_LOG(errorMessage);
 
-        if (mBench.output() != nullptr) {
-            // prepare column data ///////
-            std::vector<fmt::MarkDownColumn> columns;
+        if (nullptr == mBench.output()) {
+            return;
+        }
 
-            auto rMedian = mResult.median(Result::Measure::elapsed);
+        // prepare column data ///////
+        std::vector<fmt::MarkDownColumn> columns;
 
-            if (mBench.relative()) {
-                double d = 100.0;
-                if (!mBench.results().empty()) {
-                    d = rMedian <= 0.0 ? 0.0 : mBench.results().front().median(Result::Measure::elapsed) / rMedian * 100.0;
-                }
-                columns.emplace_back(11, 1, "relative", "%", d);
+        if (mBench.relative()) {
+            double relativePercent = 100.0;
+            if (!mBench.results().empty()) {
+                // Every other column is per unit, so this one has to be as well. Comparing the raw epoch times would
+                // give a skewed percentage as soon as the baseline was run with a different batch size.
+                // See https://github.com/martinus/nanobench/issues/131
+                // This is (baseline / baselineBatch) / (rMedian / batch) as a single fraction, so one guard does.
+                auto const rMedian = mResult.median(Result::Measure::elapsed);
+                auto const& baseline = mBench.results().front();
+                auto const num = baseline.median(Result::Measure::elapsed) * mBench.batch();
+                auto const den = rMedian * baseline.config().mBatch;
+                relativePercent = den <= 0.0 ? 0.0 : num / den * 100.0;
             }
-
-            if (mBench.complexityN() > 0) {
-                columns.emplace_back(14, 0, "complexityN", "", mBench.complexityN());
-            }
-
-            columns.emplace_back(22, 2, mBench.timeUnitName() + "/" + mBench.unit(), "",
-                                 rMedian / (mBench.timeUnit().count() * mBench.batch()));
-            columns.emplace_back(22, 2, mBench.unit() + "/s", "", rMedian <= 0.0 ? 0.0 : mBench.batch() / rMedian);
-
-            double rErrorMedian = mResult.medianAbsolutePercentError(Result::Measure::elapsed);
-            columns.emplace_back(10, 1, "err%", "%", rErrorMedian * 100.0);
-
-            double rInsMedian = -1.0;
-            if (mBench.performanceCounters() && mResult.has(Result::Measure::instructions)) {
-                rInsMedian = mResult.median(Result::Measure::instructions);
-                columns.emplace_back(18, 2, "ins/" + mBench.unit(), "", rInsMedian / mBench.batch());
-            }
-
-            double rCycMedian = -1.0;
-            if (mBench.performanceCounters() && mResult.has(Result::Measure::cpucycles)) {
-                rCycMedian = mResult.median(Result::Measure::cpucycles);
-                columns.emplace_back(18, 2, "cyc/" + mBench.unit(), "", rCycMedian / mBench.batch());
-            }
-            if (rInsMedian > 0.0 && rCycMedian > 0.0) {
-                columns.emplace_back(9, 3, "IPC", "", rCycMedian <= 0.0 ? 0.0 : rInsMedian / rCycMedian);
-            }
-            if (mBench.performanceCounters() && mResult.has(Result::Measure::branchinstructions)) {
-                double rBraMedian = mResult.median(Result::Measure::branchinstructions);
-                columns.emplace_back(17, 2, "bra/" + mBench.unit(), "", rBraMedian / mBench.batch());
-                if (mResult.has(Result::Measure::branchmisses)) {
-                    double p = 0.0;
-                    if (rBraMedian >= 1e-9) {
-                        p = 100.0 * mResult.median(Result::Measure::branchmisses) / rBraMedian;
-                    }
-                    columns.emplace_back(10, 1, "miss%", "%", p);
-                }
-            }
-
-            columns.emplace_back(12, 2, "total", "", mResult.sumProduct(Result::Measure::iterations, Result::Measure::elapsed));
-
-            // write everything
-            auto& os = *mBench.output();
-
-            // combine all elements that are relevant for printing the header
-            uint64_t hash = 0;
-            hash = hash_combine(std::hash<std::string>{}(mBench.unit()), hash);
-            hash = hash_combine(std::hash<std::string>{}(mBench.title()), hash);
-            hash = hash_combine(std::hash<std::string>{}(mBench.timeUnitName()), hash);
-            hash = hash_combine(std::hash<double>{}(mBench.timeUnit().count()), hash);
-            hash = hash_combine(std::hash<bool>{}(mBench.relative()), hash);
-            hash = hash_combine(std::hash<bool>{}(mBench.performanceCounters()), hash);
-
-            if (hash != singletonHeaderHash()) {
-                singletonHeaderHash() = hash;
-
-                // no result yet, print header
-                os << std::endl;
-                for (auto const& col : columns) {
-                    os << col.title();
-                }
-                os << "| " << mBench.title() << std::endl;
-
-                for (auto const& col : columns) {
-                    os << col.separator();
-                }
-                os << "|:" << std::string(mBench.title().size() + 1U, '-') << std::endl;
-            }
-
-            if (!errorMessage.empty()) {
-                for (auto const& col : columns) {
-                    os << col.invalid();
-                }
-                os << "| :boom: " << fmt::MarkDownCode(mBench.name()) << " (" << errorMessage << ')' << std::endl;
-            } else {
-                for (auto const& col : columns) {
-                    os << col.value();
-                }
-                os << "| ";
-                auto showUnstable = isWarningsEnabled() && rErrorMedian >= 0.05;
-                if (showUnstable) {
-                    os << ":wavy_dash: ";
-                }
-                os << fmt::MarkDownCode(mBench.name());
-                if (showUnstable) {
-                    auto avgIters = static_cast<double>(mTotalNumIters) / static_cast<double>(mBench.epochs());
-                    // NOLINTNEXTLINE(bugprone-incorrect-roundings)
-                    auto suggestedIters = static_cast<uint64_t>(avgIters * 10 + 0.5);
-
-                    os << " (Unstable with ~" << detail::fmt::Number(1, 1, avgIters)
-                       << " iters. Increase `minEpochIterations` to e.g. " << suggestedIters << ")";
-                }
-                os << std::endl;
+            if (isColumnVisible(mBench.config(), Column::relative)) {
+                columns.push_back(relativeColumn(relativePercent));
             }
         }
+
+        // everything a comparison table shows too
+        auto const measurements = measurementColumns(mResult.config(), mResult);
+        columns.insert(columns.end(), measurements.begin(), measurements.end());
+
+        double const rErrorMedian = mResult.medianAbsolutePercentError(Result::Measure::elapsed);
+
+        // write everything
+        auto& os = *mBench.output();
+
+        // The shape of the table *is* the columns it has, so that is what decides whether the header
+        // above the previous row still fits this one. Hashing a hand-kept list of the config fields
+        // that influence the columns meant every conditional column had a second place to be
+        // remembered, two hundred lines from the one that adds it - and complexityN, which
+        // measurementColumns() adds only when it is set, had already been forgotten there.
+        uint64_t hash = 0;
+        hash = hash_combine(std::hash<std::string>{}(mBench.title()), hash);
+        for (auto const& col : columns) {
+            hash = hash_combine(std::hash<std::string>{}(col.title()), hash);
+        }
+
+        auto& lastHeaderHash = streamHeaderHash(os);
+        if (hash != lastHeaderHash) {
+            lastHeaderHash = hash;
+            writeTableHeaderLines(os, columns, mBench.title());
+        }
+
+        if (!errorMessage.empty()) {
+            for (auto const& col : columns) {
+                os << col.invalid();
+            }
+            os << "| :boom: " << fmt::MarkDownCode(mBench.name()) << " (" << errorMessage << ')' << std::endl;
+            return;
+        }
+
+        for (auto const& col : columns) {
+            os << col.value();
+        }
+        os << "| ";
+        auto showUnstable = isWarningsEnabled() && rErrorMedian >= 0.05;
+        if (showUnstable) {
+            os << ":wavy_dash: ";
+        }
+        os << fmt::MarkDownCode(mBench.name());
+        if (showUnstable) {
+            auto avgIters = d(mTotalNumIters) / d(mBench.epochs());
+            auto suggestedIters = u64(avgIters * 10);
+
+            os << " (Unstable with ~" << detail::fmt::Number(1, 1, avgIters) << " iters. Increase `minEpochIterations` to e.g. "
+               << suggestedIters << ")";
+        }
+        os << std::endl;
     }
 
     ANKERL_NANOBENCH(NODISCARD) bool isCloseEnoughForMeasurements(std::chrono::nanoseconds elapsed) const noexcept {
         return elapsed * 3 >= mTargetRuntimePerEpoch * 2;
     }
 
-    uint64_t mNumIters = 1;
-    Bench const& mBench;
-    std::chrono::nanoseconds mTargetRuntimePerEpoch{};
-    Result mResult;
-    Rng mRng{123};
-    std::chrono::nanoseconds mTotalElapsed{};
-    uint64_t mTotalNumIters = 0;
-
-    State mState = State::upscaling_runtime;
+    uint64_t mNumIters = 1;                            // NOLINT(misc-non-private-member-variables-in-classes)
+    Bench const& mBench;                               // NOLINT(misc-non-private-member-variables-in-classes)
+    std::chrono::nanoseconds mTargetRuntimePerEpoch{}; // NOLINT(misc-non-private-member-variables-in-classes)
+    Result mResult;                                    // NOLINT(misc-non-private-member-variables-in-classes)
+    Rng mRng{123};                                     // NOLINT(misc-non-private-member-variables-in-classes)
+    std::chrono::nanoseconds mTotalElapsed{};          // NOLINT(misc-non-private-member-variables-in-classes)
+    uint64_t mTotalNumIters = 0;                       // NOLINT(misc-non-private-member-variables-in-classes)
+    State mState = State::upscaling_runtime;           // NOLINT(misc-non-private-member-variables-in-classes)
 };
 ANKERL_NANOBENCH(IGNORE_PADDED_POP)
 
-IterationLogic::IterationLogic(Bench const& bench) noexcept
+IterationLogic::IterationLogic(Bench const& bench)
     : mPimpl(new Impl(bench)) {}
 
 IterationLogic::~IterationLogic() {
-    if (mPimpl) {
-        delete mPimpl;
-    }
+    delete mPimpl;
 }
 
 uint64_t IterationLogic::numIters() const noexcept {
@@ -2333,7 +3479,103 @@ void IterationLogic::moveResultTo(std::vector<Result>& results) noexcept {
     results.emplace_back(std::move(mPimpl->mResult));
 }
 
+// The counter arithmetic, deliberately outside the PERF_COUNTERS guard - see the declarations.
+
+uint64_t saturatingSub(uint64_t a, uint64_t b) noexcept {
+    return a >= b ? a - b : UINT64_C(0);
+}
+
+uint64_t divRounded(uint64_t a, uint64_t divisor) noexcept {
+    return (a + divisor / 2) / divisor;
+}
+
+size_t perfReadFormatSize(size_t numEvents) noexcept {
+    return 3U + numEvents * 2U;
+}
+
+size_t perfValueIndex(uint64_t i) noexcept {
+    return perfReadFormatSize(static_cast<size_t>(i));
+}
+
+uint64_t scaleMultiplexed(uint64_t value, uint64_t timeEnabled, uint64_t timeRunning) noexcept {
+    if (0U == timeRunning || timeEnabled <= timeRunning) {
+        // the event was active the whole time, nothing to extrapolate
+        return value;
+    }
+    // counts stay far below 2^53, so double is exact enough here and cannot overflow the way the
+    // integer multiplication would
+    return u64(d(value) * (d(timeEnabled) / d(timeRunning)));
+}
+
+ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
+uint64_t correctOverhead(uint64_t value, uint64_t measuringOverhead, uint64_t loopOverheadPerIter, uint64_t numIters) noexcept {
+    return saturatingSub(saturatingSub(value, measuringOverhead), loopOverheadPerIter * numIters);
+}
+
+ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
+uint64_t loopOverheadPerIteration(uint64_t single, uint64_t doubled, uint64_t measuringOverhead, uint64_t numIters) noexcept {
+    auto const m1 = saturatingSub(single, measuringOverhead);
+    auto const m2 = saturatingSub(doubled, measuringOverhead);
+    // the second run does the work twice, so twice the first run minus the second is what the loop
+    // costs on its own
+    return divRounded(saturatingSub(m1 * 2, m2), numIters);
+}
+
+ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
+uint64_t correctBranchInstructions(uint64_t rawBranchInstructions, uint64_t numIters) noexcept {
+    // one branch per iteration for the loop, plus the one that ends it
+    return saturatingSub(rawBranchInstructions, numIters + 1U);
+}
+
+double correctBranchMisses(uint64_t rawBranchMisses, double correctedBranchInstructions) noexcept {
+    auto branchMisses = d(rawBranchMisses);
+    if (branchMisses > correctedBranchInstructions) {
+        // can't have more branch misses than there were branches
+        branchMisses = correctedBranchInstructions;
+    }
+
+    // assuming at least one missed branch for the loop
+    branchMisses -= 1.0;
+    if (branchMisses < 1.0) {
+        branchMisses = 1.0;
+    }
+    return branchMisses;
+}
+
 #    if ANKERL_NANOBENCH(PERF_COUNTERS)
+
+// glibc declares ioctl()'s request parameter as unsigned long, musl as int. PERF_EVENT_IOC_ID and
+// friends carry the direction bits in the high end, so they don't fit into an int and passing one
+// straight through is a value-changing conversion that -Werror rejects on musl (issue #92). Deduce
+// the declared parameter type from ioctl() itself, so the same cast is right for either libc.
+#        if defined(__BIONIC__)
+// Except on bionic, which declares ioctl() *twice* - once taking int and once taking unsigned - for
+// exactly the reason above, so that either signedness compiles without a cast. Its header says out
+// loud that the overload breaks anyone taking ioctl()'s address, and points at naming a concrete
+// type instead: &::ioctl is an overload set, and nothing can be deduced from one. That deduction
+// failure is the whole of issue microsoft/vcpkg#53422 - nanobench built for no Android ABI at all.
+// unsigned is the overload to name, since it is the one PERF_EVENT_IOC_ID fits into.
+using IoctlRequest = unsigned;
+#        else
+// Never defined - only ever asked for its return type.
+template <typename Ret, typename Fd, typename Request>
+Request ioctlRequestType(Ret (*)(Fd, Request, ...));
+
+#            if defined(__cpp_noexcept_function_type)
+// Since C++17 noexcept is part of a function's type, and glibc declares ioctl() with __THROW - so
+// without this second overload the deduction above stops matching at -std=c++17.
+template <typename Ret, typename Fd, typename Request>
+Request ioctlRequestType(Ret (*)(Fd, Request, ...) noexcept);
+#            endif
+
+using IoctlRequest = decltype(ioctlRequestType(&::ioctl));
+#        endif
+
+template <typename Arg>
+int perfIoctl(int fd, unsigned long request, Arg arg) {
+    // NOLINTNEXTLINE(hicpp-signed-bitwise,cppcoreguidelines-pro-type-vararg)
+    return ioctl(fd, static_cast<IoctlRequest>(request), arg);
+}
 
 ANKERL_NANOBENCH(IGNORE_PADDED_PUSH)
 class LinuxPerformanceCounters {
@@ -2344,22 +3586,22 @@ public:
             , correctMeasuringOverhead(correctMeasuringOverhead_)
             , correctLoopOverhead(correctLoopOverhead_) {}
 
-        uint64_t* targetValue{};
-        bool correctMeasuringOverhead{};
-        bool correctLoopOverhead{};
+        uint64_t* targetValue{};         // NOLINT(misc-non-private-member-variables-in-classes)
+        bool correctMeasuringOverhead{}; // NOLINT(misc-non-private-member-variables-in-classes)
+        bool correctLoopOverhead{};      // NOLINT(misc-non-private-member-variables-in-classes)
     };
 
+    LinuxPerformanceCounters() = default;
+    LinuxPerformanceCounters(LinuxPerformanceCounters const&) = delete;
+    LinuxPerformanceCounters(LinuxPerformanceCounters&&) = delete;
+    LinuxPerformanceCounters& operator=(LinuxPerformanceCounters const&) = delete;
+    LinuxPerformanceCounters& operator=(LinuxPerformanceCounters&&) = delete;
     ~LinuxPerformanceCounters();
-
-    // quick operation
-    inline void start() {}
-
-    inline void stop() {}
 
     bool monitor(perf_sw_ids swId, Target target);
     bool monitor(perf_hw_id hwId, Target target);
 
-    bool hasError() const noexcept {
+    ANKERL_NANOBENCH(NODISCARD) bool hasError() const noexcept {
         return mHasError;
     }
 
@@ -2370,14 +3612,12 @@ public:
             return;
         }
 
-        // NOLINTNEXTLINE(hicpp-signed-bitwise)
-        mHasError = -1 == ioctl(mFd, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
+        mHasError = -1 == perfIoctl(mFd, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
         if (mHasError) {
             return;
         }
 
-        // NOLINTNEXTLINE(hicpp-signed-bitwise)
-        mHasError = -1 == ioctl(mFd, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
+        mHasError = -1 == perfIoctl(mFd, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
     }
 
     inline void endMeasure() {
@@ -2385,8 +3625,7 @@ public:
             return;
         }
 
-        // NOLINTNEXTLINE(hicpp-signed-bitwise)
-        mHasError = (-1 == ioctl(mFd, PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP));
+        mHasError = (-1 == perfIoctl(mFd, PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP));
         if (mHasError) {
             return;
         }
@@ -2394,37 +3633,51 @@ public:
         auto const numBytes = sizeof(uint64_t) * mCounters.size();
         auto ret = read(mFd, mCounters.data(), numBytes);
         mHasError = ret != static_cast<ssize_t>(numBytes);
+        if (!mHasError) {
+            scaleCounters();
+        }
     }
 
     void updateResults(uint64_t numIters);
 
-    // rounded integer division
-    template <typename T>
-    static inline T divRounded(T a, T divisor) {
-        return (a + divisor / 2) / divisor;
+    // Compensates the counters that were just read for multiplexing.
+    //
+    // When more events are monitored than the hardware can count at the same time, the kernel time-shares the counters
+    // between them. An event is then only active for a fraction of the measurement, and the value read back is just what
+    // happened while it was active. Scaling it up by enabled/running extrapolates to the whole measurement, which is
+    // exactly what `perf stat` does. Without this, cycles/instructions/branches are silently underreported - e.g. when
+    // the NMI watchdog occupies one of the counters, or in a VM that exposes a restricted PMU.
+    inline void scaleCounters() noexcept {
+        auto const enabled = timeEnabled() - mTotalTimeEnabledNanos;
+        auto const running = timeRunning() - mTotalTimeRunningNanos;
+        mTotalTimeEnabledNanos = timeEnabled();
+        mTotalTimeRunningNanos = timeRunning();
+
+        for (uint64_t i = 0; i < numEvents(); ++i) {
+            auto const idx = perfValueIndex(i);
+            mCounters[idx] = scaleMultiplexed(mCounters[idx], enabled, running);
+        }
     }
 
     ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
     static inline uint32_t mix(uint32_t x) noexcept {
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
+        x ^= x << 13U;
+        x ^= x >> 17U;
+        x ^= x << 5U;
         return x;
     }
 
     template <typename Op>
     ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
     void calibrate(Op&& op) {
-        // clear current calibration data,
+        // clear current calibration data, so a measurement that fails below subtracts nothing rather
+        // than something stale
         for (auto& v : mCalibratedOverhead) {
             v = UINT64_C(0);
         }
 
-        // create new calibration data
-        auto newCalibration = mCalibratedOverhead;
-        for (auto& v : newCalibration) {
-            v = (std::numeric_limits<uint64_t>::max)();
-        }
+        // the new data is a minimum over 100 runs, so it starts at the maximum
+        std::vector<uint64_t> newCalibration(mCalibratedOverhead.size(), (std::numeric_limits<uint64_t>::max)());
         for (size_t iter = 0; iter < 100; ++iter) {
             beginMeasure();
             op();
@@ -2434,10 +3687,7 @@ public:
             }
 
             for (size_t i = 0; i < newCalibration.size(); ++i) {
-                auto diff = mCounters[i];
-                if (newCalibration[i] > diff) {
-                    newCalibration[i] = diff;
-                }
+                newCalibration[i] = (std::min)(newCalibration[i], mCounters[i]);
             }
         }
 
@@ -2448,7 +3698,7 @@ public:
             // marsaglia's xorshift: mov, sal/shr, xor. Times 3.
             // This has the nice property that the compiler doesn't seem to be able to optimize multiple calls any further.
             // see https://godbolt.org/z/49RVQ5
-            uint64_t const numIters = 100000U + (std::random_device{}() & 3);
+            uint64_t const numIters = 100000U + (std::random_device{}() & 3U);
             uint64_t n = numIters;
             uint32_t x = 1234567;
 
@@ -2472,12 +3722,7 @@ public:
             auto measure2 = mCounters;
 
             for (size_t i = 0; i < mCounters.size(); ++i) {
-                // factor 2 because we have two instructions per loop
-                auto m1 = measure1[i] > mCalibratedOverhead[i] ? measure1[i] - mCalibratedOverhead[i] : 0;
-                auto m2 = measure2[i] > mCalibratedOverhead[i] ? measure2[i] - mCalibratedOverhead[i] : 0;
-                auto overhead = m1 * 2 > m2 ? m1 * 2 - m2 : 0;
-
-                mLoopOverhead[i] = divRounded(overhead, numIters);
+                mLoopOverhead[i] = loopOverheadPerIteration(measure1[i], measure2[i], mCalibratedOverhead[i], numIters);
             }
         }
     }
@@ -2485,15 +3730,28 @@ public:
 private:
     bool monitor(uint32_t type, uint64_t eventid, Target target);
 
+    // The three header words of the last read, by name rather than by index.
+    ANKERL_NANOBENCH(NODISCARD) uint64_t numEvents() const noexcept {
+        return mCounters[0];
+    }
+    ANKERL_NANOBENCH(NODISCARD) uint64_t timeEnabled() const noexcept {
+        return mCounters[1];
+    }
+    ANKERL_NANOBENCH(NODISCARD) uint64_t timeRunning() const noexcept {
+        return mCounters[2];
+    }
+
     std::map<uint64_t, Target> mIdToTarget{};
 
-    // start with minimum size of 3 for read_format
-    std::vector<uint64_t> mCounters{3};
-    std::vector<uint64_t> mCalibratedOverhead{3};
-    std::vector<uint64_t> mLoopOverhead{3};
+    // no events monitored yet, so just the read_format header
+    std::vector<uint64_t> mCounters = std::vector<uint64_t>(perfReadFormatSize(0));
+    std::vector<uint64_t> mCalibratedOverhead = std::vector<uint64_t>(perfReadFormatSize(0));
+    std::vector<uint64_t> mLoopOverhead = std::vector<uint64_t>(perfReadFormatSize(0));
 
-    uint64_t mTimeEnabledNanos = 0;
-    uint64_t mTimeRunningNanos = 0;
+    // PERF_EVENT_IOC_RESET resets the counters, but not time_enabled/time_running: those keep accumulating over the
+    // whole lifetime of the event. So the times of a single measurement are the difference to the previous read.
+    uint64_t mTotalTimeEnabledNanos = 0;
+    uint64_t mTotalTimeRunningNanos = 0;
     int mFd = -1;
     bool mHasError = false;
 };
@@ -2525,33 +3783,17 @@ void LinuxPerformanceCounters::updateResults(uint64_t numIters) {
         return;
     }
 
-    mTimeEnabledNanos = mCounters[1] - mCalibratedOverhead[1];
-    mTimeRunningNanos = mCounters[2] - mCalibratedOverhead[2];
-
-    for (uint64_t i = 0; i < mCounters[0]; ++i) {
-        auto idx = static_cast<size_t>(3 + i * 2 + 0);
+    // mCounters has already been compensated for multiplexing in endMeasure(), and so has mCalibratedOverhead
+    for (uint64_t i = 0; i < numEvents(); ++i) {
+        auto idx = perfValueIndex(i);
         auto id = mCounters[idx + 1U];
 
         auto it = mIdToTarget.find(id);
         if (it != mIdToTarget.end()) {
-
             auto& tgt = it->second;
-            *tgt.targetValue = mCounters[idx];
-            if (tgt.correctMeasuringOverhead) {
-                if (*tgt.targetValue >= mCalibratedOverhead[idx]) {
-                    *tgt.targetValue -= mCalibratedOverhead[idx];
-                } else {
-                    *tgt.targetValue = 0U;
-                }
-            }
-            if (tgt.correctLoopOverhead) {
-                auto correctionVal = mLoopOverhead[idx] * numIters;
-                if (*tgt.targetValue >= correctionVal) {
-                    *tgt.targetValue -= correctionVal;
-                } else {
-                    *tgt.targetValue = 0U;
-                }
-            }
+            // a correction the target did not ask for is applied as a correction of zero
+            *tgt.targetValue = correctOverhead(mCounters[idx], tgt.correctMeasuringOverhead ? mCalibratedOverhead[idx] : UINT64_C(0),
+                                               tgt.correctLoopOverhead ? mLoopOverhead[idx] : UINT64_C(0), numIters);
         }
     }
 }
@@ -2582,6 +3824,7 @@ bool LinuxPerformanceCounters::monitor(uint32_t type, uint64_t eventid, Target t
     const unsigned long flags = 0;
 #        endif
 
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
     auto fd = static_cast<int>(syscall(__NR_perf_event_open, &pea, pid, cpu, mFd, flags));
     if (-1 == fd) {
         return false;
@@ -2591,8 +3834,7 @@ bool LinuxPerformanceCounters::monitor(uint32_t type, uint64_t eventid, Target t
         mFd = fd;
     }
     uint64_t id = 0;
-    // NOLINTNEXTLINE(hicpp-signed-bitwise)
-    if (-1 == ioctl(fd, PERF_EVENT_IOC_ID, &id)) {
+    if (-1 == perfIoctl(fd, PERF_EVENT_IOC_ID, &id)) {
         // couldn't get id
         return false;
     }
@@ -2601,7 +3843,7 @@ bool LinuxPerformanceCounters::monitor(uint32_t type, uint64_t eventid, Target t
     mIdToTarget.emplace(id, target);
 
     // prepare readformat with the correct size (after the insert)
-    auto size = 3 + 2 * mIdToTarget.size();
+    auto size = perfReadFormatSize(mIdToTarget.size());
     mCounters.resize(size);
     mCalibratedOverhead.resize(size);
     mLoopOverhead.resize(size);
@@ -2614,17 +3856,22 @@ PerformanceCounters::PerformanceCounters()
     , mVal()
     , mHas() {
 
-    mHas.pageFaults = mPc->monitor(PERF_COUNT_SW_PAGE_FAULTS, LinuxPerformanceCounters::Target(&mVal.pageFaults, true, false));
+    // HW events
     mHas.cpuCycles = mPc->monitor(PERF_COUNT_HW_REF_CPU_CYCLES, LinuxPerformanceCounters::Target(&mVal.cpuCycles, true, false));
-    mHas.contextSwitches =
-        mPc->monitor(PERF_COUNT_SW_CONTEXT_SWITCHES, LinuxPerformanceCounters::Target(&mVal.contextSwitches, true, false));
+    if (!mHas.cpuCycles) {
+        // Fallback to cycles counter, reference cycles not available in many systems.
+        mHas.cpuCycles = mPc->monitor(PERF_COUNT_HW_CPU_CYCLES, LinuxPerformanceCounters::Target(&mVal.cpuCycles, true, false));
+    }
     mHas.instructions = mPc->monitor(PERF_COUNT_HW_INSTRUCTIONS, LinuxPerformanceCounters::Target(&mVal.instructions, true, true));
     mHas.branchInstructions =
         mPc->monitor(PERF_COUNT_HW_BRANCH_INSTRUCTIONS, LinuxPerformanceCounters::Target(&mVal.branchInstructions, true, false));
     mHas.branchMisses = mPc->monitor(PERF_COUNT_HW_BRANCH_MISSES, LinuxPerformanceCounters::Target(&mVal.branchMisses, true, false));
-    // mHas.branchMisses = false;
 
-    mPc->start();
+    // SW events
+    mHas.pageFaults = mPc->monitor(PERF_COUNT_SW_PAGE_FAULTS, LinuxPerformanceCounters::Target(&mVal.pageFaults, true, false));
+    mHas.contextSwitches =
+        mPc->monitor(PERF_COUNT_SW_CONTEXT_SWITCHES, LinuxPerformanceCounters::Target(&mVal.contextSwitches, true, false));
+
     mPc->calibrate([] {
         auto before = ankerl::nanobench::Clock::now();
         auto after = ankerl::nanobench::Clock::now();
@@ -2639,9 +3886,8 @@ PerformanceCounters::PerformanceCounters()
 }
 
 PerformanceCounters::~PerformanceCounters() {
-    if (nullptr != mPc) {
-        delete mPc;
-    }
+    // no need to check for nullptr, delete nullptr has no effect
+    delete mPc;
 }
 
 void PerformanceCounters::beginMeasure() {
@@ -2676,18 +3922,6 @@ ANKERL_NANOBENCH(NODISCARD) PerfCountSet<bool> const& PerformanceCounters::has()
 // formatting utilities
 namespace fmt {
 
-// adds thousands separator to numbers
-NumSep::NumSep(char sep)
-    : mSep(sep) {}
-
-char NumSep::do_thousands_sep() const {
-    return mSep;
-}
-
-std::string NumSep::do_grouping() const {
-    return "\003";
-}
-
 // RAII to save & restore a stream's state
 StreamStateRestorer::StreamStateRestorer(std::ostream& s)
     : mStream(s)
@@ -2710,20 +3944,46 @@ void StreamStateRestorer::restore() {
     mStream.flags(mFmtFlags);
 }
 
-Number::Number(int width, int precision, int64_t value)
-    : mWidth(width)
-    , mPrecision(precision)
-    , mValue(static_cast<double>(value)) {}
-
 Number::Number(int width, int precision, double value)
     : mWidth(width)
     , mPrecision(precision)
     , mValue(value) {}
 
+// Groups the integer digits of an already formatted number in threes: "1234.50" -> "1,234.50".
+//
+// This used to be a std::numpunct facet imbued into the stream, which is the idiomatic way and works
+// right up until someone builds with -fno-rtti: installing a facet goes through __dynamic_cast, which
+// without RTTI reads through a null pointer and takes the process with it (issue #122). Grouping the
+// digits by hand costs a few lines, produces the same output for everyone, and drops an allocation
+// per formatted number along the way.
+//
+// Only a run of digits is touched, so "inf" and "nan" pass through unchanged.
+std::string addThousandsSeparators(std::string str, char sep) {
+    size_t const start = (!str.empty() && ('-' == str[0] || '+' == str[0])) ? 1U : 0U;
+    size_t end = start;
+    while (end < str.size() && str[end] >= '0' && str[end] <= '9') {
+        ++end;
+    }
+
+    // insert from the right, so the positions still to be visited stay valid
+    for (size_t pos = end; pos > start + 3;) {
+        pos -= 3;
+        str.insert(pos, 1, sep);
+    }
+    return str;
+}
+
 std::ostream& Number::write(std::ostream& os) const {
-    StreamStateRestorer restorer(os);
-    os.imbue(std::locale(os.getloc(), new NumSep(',')));
-    os << std::setw(mWidth) << std::setprecision(mPrecision) << std::fixed << mValue;
+    // No StreamStateRestorer: the only thing this used to change on os was the imbued locale, and
+    // std::setw below is consumed by the very next insertion.
+
+    // format without the stream's locale, so a global locale that already groups digits cannot group
+    // them a second time
+    std::stringstream ss;
+    ss.imbue(std::locale::classic());
+    ss << std::setprecision(mPrecision) << std::fixed << mValue;
+
+    os << std::setw(mWidth) << addThousandsSeparators(ss.str(), ',');
     return os;
 }
 
@@ -2747,17 +4007,30 @@ std::ostream& operator<<(std::ostream& os, Number const& n) {
     return n.write(os);
 }
 
-MarkDownColumn::MarkDownColumn(int w, int prec, std::string const& tit, std::string const& suff, double val)
+MarkDownColumn::MarkDownColumn(int w, int prec, std::string tit, std::string suff, double val) noexcept
     : mWidth(w)
     , mPrecision(prec)
-    , mTitle(tit)
-    , mSuffix(suff)
+    , mTitle(std::move(tit))
+    , mSuffix(std::move(suff))
     , mValue(val) {}
 
-std::string MarkDownColumn::title() const {
+MarkDownColumn::MarkDownColumn(int w, std::string tit, std::string text) noexcept
+    : mWidth(w)
+    , mPrecision(0)
+    , mTitle(std::move(tit))
+    , mSuffix()
+    , mValue(0.0)
+    , mText(std::move(text))
+    , mIsText(true) {}
+
+std::string MarkDownColumn::padded(std::string const& text) const {
     std::stringstream ss;
-    ss << '|' << std::setw(mWidth - 2) << std::right << mTitle << ' ';
+    ss << '|' << std::setw(mWidth - 2) << std::right << text << ' ';
     return ss.str();
+}
+
+std::string MarkDownColumn::title() const {
+    return padded(mTitle);
 }
 
 std::string MarkDownColumn::separator() const {
@@ -2775,6 +4048,10 @@ std::string MarkDownColumn::invalid() const {
 }
 
 std::string MarkDownColumn::value() const {
+    if (mIsText) {
+        // aligned like the header, so the ':' the separator puts on the right stays honest
+        return padded(mText);
+    }
     std::stringstream ss;
     auto width = mWidth - 2 - static_cast<int>(mSuffix.size());
     ss << '|' << Number(width, mPrecision, mValue) << mSuffix << ' ';
@@ -2785,7 +4062,7 @@ std::string MarkDownColumn::value() const {
 MarkDownCode::MarkDownCode(std::string const& what) {
     mWhat.reserve(what.size() + 2);
     mWhat.push_back('`');
-    for (char c : what) {
+    for (char const c : what) {
         mWhat.push_back(c);
         if ('`' == c) {
             mWhat.push_back('`');
@@ -2808,14 +4085,14 @@ std::ostream& operator<<(std::ostream& os, MarkDownCode const& mdCode) {
 Config::Config() = default;
 Config::~Config() = default;
 Config& Config::operator=(Config const&) = default;
-Config& Config::operator=(Config&&) = default;
+Config& Config::operator=(Config&&) noexcept(ANKERL_NANOBENCH(NOEXCEPT_STRING_MOVE)) = default;
 Config::Config(Config const&) = default;
 Config::Config(Config&&) noexcept = default;
 
 // provide implementation here so it's only generated once
 Result::~Result() = default;
 Result& Result::operator=(Result const&) = default;
-Result& Result::operator=(Result&&) = default;
+Result& Result::operator=(Result&&) noexcept(ANKERL_NANOBENCH(NOEXCEPT_STRING_MOVE)) = default;
 Result::Result(Result const&) = default;
 Result::Result(Result&&) noexcept = default;
 
@@ -2827,15 +4104,21 @@ inline constexpr typename std::underlying_type<T>::type u(T val) noexcept {
 } // namespace detail
 
 // Result returned after a benchmark has finished. Can be used as a baseline for relative().
-Result::Result(Config const& benchmarkConfig)
-    : mConfig(benchmarkConfig)
-    , mNameToMeasurements{detail::u(Result::Measure::_size)} {}
+Result::Result(Config benchmarkConfig)
+    : mConfig(std::move(benchmarkConfig))
+    // One slot per measure, plus one for _size itself. Result::fromString() returns _size for a name
+    // it does not know, so it reaches these accessors whenever a caller resolves a measure from
+    // user input - and reading one slot past the end of the storage is not the answer to a typo.
+    // With the extra slot it is a permanently empty measurement list, which reads as "nothing was
+    // measured": 0.0 from the statistics and false from has(), the same thing the mustache renderer
+    // already does with a measure it does not recognise.
+    , mNameToMeasurements{detail::u(Result::Measure::_size) + 1U} {}
 
 void Result::add(Clock::duration totalElapsed, uint64_t iters, detail::PerformanceCounters const& pc) {
     using detail::d;
     using detail::u;
 
-    double dIters = d(iters);
+    double const dIters = d(iters);
     mNameToMeasurements[u(Result::Measure::iterations)].push_back(dIters);
 
     mNameToMeasurements[u(Result::Measure::elapsed)].push_back(d(totalElapsed) / dIters);
@@ -2852,26 +4135,11 @@ void Result::add(Clock::duration totalElapsed, uint64_t iters, detail::Performan
         mNameToMeasurements[u(Result::Measure::instructions)].push_back(d(pc.val().instructions) / dIters);
     }
     if (pc.has().branchInstructions) {
-        double branchInstructions = 0.0;
-        // correcting branches: remove branch introduced by the while (...) loop for each iteration.
-        if (pc.val().branchInstructions > iters + 1U) {
-            branchInstructions = d(pc.val().branchInstructions - (iters + 1U));
-        }
+        double const branchInstructions = d(detail::correctBranchInstructions(pc.val().branchInstructions, iters));
         mNameToMeasurements[u(Result::Measure::branchinstructions)].push_back(branchInstructions / dIters);
 
         if (pc.has().branchMisses) {
-            // correcting branch misses
-            double branchMisses = d(pc.val().branchMisses);
-            if (branchMisses > branchInstructions) {
-                // can't have branch misses when there were branches...
-                branchMisses = branchInstructions;
-            }
-
-            // assuming at least one missed branch for the loop
-            branchMisses -= 1.0;
-            if (branchMisses < 1.0) {
-                branchMisses = 1.0;
-            }
+            auto const branchMisses = detail::correctBranchMisses(pc.val().branchMisses, branchInstructions);
             mNameToMeasurements[u(Result::Measure::branchmisses)].push_back(branchMisses / dIters);
         }
     }
@@ -2894,33 +4162,516 @@ inline double calcMedian(std::vector<double>& data) {
     return (data[midIdx - 1U] + data[midIdx]) / 2U;
 }
 
+namespace detail {
+
+std::vector<double> pairedLogRatios(std::vector<double> const& a, std::vector<double> const& b) {
+    std::vector<double> logRatios;
+    auto const numPairs = (std::min)(a.size(), b.size());
+    logRatios.reserve(numPairs);
+    for (size_t i = 0; i < numPairs; ++i) {
+        // A round where either side measured 0 carries no ratio at all - the logarithm of it is not a
+        // large number, it is negative infinity, and one of those poisons every statistic downstream.
+        if (a[i] > 0.0 && b[i] > 0.0) {
+            logRatios.push_back(std::log(a[i]) - std::log(b[i]));
+        }
+    }
+    return logRatios;
+}
+
+std::vector<double> pairedLogRatios(Result const& a, Result const& b) {
+    auto const perRound = [](Result const& result) {
+        std::vector<double> values;
+        values.reserve(result.size());
+        for (size_t r = 0; r < result.size(); ++r) {
+            values.push_back(result.get(r, Result::Measure::elapsed));
+        }
+        return values;
+    };
+    return pairedLogRatios(perRound(a), perRound(b));
+}
+
+double medianOf(std::vector<double> values) {
+    return calcMedian(values);
+}
+
+double bonferroniConfidence(size_t numComparisons) noexcept {
+    return 1.0 - 0.05 / d((std::max)(numComparisons, static_cast<size_t>(1)));
+}
+
+std::pair<size_t, size_t> medianIntervalIndices(size_t n, double confidence) {
+    auto const alphaHalf = (1.0 - confidence) / 2.0;
+    size_t k = 0;
+
+    if (n <= 1024U) {
+        // Exact: walk the binomial tail up from P(X = 0) = 2^-n, each term from the one before it.
+        // 2^-1024 is still a representable double, so nothing underflows into a wrong answer.
+        double p = std::pow(0.5, d(n));
+        double cumulative = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            if (i > 0U) {
+                p = p * d(n - i + 1U) / d(i);
+            }
+            if (cumulative + p > alphaHalf) {
+                break;
+            }
+            cumulative += p;
+            k = i + 1U;
+        }
+    } else {
+        // well past the point where the normal approximation of a binomial is worth arguing about
+        auto const z = 1.959963985;
+        auto const approx = d(n) / 2.0 - z * std::sqrt(d(n)) / 2.0;
+        k = approx <= 0.0 ? 0U : static_cast<size_t>(approx);
+    }
+
+    if (0U == k || 2U * k > n) {
+        // no interval at this confidence for this few observations
+        return {1U, 0U};
+    }
+    return {k - 1U, n - k};
+}
+
+size_t countTiedRounds(std::vector<double> const& logRatios) {
+    size_t tied = 0;
+    for (auto logRatio : logRatios) {
+        // written without == so that -Wfloat-equal stays on for everyone else
+        if (!(logRatio < 0.0) && !(logRatio > 0.0)) {
+            ++tied;
+        }
+    }
+    return tied;
+}
+
+std::pair<double, double> medianInterval(std::vector<double> values, double confidence) {
+    auto const indices = medianIntervalIndices(values.size(), confidence);
+    if (indices.first > indices.second) {
+        return {0.0, 0.0};
+    }
+    std::sort(values.begin(), values.end());
+    return {values[indices.first], values[indices.second]};
+}
+
+} // namespace detail
+
+CompareResult::Entry::Entry(std::string entryName, Result entryResult, double entryRelative, double entryRelativeLow,
+                            double entryRelativeHigh, size_t entryTiedRounds) noexcept
+    : name(std::move(entryName))
+    , result(std::move(entryResult))
+    , relative(entryRelative)
+    , relativeLow(entryRelativeLow)
+    , relativeHigh(entryRelativeHigh)
+    , tiedRounds(entryTiedRounds) {}
+
+CompareResult::CompareResult(std::vector<Entry> entries, size_t numRounds)
+    : mEntries(std::move(entries))
+    , mRounds(numRounds) {}
+
+size_t CompareResult::size() const noexcept {
+    return mEntries.size();
+}
+
+CompareResult::Entry const& CompareResult::operator[](size_t idx) const {
+    return mEntries.at(idx);
+}
+
+size_t CompareResult::rounds() const noexcept {
+    return mRounds;
+}
+
+size_t CompareResult::comparisons() const noexcept {
+    return mEntries.empty() ? 0U : mEntries.size() - 1U;
+}
+
+bool CompareResult::isSignificant(size_t idx) const {
+    if (0U == idx) {
+        // the baseline is not compared against itself
+        return false;
+    }
+    auto const& entry = mEntries.at(idx);
+    return entry.relativeLow > 1.0 || entry.relativeHigh < 1.0;
+}
+
+// The entry with the lowest median, ignoring index `skip` - pass size() to ignore nothing. Returns
+// size() when that leaves no entry at all. The winner and the runner-up are the same question asked
+// twice, and asking it twice is how the two answers come to disagree about ties.
+static size_t fastestExcept(CompareResult const& compareResult, size_t skip) {
+    size_t best = compareResult.size();
+    auto bestMedian = (std::numeric_limits<double>::max)();
+    for (size_t i = 0; i < compareResult.size(); ++i) {
+        if (i == skip) {
+            continue;
+        }
+        auto const median = compareResult[i].result.median(Result::Measure::elapsed);
+        if (median < bestMedian) {
+            bestMedian = median;
+            best = i;
+        }
+    }
+    return best;
+}
+
+size_t CompareResult::fastest() const {
+    auto const best = fastestExcept(*this, mEntries.size());
+    // with no entries there is nothing to pick, and 0 is what this has always answered
+    return best == mEntries.size() ? 0U : best;
+}
+
+// The table half of a comparison: an ordinary benchmark table with the ratio to the baseline and an
+// interval for it in front. Split out of operator<< because clang-tidy caps cognitive complexity at
+// 25 and the two halves together sat well over it.
+static void writeCompareTable(std::ostream& os, CompareResult const& compareResult) {
+    auto const& config = compareResult[0].result.config();
+    auto ratioText = [](double low, double high) {
+        std::ostringstream ss;
+        ss << detail::fmt::Number(1, 1, low * 100.0) << "% .. " << detail::fmt::Number(1, 1, high * 100.0) << "%";
+        return ss.str();
+    };
+
+    // The two extra columns are the comparison itself, so they are not hideable - without them this
+    // is just a table. Everything after them is the same set an ordinary table shows, performance
+    // counters included: a comparison collects them around every epoch either way, so leaving them
+    // out was paying for them and showing nothing.
+    auto columnsFor = [&](CompareResult::Entry const& entry, bool isBaseline) {
+        std::vector<detail::fmt::MarkDownColumn> columns;
+        columns.push_back(detail::relativeColumn(entry.relative * 100.0));
+        columns.emplace_back(22, "95% CI", isBaseline ? std::string() : ratioText(entry.relativeLow, entry.relativeHigh));
+        auto const measurements = detail::measurementColumns(entry.result.config(), entry.result);
+        columns.insert(columns.end(), measurements.begin(), measurements.end());
+        return columns;
+    };
+
+    // An ordinary table only reprints its header when the shape changes, and that state lives on the
+    // stream. A comparison table always prints its own header, so the remembered shape is now wrong:
+    // clear it, or the next run() on this stream matches against a header it never wrote and streams
+    // its rows straight under the comparison's summary with no header of their own.
+    detail::streamHeaderHash(os) = 0;
+
+    detail::writeTableHeaderLines(os, columnsFor(compareResult[0], true), config.mBenchmarkTitle);
+
+    for (size_t i = 0; i < compareResult.size(); ++i) {
+        auto const columns = columnsFor(compareResult[i], 0U == i);
+        for (auto const& col : columns) {
+            os << col.value();
+        }
+        os << "| " << detail::fmt::MarkDownCode(compareResult[i].name) << std::endl;
+    }
+}
+
+// Two alternatives read better as a sentence than as a row to look up.
+// One spelling of the interval, so the table and the two summary shapes cannot drift apart.
+static void writeCompareInterval(std::ostream& os, double low, double high) {
+    os << "95% CI [" << detail::fmt::Number(1, 2, low) << " .. " << detail::fmt::Number(1, 2, high) << "]";
+}
+
+static void writeComparePair(std::ostream& os, CompareResult const& compareResult) {
+    auto const baseline = detail::fmt::MarkDownCode(compareResult[0].name);
+    auto const& entry = compareResult[1];
+    auto const other = detail::fmt::MarkDownCode(entry.name);
+
+    if (!compareResult.isSignificant(1)) {
+        os << "    no difference resolved between " << baseline << " and " << other << std::endl
+           << "    ratio " << detail::fmt::Number(1, 2, entry.relative) << "x, ";
+        writeCompareInterval(os, entry.relativeLow, entry.relativeHigh);
+        return;
+    }
+
+    // stated the way round the reader asked the question, so the interval inverts with it
+    auto const faster = entry.relative > 1.0;
+    os << "    " << other << " ran " << detail::fmt::Number(1, 2, faster ? entry.relative : 1.0 / entry.relative)
+       << (faster ? "x faster than " : "x slower than ") << baseline << std::endl
+       << "    ";
+    writeCompareInterval(os, faster ? entry.relativeLow : 1.0 / entry.relativeHigh,
+                         faster ? entry.relativeHigh : 1.0 / entry.relativeLow);
+}
+
+// Picking the winner out of many is a selection, not a test: whichever came first is flattered by the
+// same luck that made it first. So the claim is not "this one is fastest" on its own, it is how far
+// ahead of the *runner-up* it is - and if that interval contains 1, the top two were not separated.
+static void writeCompareWinner(std::ostream& os, CompareResult const& compareResult) {
+    auto const best = compareResult.fastest();
+    auto runnerUp = fastestExcept(compareResult, best);
+    if (runnerUp == compareResult.size()) {
+        // a comparison of one: there is nothing to be ahead of, so it is compared against itself and
+        // the empty interval that comes out reads as "not separated"
+        runnerUp = best;
+    }
+
+    // The rounds are paired for every alternative, not only against the baseline, so the top two can
+    // be compared to each other after the fact from the per-round measurements.
+    auto const logRatios = detail::pairedLogRatios(compareResult[runnerUp].result, compareResult[best].result);
+    auto const confidence = detail::bonferroniConfidence(compareResult.comparisons());
+    auto const interval = detail::medianInterval(logRatios, confidence);
+    auto const lead = std::exp(detail::medianOf(logRatios));
+    auto const leadLow = std::exp(interval.first);
+    auto const leadHigh = std::exp(interval.second);
+
+    auto const bestCode = detail::fmt::MarkDownCode(compareResult[best].name);
+    auto const runnerUpCode = detail::fmt::MarkDownCode(compareResult[runnerUp].name);
+    if (leadLow > 1.0) {
+        os << "    " << bestCode << " is fastest of " << compareResult.size() << ", " << detail::fmt::Number(1, 2, lead)
+           << "x ahead of " << runnerUpCode << std::endl;
+    } else {
+        os << "    " << bestCode << " and " << runnerUpCode << " are the two fastest of " << compareResult.size()
+           << ", and were not separated" << std::endl;
+    }
+    os << "    ";
+    writeCompareInterval(os, leadLow, leadHigh);
+    os << ", intervals corrected for " << compareResult.comparisons() << " comparisons";
+}
+
+std::ostream& operator<<(std::ostream& os, CompareResult const& compareResult) {
+    detail::fmt::StreamStateRestorer const restorer(os);
+    if (0U == compareResult.size()) {
+        return os;
+    }
+
+    // The same table an ordinary benchmark prints, plus the ratio to the baseline and an interval for
+    // it. A ratio with no scale beside it cannot be told from the same ratio on a completely
+    // different scale, and a side that was wildly unstable is invisible in one - so the absolute
+    // numbers come first and the verdict after.
+    writeCompareTable(os, compareResult);
+
+    os << std::endl << "  Summary" << std::endl;
+    if (2U == compareResult.size()) {
+        writeComparePair(os, compareResult);
+    } else {
+        writeCompareWinner(os, compareResult);
+    }
+    os << ", " << compareResult.rounds() << " paired rounds, interleaved" << std::endl;
+
+    size_t tied = 0;
+    for (size_t i = 1; i < compareResult.size(); ++i) {
+        tied = (std::max)(tied, compareResult[i].tiedRounds);
+    }
+    if (0U != tied) {
+        os << "    up to " << tied << " of " << compareResult.rounds() << " rounds tied at the clock's resolution" << std::endl;
+    }
+    return os;
+}
+
+uint64_t Bench::compareIterations(std::vector<detail::ErasedOp> const& ops) const {
+    // An exact epochIterations() overrides any calculated count, exactly as it does in a normal run.
+    if (0 != epochIterations()) {
+        return epochIterations();
+    }
+
+    // The count that fills a normal epoch, per alternative. The smallest of them belongs to the
+    // slowest alternative - it needs the fewest iterations to fill an epoch - and the largest to the
+    // fastest.
+    auto const target = detail::targetRuntimePerEpoch(*this);
+    auto fewest = (std::numeric_limits<uint64_t>::max)();
+    uint64_t most = 0;
+    for (auto const& op : ops) {
+        auto const calibrated = compareCalibrate(op, target);
+        fewest = (std::min)(fewest, calibrated);
+        most = (std::max)(most, calibrated);
+    }
+
+    // Every count above fills the same target, so they are inversely proportional to the
+    // per-iteration times and convert to any other epoch length by scaling: a count that fills
+    // `target` times `wanted / target` is the count that fills `wanted`. Calibration stops at the
+    // first count that reaches the target rather than at the exact one, so the per-iteration time
+    // behind it is if anything underestimated and the scaled counts err upwards.
+    auto const targetSeconds = detail::d(target);
+    if (!(targetSeconds > 0.0)) {
+        // Nothing to scale by. A maxEpochTime of zero gets here, and every alternative then ran
+        // minEpochIterations during calibration, which is what `fewest` holds.
+        return fewest;
+    }
+    auto const scaled = [&](uint64_t iters, Clock::duration wanted) {
+        return detail::u64(detail::d(iters) * (detail::d(wanted) / targetSeconds));
+    };
+
+    // Taking `fewest` is what keeps the slowest alternative inside maxEpochTime, but on its own it
+    // makes every faster alternative run an epoch shorter than asked for by however much faster it
+    // is - a 1ns operation against a 50ns one gets a fiftieth of an epoch. So the count is raised
+    // until the *fastest* alternative clears the epoch this library calls long enough to measure:
+    // the clock's resolution times the multiple, which is where targetRuntimePerEpoch() starts from.
+    // That sits far below minEpochTime wherever the clock is good, so this binds only when the
+    // alternatives are orders of magnitude apart or the clock is coarse.
+    auto const measurable = scaled(most, detail::clockResolution() * clockResolutionMultiple());
+
+    // Raising it stretches the slowest alternative's epoch by the same factor, and maxEpochTime is
+    // the bound on that. A 1ns operation against a 1ms one cannot have both, and epochs a million
+    // times longer than asked for are the worse of the two failures.
+    auto const affordable = scaled(fewest, maxEpochTime());
+
+    return (std::max)(fewest, (std::min)(measurable, affordable));
+}
+
+uint64_t Bench::compareCalibrate(detail::ErasedOp const& op, Clock::duration target) const {
+    uint64_t numIters = minEpochIterations();
+    uint64_t reached = 0;
+    for (size_t attempt = 0; attempt < 64; ++attempt) {
+        Clock::time_point const before = Clock::now();
+        op.run(op.op, numIters);
+        auto const elapsed = Clock::now() - before;
+        if (elapsed >= target) {
+            // Measured again at the same count before it is believed. A single reading is one
+            // interruption away from being far too high, and this loop grows in steps of up to 10x -
+            // so one preempted attempt ends the search an order of magnitude early, and every
+            // alternative then runs epochs that much shorter than they were asked to be. That is not
+            // hypothetical: an Alpine leg on a shared two core runner returned 11111 for an operation
+            // whose 11111 iterations take 14us against a 100us target, because one attempt was
+            // interrupted for 86us. Two readings in a row have to cross.
+            if (reached == numIters) {
+                return numIters;
+            }
+            reached = numIters;
+            continue;
+        }
+        reached = 0;
+
+        // grow towards the target, but never by more than 10x at once - the same shape as the normal
+        // upscaling, so a wildly wrong first guess still converges in a few steps
+        auto const elapsedSeconds = detail::d(elapsed);
+        auto factor = elapsedSeconds > 0.0 ? detail::d(target) / elapsedSeconds : 10.0;
+        factor = (std::min)(10.0, (std::max)(1.5, factor));
+        if (numIters > (std::numeric_limits<uint64_t>::max)() / 16U) {
+            break;
+        }
+        numIters = detail::u64(detail::d(numIters) * factor) + 1U;
+    }
+    return numIters;
+}
+
+CompareResult Bench::compareImpl(std::vector<std::string> const& names, std::vector<detail::ErasedOp> const& ops) {
+    auto const numOps = ops.size();
+
+    // A comparison on a machine with frequency scaling on needs these at least as much as a run()
+    // does, and a program that only ever calls compare() would otherwise never see them.
+    detail::printStabilityInformationOnce(output());
+    detail::printPerformanceCounterHintOnce(output(), performanceCounters());
+
+    // Honored, though it is not the tool it looks like here: calibration below already runs each side
+    // for about a full epoch, and the serial correlation a warmup would be aimed at is removed by the
+    // pairing rather than by running longer first. Measured over 200 rounds, the raw per-round times
+    // carry a lag-1 autocorrelation around +0.10 while the paired differences carry -0.01 to -0.08,
+    // and dropping the first twenty rounds changes neither.
+    for (auto const& op : ops) {
+        op.run(op.op, warmup());
+    }
+
+    // One count for every alternative - see compareIterations() for why that matters so much.
+    auto const iters = compareIterations(ops);
+
+    std::vector<Result> results;
+    results.reserve(numOps);
+    for (auto const& name : names) {
+        Config entryConfig = mConfig;
+        entryConfig.mBenchmarkName = name;
+        results.emplace_back(std::move(entryConfig));
+    }
+
+    // Every alternative besides the baseline is one more chance to be wrong, so the intervals are
+    // widened to keep the whole table at 95% rather than each row separately.
+    auto const confidence = detail::bonferroniConfidence(numOps - 1U);
+
+    // Rounds come in blocks of one epoch per alternative, and the count is raised until the interval
+    // is possible at all - with many alternatives the corrected confidence needs more rounds before
+    // any pair of order statistics reaches it.
+    auto numRounds = ((epochs() + numOps - 1U) / numOps) * numOps;
+    while (true) {
+        auto const indices = detail::medianIntervalIndices(numRounds, confidence);
+        if (indices.first <= indices.second) {
+            break;
+        }
+        numRounds += numOps;
+    }
+
+    Rng orderRng;
+    std::vector<uint32_t> order(numOps);
+    for (size_t i = 0; i < numOps; ++i) {
+        order[i] = static_cast<uint32_t>(i);
+    }
+
+    for (size_t round = 0; round < numRounds; ++round) {
+        auto const positionInBlock = round % numOps;
+        if (0 == positionInBlock) {
+            // A fresh random permutation per block, then rotated one step per round: every
+            // alternative occupies every position exactly once over the block, so their mean
+            // positions are equal and a drift that is linear over the block cancels. For two
+            // alternatives this produces exactly ABBA or BAAB.
+            orderRng.shuffle(order);
+        }
+        for (size_t slot = 0; slot < numOps; ++slot) {
+            auto const which = order[(slot + positionInBlock) % numOps];
+            compareEpoch(ops[which], iters, results[which]);
+        }
+    }
+
+    std::vector<CompareResult::Entry> entries;
+    entries.reserve(numOps);
+    entries.emplace_back(names[0], std::move(results[0]), 1.0, 1.0, 1.0, static_cast<size_t>(0));
+    for (size_t i = 1; i < numOps; ++i) {
+        // ln(t_baseline) - ln(t_i), so a positive difference means the alternative was quicker and
+        // the ratio comes out above 1 - the same direction relative() reports. The baseline was moved
+        // into entries[0] above, which is where it is read from now.
+        auto const logRatios = detail::pairedLogRatios(entries[0].result, results[i]);
+        auto const interval = detail::medianInterval(logRatios, confidence);
+        entries.emplace_back(names[i], std::move(results[i]), std::exp(detail::medianOf(logRatios)), std::exp(interval.first),
+                             std::exp(interval.second), detail::countTiedRounds(logRatios));
+    }
+
+    CompareResult compareResult{std::move(entries), numRounds};
+    if (nullptr != output()) {
+        *output() << compareResult;
+    }
+    return compareResult;
+}
+
+void Bench::compareEpoch(detail::ErasedOp const& op, uint64_t numIters, Result& result) {
+    auto& pc = detail::performanceCounters();
+
+    pc.beginMeasure();
+    Clock::time_point const before = Clock::now();
+    op.run(op.op, numIters);
+    Clock::time_point const after = Clock::now();
+    pc.endMeasure();
+    pc.updateResults(numIters);
+
+    result.add(after - before, numIters, pc);
+}
+
+std::vector<double> const& Result::measurements(Measure m) const {
+    return mNameToMeasurements.at(detail::u(m));
+}
+
 double Result::median(Measure m) const {
     // create a copy so we can sort
-    auto data = mNameToMeasurements[detail::u(m)];
+    auto data = measurements(m);
     return calcMedian(data);
 }
 
 double Result::average(Measure m) const {
     using detail::d;
-    auto const& data = mNameToMeasurements[detail::u(m)];
+    auto const& data = measurements(m);
     if (data.empty()) {
         return 0.0;
     }
 
-    // create a copy so we can sort
     return sum(m) / d(data.size());
 }
 
 double Result::medianAbsolutePercentError(Measure m) const {
     // create copy
-    auto data = mNameToMeasurements[detail::u(m)];
+    auto data = measurements(m);
 
     // calculates MdAPE which is the median of percentage error
-    // see https://www.spiderfinancial.com/support/documentation/numxl/reference-manual/forecasting-performance/mdape
+    // see https://support.numxl.com/hc/en-us/articles/115001223503-MdAPE-Median-Absolute-Percentage-Error
     auto med = calcMedian(data);
+
+    // The error is relative to the measurement itself, so a measurement of 0 has none that is finite: it is 0 when the
+    // median is 0 as well (they agree), and infinite otherwise, which is the limit of |(x - med) / x| for x -> 0.
+    // Calculating it directly would give NaN, and a NaN in the data breaks the ordering that calcMedian's sort needs.
+    auto const zeroError = med <= 0.0 ? 0.0 : std::numeric_limits<double>::infinity();
 
     // transform the data to absolute error
     for (auto& x : data) {
+        if (x <= 0.0) {
+            x = zeroError;
+            continue;
+        }
         x = (x - med) / x;
         if (x < 0) {
             x = -x;
@@ -2930,13 +4681,13 @@ double Result::medianAbsolutePercentError(Measure m) const {
 }
 
 double Result::sum(Measure m) const noexcept {
-    auto const& data = mNameToMeasurements[detail::u(m)];
+    auto const& data = measurements(m);
     return std::accumulate(data.begin(), data.end(), 0.0);
 }
 
 double Result::sumProduct(Measure m1, Measure m2) const noexcept {
-    auto const& data1 = mNameToMeasurements[detail::u(m1)];
-    auto const& data2 = mNameToMeasurements[detail::u(m2)];
+    auto const& data1 = measurements(m1);
+    auto const& data2 = measurements(m2);
 
     if (data1.size() != data2.size()) {
         return 0.0;
@@ -2950,12 +4701,11 @@ double Result::sumProduct(Measure m1, Measure m2) const noexcept {
 }
 
 bool Result::has(Measure m) const noexcept {
-    return !mNameToMeasurements[detail::u(m)].empty();
+    return !measurements(m).empty();
 }
 
 double Result::get(size_t idx, Measure m) const {
-    auto const& data = mNameToMeasurements[detail::u(m)];
-    return data.at(idx);
+    return measurements(m).at(idx);
 }
 
 bool Result::empty() const noexcept {
@@ -2963,12 +4713,11 @@ bool Result::empty() const noexcept {
 }
 
 size_t Result::size() const noexcept {
-    auto const& data = mNameToMeasurements[detail::u(Measure::elapsed)];
-    return data.size();
+    return measurements(Measure::elapsed).size();
 }
 
 double Result::minimum(Measure m) const noexcept {
-    auto const& data = mNameToMeasurements[detail::u(m)];
+    auto const& data = measurements(m);
     if (data.empty()) {
         return 0.0;
     }
@@ -2978,7 +4727,7 @@ double Result::minimum(Measure m) const noexcept {
 }
 
 double Result::maximum(Measure m) const noexcept {
-    auto const& data = mNameToMeasurements[detail::u(m)];
+    auto const& data = measurements(m);
     if (data.empty()) {
         return 0.0;
     }
@@ -2987,36 +4736,51 @@ double Result::maximum(Measure m) const noexcept {
     return *std::max_element(data.begin(), data.end());
 }
 
+std::string const& Result::context(char const* variableName) const {
+    return mConfig.mContext.at(variableName);
+}
+
+std::string const& Result::context(std::string const& variableName) const {
+    return mConfig.mContext.at(variableName);
+}
+
 Result::Measure Result::fromString(std::string const& str) {
     if (str == "elapsed") {
         return Measure::elapsed;
-    } else if (str == "iterations") {
-        return Measure::iterations;
-    } else if (str == "pagefaults") {
-        return Measure::pagefaults;
-    } else if (str == "cpucycles") {
-        return Measure::cpucycles;
-    } else if (str == "contextswitches") {
-        return Measure::contextswitches;
-    } else if (str == "instructions") {
-        return Measure::instructions;
-    } else if (str == "branchinstructions") {
-        return Measure::branchinstructions;
-    } else if (str == "branchmisses") {
-        return Measure::branchmisses;
-    } else {
-        // not found, return _size
-        return Measure::_size;
     }
+    if (str == "iterations") {
+        return Measure::iterations;
+    }
+    if (str == "pagefaults") {
+        return Measure::pagefaults;
+    }
+    if (str == "cpucycles") {
+        return Measure::cpucycles;
+    }
+    if (str == "contextswitches") {
+        return Measure::contextswitches;
+    }
+    if (str == "instructions") {
+        return Measure::instructions;
+    }
+    if (str == "branchinstructions") {
+        return Measure::branchinstructions;
+    }
+    if (str == "branchmisses") {
+        return Measure::branchmisses;
+    }
+    // not found, return _size
+    return Measure::_size;
 }
 
 // Configuration of a microbenchmark.
 Bench::Bench() {
     mConfig.mOut = &std::cout;
+    detail::applyEnvConfig(*this);
 }
 
-Bench::Bench(Bench&&) = default;
-Bench& Bench::operator=(Bench&&) = default;
+Bench::Bench(Bench&&) noexcept = default;
+Bench& Bench::operator=(Bench&&) noexcept(ANKERL_NANOBENCH(NOEXCEPT_STRING_MOVE)) = default;
 Bench::Bench(Bench const&) = default;
 Bench& Bench::operator=(Bench const&) = default;
 Bench::~Bench() noexcept = default;
@@ -3045,6 +4809,49 @@ Bench& Bench::performanceCounters(bool showPerformanceCounters) noexcept {
 }
 bool Bench::performanceCounters() const noexcept {
     return mConfig.mShowPerformanceCounters;
+}
+
+namespace detail {
+
+// One bit of mHiddenColumns per Column, so there had better be at most 32 of them.
+static_assert(static_cast<size_t>(Column::_size) <= 32, "Column no longer fits in Config::mHiddenColumns");
+
+ANKERL_NANOBENCH(NODISCARD) inline uint32_t columnBit(Column column) noexcept {
+    return UINT32_C(1) << static_cast<uint32_t>(column);
+}
+
+bool isColumnVisible(Config const& config, Column column) noexcept {
+    return 0 == (config.mHiddenColumns & columnBit(column));
+}
+
+} // namespace detail
+
+Bench& Bench::hideColumn(Column column) noexcept {
+    mConfig.mHiddenColumns |= detail::columnBit(column);
+    return *this;
+}
+
+Bench& Bench::showColumn(Column column) noexcept {
+    mConfig.mHiddenColumns &= ~detail::columnBit(column);
+    return *this;
+}
+
+bool Bench::isColumnVisible(Column column) const noexcept {
+    return detail::isColumnVisible(mConfig, column);
+}
+
+Bench& Bench::contextColumn(std::string const& variableName) {
+    // adding the same name twice would print the same column twice
+    if (mConfig.mContextColumns.end() != std::find(mConfig.mContextColumns.begin(), mConfig.mContextColumns.end(), variableName)) {
+        return *this;
+    }
+    mConfig.mContextColumns.push_back(variableName);
+    return *this;
+}
+
+Bench& Bench::clearContextColumns() noexcept {
+    mConfig.mContextColumns.clear();
+    return *this;
 }
 
 // Operation unit. Defaults to "op", could be e.g. "byte" for string processing.
@@ -3080,14 +4887,12 @@ std::chrono::duration<double> const& Bench::timeUnit() const noexcept {
     return mConfig.mTimeUnit;
 }
 
-// If benchmarkTitle differs from currently set title, the stored results will be cleared.
 Bench& Bench::title(const char* benchmarkTitle) {
-    if (benchmarkTitle != mConfig.mBenchmarkTitle) {
-        mResults.clear();
-    }
-    mConfig.mBenchmarkTitle = benchmarkTitle;
-    return *this;
+    return title(std::string(benchmarkTitle));
 }
+
+// If benchmarkTitle differs from currently set title, the stored results will be cleared. One body
+// for both overloads, so that rule cannot come to mean two things.
 Bench& Bench::title(std::string const& benchmarkTitle) {
     if (benchmarkTitle != mConfig.mBenchmarkTitle) {
         mResults.clear();
@@ -3110,8 +4915,30 @@ Bench& Bench::name(std::string const& benchmarkName) {
     return *this;
 }
 
+#    if ANKERL_NANOBENCH(HAS_STRING_VIEW)
+Bench& Bench::name(std::string_view benchmarkName) {
+    mConfig.mBenchmarkName.assign(benchmarkName.data(), benchmarkName.size());
+    return *this;
+}
+#    endif
+
 std::string const& Bench::name() const noexcept {
     return mConfig.mBenchmarkName;
+}
+
+Bench& Bench::context(char const* variableName, char const* variableValue) {
+    mConfig.mContext[variableName] = variableValue;
+    return *this;
+}
+
+Bench& Bench::context(std::string const& variableName, std::string const& variableValue) {
+    mConfig.mContext[variableName] = variableValue;
+    return *this;
+}
+
+Bench& Bench::clearContext() {
+    mConfig.mContext.clear();
+    return *this;
 }
 
 // Number of epochs to evaluate. The reported result will be the median of evaluation of each epoch.
@@ -3141,7 +4968,7 @@ std::chrono::nanoseconds Bench::maxEpochTime() const noexcept {
     return mConfig.mMaxEpochTime;
 }
 
-// Sets the maximum time each epoch should take. Default is 100ms.
+// Sets the minimum time each epoch should take. Default is 1ms.
 Bench& Bench::minEpochTime(std::chrono::nanoseconds t) noexcept {
     mConfig.mMinEpochTime = t;
     return *this;
@@ -3271,8 +5098,8 @@ Rng::Rng(std::vector<uint64_t> const& data)
     : mX(0)
     , mY(0) {
     if (data.size() != 2) {
-        throw std::runtime_error("ankerl::nanobench::Rng::Rng: needed exactly 2 entries in data, but got " +
-                                 detail::fmt::to_s(data.size()));
+        ANKERL_NANOBENCH_THROW(std::runtime_error("ankerl::nanobench::Rng::Rng: needed exactly 2 entries in data, but got " +
+                                                  detail::fmt::to_s(data.size())));
     }
     mX = data[0];
     mY = data[1];
@@ -3295,32 +5122,44 @@ BigO::RangeMeasure BigO::collectRangeMeasure(std::vector<Result> const& results)
     return rangeMeasure;
 }
 
-BigO::BigO(std::string const& bigOName, RangeMeasure const& rangeMeasure)
-    : mName(bigOName) {
+BigO::BigO(std::string bigOName, RangeMeasure const& rangeMeasure)
+    : mName(std::move(bigOName)) {
+
+    // Nothing to fit against: leave the constant and the error at 0 rather than dividing by zero
+    // three times over. complexityBigO() reaches this whenever it is called on a Bench where no
+    // complexityN was ever set, since collectRangeMeasure() then returns nothing - the six models
+    // used to come out all-NaN, which prints as "nan" and, being unordered, is a poor thing to hand
+    // to std::sort.
+    if (rangeMeasure.empty()) {
+        return;
+    }
 
     // estimate the constant factor
     double sumRangeMeasure = 0.0;
     double sumRangeRange = 0.0;
 
-    for (size_t i = 0; i < rangeMeasure.size(); ++i) {
-        sumRangeMeasure += rangeMeasure[i].first * rangeMeasure[i].second;
-        sumRangeRange += rangeMeasure[i].first * rangeMeasure[i].first;
+    for (const auto& rm : rangeMeasure) {
+        sumRangeMeasure += rm.first * rm.second;
+        sumRangeRange += rm.first * rm.first;
     }
-    mConstant = sumRangeMeasure / sumRangeRange;
+    // a sum of squares, so this is only 0 when every n is
+    mConstant = sumRangeRange <= 0.0 ? 0.0 : sumRangeMeasure / sumRangeRange;
 
     // calculate root mean square
     double err = 0.0;
     double sumMeasure = 0.0;
-    for (size_t i = 0; i < rangeMeasure.size(); ++i) {
-        auto diff = mConstant * rangeMeasure[i].first - rangeMeasure[i].second;
+    for (const auto& rm : rangeMeasure) {
+        auto diff = mConstant * rm.first - rm.second;
         err += diff * diff;
 
-        sumMeasure += rangeMeasure[i].second;
+        sumMeasure += rm.second;
     }
 
-    auto n = static_cast<double>(rangeMeasure.size());
+    auto n = detail::d(rangeMeasure.size());
     auto mean = sumMeasure / n;
-    mNormalizedRootMeanSquare = std::sqrt(err / n) / mean;
+    // the error is relative to the mean measurement, so there is no relative error to report when
+    // everything measured as 0 - and 0/0 is not it
+    mNormalizedRootMeanSquare = mean <= 0.0 ? 0.0 : std::sqrt(err / n) / mean;
 }
 
 BigO::BigO(const char* bigOName, RangeMeasure const& rangeMeasure)
@@ -3339,7 +5178,8 @@ double BigO::normalizedRootMeanSquare() const noexcept {
 }
 
 bool BigO::operator<(BigO const& other) const noexcept {
-    return std::tie(mNormalizedRootMeanSquare, mName) < std::tie(other.mNormalizedRootMeanSquare, other.mName);
+    return (mNormalizedRootMeanSquare < other.mNormalizedRootMeanSquare) ||
+           (!(mNormalizedRootMeanSquare > other.mNormalizedRootMeanSquare) && mName < other.mName);
 }
 
 std::ostream& operator<<(std::ostream& os, BigO const& bigO) {
@@ -3347,7 +5187,7 @@ std::ostream& operator<<(std::ostream& os, BigO const& bigO) {
 }
 
 std::ostream& operator<<(std::ostream& os, std::vector<ankerl::nanobench::BigO> const& bigOs) {
-    detail::fmt::StreamStateRestorer restorer(os);
+    detail::fmt::StreamStateRestorer const restorer(os);
     os << std::endl << "|   coefficient |   err% | complexity" << std::endl << "|--------------:|-------:|------------" << std::endl;
     for (auto const& bigO : bigOs) {
         os << "|" << std::setw(14) << std::setprecision(7) << std::scientific << bigO.constant() << " ";
