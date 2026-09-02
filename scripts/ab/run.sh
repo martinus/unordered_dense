@@ -7,8 +7,9 @@
 #   -b           also measure boost::unordered_flat_map (needs boost headers)
 #   -c COMPILER  default clang++
 #
-# Needs nanobench >= 4.6 for Bench::compare(); point NANOBENCH_INCLUDE at its include directory.
-# Everything is built in $AB_BUILD (default: a temporary directory), the tree is not touched.
+# Uses the vendored nanobench (test/third-party, >= 4.6 for Bench::compare()); NANOBENCH_INCLUDE
+# overrides it. Everything is built in $AB_BUILD (default: a temporary directory), the tree is not
+# touched.
 set -euo pipefail
 rev=HEAD boost=0 cxx=clang++
 while getopts "r:bc:" opt; do
@@ -22,7 +23,7 @@ done
 shift $((OPTIND - 1))
 [ $# -ge 1 ] || { sed -n '2,12p' "$0"; exit 1; }
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-nb=${NANOBENCH_INCLUDE:?set NANOBENCH_INCLUDE to a nanobench >= 4.6 include directory}
+nb=${NANOBENCH_INCLUDE:-$root/test/third-party}
 build=${AB_BUILD:-$(mktemp -d)}
 mkdir -p "$build"
 # the baseline header, in its own namespace and macro prefix, beside the candidate one
