@@ -48,5 +48,26 @@ Numbers from that session, paired against main (ms; boost for scale). The string
 | rhit64 | 145 | 80 | 50 |
 | rmiss64 | 48 | 35 | 28 |
 
+## Where inserting stands (2026-09-02)
+
+`build64` is the weakest workload the score has, and it was added because nothing in the score grew
+a table. Paired against `boost::unordered_flat_map` with the same hash:
+
+| workload | unordered_dense | boost |
+|---|---|---|
+| build64 | 6.65 ms | **4.70 ms** |
+| buildstr | **11.25 ms** | 13.91 ms |
+| ie64 | 15.46 M op/s | **17.76 M op/s** |
+| iestr | 4.52 M op/s | **5.17 M op/s** |
+
+Growth is not the whole of it. Inserting 200000 `uint64_t` keys into a table that already reserved
+the room costs 52.4 cycles and 101.5 instructions here against boost's 22.6 and 73.5, and the
+difference is **0.611 branch mispredictions per insert against 0.097**. They come from the robin
+hood shift: measured over 8 million inserts, 73% shift no bucket, 11% shift one, and the rest
+spread out, so "is this bucket occupied" is a coin flip the predictor cannot win. boost does not
+shift at all -- it never moves an element once placed -- so this is the price of the distance
+ordering rather than something to tune away. Settling the first two buckets without a branch was
+tried and lost; see the dead ends in CLAUDE.md.
+
 `perf stat -e cycles,instructions,branch-misses` on a single-workload runner is what separates
 "more instructions" from "more mispredictions"; `perf record -e cycles:pp` for annotate.

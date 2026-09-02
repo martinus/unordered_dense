@@ -219,6 +219,23 @@ inline auto hash_keys() -> std::vector<std::string> const& {
     return keys;
 }
 
+// Build a map from empty, which is the half of inserting that insert_erase never shows.
+//
+// insert_erase draws its keys from a range that grows to 20000, so the map hovers at ~10k entries
+// and doubles its bucket array about a dozen times in eight million operations -- growth is a
+// rounding error there. It is not one in general: building a map of a million entries against one
+// that reserved the room first costs 52% more for uint64_t keys and 31% more for strings, all of
+// it rehashing. A map that grew badly would have scored the same as one that grew well.
+template <typename Map>
+auto build() -> size_t {
+    ankerl::nanobench::Rng rng(777);
+    Map map;
+    for (size_t i = 0; i < 200000; ++i) {
+        map[key_for<Map>(rng())] = i;
+    }
+    return map.size();
+}
+
 // Hashing alone, over the keys the string workloads use.
 //
 // A whole lookup is ~167 instructions and only ~59 of them are the hash, and a hash change that

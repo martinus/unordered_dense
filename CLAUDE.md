@@ -22,7 +22,7 @@ Warnings are errors (`werror=true`, `warning_level=3`, plus `-Wconversion`, `-Wo
 
 ## Benchmarking
 
-The main performance metric is `bench_quick_overall_udm`. It runs six nanobench benchmarks covering the most important primitives — iterate-while-modifying, random insert/erase, and random find (50% hit rate) — each for both `map<uint64_t, size_t>` and `map<std::string, size_t>`, then prints the geometric mean of the median elapsed times:
+The main performance metric is `bench_quick_overall_udm`. It runs eight nanobench benchmarks covering the most important primitives — iterate-while-modifying, random insert/erase, build-from-empty, and random find (50% hit rate) — each for both `map<uint64_t, size_t>` and `map<std::string, size_t>`, then prints the geometric mean of the median elapsed times:
 
 ```sh
 # benchmarks are marked doctest::skip(), so -ns (no-skip) is required
@@ -62,6 +62,14 @@ difference. 200 bytes also put every key on the heap, where a real workload keep
 them inside the `std::string`. The keys now run from 8 to 135 bytes, skewed towards short. Scores
 from before that change are not comparable with scores after it.
 
+**Inserting has to grow the table somewhere.** Until 2026-09-02 no workload in the score did.
+`insert_erase` draws its keys from a range that grows to 20000, so the map hovers at ~10k entries
+and doubles its bucket array about a dozen times in eight million operations. Growth is not a
+rounding error in general: building a map of a million entries costs 52% more than building the
+same map after `reserve` for `uint64_t` keys and 31% more for strings, all of it rehashing, so a
+map that grew badly would have scored the same as one that grew well. `build` covers it, and it
+showed at once that this is where the map is weakest -- see `scripts/ab/README.md`.
+
 **Lookup benchmarks must not replay.** Until 2026-09 the find workload of
 `bench_quick_overall_udm` reset its search rng to the insertion rng's seed, so its sequence of hits
 and misses repeated and a TAGE-style predictor learned much of it: 0.6 mispredictions per lookup
@@ -90,6 +98,13 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   successful half of the erases move one, so the bound is ~7% of `iestr`, and it measured 1.4%
   for 4 bytes per element and a second container to keep consistent.
 - Caching the bucket data pointer in the shift loops (the compiler already hoists it).
+- Three attempts at the insert path, all measured against `build64` and `buildstr` (2026-09-02):
+  skipping the `memset` in `clear_and_fill_buckets_from_values`, which is redundant because
+  `allocate_buckets_from_shift` hands back a freshly zeroed vector (0.7% on `build64`, ~1% *worse*
+  on `iestr`); hashing eight elements ahead in the rehash loop and prefetching the bucket each will
+  land in (nothing on `build64`, ~1% worse on `buildstr`); and settling the first two buckets of
+  `place_and_shift_up` without a branch, since 73% of inserts shift nothing and 11% shift one
+  (mispredictions 0.611 to 0.606 per insert, instructions 101.5 to 111.3, so it lost).
 
 ## Testing
 
