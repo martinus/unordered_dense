@@ -49,10 +49,18 @@ Benchmarking practices:
 ## Where the time goes
 
 The u64 workloads are bound by branch mispredictions, the string workloads by the latency of a
-~250 instruction lookup of which the 200 byte hash is ~150, and a model of 16 cycles per
-misprediction plus instructions at ~3.5 per cycle predicts changes within a cycle or two. The
-measurements behind that, and the per-workload numbers, are in `scripts/ab/README.md` with the
-paired A/B harness that produced them.
+~224 instruction lookup of which the hash is ~60, and a model of 16 cycles per misprediction plus
+instructions at ~3.5 per cycle predicts changes within a cycle or two. The measurements behind
+that, and the per-workload numbers, are in `scripts/ab/README.md` with the paired A/B harness that
+produced them.
+
+**String keys must not all be the same length.** Until 2026-09-02 every string key of
+`bench_quick_overall_udm` was exactly 200 bytes. A hash dispatches on length, and one length makes
+that dispatch perfectly predictable: wyhash costs 0.31 branch mispredictions per hash on lengths
+spread over 4 to 200 bytes and 0.01 on a fixed length, so the benchmark could not see the
+difference. 200 bytes also put every key on the heap, where a real workload keeps a good share of
+them inside the `std::string`. The keys now run from 8 to 135 bytes, skewed towards short. Scores
+from before that change are not comparable with scores after it.
 
 **Lookup benchmarks must not replay.** Until 2026-09 the find workload of
 `bench_quick_overall_udm` reset its search rng to the insertion rng's seed, so its sequence of hits
