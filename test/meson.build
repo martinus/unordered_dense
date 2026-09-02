@@ -244,9 +244,14 @@ benchmark(
     args: ['-ns', '-ts=bench'],
     verbose: true)
 
+# Meson's default is 30 seconds, which a sanitizer build of this suite no longer fits into: address
+# and undefined together, with detect_stack_use_after_return, cost it well over an order of
+# magnitude, and a Valgrind run costs more again. The timeout is here to catch a hang, so it only
+# has to be shorter than a CI job.
 test(
     'unit',
     test_exe,
+    timeout: 600,
     verbose: true)
 
 # libFuzzer targets. The unit suite replays data/fuzz/<name> on every build, which by construction

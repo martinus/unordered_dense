@@ -15,6 +15,14 @@ module;
 import std;
 #endif
 
+// The vector probe reads four buckets at once through x86 intrinsics, and those are declared by a
+// header included here, in the global module fragment. A translation unit that imports this module
+// does not include that header, and clang does not carry the declarations across the module
+// boundary either -- instantiating the probe in the importing translation unit then fails to find
+// _mm_cmpeq_epi32. So a module is built with the scalar probe. Everything else the module offers is
+// unaffected, and a consumer that includes the header directly still gets the vector probe.
+#define ANKERL_UNORDERED_DENSE_HAS_SSE2 0 // NOLINT(cppcoreguidelines-macro-usage)
+
 #include <ankerl/unordered_dense.h>
 
 export module ankerl.unordered_dense;

@@ -1930,11 +1930,15 @@ private:
     template <typename K>
     auto probe(K const& key, std::uint64_t mh) const -> probe_result {
 #    if ANKERL_UNORDERED_DENSE_HAS_SSE2
+        // An else, so that the scalar call is not merely never reached but not there at all: MSVC
+        // warns about code it can prove unreachable, and this build treats warnings as errors.
         if constexpr (has_simd_scan) {
             return probe_simd(key, mh);
-        }
+        } else
 #    endif
-        return probe_scalar(key, dist_and_fingerprint_from_hash(mh), bucket_idx_from_hash(mh));
+        {
+            return probe_scalar(key, dist_and_fingerprint_from_hash(mh), bucket_idx_from_hash(mh));
+        }
     }
 
     // Same lookup with the hashing already done. Requires the bucket array to be allocated, which
