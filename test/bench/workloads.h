@@ -50,7 +50,18 @@ inline constexpr std::string_view key_filler =
 // workload here uses a key and is done with it.
 template <typename K>
 struct key_source {
+    // Not the value itself. insert_erase and iterate draw their values from a small range, and
+    // the hash of a small sequential integer is a multiply, whose top bits walk a lattice: 10000
+    // of them in 16384 buckets landed at most one to a bucket, with 39% of buckets empty where a
+    // uniform hash leaves 54%. In that table nothing ever collides, so the probe never probes and
+    // the shifts never shift -- 82% of erases moved nothing against 58% for the same values as
+    // strings -- and the cost of both was invisible. A real integer key is as often an id from
+    // somewhere else as a counter, so scramble it: xor-shift between two multiplies is a bijection
+    // on 64 bits, which keeps every value distinct and every checksum exactly what it was.
     [[nodiscard]] static auto get(uint64_t v) -> K {
+        v *= UINT64_C(0x9E3779B97F4A7C15);
+        v ^= v >> 29U;
+        v *= UINT64_C(0xBF58476D1CE4E5B9);
         return static_cast<K>(v);
     }
 };
