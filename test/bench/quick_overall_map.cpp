@@ -2,7 +2,7 @@
 
 #include <app/doctest.h>           // for TestCase, skip, ResultBuilder
 #include <app/geomean.h>           // for geomean
-#include <bench/workloads.h>       // for insert_erase, iterate, find_50, find_all
+#include <bench/workloads.h>       // for insert_erase, iterate, find_50, find_all, hash_strings
 #include <third-party/nanobench.h> // for Bench
 
 #include <fmt/format.h> // for print, format
@@ -134,6 +134,17 @@ TEST_CASE("bench_find_all_hits_or_misses_udm" * doctest::test_suite("bench") * d
     });
     bench.run("map<std::string, size_t> no hits", [] {
         ankerl::nanobench::doNotOptimizeAway(workloads::find_all<map_str_t, false>());
+    });
+}
+
+// The string hash on its own; not part of the score. A lookup is ~224 instructions and only ~60
+// of them are the hash, so a change to the hash is easier to resolve here than in the score.
+TEST_CASE("bench_hash_string_udm" * doctest::test_suite("bench") * doctest::skip()) {
+    ankerl::nanobench::Bench bench;
+    bench.title("hash").minEpochTime(100ms).unit("hash").batch(workloads::hash_keys().size());
+    using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t>;
+    bench.run("map<std::string, size_t> hash only", [] {
+        ankerl::nanobench::doNotOptimizeAway(workloads::hash_strings<map_str_t>());
     });
 }
 
