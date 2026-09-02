@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace workloads {
@@ -18,20 +19,48 @@ inline auto init_key() -> K {
     return {};
 }
 
+// How long a string key is.
+//
+// Real string keys are identifiers, field names or paths. Most of them are short, a few are long,
+// and no workload has them all the same length. Until 2026-09 every string key here was exactly
+// 200 bytes, and that hid two things at once: the length dispatch of the hash was perfectly
+// predicted, and every key went on the heap because none of them fit a std::string.
+//
+// The lengths below run from 8 to 135 bytes, skewed towards short: about a quarter are 16 bytes
+// or less, a third are 17 to 48, a quarter are 49 to 96 and a sixth are longer. That covers every
+// path the hash has, weighted the way a real workload weighs them, and a quarter of the keys are
+// short enough to live inside the std::string.
+inline constexpr size_t min_key_len = 8; // room for the whole value, so keys stay distinct
+inline constexpr size_t max_key_len = 135;
+
+// What a string key is made of.
+//
+// Only the length changes what a lookup costs. Neither the hash nor the comparison is faster or
+// slower for one byte value than another, so the filler is a fixed string and the value goes in
+// the first 8 bytes. Two different values give two different keys, which is what every workload
+// here relies on.
+inline constexpr std::string_view key_filler =
+    "service.name/attribute.count/http.status_code/db.query.duration_ms/net.peer.address.family/"
+    "process.runtime.description/log.record.uid/k8s.pod.namespace";
+
 template <>
 inline auto init_key<std::string>() -> std::string {
     std::string str;
-    str.resize(200);
+    str.reserve(max_key_len); // once, so that set_key never has to allocate again
     return str;
 }
 
-// the first 8 bytes of a string key carry the value; the rest stays zero
 template <typename T>
 inline void set_key(uint64_t v, T* key) {
     *key = static_cast<T>(v);
 }
 
 inline void set_key(uint64_t v, std::string* key) {
+    static_assert(key_filler.size() >= max_key_len);
+    // Square a byte of a mixed value: uniform in, skewed towards short out.
+    auto const spread = (v * UINT64_C(0x9E3779B97F4A7C15)) >> 56U;
+    auto const len = min_key_len + ((spread * spread) >> 9U);
+    key->assign(key_filler.data(), len);
     std::memcpy(key->data(), &v, sizeof(v));
 }
 
