@@ -57,11 +57,14 @@ namespace {
 
 // One length per branch of wyhash::hash and both sides of every boundary it switches on: 3/4 (the
 // 3-byte read), 7/8 (the 4-byte pair), 16/17 (the 8-byte pair vs the loop), 48/49 (the three-lane
-// loop) and 96/97 (the six-lane one). A mutated bound moves one of these onto the wrong branch.
+// loop) and 192/193 (the six-lane one). A mutated bound moves one of these onto the wrong branch.
 //
 // The loops need more than their entry conditions, though: a `>` that became `>=` only differs on
 // the iteration where the counter lands exactly on the bound, so there are lengths here that leave
-// it at 17 after the 48-byte loop (65) and at 96 after the 96-byte one (192, 289).
+// it at 17 after the 48-byte loop (65) and at 96 after the 96-byte one (288, 289).
+//
+// 96 and 97 are still here even though they no longer straddle anything: they are where the
+// six-lane block used to begin, and a bound that moved back there has to be caught.
 TEST_CASE("wyhash_golden_values_by_length") {
     if (skip_on_big_endian()) {
         return;
@@ -75,9 +78,10 @@ TEST_CASE("wyhash_golden_values_by_length") {
         {15, UINT64_C(0xb4f9a728274096d7)},  {16, UINT64_C(0xce6a868a78a46c73)},  {17, UINT64_C(0xab9f0d72fd62acbb)},
         {24, UINT64_C(0xaf048c621425ee78)},  {32, UINT64_C(0x46f297d4bd07d149)},  {48, UINT64_C(0x9e97709342df6b56)},
         {49, UINT64_C(0x3b846738927f6274)},  {64, UINT64_C(0xd4a468aebbe74bfa)},  {65, UINT64_C(0x68624a1222e1898b)},
-        {96, UINT64_C(0x2d9d003ab847fe53)},  {97, UINT64_C(0x97ef6fc060548571)},  {128, UINT64_C(0x04c929c0de5c5ada)},
-        {192, UINT64_C(0x188b2a6bd5264944)}, {193, UINT64_C(0x11ff8ae436691f52)}, {200, UINT64_C(0xc0895d26f8d2d90f)},
-        {289, UINT64_C(0xede2975ce774d7e7)}, {300, UINT64_C(0xb8446c7b09ba427b)}, {512, UINT64_C(0x2c274db7d27dc42b)},
+        {96, UINT64_C(0x2d9d003ab847fe53)},  {97, UINT64_C(0x8c7242d7e4010ba0)},  {128, UINT64_C(0x90d38e952fc9b8a0)},
+        {192, UINT64_C(0xbc152e7c1f5e9c40)}, {193, UINT64_C(0x11ff8ae436691f52)}, {200, UINT64_C(0xc0895d26f8d2d90f)},
+        {288, UINT64_C(0x17e4aa47a185f12c)}, {289, UINT64_C(0xede2975ce774d7e7)}, {300, UINT64_C(0xb8446c7b09ba427b)},
+        {512, UINT64_C(0x2c274db7d27dc42b)},
     };
 
     auto const data = pattern(512);
