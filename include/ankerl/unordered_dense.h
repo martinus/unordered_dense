@@ -292,7 +292,13 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
         ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
             std::uint64_t see1 = seed;
             std::uint64_t see2 = seed;
-            if (i > 96) {
+            // Six lanes cost three more accumulators to set up and fold back in, so the block
+            // has to run more than once to pay for them. Entering it at 96 meant exactly one
+            // iteration for everything from 97 to 192 bytes, which never can: measured, 23.4
+            // cycles for a 100 byte key against 21.8 when it takes the 48 byte loop instead, and
+            // 29.3 against 28.2 at 150. Above 192 the block runs at least twice and wins again --
+            // 143.5 cycles against 147.1 at 1000 bytes -- so it keeps those.
+            if (i > 192) {
                 // 6 independent lanes: twice the instruction level parallelism of the 48 byte loop below
                 std::uint64_t see3 = seed;
                 std::uint64_t see4 = seed;
