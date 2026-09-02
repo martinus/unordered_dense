@@ -41,39 +41,18 @@ Benchmarking practices:
 
 - Always benchmark a `--buildtype release` build (never debug).
 - Record a baseline score on the unmodified code first, then compare after each change. Run each measurement 2–3 times; treat differences within run-to-run noise (~1–2%) as no change.
-- Don't compare runs made at different times — even a desktop drifts by a few percent over minutes. `scripts/ab/run.sh` (see below) runs baseline and candidate interleaved in one process and reports a confidence interval for the ratio; believe a change when the interval excludes 100%.
+- Don't compare runs made at different times — even a desktop drifts by a few percent over minutes. `scripts/ab/run.sh` runs baseline (any git revision) and candidate (the working tree) interleaved in one process, on the benchmark's own workloads, and reports a confidence interval for the ratio; believe a change when the interval excludes 100%.
 - Beware code-layout luck: any edit (even to never-executed code) can shift alignment and move individual sub-benchmarks by ±3%. Judge micro-optimizations by mechanism plus a focused microbenchmark, and confirm on the paired geomean, not on a single sub-benchmark delta.
 - nanobench prints per-benchmark `err%`; rerun if it's high (> ~3%). A warning about CPU governor/turbo is normal on non-tuned machines — it just means more noise.
 - Other useful benchmarks in `test/bench/` (e.g. `bench_copy`, `bench_game_of_life`, find variants) can be run the same way via `-tc=<name>`; run all with `-ns -ts=bench`. List all test cases with `-ltc`.
 
-## Where the time goes (measured 2026-09 on a Ryzen 9 7950X, clang 22, default `-march`)
+## Where the time goes
 
-The cost model that predicted every experiment within a cycle or two: **cycles per operation ≈
-16 × branch mispredictions + instructions / ~3.5**. The hot loops are front-end bound between
-mispredictions, so both terms matter and nothing else does -- the whole working set of the
-benchmark sits in L2.
-
-- **u64 lookups are bounded by branch mispredictions.** The scalar probe branched once per
-  bucket, so the *position* of a hit leaked into the branch pattern. The SSE2 probe (four
-  buckets per step, lowest deciding lane via `ctz`) makes the outcome one data-dependent branch
-  regardless of position. On lookups whose hit/miss sequence is random that is worth 35-80% on
-  u64 keys. The old, replayed find of `bench_quick_overall_udm` showed only ~6% (see below).
-- **String workloads are latency bound.** At ~250 instructions per lookup -- ~150 of them the
-  200 byte wyhash -- the reorder buffer holds barely one lookup, so anything on the dependency
-  chain shows directly. The vector decision (`movmskps` → `tzcnt` → index load) adds ~10 cycles
-  before the value load can issue where the scalar path's predicted branch let it issue at
-  once. That is the -4% of `findstr` under clang; gcc shows +7% instead. Random string lookups
-  win 5-12% either way.
-- **Hashing is 42-45% of the string workloads**, at ~40 cycles per 200 byte key: 0.5 uops per
-  byte, nothing to do with multiply count. With a trivial 8 byte hash, insert/erase time equals
-  boost's exactly -- the rest of the gap there is that a robin hood erase hashes the moved last
-  element too.
-
-Paired measurements: `scripts/ab/run.sh` builds the working-tree header against any revision of
-itself (renamed into a second namespace) and optionally `boost::unordered_flat_map`, and runs
-the vendored nanobench's `compare()` (4.6, `test/third-party/nanobench.h`) -- interleaved, with a confidence interval on the *ratio*, which is what
-makes a 2% change believable on a desktop that drifts by more than that. It also has all-hits
-and no-hits lookup workloads (`rhit64`, `rmiss64`, and the `str` variants).
+The u64 workloads are bound by branch mispredictions, the string workloads by the latency of a
+~250 instruction lookup of which the 200 byte hash is ~150, and a model of 16 cycles per
+misprediction plus instructions at ~3.5 per cycle predicts changes within a cycle or two. The
+measurements behind that, and the per-workload numbers, are in `scripts/ab/README.md` with the
+paired A/B harness that produced them.
 
 **Lookup benchmarks must not replay.** Until 2026-09 the find workload of
 `bench_quick_overall_udm` reset its search rng to the insertion rng's seed, so its sequence of hits

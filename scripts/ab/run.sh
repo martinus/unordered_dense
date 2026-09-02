@@ -8,7 +8,7 @@
 #   -c COMPILER  default clang++
 #
 # Uses the vendored nanobench (test/third-party, >= 4.6 for Bench::compare()); NANOBENCH_INCLUDE
-# overrides it. Everything is built in $AB_BUILD (default: a temporary directory), the tree is not
+# overrides it. The workloads come from test/bench/workloads.h, the benchmark's own. Everything is built in $AB_BUILD (default: a temporary directory), the tree is not
 # touched.
 set -euo pipefail
 rev=HEAD boost=0 cxx=clang++
@@ -23,16 +23,15 @@ done
 shift $((OPTIND - 1))
 [ $# -ge 1 ] || { sed -n '2,12p' "$0"; exit 1; }
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-nb=${NANOBENCH_INCLUDE:-$root/test/third-party}
 build=${AB_BUILD:-$(mktemp -d)}
 mkdir -p "$build"
 # the baseline header, in its own namespace and macro prefix, beside the candidate one
 git -C "$root" show "$rev:include/ankerl/unordered_dense.h" \
     | sed 's/ankerl::unordered_dense/udmbase::unordered_dense/g; s/ANKERL_UNORDERED_DENSE/UDMBASE_UNORDERED_DENSE/g; s/namespace ankerl/namespace udmbase/g; s|#        include "stl.h"|#        include <ankerl/stl.h>|' \
     > "$build/base.h"
-flags=(-O3 -DNDEBUG -std=c++17 -I"$build" -I"$root/include" -I"$nb")
+flags=(-O3 -DNDEBUG -std=c++17 -I"$build" -I"$root/include" -I"$root/test")
 [ $boost = 1 ] && flags+=(-DUDM_AB_HAVE_BOOST)
-[ -f "$build/nanobench_$cxx.o" ] || (cd "$build" && printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <nanobench.h>\n' > nb.cpp && "$cxx" "${flags[@]}" -c nb.cpp -o "nanobench_$cxx.o")
+[ -f "$build/nanobench_$cxx.o" ] || (cd "$build" && printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > nb.cpp && "$cxx" "${flags[@]}" -c nb.cpp -o "nanobench_$cxx.o")
 "$cxx" "${flags[@]}" "$root/scripts/ab/ab.cpp" "$build/nanobench_$cxx.o" -o "$build/ab"
 echo "baseline $rev vs working tree, $cxx, in $build" >&2
 "$build/ab" "$1" "${2:-12}" "$boost"
