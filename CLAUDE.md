@@ -22,7 +22,7 @@ Warnings are errors (`werror=true`, `warning_level=3`, plus `-Wconversion`, `-Wo
 
 ## Benchmarking
 
-The main performance metric is `bench_quick_overall_udm`. It runs eight nanobench benchmarks covering the most important primitives — iterate-while-modifying, random insert/erase, build-from-empty, and random find (50% hit rate) — each for both `map<uint64_t, size_t>` and `map<std::string, size_t>`, then prints the geometric mean of the median elapsed times:
+The main performance metric is `bench_quick_overall_udm`. It runs ten nanobench benchmarks covering the most important primitives — iterate-while-modifying, random insert/erase, build-from-empty, sustained churn at a fixed size, and random find (50% hit rate) — each for both `map<uint64_t, size_t>` and `map<std::string, size_t>`, then prints the geometric mean of the median elapsed times:
 
 ```sh
 # benchmarks are marked doctest::skip(), so -ns (no-skip) is required
@@ -80,6 +80,24 @@ rounding error in general: building a map of a million entries costs 52% more th
 same map after `reserve` for `uint64_t` keys and 31% more for strings, all of it rehashing, so a
 map that grew badly would have scored the same as one that grew well. `build` covers it, and it
 showed at once that this is where the map is weakest -- see `scripts/ab/README.md`.
+
+**Nothing measured a table that only churns.** Until 2026-09-03 every workload in the score
+either grew or was measured on a table that had just been built. Backward shift deletion leaves the
+table as it would have been had the erased element never been inserted, so a table that has churned
+for a long time is as good as a fresh one. A design that frees a slot without undoing what once
+probed past it cannot do that -- its probe sequences only grow, and it repairs them with a rehash.
+Nothing in the score could tell the two apart, because `build` and `insert_erase` both keep growing
+and a growth rehash resets the damage for free. `churn` grows once and then never again: fill to
+50000, reserve the room, then erase one and insert one with two lookups between, holding the size
+exactly there. Measured that way over two million operations at 200000 entries,
+`boost::unordered_flat_map`'s lookups degrade to **1.31x** of their fresh cost and snap back on an
+in-place rehash it pays for every third round -- its bucket count never changes, and the round that
+repairs costs +7ns per operation -- while this map's stay flat within the noise. With string keys
+both degrade, because what degrades there is the heap the key bodies live on rather than the table,
+and this map churns **1.28x faster** than boost throughout. Against boost the sustained gap is much
+smaller than the fresh-table one: 1.32x on `churn64` where `rhit64` on a fresh table is 1.71x, and
+1.03x on `churnstr`, the narrowest of any string workload it does not already win. Scores from
+before this workload are not comparable with scores after it.
 
 **Lookup benchmarks must not replay.** Until 2026-09 the find workload of
 `bench_quick_overall_udm` reset its search rng to the insertion rng's seed, so its sequence of hits

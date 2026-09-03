@@ -6,8 +6,9 @@ Builds the working-tree header against `REV`'s (default `HEAD`) in one binary --
 renamed into a second namespace -- and runs nanobench's `compare()`: the alternatives run
 interleaved in the same slice of time, so drift cancels out of the ratios, and the interval it
 prints is about the ratio. `-b` adds `boost::unordered_flat_map` (needs its headers). The
-workloads are `test/bench/workloads.h`, the ones `bench_quick_overall_udm` scores, plus all-hits
-and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
+workloads are `test/bench/workloads.h`, the ones `bench_quick_overall_udm` scores -- including
+`churn64`/`churnstr`, a table that grows once and then only erases and inserts -- plus all-hits and
+no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
@@ -47,6 +48,31 @@ Numbers from that session, paired against main (ms; boost for scale). The string
 | iestr (200 byte keys) | 226 | 212 | 188 |
 | rhit64 | 145 | 80 | 50 |
 | rmiss64 | 48 | 35 | 28 |
+
+## Where a table that only churns stands (2026-09-03)
+
+Every workload above measures a table that has just been built. `churn` measures one that never
+grows again: filled to a fixed size, reserved, then erase-one/insert-one forever. Paired against
+`boost::unordered_flat_map` with the same hash:
+
+| workload | udm | boost | |
+|---|---|---|---|
+| churn64 | 12.10 ms | 9.16 ms | boost ahead 32% |
+| churnstr | 30.50 ms | 29.48 ms | boost ahead 3% |
+
+Both gaps are much narrower than the fresh-table ones (`rhit64` is 1.71x, `findstr` 1.07x), and the
+reason is visible when the run is broken into rounds at 200000 entries. boost's lookups degrade to
+1.31x of their fresh cost over three rounds and then snap back, and the round that repairs them
+costs +7ns per operation while its bucket count does not change -- an in-place rehash. This map does
+not degrade at all: 0.91-1.00x across two million operations, flat churn cost. That is backward
+shift deletion doing what it claims.
+
+With string keys both degrade, to 1.41x and 1.71x, and that part is not the table -- the u64 run
+proves this map's table does not degrade. It is the heap the key bodies live on. This map churns
+strings 1.28x faster than boost at every round.
+
+A run that measures only a fresh table is therefore systematically flattering to a design that
+trades erase quality for lookup speed.
 
 ## Where inserting and erasing stand (2026-09-02)
 

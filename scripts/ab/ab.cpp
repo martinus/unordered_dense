@@ -83,6 +83,12 @@ struct build {
     }
 };
 template <typename Map>
+struct churn {
+    static auto run() {
+        return workloads::churn<Map>();
+    }
+};
+template <typename Map>
 struct find_50 {
     static auto run() {
         return workloads::find_50<Map>();
@@ -112,7 +118,7 @@ struct find_misses {
 auto main(int argc, char** argv) -> int {
     if (argc < 2) {
         std::printf("usage: %s <workload|all> [epochs=12] [boost=0]\n"
-                    "workloads: it64 ie64 build64 find64 itstr iestr buildstr findstr\n"
+                    "workloads: it64 ie64 build64 churn64 find64 itstr iestr buildstr churnstr findstr\n"
                     "           (bench_quick_overall_udm)\n"
                     "           rhit64 rmiss64 rhitstr rmissstr (all hits / no hits)\n"
                     "           hashstr (the string hash on its own)\n",
@@ -140,10 +146,12 @@ auto main(int argc, char** argv) -> int {
     U64("it64", iterate);
     U64("ie64", insert_erase);
     U64("build64", build);
+    U64("churn64", churn);
     U64("find64", find_50);
     STR("itstr", iterate);
     STR("iestr", insert_erase);
     STR("buildstr", build);
+    STR("churnstr", churn);
     STR("findstr", find_50);
     U64("rhit64", find_hits);
     U64("rmiss64", find_misses);
