@@ -6,14 +6,50 @@
 
 #include <third-party/nanobench.h> // for Rng
 
+#if defined(__GLIBC__)
+#    include <malloc.h> // for mallopt
+#endif
+
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace workloads {
+
+// Stop the workloads measuring the kernel's page fault handler.
+//
+// A workload that builds a map from empty asks for megabytes and gives them straight back, and
+// glibc returns anything above its mmap threshold to the OS. Every repetition then faults in the
+// same fresh pages again, and that cost is not the map: measured on `build` with `uint64_t` keys,
+// 38% of the cycles were kernel and there were 2057 page faults per build. It is worse than noise,
+// because whether it is paid depends on what ran *before* in the process -- something that has
+// already freed a block that large raises the threshold and moves the whole thing into the arena.
+// That is how the 64 byte map came to report 4.31ms for a build that costs 14.9ms on its own,
+// while executing more cycles and more instructions than the 16 byte map that reported 6.04ms.
+//
+// Raising both thresholds keeps the arena, so the pages are faulted once for the process instead
+// of once per repetition: 6.61ms to 3.78ms per build, 41141 faults to 2289, and total cycles come
+// down to within 4% of user cycles. What is removed is a real cost -- a program that builds one
+// map in a fresh process does pay it -- but it is paid once there, where a benchmark repeating the
+// build hundreds of times pays it every time and drowns the map in it.
+//
+// glibc only. Elsewhere this is a no-op and the workloads measure what they always did.
+inline void tame_allocator() {
+#if defined(__GLIBC__)
+    static auto const done = [] {
+        // above any block these workloads ask for, including the doubling of the largest
+        constexpr int limit = 64 * 1024 * 1024;
+        mallopt(M_MMAP_THRESHOLD, limit);
+        mallopt(M_TRIM_THRESHOLD, limit);
+        return true;
+    }();
+    (void)done;
+#endif
+}
 
 // How long a string key is.
 //
@@ -128,7 +164,9 @@ struct big_value {
     }
 
     size_t value{};
-    std::array<char, 56> padding{};
+    // sized from size_t, which is four bytes on the 32 bit legs and eight on the others, so that
+    // the type is 64 bytes everywhere rather than 60 on half of CI
+    std::array<char, 64 - sizeof(size_t)> padding{};
 };
 static_assert(sizeof(big_value) == 64);
 
@@ -140,6 +178,7 @@ struct insert_erase_result {
 // Random insert & erase, ~10k entries live
 template <typename Map>
 auto insert_erase() -> insert_erase_result {
+    tame_allocator();
     ankerl::nanobench::Rng rng(123);
     size_t erased{};
     Map map;
@@ -155,6 +194,7 @@ auto insert_erase() -> insert_erase_result {
 // iterate while adding, then while removing
 template <typename Map>
 auto iterate() -> size_t {
+    tame_allocator();
     size_t const num_elements = 5000;
     ankerl::nanobench::Rng rng(555);
     Map map;
@@ -185,6 +225,7 @@ auto iterate() -> size_t {
 // mispredictions looked worse here than it was.
 template <typename Map>
 auto find_50() -> size_t {
+    tame_allocator();
     ankerl::nanobench::Rng insert_rng(123123);
     ankerl::nanobench::Rng search_rng(987654321);
     constexpr auto never_inserted = uint64_t{1} << 63U;
@@ -220,6 +261,7 @@ auto find_50() -> size_t {
 // cannot be): the two ends of what a workload's hit rate can do to the probe.
 template <typename Map, bool Hits>
 auto find_all() -> size_t {
+    tame_allocator();
     ankerl::nanobench::Rng rng(999);
     constexpr auto never_inserted = uint64_t{1} << 63U;
     Map map;
@@ -271,6 +313,7 @@ inline auto hash_keys() -> std::vector<std::string> const& {
 // it rehashing. A map that grew badly would have scored the same as one that grew well.
 template <typename Map>
 auto build() -> size_t {
+    tame_allocator();
     ankerl::nanobench::Rng rng(777);
     Map map;
     for (size_t i = 0; i < 200000; ++i) {
@@ -299,6 +342,7 @@ auto build() -> size_t {
 // for it while it is degraded, which is what a real churning cache does.
 template <typename Map>
 auto churn() -> size_t {
+    tame_allocator();
     constexpr size_t num_elements = 50000;
     constexpr size_t num_rounds = 4;
     constexpr auto never_inserted = uint64_t{1} << 63U;
