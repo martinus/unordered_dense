@@ -7,8 +7,9 @@ renamed into a second namespace -- and runs nanobench's `compare()`: the alterna
 interleaved in the same slice of time, so drift cancels out of the ratios, and the interval it
 prints is about the ratio. `-b` adds `boost::unordered_flat_map` (needs its headers). The
 workloads are `test/bench/workloads.h`, the ones `bench_quick_overall_udm` scores -- including
-`churn64`/`churnstr`, a table that grows once and then only erases and inserts -- plus all-hits and
-no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
+`churn64`/`churnstr`, a table that grows once and then only erases and inserts, and the `*big`
+five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates a dense map from a
+flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)

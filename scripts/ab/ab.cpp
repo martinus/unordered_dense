@@ -25,12 +25,16 @@ using base_u64 = udmbase::unordered_dense::map<uint64_t, size_t>;
 using cand_u64 = ankerl::unordered_dense::map<uint64_t, size_t>;
 using base_str = udmbase::unordered_dense::map<std::string, size_t>;
 using cand_str = ankerl::unordered_dense::map<std::string, size_t>;
+using base_big = udmbase::unordered_dense::map<uint64_t, workloads::big_value>;
+using cand_big = ankerl::unordered_dense::map<uint64_t, workloads::big_value>;
 #ifdef UDM_AB_HAVE_BOOST
 using boost_u64 = boost::unordered_flat_map<uint64_t, size_t, ankerl::unordered_dense::hash<uint64_t>>;
 using boost_str = boost::unordered_flat_map<std::string, size_t, ankerl::unordered_dense::hash<std::string>>;
+using boost_big = boost::unordered_flat_map<uint64_t, workloads::big_value, ankerl::unordered_dense::hash<uint64_t>>;
 #else
 using boost_u64 = cand_u64;
 using boost_str = cand_str;
+using boost_big = cand_big;
 #endif
 
 // Workload is a template with one type parameter, the map. The result is whatever it returns;
@@ -119,6 +123,7 @@ auto main(int argc, char** argv) -> int {
     if (argc < 2) {
         std::printf("usage: %s <workload|all> [epochs=12] [boost=0]\n"
                     "workloads: it64 ie64 build64 churn64 find64 itstr iestr buildstr churnstr findstr\n"
+                    "           itbig iebig buildbig churnbig findbig (64 byte mapped value)\n"
                     "           (bench_quick_overall_udm)\n"
                     "           rhit64 rmiss64 rhitstr rmissstr (all hits / no hits)\n"
                     "           hashstr (the string hash on its own)\n",
@@ -143,6 +148,9 @@ auto main(int argc, char** argv) -> int {
 #define STR(name, workload) \
     if (want(name))         \
     compare<workload, base_str, cand_str, boost_str>(name, epochs, boost)
+#define BIG(name, workload) \
+    if (want(name))         \
+    compare<workload, base_big, cand_big, boost_big>(name, epochs, boost)
     U64("it64", iterate);
     U64("ie64", insert_erase);
     U64("build64", build);
@@ -153,6 +161,11 @@ auto main(int argc, char** argv) -> int {
     STR("buildstr", build);
     STR("churnstr", churn);
     STR("findstr", find_50);
+    BIG("itbig", iterate);
+    BIG("iebig", insert_erase);
+    BIG("buildbig", build);
+    BIG("churnbig", churn);
+    BIG("findbig", find_50);
     U64("rhit64", find_hits);
     U64("rmiss64", find_misses);
     STR("rhitstr", find_hits);

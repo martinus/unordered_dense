@@ -22,7 +22,7 @@ Warnings are errors (`werror=true`, `warning_level=3`, plus `-Wconversion`, `-Wo
 
 ## Benchmarking
 
-The main performance metric is `bench_quick_overall_udm`. It runs ten nanobench benchmarks covering the most important primitives — iterate-while-modifying, random insert/erase, build-from-empty, sustained churn at a fixed size, and random find (50% hit rate) — each for both `map<uint64_t, size_t>` and `map<std::string, size_t>`, then prints the geometric mean of the median elapsed times:
+The main performance metric is `bench_quick_overall_udm`. It runs fifteen nanobench benchmarks covering the most important primitives — iterate-while-modifying, random insert/erase, build-from-empty, sustained churn at a fixed size, and random find (50% hit rate) — each for `map<uint64_t, size_t>`, `map<std::string, size_t>` and `map<uint64_t, big_value>` (a 64 byte mapped value), then prints the geometric mean of the median elapsed times:
 
 ```sh
 # benchmarks are marked doctest::skip(), so -ns (no-skip) is required
@@ -80,6 +80,29 @@ rounding error in general: building a map of a million entries costs 52% more th
 same map after `reserve` for `uint64_t` keys and 31% more for strings, all of it rehashing, so a
 map that grew badly would have scored the same as one that grew well. `build` covers it, and it
 showed at once that this is where the map is weakest -- see `scripts/ab/README.md`.
+
+**A mapped value of eight bytes hides what a dense map is for.** Until 2026-09-03 both maps in the
+score held a `size_t`. Every cost of a flat map scales with `sizeof(value_type)`, because it writes
+the whole value into a hash-scattered slot; a dense map writes eight bytes there and appends the
+payload to a vector in order. Measured on `build` with the same `uint64_t` key,
+`boost::unordered_flat_map` is 1.22x ahead at a 16 byte `value_type` and **2.14x behind** at 64 --
+the same property that wins `buildstr` and loses `build64`. `map<Key, SomeStruct>` is at least as
+common as `map<Key, size_t>`, and a change that gave that property up would have scored the same.
+`workloads::big_value` is 64 bytes and trivially copyable on purpose: the variable under test is the
+size of the value, and an owned allocation would confound it with the heap. Its checksums are the
+ones the small-value maps produce, so one set of constants verifies all three.
+
+**`build` measures the allocator and the kernel as much as the map, and the split is not stable
+between workloads.** Discovered 2026-09-03 while adding the big-value map, and it is not new: with
+`perf` counters from the score itself, `buildbig` executes *more* cycles (19.2M against 16.6M) and
+*more* instructions (46.3M against 42.0M) than `build64` while reporting *less* elapsed time (4.31ms
+against 6.04ms). 16.6M cycles is 3.7ms at this clock, so `build64` spends ~2.3ms per build outside
+user cycles -- page faults, `mmap` and `munmap` -- and `buildbig` spends almost none, because by the
+time it runs the process has an arena large enough to serve it. Isolated in its own process the
+ordering reverses and is what physics predicts: 6.7ms for `build64`, 14.9ms for `buildbig`. **Never
+compare one `build*` number against another**, and treat a `build*` ratio as diluted: a third of
+`build64` is not the map at all. The paired A/B is unaffected, since both arms run in the same
+process in the same order.
 
 **Nothing measured a table that only churns.** Until 2026-09-03 every workload in the score
 either grew or was measured on a table that had just been built. Backward shift deletion leaves the
