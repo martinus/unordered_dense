@@ -247,6 +247,66 @@ auto build() -> size_t {
     return map.size();
 }
 
+// Sustained churn at a fixed size, which every other workload here resets before it accumulates.
+//
+// Backward shift deletion leaves the table as it would have been had the erased element never
+// been inserted, so a table that has churned is as good as a fresh one. A design that frees a slot
+// without undoing what once probed past it cannot do that: its probe sequences only grow, and it
+// repairs them with a rehash. Nothing in the score could tell the two apart, because build and
+// insert_erase both keep growing and a growth rehash resets the damage for free.
+//
+// So this one grows once and then never again: fill to 50000, reserve the room, and from there
+// erase one and insert one, holding the size exactly there. Measured this way over two million
+// operations, boost::unordered_flat_map's lookups degrade to 1.31x of their fresh cost and snap
+// back on a rehash it pays for every third round -- its bucket count never changes -- while this
+// map's stay flat within the noise. With string keys both degrade, because what degrades there is
+// the heap the key bodies live on rather than the table, and this map churns 1.28x faster than
+// boost throughout.
+//
+// The lookups are interleaved rather than left to the end so that a table which has degraded pays
+// for it while it is degraded, which is what a real churning cache does.
+template <typename Map>
+auto churn() -> size_t {
+    constexpr size_t num_elements = 50000;
+    constexpr size_t num_rounds = 4;
+    constexpr auto never_inserted = uint64_t{1} << 63U;
+
+    ankerl::nanobench::Rng rng(31337);
+    Map map;
+    map.reserve(num_elements);
+
+    // The keys are a counter, so every insert below brings one the map has never held and every
+    // erase names one it holds. live[] is the set of those, and stays exactly num_elements long.
+    std::vector<uint64_t> live;
+    live.reserve(num_elements);
+    uint64_t next = 0;
+    while (live.size() < num_elements) {
+        map[key_for<Map>(next)] = live.size();
+        live.push_back(next);
+        ++next;
+    }
+
+    size_t checksum = 0;
+    for (size_t i = 0; i < num_rounds * num_elements; ++i) {
+        auto const slot = static_cast<size_t>(((rng() >> 32U) * live.size()) >> 32U);
+        map.erase(key_for<Map>(live[slot]));
+        map[key_for<Map>(next)] = i;
+        live[slot] = next;
+        ++next;
+
+        for (size_t search = 0; search < 2; ++search) {
+            auto const r = rng();
+            auto const& key =
+                (r & 1U) != 0 ? key_for<Map>(live[((r >> 32U) * live.size()) >> 32U]) : key_for<Map>(r | never_inserted);
+            auto it = map.find(key);
+            if (it != map.end()) {
+                checksum += it->second;
+            }
+        }
+    }
+    return checksum + map.size();
+}
+
 // Hashing alone, over the keys the string workloads use.
 //
 // A whole lookup is ~167 instructions and only ~59 of them are the hash, and a hash change that

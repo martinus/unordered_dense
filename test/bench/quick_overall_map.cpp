@@ -2,7 +2,7 @@
 
 #include <app/doctest.h>           // for TestCase, skip, ResultBuilder
 #include <app/geomean.h>           // for geomean
-#include <bench/workloads.h>       // for insert_erase, iterate, build, find_50, find_all, hash_strings
+#include <bench/workloads.h>       // for insert_erase, iterate, build, churn, find_50, find_all, hash_strings
 #include <third-party/nanobench.h> // for Bench
 
 #include <fmt/format.h> // for print, format
@@ -43,6 +43,13 @@ void bench_build(ankerl::nanobench::Bench* bench, std::string_view name) {
 }
 
 template <typename Map>
+void bench_churn(ankerl::nanobench::Bench* bench, std::string_view name) {
+    bench->run(fmt::format("{} churn at a fixed size", name), [&] {
+        CHECK(workloads::churn<Map>() == 13688565634U);
+    });
+}
+
+template <typename Map>
 void bench_random_find(ankerl::nanobench::Bench* bench, std::string_view name) {
     bench->run(fmt::format("{} 50% probability to find", name), [&] {
         CHECK(workloads::find_50<Map>() == 124865472559U);
@@ -56,6 +63,7 @@ void bench_all(ankerl::nanobench::Bench* bench, std::string_view name) {
     bench_iterate<Map>(bench, name);
     bench_random_insert_erase<Map>(bench, name);
     bench_build<Map>(bench, name);
+    bench_churn<Map>(bench, name);
     bench_random_find<Map>(bench, name);
 }
 
