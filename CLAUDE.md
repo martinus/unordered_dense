@@ -177,6 +177,28 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   (49.7 against 46.3 cycles per insert): its second slot is still a branch. Both vector shifts
   first read as ~1% *losses* on `ie64`, and that was the benchmark: its integer keys hashed to a
   lattice with no chains to shift (see "Where the time goes"). With honest keys they are 1.07x.
+- Four attempts at the rehash loop (2026-09-03), and the reason they all failed. The loop in
+  `clear_and_fill_buckets_from_values` costs **~21-26 cycles per element at every size from L1 to
+  L3** (4.4 ns at 1000 elements, 5.4 ns at 200000): memory latency is already hidden, and what
+  bounds it is an in-core chain through the bucket array -- each element's loads sit behind the
+  previous element's stores. Two experiments pin that down. Adding 11 cycles of artificial latency
+  between the probe load and the store address adds 17 cycles per element; reading four elements'
+  home buckets before storing any of them is 1.5x faster while the array is L1-resident and nothing
+  at 100000, where the score's rehashes run. Nothing that shortens the *data* side of the store
+  moves it at all. So for this loop: anything that puts a load result on the path to the store
+  address is a large loss, and anything that only saves instructions or mispredictions is
+  invisible -- which is also why the earlier prefetch-eight-ahead and memset attempts found
+  nothing. What was tried, against `HEAD` on the isolated loop and paired on `build64`:
+  vectorizing `next_while_less` with the probe's four-lane window (`build64` **1.41x slower**,
+  the rehash 2-3x per element even in L1: fewer mispredictions, 7% more instructions, and the
+  store address now waits for the window load); the four-element batch above (neutral at scored
+  sizes, worse at a million); refilling from the *old* bucket array in order so new homes arrive
+  nearly sorted (**2x slower** at 100000-200000, with or without prefetching the keys: sorted
+  arrival makes every element probe the bucket the previous one just wrote); and replacing the
+  `tzcnt`-indexed blend tables of both vector shifts with a vector prefix-or (rehash neutral,
+  erase 6% slower: the table loads were never on the chain). `perf stat` shows 1.5
+  `ls_bad_status2.stli_other` interlocks per *insert* too, so the insert path is likely bound the
+  same way; IBS could not attribute them to an instruction.
 
 ## Testing
 
