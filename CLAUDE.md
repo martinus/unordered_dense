@@ -196,9 +196,12 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   nearly sorted (**2x slower** at 100000-200000, with or without prefetching the keys: sorted
   arrival makes every element probe the bucket the previous one just wrote); and replacing the
   `tzcnt`-indexed blend tables of both vector shifts with a vector prefix-or (rehash neutral,
-  erase 6% slower: the table loads were never on the chain). `perf stat` shows 1.5
-  `ls_bad_status2.stli_other` interlocks per *insert* too, so the insert path is likely bound the
-  same way; IBS could not attribute them to an instruction.
+  erase 6% slower: the table loads were never on the chain). Do not read
+  `ls_bad_status2.stli_other` as a cost here: `build` shows 1.5 of them per insert and `churn`
+  1.3, on bucket-window loads that cannot overlap the previous insert's stores (odds ~3e-5), and
+  shifting the stack of the same binary moves the count from 1.45 to 2.85 per insert while the
+  cycles stay at 98.0 +- 0.5. Placing the bucket before appending the value, to put distance
+  between those stores and the next probe's loads, cost 2-7 cycles per insert in every variant.
 
 ## Testing
 
