@@ -130,6 +130,11 @@ TEST_CASE("bench_quick_overall_udm" * doctest::test_suite("bench") * doctest::sk
     using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t>;
     bench_all<map_str_t>(&bench, "ankerl::unordered_dense::map<std::string, size_t>");
 
+    // A 64 byte mapped value, where a flat map pays sizeof(value_type) per scattered write and a
+    // dense one pays eight bytes; see workloads::big_value for what the other two could not see.
+    using map_big_t = ankerl::unordered_dense::map<uint64_t, workloads::big_value>;
+    bench_all<map_big_t>(&bench, "ankerl::unordered_dense::map<uint64_t, big_value>");
+
     fmt::print("{} bench_quick_overall_map_udm\n", geomean1(bench));
 }
 

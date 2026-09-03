@@ -6,6 +6,7 @@
 
 #include <third-party/nanobench.h> // for Rng
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -99,6 +100,37 @@ template <typename Map>
     auto const limited = (((*rng)() >> 32U) * static_cast<uint64_t>(n)) >> 32U;
     return key_for<Map>(limited);
 }
+
+// A mapped type of the size a real one has.
+//
+// Both maps the score measures hold a `size_t`, and eight bytes of payload hides the property that
+// separates a dense map from a flat one. Every cost of a flat map scales with `sizeof(value_type)`,
+// because it writes the whole value into a hash-scattered slot; a dense map writes eight bytes
+// there and appends the payload to a vector in order. Measured on `build` with the same
+// `uint64_t` key, `boost::unordered_flat_map` is 1.22x ahead at a 16 byte value_type and 2.14x
+// *behind* at 64 bytes -- the same reason `buildstr` wins and `build64` loses. Nothing in the score
+// could see that, so a change that gave it up would have scored the same.
+//
+// `map<Key, SomeStruct>` is at least as common as `map<Key, size_t>`, and 64 bytes is an ordinary
+// struct. It is trivially copyable on purpose: the variable under test is the size of the value,
+// and a non-trivial move or an owned allocation would confound it with the heap. The padding is
+// value-initialized because a copy of an indeterminate byte is what valgrind is for.
+struct big_value {
+    // Implicit both ways so that every workload here reads and writes it as it does a size_t, and
+    // so the checksums are exactly the ones the small-value maps produce.
+    big_value() = default;
+    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
+    big_value(size_t v)
+        : value(v) {}
+    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
+    operator size_t() const {
+        return value;
+    }
+
+    size_t value{};
+    std::array<char, 56> padding{};
+};
+static_assert(sizeof(big_value) == 64);
 
 struct insert_erase_result {
     size_t erased;
