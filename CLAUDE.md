@@ -92,17 +92,28 @@ common as `map<Key, size_t>`, and a change that gave that property up would have
 size of the value, and an owned allocation would confound it with the heap. Its checksums are the
 ones the small-value maps produce, so one set of constants verifies all three.
 
-**`build` measures the allocator and the kernel as much as the map, and the split is not stable
-between workloads.** Discovered 2026-09-03 while adding the big-value map, and it is not new: with
-`perf` counters from the score itself, `buildbig` executes *more* cycles (19.2M against 16.6M) and
-*more* instructions (46.3M against 42.0M) than `build64` while reporting *less* elapsed time (4.31ms
-against 6.04ms). 16.6M cycles is 3.7ms at this clock, so `build64` spends ~2.3ms per build outside
-user cycles -- page faults, `mmap` and `munmap` -- and `buildbig` spends almost none, because by the
-time it runs the process has an arena large enough to serve it. Isolated in its own process the
-ordering reverses and is what physics predicts: 6.7ms for `build64`, 14.9ms for `buildbig`. **Never
-compare one `build*` number against another**, and treat a `build*` ratio as diluted: a third of
-`build64` is not the map at all. The paired A/B is unaffected, since both arms run in the same
-process in the same order.
+**`build` measured the kernel's page fault handler as much as the map, until `tame_allocator()`.**
+Found 2026-09-03 while adding the big-value map. A build from empty asks for megabytes and gives
+them straight back, and glibc returns anything above its mmap threshold to the OS, so every
+repetition faults in the same fresh pages again: 38% of `build64`'s cycles were kernel, at 2057
+page faults per build, and 65% of `buildbig`'s. Worse than noise, because whether it is paid
+depends on what ran *before* in the process -- anything that already freed a block that large
+raises the threshold and moves the whole thing into the arena. That is how `buildbig` came to
+report 4.31ms for a build costing 14.9ms on its own, while executing *more* cycles (19.2M against
+16.6M) and *more* instructions than `build64`, which reported 6.04ms.
+
+`workloads::tame_allocator()` raises `M_MMAP_THRESHOLD` and `M_TRIM_THRESHOLD` to 64 MB, so the
+arena is kept and the pages are faulted once per process instead of once per repetition. Every
+workload calls it, so the process is in the same state whatever the order. Measured on `build64`:
+6.61ms to 3.78ms per build, 41141 page faults to 2289, and total cycles down to within 4% of user
+cycles. Isolated-versus-in-score now agrees for all three maps -- `buildbig` was 14.90 against
+4.31, and is 4.94 against 4.26 -- and all three run at the same effective clock, which is the check
+that the kernel time is gone. A warm allocation before the build does *not* work, touched or not
+(6.60ms and 6.11ms); only keeping the arena does.
+
+What this removes is a real cost -- a program that builds one map in a fresh process does pay it --
+but it pays it once, where a benchmark repeating the build hundreds of times paid it every time and
+drowned the map in it. glibc only; elsewhere it is a no-op.
 
 **Nothing measured a table that only churns.** Until 2026-09-03 every workload in the score
 either grew or was measured on a table that had just been built. Backward shift deletion leaves the
