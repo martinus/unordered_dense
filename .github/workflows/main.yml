@@ -139,6 +139,18 @@ jobs:
             apt: libboost-dev
             setup_args: --unity=on --unity-size=16
 
+          # ANKERL_UNORDERED_DENSE_HAS_SSE2=0 is the documented way to get the scalar probe and
+          # shifts on x86-64, which a gcc module interface needs (gcc bug 127193 turns the vector
+          # shifts' unaligned stores into aligned ones). The 32 bit legs below reach the scalar
+          # code too, but only because their target has no SSE2; nothing else builds an x86-64
+          # binary through the switch itself, so a typo in its name would be invisible.
+          - name: Linux (gcc, C++17, no SSE2)
+            id: linux-gcc-cpp17-nosse2
+            os: ubuntu-latest
+            cxx: g++
+            apt: libboost-dev
+            setup_args: -Dcpp_args=-DANKERL_UNORDERED_DENSE_HAS_SSE2=0
+
           # A hash map that packs a bucket into 8 bytes and indexes with size_t is exactly the
           # design a different word size breaks, so 32 bit is real coverage, not a formality.
           # The runner images carry a 64 bit only toolchain, hence g++-multilib. -m32 used to be
