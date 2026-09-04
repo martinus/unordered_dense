@@ -39,12 +39,14 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::standard`](#351-ankerlunordered_densebucket_typestandard)
     - [3.5.2. `ankerl::unordered_dense::bucket_type::big`](#352-ankerlunordered_densebucket_typebig)
+    - [3.5.3. `ankerl::unordered_dense::bucket_type::group` and `group_big`](#353-ankerlunordered_densebucket_typegroup-and-group_big)
   - [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
 - [5. Design](#5-design)
   - [5.1. Inserts](#51-inserts)
   - [5.2. Lookups](#52-lookups)
   - [5.3. Removals](#53-removals)
+  - [5.4. The group index](#54-the-group-index)
 - [6. Real World Usage](#6-real-world-usage)
   - [6.1. Databases and data engines](#61-databases-and-data-engines)
   - [6.2. Games, emulators and game engines](#62-games-emulators-and-game-engines)
@@ -408,6 +410,31 @@ The map/set supports two different bucket types. The default should be good for 
 * Up to 2^63 = 9,223,372,036,854,775,808 elements.
 * 12 bytes overhead per bucket.
 
+#### 3.5.3. `ankerl::unordered_dense::bucket_type::group` and `group_big`
+
+A different index rather than a different bucket: sixteen slots per group, compared with one SSE2
+instruction, and overflow counters instead of robin hood shifting, so that nothing moves after it
+is placed. See [5.4. The group index](#54-the-group-index) for how it works and what was measured.
+
+* `group`: up to 2^32 elements, 5.5 bytes overhead per slot (24 bytes per group of sixteen, plus a
+  4 byte value index per slot).
+* `group_big`: up to 2^63 elements, 9.5 bytes per slot.
+* Faster than the default wherever a table is churned, erased from, or looked up in near its
+  maximum load; the same for iteration and for string keys; a little slower to build with large
+  values. Measured on the benchmark's own workloads it is 1.10x ahead on the geometric mean, with
+  churn at a fixed size 1.45x and lookups that miss 1.5x.
+* Needs the default bucket container and the non-segmented map. Without SSE2 the sixteen
+  fingerprints are compared in a loop.
+
+```cpp
+using map_t = ankerl::unordered_dense::map<std::string,
+                                           int,
+                                           ankerl::unordered_dense::hash<std::string>,
+                                           std::equal_to<std::string>,
+                                           std::allocator<std::pair<std::string, int>>,
+                                           ankerl::unordered_dense::bucket_type::group>;
+```
+
 ### 3.6. Disabling the SSE2 Probe
 
 On x86-64 the map probes, places and erases four buckets at a time with SSE2 intrinsics. That needs no compiler
@@ -478,6 +505,59 @@ Since all data is stored in a vector, removals are a bit more complicated:
 3. Update *two* locations in the bucket array: First, remove the bucket for the removed element.
 4. Then, update the `value_idx` of the moved element. This requires another lookup.
 
+
+### 5.4. The group index
+
+`bucket_type::group` keeps the value vector and everything about it -- the swap-with-last erase,
+iteration, `values()`, `replace()` -- and changes only the index that finds a value from a key.
+Instead of one 8 byte bucket per slot holding a distance, a fingerprint and a value index, it
+holds two arrays:
+
+```cpp
+struct group {
+    uint8_t m_fingerprints[16]; // the low byte of the hash, 0 means empty
+    uint8_t m_overflows[8];     // how many entries with (fingerprint & 7) == i probed past this group
+};
+uint32_t value_index[16 * groups];
+```
+
+A lookup takes the top bits of the hash as the group, loads the sixteen fingerprints with one
+instruction, compares all of them against the key's fingerprint with another, and gets a 16 bit
+mask of candidates. For each set bit it reads the slot's value index and compares the key in the
+vector. If none matched, it reads the one overflow counter that the low three bits of the
+fingerprint select: zero means no entry with those bits ever had to leave this group, so the key
+is absent; otherwise the probe goes on to the next group of a quadratic sequence.
+
+An insert takes the first free slot on that sequence and increments the counter in every full
+group it passed. An erase clears the fingerprint and decrements the same counters on the same
+walk. That leaves the index in the state it would have been in had the entry never been inserted,
+which is the property backward shift deletion gives the robin hood index -- without moving
+anything. A counter that reaches 255 stays there and only ever costs a probe one group more.
+
+What it buys, measured with the paired harness in `scripts/ab` on the benchmark's own workloads
+against the default index (ratios above 1 are the group index's win):
+
+| workload                        | `uint64_t` key | `std::string` key | 64 byte value |
+|---------------------------------|---------------:|------------------:|--------------:|
+| iterate while modifying         | 0.98           | 1.01              | 1.00          |
+| random insert and erase         | 1.21           | 1.04              | 1.20          |
+| build from empty                | 1.04           | 1.13              | 1.00          |
+| churn at a fixed size           | 1.45           | 1.10              | 1.37          |
+| random find, half hits          | 1.06           | 1.01              | 1.08          |
+| find, all hits                  | 1.33           | 1.06              |               |
+| find, no hits                   | 1.51           | 1.04              |               |
+
+Churn is where the two indexes differ in kind. A table that was reserved for its size sits at load
+0.76 forever, and there a robin hood insert shifts about eight buckets along and an erase shifts
+eight back, while a group index moves nothing. Lookups gain because a hit reads sixteen slots per
+compare instead of four, and because the value indices of a group have an address that depends on
+the group alone, so they are prefetched while the fingerprints are still on their way. String keys
+gain little, since their cost is the hash and the key compare and never was the probe. Memory drops
+from 8 to 5.5 bytes per slot.
+
+The default stays the robin hood index: it builds faster with large values, it is what every
+existing user has measured, and its lookup cost is the one the rest of this document describes.
+The group index is a template argument away for the workloads it is better at.
 
 ## 6. Real World Usage
 
