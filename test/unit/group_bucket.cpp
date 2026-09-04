@@ -183,7 +183,7 @@ TEST_CASE("group_index_churn_at_full_load") {
     REQUIRE(map.bucket_count() == buckets); // reserve was enough, no growth
     for (size_t round = 0; round < 4; ++round) {
         for (size_t i = 0; i < num_elements; ++i) {
-            auto const slot = rng() % live.size();
+            auto const slot = static_cast<size_t>(rng() % live.size());
             REQUIRE(map.erase(live[slot]) == 1U);
             REQUIRE(map.try_emplace(next, i).second);
             live[slot] = next;
