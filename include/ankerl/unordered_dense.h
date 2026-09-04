@@ -1541,6 +1541,40 @@ private:
         return static_cast<value_idx_type>((group_idx + (++delta)) & m_bucket_mask);
     }
 
+#    if !ANKERL_UNORDERED_DENSE_HAS_SSE2
+    // Eight fingerprints per machine word, without SIMD.
+    //
+    // The bytes wanted are the zero ones of `slots ^ fingerprint`, and this is what marks them
+    // exactly. `(b & 0x7f) + 0x7f` carries into a byte's high bit precisely when its low seven bits
+    // are not all zero, and cannot carry out of the byte, so or-ing the byte back in leaves that
+    // high bit set in every non-zero byte and clear in every zero one. The more familiar
+    // `(x - ones) & ~x & highs` is two operations shorter and wrong here: a zero byte borrows from
+    // the next one, which marks a 0x01 above a 0x00 as a match too. Harmless for a probe, which
+    // verifies its candidates against the key -- and not harmless at all for the empty slot an
+    // insert picks.
+    //
+    // The multiply then gathers the eight high bits into eight adjacent ones: bit 7 + 8i has to
+    // reach bit 56 + i, so the constant carries a bit at 56 - 7i, and no other pair of bits lands
+    // in the top byte.
+    [[nodiscard]] static auto match_zero_bytes(std::uint64_t x) -> unsigned {
+        static constexpr auto lows = UINT64_C(0x7F7F7F7F7F7F7F7F);
+        static constexpr auto highs = UINT64_C(0x8080808080808080);
+        auto const zeros = ~(((x & lows) + lows) | x) & highs;
+        return static_cast<unsigned>(((zeros >> 7U) * UINT64_C(0x0102040810204080)) >> 56U);
+    }
+
+    // Byte i of the group has to become bit i, which is what a load is on a little endian machine
+    // and the reverse of one anywhere else.
+    [[nodiscard]] static auto load_fingerprints(std::uint8_t const* p) -> std::uint64_t {
+        auto word = std::uint64_t{};
+        std::memcpy(&word, p, sizeof(word));
+#        if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+        word = __builtin_bswap64(word);
+#        endif
+        return word;
+    }
+#    endif
+
     // lanes whose fingerprint is the word's; every byte of the word is the same
     [[nodiscard]] static auto match_fingerprint(Bucket const& group, std::uint32_t word) -> unsigned {
 #    if ANKERL_UNORDERED_DENSE_HAS_SSE2
@@ -1549,12 +1583,9 @@ private:
         return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(fingerprints, _mm_set1_epi32(static_cast<int>(word)))));
         // NOLINTEND(portability-simd-intrinsics)
 #    else
-        auto const fingerprint = static_cast<std::uint8_t>(word);
-        auto lanes = 0U;
-        for (auto i = 0U; i < 16U; ++i) {
-            lanes |= static_cast<unsigned>(group.m_fingerprints[i] == fingerprint) << i;
-        }
-        return lanes;
+        auto const wanted = static_cast<std::uint64_t>(static_cast<std::uint8_t>(word)) * UINT64_C(0x0101010101010101);
+        auto const* p = group.m_fingerprints.data();
+        return match_zero_bytes(load_fingerprints(p) ^ wanted) | (match_zero_bytes(load_fingerprints(p + 8) ^ wanted) << 8U);
 #    endif
     }
 
