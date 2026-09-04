@@ -39,8 +39,6 @@ export namespace ankerl::unordered_dense {
       using ankerl::unordered_dense::set;
       using ankerl::unordered_dense::segmented_set;
       namespace bucket_type {
-        using ankerl::unordered_dense::bucket_type::standard;
-        using ankerl::unordered_dense::bucket_type::big;
         using ankerl::unordered_dense::bucket_type::group;
         using ankerl::unordered_dense::bucket_type::group_big;
       }

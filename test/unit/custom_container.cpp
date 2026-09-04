@@ -15,9 +15,7 @@ TEST_CASE_MAP("custom_container",
               std::string,
               ankerl::unordered_dense::hash<int>,
               std::equal_to<int>,
-              std::deque<std::pair<int, std::string>>,
-              ankerl::unordered_dense::bucket_type::standard,
-              std::deque<ankerl::unordered_dense::bucket_type::standard>) {
+              std::deque<std::pair<int, std::string>>) {
     auto map = map_t();
 
     for (int i = 0; i < 10; ++i) {

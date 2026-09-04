@@ -5,24 +5,25 @@
 
 #include <fmt/format.h>
 
+#include <array>
 #include <limits>
 #include <stdexcept> // for out_of_range
 
 using map_default_t = ankerl::unordered_dense::map<std::string, size_t>;
 
-// big bucket type allows 2^64 elements, but has more memory & CPU overhead.
+// the wide value index allows 2^63 elements, at 4 more bytes per slot
 using map_big_t = ankerl::unordered_dense::map<std::string,
                                                size_t,
                                                ankerl::unordered_dense::hash<std::string>,
                                                std::equal_to<std::string>,
                                                std::allocator<std::pair<std::string, size_t>>,
-                                               ankerl::unordered_dense::bucket_type::big>;
+                                               ankerl::unordered_dense::bucket_type::group_big>;
 
-// The packing is asserted by the table itself, so that a user's own bucket type is held to it
-// too -- see the static_asserts on Bucket in the header. Instantiating map_default_t, map_big_t
-// and the bucket_micro map below is what fires them for these three.
-static_assert(sizeof(map_default_t::bucket_type) == 8U);
-static_assert(sizeof(map_big_t::bucket_type) == sizeof(size_t) + 4U);
+// A group is sixteen fingerprints and eight counters whatever its value index is; the indices are
+// beside it. Instantiating map_default_t, map_big_t and the group_micro map below is what fires
+// the table's own asserts on Bucket for these three.
+static_assert(sizeof(map_default_t::bucket_type) == 24U);
+static_assert(sizeof(map_big_t::bucket_type) == 24U);
 static_assert(map_default_t::max_size() == map_default_t::max_bucket_count());
 
 #if SIZE_MAX == UINT32_MAX
@@ -33,12 +34,12 @@ static_assert(map_default_t::max_size() == uint64_t{1} << 32U);
 static_assert(map_big_t::max_size() == uint64_t{1} << 63U);
 #endif
 
-struct bucket_micro {
-    static constexpr uint8_t dist_inc = 1U << 1U;             // 1 bits for fingerprint
-    static constexpr uint8_t fingerprint_mask = dist_inc - 1; // 7 bit = 128 positions for distance
-
-    uint8_t m_dist_and_fingerprint;
-    uint8_t m_value_idx;
+// A one byte value index, so that max_size() is 256 rather than 2^32 and the boundaries below can
+// be reached at all.
+struct group_micro {
+    using value_idx_type = uint8_t;
+    std::array<uint8_t, 16> m_fingerprints;
+    std::array<uint8_t, 8> m_overflows;
 };
 
 TYPE_TO_STRING_MAP(counter::obj,
@@ -46,15 +47,15 @@ TYPE_TO_STRING_MAP(counter::obj,
                    ankerl::unordered_dense::hash<counter::obj>,
                    std::equal_to<counter::obj>,
                    std::allocator<std::pair<counter::obj, counter::obj>>,
-                   bucket_micro);
+                   group_micro);
 
-TEST_CASE_MAP("bucket_micro",
+TEST_CASE_MAP("group_micro",
               counter::obj,
               counter::obj,
               ankerl::unordered_dense::hash<counter::obj>,
               std::equal_to<counter::obj>,
               std::allocator<std::pair<counter::obj, counter::obj>>,
-              bucket_micro) {
+              group_micro) {
     counter counts;
     INFO(counts);
 
@@ -85,7 +86,7 @@ TEST_CASE_MAP("bucket_micro",
 }
 
 // replace() refuses a container it could not index, and the boundary is the interesting part: the
-// guard is `>`, so a container of exactly max_size() has to be accepted. bucket_micro is what makes
+// guard is `>`, so a container of exactly max_size() has to be accepted. group_micro is what makes
 // that testable at all -- its value index is one byte, so max_size() is 256 rather than 2^32.
 namespace {
 
@@ -94,7 +95,7 @@ using micro_map_t = ankerl::unordered_dense::map<size_t,
                                                  ankerl::unordered_dense::hash<size_t>,
                                                  std::equal_to<size_t>,
                                                  std::allocator<std::pair<size_t, size_t>>,
-                                                 bucket_micro>;
+                                                 group_micro>;
 
 [[nodiscard]] auto container_of(size_t count) -> micro_map_t::value_container_type {
     auto container = micro_map_t::value_container_type{};
@@ -145,7 +146,7 @@ TEST_CASE("replace_drops_a_duplicate_that_sits_last") {
 // than it can hold came back with a single bucket and a mask of zero, and the next probe read past
 // the end of it.
 //
-// bucket_micro is what makes this cheap to ask. The arithmetic is the same for the shipped bucket
+// group_micro is what makes this cheap to ask. The arithmetic is the same for the shipped bucket
 // types -- map<uint32_t, uint32_t>::rehash(3865470566) reproduced it -- but there the correct
 // answer is an array of 2^32 buckets, so the test would be asking the machine for 32 GB. Here the
 // same walk runs off the same end and the correct answer is 256 buckets.
@@ -190,7 +191,7 @@ TEST_CASE("a_count_above_the_bucket_limit_does_not_collapse_the_array") {
 // std::vector::reserve() with the raw number and gets a std::length_error out of a call that
 // should simply have given them everything there is.
 //
-// bucket_micro is what makes this askable. On a default map max_size() is 2^32, so the clamped
+// group_micro is what makes this askable. On a default map max_size() is 2^32, so the clamped
 // call still reserves 2^32 pairs -- tens of gigabytes -- and the test would be indistinguishable
 // from the bug. Here the clamp lands on 256.
 TEST_CASE("reserve_clamps_to_max_size_instead_of_failing") {

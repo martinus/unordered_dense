@@ -1,6 +1,6 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
-// A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion.
+// A fast & densely stored hashmap and hashset.
 // Version 4.11.0
 // https://github.com/martinus/unordered_dense
 //
@@ -591,38 +591,20 @@ ANKERL_UNORDERED_DENSE_HASH_STATICCAST(unsigned long long);
 
 namespace bucket_type {
 
-struct standard {
-    static constexpr std::uint32_t dist_inc = 1U << 8U;             // skip 1 byte fingerprint
-    static constexpr std::uint32_t fingerprint_mask = dist_inc - 1; // mask for 1 byte of fingerprint
-
-    std::uint32_t m_dist_and_fingerprint; // upper 3 byte: distance to original bucket. lower byte: fingerprint from hash
-    std::uint32_t m_value_idx;            // index into the m_values vector.
-};
-
-ANKERL_UNORDERED_DENSE_PACK(struct big {
-    static constexpr std::uint32_t dist_inc = 1U << 8U;             // skip 1 byte fingerprint
-    static constexpr std::uint32_t fingerprint_mask = dist_inc - 1; // mask for 1 byte of fingerprint
-
-    std::uint32_t m_dist_and_fingerprint; // upper 3 byte: distance to original bucket. lower byte: fingerprint from hash
-    std::size_t m_value_idx;              // index into the m_values vector.
-});
-
-// A group of sixteen slots rather than one bucket, and a different index altogether: where the two
-// types above are robin hood buckets that a probe walks one (or four) at a time and that inserts
-// and erases shift along, a group holds one byte of fingerprint per slot, compared sixteen at once,
-// and eight overflow counters that record how many entries with those low three fingerprint bits
-// had to probe past it. An erase decrements them, so nothing ever moves after it is placed and no
-// tombstone is left behind. The value indices sit in a second array beside the groups: 24 + 64
-// bytes per sixteen slots, 5.5 bytes per slot against 8 for `standard`. What it trades is a
-// second cache line on a hit, which the table hides with a prefetch, and the strict ordering of a
-// robin hood table. See "5.4. The group index" in the README.
+// The index is groups of sixteen slots. A group holds one byte of fingerprint per slot, compared
+// sixteen at a time, and eight overflow counters that record how many entries with those low three
+// fingerprint bits had to probe past it. An erase decrements them, so nothing ever moves after it
+// is placed and no tombstone is left behind. The value indices sit in a second array beside the
+// groups: 24 + 64 bytes per sixteen slots, 5.5 bytes per slot. See "5. Design" in the README.
+//
+// `group` indexes up to 2^32 values, `group_big` up to 2^63.
 struct group {
     using value_idx_type = std::uint32_t;
     std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
     std::array<std::uint8_t, 8> m_overflows;     // how many entries with (fingerprint & 7) == i probed past this group
 };
 
-// The same index with 64 bit value indices, for more than 2^32 elements: 24 + 128 bytes per sixteen slots.
+// 24 + 128 bytes per sixteen slots.
 struct group_big {
     using value_idx_type = std::size_t;
     std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
@@ -632,8 +614,6 @@ struct group_big {
 } // namespace bucket_type
 
 namespace detail {
-
-struct default_container_t {};
 
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
@@ -1180,59 +1160,10 @@ public:
 
 namespace detail {
 
-// A bucket type is a group index when it carries fingerprints and overflow counters and names the
-// type of its value indices; see bucket_type::group. Anything else is a robin hood bucket.
-template <typename Bucket, typename = void>
-struct is_group_bucket : std::false_type {};
-
-template <typename Bucket>
-struct is_group_bucket<
-    Bucket,
-    std::void_t<decltype(Bucket::m_fingerprints), decltype(Bucket::m_overflows), typename Bucket::value_idx_type>>
-    : std::true_type {};
-
-template <typename Bucket>
-inline constexpr bool is_group_bucket_v = is_group_bucket<Bucket>::value;
-
-template <typename Bucket, bool IsGroup = is_group_bucket_v<Bucket>>
-struct bucket_traits {
-    using value_idx_type = decltype(Bucket::m_value_idx);
-    using dist_and_fingerprint_type = decltype(Bucket::m_dist_and_fingerprint);
-};
-
-template <typename Bucket>
-struct bucket_traits<Bucket, true> {
-    using value_idx_type = typename Bucket::value_idx_type;
-    using dist_and_fingerprint_type =
-        std::uint32_t; // a group index has none; the type has to exist for the members that name it
-};
-
-// The two static_asserts on a robin hood bucket's fields, as functions so that they can be asked of
-// a group bucket too and answer yes without naming fields it does not have.
-template <typename Bucket>
-[[nodiscard]] constexpr auto fingerprint_fits_below_dist_inc() -> bool {
-    if constexpr (is_group_bucket_v<Bucket>) {
-        return true;
-    } else {
-        return Bucket::fingerprint_mask < Bucket::dist_inc;
-    }
-}
-
-template <typename Bucket>
-[[nodiscard]] constexpr auto dist_inc_is_a_single_bit() -> bool {
-    if constexpr (is_group_bucket_v<Bucket>) {
-        return true;
-    } else {
-        return 0 != Bucket::dist_inc && 0 == (Bucket::dist_inc & (Bucket::dist_inc - 1));
-    }
-}
-
-// What holds a group index: the groups, and beside them the value index of every slot. Two arrays
+// What holds the index: the groups, and beside them the value index of every slot. Two arrays
 // rather than one struct because the groups are what a probe reads -- a miss touches nothing else,
 // and a rehash writes them at random -- and 24 bytes per sixteen slots keeps far more of them in
-// cache than 88 would. Measured, the split is 10% faster on a build for the same lookups. It
-// answers to the same handful of calls the table makes on a std::vector of buckets, so the
-// allocator, copy, move and swap logic of the table is the same for both kinds of index.
+// cache than 88 would. Measured, the split is 10% faster on a build for the same lookups.
 template <typename Group, typename Alloc>
 class group_storage {
 public:
@@ -1312,7 +1243,6 @@ template <class Key,
           class KeyEqual,
           class AllocatorOrContainer,
           class Bucket,
-          class BucketContainer,
           bool IsSegmented>
 class table : public std::conditional_t<is_map_v<T>, base_table_type_map<T>, base_table_type_set> {
     using underlying_value_type = std::conditional_t<is_map_v<T>, std::pair<Key, T>, Key>;
@@ -1327,45 +1257,17 @@ public:
 private:
     using bucket_alloc =
         typename std::allocator_traits<typename value_container_type::allocator_type>::template rebind_alloc<Bucket>;
-    using default_bucket_container_type =
-        std::conditional_t<IsSegmented, segmented_vector<Bucket, bucket_alloc>, std::vector<Bucket, bucket_alloc>>;
 
-    // A group index brings its own storage, see group_storage.
-    static constexpr bool is_group = detail::is_group_bucket_v<Bucket>;
-    static_assert(!is_group || (!IsSegmented && std::is_same_v<BucketContainer, detail::default_container_t>),
-                  "a group bucket type holds its index in its own two arrays: it can neither be segmented nor be "
-                  "given a bucket container");
+    // IsSegmented is about the values -- stable references, no reallocation of the payload. The
+    // index is two plain arrays either way: it is 5.5 bytes per slot, and a probe reads it by
+    // pointer.
+    using bucket_container_type = detail::group_storage<Bucket, bucket_alloc>;
 
-    using bucket_container_type =
-        std::conditional_t<is_group,
-                           detail::group_storage<Bucket, bucket_alloc>,
-                           std::conditional_t<std::is_same_v<BucketContainer, detail::default_container_t>,
-                                              default_bucket_container_type,
-                                              BucketContainer>>;
+    // Slots per group. bucket_count() counts slots, m_group_mask counts groups.
+    static constexpr std::size_t slots_per_group = 16;
 
-    // Slots of the index per element of the bucket container: a robin hood bucket is one slot, a
-    // group is sixteen. bucket_count() counts slots.
-    static constexpr std::size_t slots_per_bucket = is_group ? 16 : 1;
-
-    static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shift) number of buckets, or of groups
+    static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
     static constexpr float default_max_load_factor = 0.8F;
-
-    // The default bucket container is a std::vector: one allocation, reached through data().
-    static constexpr bool has_contiguous_buckets =
-        is_group || (!IsSegmented && std::is_same_v<BucketContainer, detail::default_container_t>);
-
-    // The probe can read four buckets at once where the bucket array is contiguous and the bucket
-    // is the standard 8 byte one, on a platform with SSE2.
-    static constexpr bool has_simd_scan = ANKERL_UNORDERED_DENSE_HAS_SSE2 && has_contiguous_buckets &&
-                                          std::is_same_v<Bucket, ankerl::unordered_dense::bucket_type::standard>;
-
-    // Four buckets read from any bucket index reach up to three past the end of the array, so the
-    // array carries that many extra, written by allocate_buckets_from_shift() and copied along
-    // with the rest. They hold a dist_and_fingerprint no key can expect and no bucket can hold
-    // less than, and a value index no value has, so a scan passes over them as it would over
-    // occupied buckets that are not the answer -- and the wrap to bucket zero is taken only where a
-    // scan moves on, which is rare. bucket_count() does not count them.
-    static constexpr std::size_t bucket_padding = has_simd_scan ? 3 : 0;
 
     // Named, and covering both containers, so that the promise and the recovery that exists for
     // when the promise cannot be made are spelled the same way and cannot drift apart -- the same
@@ -1398,80 +1300,19 @@ public:
     using precomputed_hash = detail::precomputed_hash<Hash>;
 
 private:
-    using value_idx_type = typename detail::bucket_traits<Bucket>::value_idx_type;
-    using dist_and_fingerprint_type = typename detail::bucket_traits<Bucket>::dist_and_fingerprint_type;
-
-    // what the padding buckets hold, see bucket_padding
-    static constexpr auto sentinel_dist_and_fingerprint = static_cast<dist_and_fingerprint_type>(0x7FFFFFFFU);
-    static constexpr auto sentinel_value_idx = (std::numeric_limits<value_idx_type>::max)();
+    using value_idx_type = typename Bucket::value_idx_type;
 
     static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
 
-    // m_dist_and_fingerprint packs two fields into one integer, and these are what keeps them from
-    // reaching into each other. A bucket type is something a user can supply, so this is checked
-    // here rather than assumed.
-    //
-    // The fingerprint has to stay strictly below dist_inc. A mask that overlaps it lets hash bits
-    // add to the distance a bucket claims, which silently reorders the robin hood sequence that
-    // every probe depends on -- and a mask that reaches the bit above turns a fresh bucket into one
-    // that reads as further from home than it is. Fewer fingerprint bits than dist_inc allows is
-    // merely a weaker fingerprint, so the bound is one-sided.
-    static_assert(detail::fingerprint_fits_below_dist_inc<Bucket>(),
-                  "the fingerprint must fit strictly below dist_inc, or it changes the distance");
-    // And dist_inc has to be a single bit, because the distance is incremented by adding it: two
-    // bits set would carry into the fingerprint on the very first step away from home.
-    static_assert(detail::dist_inc_is_a_single_bit<Bucket>(),
-                  "dist_inc must be a power of two, so that adding it only touches the distance");
-
     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
     bucket_container_type m_buckets{};
     std::size_t m_max_bucket_capacity = 0;
-    value_idx_type m_bucket_mask = 0; // buckets (or groups) - 1; works because their number is always a power of two
+    value_idx_type m_group_mask = 0; // groups - 1; works because the number of groups is a power of two
     float m_max_load_factor = default_max_load_factor;
     Hash m_hash{};
     KeyEqual m_equal{};
     std::uint8_t m_shifts = initial_shifts;
-
-    [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
-        return static_cast<value_idx_type>((bucket_idx + 1U) & m_bucket_mask);
-    }
-
-    // Helper to access bucket through pointer types. The group branches of this and the three
-    // below exist because a constexpr member is instantiated with the class, before any if
-    // constexpr elsewhere has kept the robin hood code away from a group bucket.
-    [[nodiscard]] static constexpr auto at(bucket_container_type& bucket, std::size_t offset) -> Bucket& {
-        if constexpr (is_group) {
-            return bucket.data()[offset];
-        } else {
-            return bucket[offset];
-        }
-    }
-
-    [[nodiscard]] static constexpr auto at(const bucket_container_type& bucket, std::size_t offset) -> const Bucket& {
-        if constexpr (is_group) {
-            return bucket.data()[offset];
-        } else {
-            return bucket[offset];
-        }
-    }
-
-    // use the dist_inc and dist_dec functions so that std::uint16_t types work without warning
-    [[nodiscard]] static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
-        if constexpr (is_group) {
-            return x;
-        } else {
-            return static_cast<dist_and_fingerprint_type>(x + Bucket::dist_inc);
-        }
-    }
-
-    [[nodiscard]] static constexpr auto dist_dec(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
-        if constexpr (is_group) {
-            return x;
-        } else {
-            return static_cast<dist_and_fingerprint_type>(x - Bucket::dist_inc);
-        }
-    }
 
     // The goal of mixed_hash is to always produce a high quality 64bit hash.
     template <typename K>
@@ -1491,40 +1332,29 @@ private:
         }
     }
 
-    [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(std::uint64_t hash) const -> dist_and_fingerprint_type {
-        if constexpr (is_group) {
-            return static_cast<dist_and_fingerprint_type>(hash); // never asked; see at()
-        } else {
-            return Bucket::dist_inc | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::fingerprint_mask);
-        }
-    }
-
     [[nodiscard]] constexpr auto bucket_idx_from_hash(std::uint64_t hash) const -> value_idx_type {
         return static_cast<value_idx_type>(hash >> m_shifts);
     }
 
-    // Where a probe for a key stopped. Found: the bucket holding it, and the value it points to.
-    // Not found: the bucket the key would be placed in, and the dist_and_fingerprint it would carry
-    // there -- exactly what an insert needs next. dist_and_fingerprint is meaningful only then.
-    // For a group index the bucket is the slot, and nothing but found and value_idx is meaningful
-    // on a miss: the insert walks the probe sequence again from the hash.
+    // Where a probe for a key stopped. Found: the slot holding it, and the value it points to.
+    // Not found: nothing but `found` is meaningful, and an insert walks the probe sequence again
+    // from the hash to place the key.
     struct probe_result {
-        dist_and_fingerprint_type dist_and_fingerprint;
-        value_idx_type bucket_idx;
+        value_idx_type slot;
         value_idx_type value_idx;
         bool found;
     };
 
-    // group index ////////////////////////////////////////////////////////////
+    // the index ///////////////////////////////////////////////////////////////
     //
-    // The index of bucket_type::group: sixteen one-byte fingerprints per group, compared at once,
-    // a second array with the value index of every slot, quadratic probing over groups, and
-    // eight overflow counters per group that an insert increments in every full group it passes
-    // and an erase decrements again. A probe stops at the first group whose counter for this
-    // hash is zero, since no entry with those bits ever went past it. Nothing moves after it is
-    // placed, so a table that has churned is as good as a fresh one, the property backward shift
-    // deletion gives the robin hood index. A saturated counter is never decremented and merely
-    // sends a probe one group further for the rest of the array's life.
+    // Sixteen one-byte fingerprints per group, compared at once, a second array with the value
+    // index of every slot, quadratic probing over groups, and eight overflow counters per group
+    // that an insert increments in every full group it passes and an erase decrements again. A
+    // probe stops at the first group whose counter for this hash is zero, since no entry with
+    // those bits ever went past it. Nothing moves after it is placed, so a table that has churned
+    // is as good as a fresh one, and there are no tombstones to rehash away. A saturated counter
+    // is never decremented and merely sends a probe one group further for the rest of the array's
+    // life.
     //
     // The group is hash >> m_shifts, the fingerprint the low byte of the hash with 0 mapped to
     // 8 so that 0 means empty and (fingerprint & 7), which picks the counter, is unchanged.
@@ -1538,7 +1368,7 @@ private:
 
     // quadratic: the triangular numbers reach every group of a power-of-two array
     [[nodiscard]] auto next_group(value_idx_type group_idx, value_idx_type& delta) const -> value_idx_type {
-        return static_cast<value_idx_type>((group_idx + (++delta)) & m_bucket_mask);
+        return static_cast<value_idx_type>((group_idx + (++delta)) & m_group_mask);
     }
 
 #    if !ANKERL_UNORDERED_DENSE_HAS_SSE2
@@ -1621,12 +1451,12 @@ private:
                 auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * 16 + detail::countr_zero(lanes));
                 auto const value_idx = index[slot];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
-                    return {0, slot, value_idx, true};
+                    return {slot, value_idx, true};
                 }
                 lanes &= lanes - 1;
             }
             if (group.m_overflows[counter] == 0) {
-                return {0, 0, 0, false};
+                return {0, 0, false};
             }
             group_idx = next_group(group_idx, delta);
         }
@@ -1697,15 +1527,6 @@ private:
         }
     }
 
-    // The bucket, or slot, that points at a value: what erasing by iterator has to find first.
-    [[nodiscard]] auto locate_value(std::uint64_t mh, value_idx_type value_idx) const -> value_idx_type {
-        if constexpr (is_group) {
-            return slot_of_value(mh, value_idx);
-        } else {
-            return bucket_idx_of_value(bucket_idx_from_hash(mh), value_idx);
-        }
-    }
-
     [[nodiscard]] static constexpr auto get_key(value_type const& vt) -> key_type const& {
         if constexpr (is_map_v<T>) {
             return vt.first;
@@ -1714,157 +1535,9 @@ private:
         }
     }
 
-    template <typename K>
-    [[nodiscard]] auto next_while_less(K const& key) const -> Bucket {
-        auto hash = mixed_hash(key);
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
-        auto bucket_idx = bucket_idx_from_hash(hash);
-
-        while (dist_and_fingerprint < at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
-            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-            bucket_idx = next(bucket_idx);
-        }
-        return {dist_and_fingerprint, bucket_idx};
-    }
-
-    void place_and_shift_up(Bucket bucket, value_idx_type place) {
-        // cache mask in a local so the bucket stores can't alias it
-        auto const mask = m_bucket_mask;
-#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-        // NOLINTBEGIN(portability-simd-intrinsics) -- this is the x86 path, on purpose
-        if constexpr (has_simd_scan) {
-            // Four buckets at once, the way the probe reads them.
-            //
-            // Whether a bucket is occupied is a coin flip -- measured over 8 million inserts into a
-            // table at its load factor, 73% shift nothing, 11% shift one, and the rest tail off --
-            // and the loop below asks it once per bucket, so it paid 0.61 mispredictions per
-            // insert. Here the four answers arrive as one mask: the contents are built as if every
-            // bucket moved one along, and a blend keeps that for the run of occupied buckets plus
-            // the empty one it ends in, and the old contents beyond. No decision per bucket; the
-            // one branch left is "did the run end inside these four", which it does 91% of the
-            // time. The loop takes the rest, and the last three buckets before the sentinels, so
-            // that the four wide store never touches a sentinel. That bound is hygiene rather than
-            // correctness, and a mutation sweep says so: with it wrong in every way, a sentinel in
-            // the window reads as occupied and is written back as it was, and the three of them
-            // are exactly enough padding for the window. Measured: 0.24 mispredictions and 46
-            // cycles per insert where the loop alone cost 52, and build64 10% faster.
-            if (ANKERL_UNORDERED_DENSE_LIKELY(std::size_t{place} + 3 <= mask)) {
-                auto* gp = m_buckets.data() + place;
-                auto lo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp));     // NOLINT
-                auto hi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 2)); // NOLINT
-                auto const dists =
-                    _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(lo), _mm_castsi128_ps(hi), _MM_SHUFFLE(2, 0, 2, 0)));
-                auto const empty =
-                    static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(dists, _mm_setzero_si128()))));
-                if (ANKERL_UNORDERED_DENSE_LIKELY(empty != 0)) {
-                    // how many occupied buckets come before the first empty one: 0 to 3
-                    auto const run = detail::countr_zero(empty);
-                    auto const inc = static_cast<int>(Bucket::dist_inc);
-                    static_assert(sizeof(Bucket) == 8);
-                    auto const fresh = _mm_loadl_epi64(reinterpret_cast<__m128i const*>(&bucket)); // NOLINT
-                    // [bucket, b0] and [b1, b2], each moved bucket one distance further from home
-                    auto const moved_lo =
-                        _mm_add_epi32(_mm_or_si128(_mm_slli_si128(lo, 8), fresh), _mm_setr_epi32(0, 0, inc, 0));
-                    auto const moved_hi = _mm_add_epi32(_mm_or_si128(_mm_slli_si128(hi, 8), _mm_srli_si128(lo, 8)),
-                                                        _mm_setr_epi32(inc, 0, inc, 0));
-                    // buckets 0..run take the moved contents, the rest keep theirs
-                    // rows are 32 bytes, so with the table aligned both halves of every row are
-                    alignas(16) static constexpr std::array<std::array<std::int32_t, 8>, 4> keep = {
-                        { {{-1, -1, 0, 0, 0, 0, 0, 0}},
-                          {{-1, -1, -1, -1, 0, 0, 0, 0}},
-                          {{-1, -1, -1, -1, -1, -1, 0, 0}},
-                          {{-1, -1, -1, -1, -1, -1, -1, -1}},
-                        }};
-                    auto const keep_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(keep[run].data()));     // NOLINT
-                    auto const keep_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(keep[run].data() + 4)); // NOLINT
-                    lo = _mm_or_si128(_mm_and_si128(keep_lo, moved_lo), _mm_andnot_si128(keep_lo, lo));
-                    hi = _mm_or_si128(_mm_and_si128(keep_hi, moved_hi), _mm_andnot_si128(keep_hi, hi));
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(gp), lo);     // NOLINT
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(gp + 2), hi); // NOLINT
-                    return;
-                }
-            }
-        }
-        // NOLINTEND(portability-simd-intrinsics)
-#    endif
-        while (0 != at(m_buckets, place).m_dist_and_fingerprint) {
-            bucket = std::exchange(at(m_buckets, place), bucket);
-            bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
-            place = static_cast<value_idx_type>((place + 1U) & mask);
-        }
-        at(m_buckets, place) = bucket;
-    }
-
-    void erase_and_shift_down(value_idx_type bucket_idx) {
-        // cache mask in a local so the bucket stores can't alias it
-        auto const mask = m_bucket_mask;
-#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-        // NOLINTBEGIN(portability-simd-intrinsics) -- this is the x86 path, on purpose
-        if constexpr (has_simd_scan) {
-            // The mirror of place_and_shift_up: the four buckets after the one being erased, read
-            // at once. A bucket moves back one if it is displaced, that is at distance two or
-            // more; the run of displaced buckets after the victim all move back by one, and the
-            // slot where the run ends becomes the empty one. Measured, the run is empty 73% of
-            // the time and one long 11%, so asking per bucket was a coin flip per erase.
-            //
-            // The bound keeps the four wide store off the sentinels. As with the insert, a
-            // mutation sweep found it is hygiene and not correctness: a sentinel inside the
-            // window reads as displaced, which only ever sends the erase to the loop below.
-            if (ANKERL_UNORDERED_DENSE_LIKELY(std::size_t{bucket_idx} + 4 <= mask)) {
-                auto* gp = m_buckets.data() + bucket_idx;
-                auto const rlo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 1)); // NOLINT  [b1, b2]
-                auto const rhi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 3)); // NOLINT  [b3, b4]
-                auto const dists =
-                    _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(rlo), _mm_castsi128_ps(rhi), _MM_SHUFFLE(2, 0, 2, 0)));
-                // at home or empty: distance below two, which is the value below 2 * dist_inc
-                static_assert(Bucket::dist_inc == (1U << 8U));
-                auto const settled = static_cast<unsigned>(
-                    _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(_mm_srli_epi32(dists, 9), _mm_setzero_si128()))));
-                if (ANKERL_UNORDERED_DENSE_LIKELY(settled != 0)) {
-                    auto const run = detail::countr_zero(settled); // displaced buckets after the victim, 0..3
-                    auto const inc = static_cast<int>(Bucket::dist_inc);
-                    // every bucket one closer to home, in the victim's window
-                    auto const moved_lo = _mm_sub_epi32(rlo, _mm_setr_epi32(inc, 0, inc, 0));
-                    auto const moved_hi = _mm_sub_epi32(rhi, _mm_setr_epi32(inc, 0, inc, 0));
-                    // what the window holds now, for the buckets past the run: [victim, b1] and [b2, b3]
-                    auto const old_lo = _mm_slli_si128(rlo, 8);
-                    auto const old_hi = _mm_or_si128(_mm_slli_si128(rhi, 8), _mm_srli_si128(rlo, 8));
-                    // buckets below run move, the one at run empties, the ones above stay
-                    alignas(16) static constexpr std::array<std::array<std::int32_t, 8>, 5> below = {
-                        { {{0, 0, 0, 0, 0, 0, 0, 0}},
-                          {{-1, -1, 0, 0, 0, 0, 0, 0}},
-                          {{-1, -1, -1, -1, 0, 0, 0, 0}},
-                          {{-1, -1, -1, -1, -1, -1, 0, 0}},
-                          {{-1, -1, -1, -1, -1, -1, -1, -1}},
-                        }};
-                    auto const take_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run].data()));         // NOLINT
-                    auto const take_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run].data() + 4));     // NOLINT
-                    auto const gone_lo = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run + 1].data()));     // NOLINT
-                    auto const gone_hi = _mm_load_si128(reinterpret_cast<__m128i const*>(below[run + 1].data() + 4)); // NOLINT
-                    auto const lo = _mm_or_si128(_mm_and_si128(take_lo, moved_lo), _mm_andnot_si128(gone_lo, old_lo));
-                    auto const hi = _mm_or_si128(_mm_and_si128(take_hi, moved_hi), _mm_andnot_si128(gone_hi, old_hi));
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(gp), lo);     // NOLINT
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(gp + 2), hi); // NOLINT
-                    return;
-                }
-            }
-        }
-        // NOLINTEND(portability-simd-intrinsics)
-#    endif
-
-        // shift down until either empty or an element with correct spot is found
-        auto next_bucket_idx = static_cast<value_idx_type>((bucket_idx + 1U) & mask);
-        while (at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2) {
-            auto& next_bucket = at(m_buckets, next_bucket_idx);
-            at(m_buckets, bucket_idx) = {dist_dec(next_bucket.m_dist_and_fingerprint), next_bucket.m_value_idx};
-            bucket_idx = std::exchange(next_bucket_idx, static_cast<value_idx_type>((next_bucket_idx + 1U) & mask));
-        }
-        at(m_buckets, bucket_idx) = {};
-    }
-
     [[nodiscard]] static constexpr auto calc_num_buckets(std::uint8_t shifts) -> std::size_t {
-        // in slots: the container has this many buckets, or a sixteenth as many groups
-        return (std::min)(max_bucket_count(), (std::size_t{1} << (64U - shifts)) * slots_per_bucket);
+        // in slots; the array is a sixteenth as many groups
+        return (std::min)(max_bucket_count(), (std::size_t{1} << (64U - shifts)) * slots_per_group);
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(std::size_t s) const -> std::uint8_t {
@@ -1892,12 +1565,7 @@ private:
             // first insert allocate. Copying an empty table therefore allocates nothing either.
             m_shifts = initial_shifts;
         } else {
-            if constexpr (!has_contiguous_buckets) {
-                allocate_buckets_from_shift(other.m_shifts);
-                for (auto i = 0UL; i < bucket_count(); ++i) {
-                    at(m_buckets, i) = at(other.m_buckets, i);
-                }
-            } else {
+            {
                 // One pass, not two. This used to grow the array with resize(), which value
                 // initialises every bucket it adds, and then memcpy over all of it -- so every byte
                 // of the bucket array was written twice, and for a large map the wasted half is a
@@ -1907,11 +1575,7 @@ private:
                 // allocator question is answered by the caller, and this is also reached from the
                 // move assignment's differing-allocator branch, where adopting other's would be
                 // exactly wrong.
-                if constexpr (is_group) {
-                    m_buckets.assign(other.m_buckets);
-                } else {
-                    m_buckets.assign(other.m_buckets.begin(), other.m_buckets.end());
-                }
+                m_buckets.assign(other.m_buckets);
                 m_shifts = other.m_shifts;
                 describe_buckets(other.bucket_count());
             }
@@ -1959,7 +1623,7 @@ private:
             m_buckets = std::move(other.m_buckets);
             other.m_buckets.clear();
             m_max_bucket_capacity = std::exchange(other.m_max_bucket_capacity, 0);
-            m_bucket_mask = std::exchange(other.m_bucket_mask, 0);
+            m_group_mask = std::exchange(other.m_group_mask, 0);
             m_shifts = std::exchange(other.m_shifts, initial_shifts);
             m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
             m_hash = std::exchange(other.m_hash, {});
@@ -1995,7 +1659,7 @@ private:
         m_values.clear();
         m_buckets.clear();
         m_max_bucket_capacity = 0;
-        m_bucket_mask = 0;
+        m_group_mask = 0;
         m_shifts = initial_shifts;
     }
 
@@ -2010,7 +1674,7 @@ private:
         m_buckets.clear();
         m_buckets.shrink_to_fit();
         m_max_bucket_capacity = 0;
-        m_bucket_mask = 0;
+        m_group_mask = 0;
     }
 
     // Takes the shift rather than reading m_shifts, so that nothing describing the bucket array is
@@ -2018,46 +1682,22 @@ private:
     // allocate, which left a gap for a failed allocation to stop in.
     void allocate_buckets_from_shift(std::uint8_t shifts) {
         auto num_buckets = calc_num_buckets(shifts);
-        if constexpr (!has_contiguous_buckets) {
-            if (num_buckets < m_buckets.size()) {
-                // Shrinking, which rehash does. This used to work because the caller emptied the
-                // array first and the loop below then grew it from nothing; without that it would
-                // keep the larger size. Shrinking rather than emptying is what keeps the array and
-                // the mask agreeing at every point: it hands memory back instead of asking for it,
-                // so unlike a clear-then-regrow it has no failure to stop in.
-                m_buckets.resize(num_buckets);
-            } else {
-                if constexpr (has_reserve<bucket_container_type>) {
-                    m_buckets.reserve(num_buckets);
-                }
-                // Growing in place leaves the old buckets where they are, so a failure part way
-                // through leaves an array that is merely larger than the mask below describes,
-                // which nothing reads.
-                for (std::size_t i = m_buckets.size(); i < num_buckets; ++i) {
-                    m_buckets.emplace_back();
-                }
-            }
-        } else {
+        {
             // Built beside the old array rather than over it, so that a failure here leaves the
             // table exactly as it was. Callers used to give the old array back first, which made
             // this the only allocation alive -- and made a failure leave them holding values with
             // no buckets to find them by, which is not a state anything can recover from without
             // allocating again.
             auto fresh = bucket_container_type(m_buckets.get_allocator());
-            fresh.resize(num_buckets / slots_per_bucket + bucket_padding);
-            if constexpr (bucket_padding != 0) {
-                for (std::size_t i = 0; i < bucket_padding; ++i) {
-                    fresh[num_buckets + i] = {sentinel_dist_and_fingerprint, sentinel_value_idx};
-                }
-            }
+            fresh.resize(num_buckets / slots_per_group);
             m_buckets = std::move(fresh);
         }
         // All three commit here, together, and only once the array they describe exists. They have
-        // to move as one: do_find indexes its first probe with hash >> m_shifts and does not mask,
+        // to move as one: a probe indexes its first group with hash >> m_shifts and does not mask,
         // so a shift that has run ahead of the array reads past the end of it, and a mask published
         // ahead of an allocation that then failed does the same. This is the one function every
-        // bucket-allocating path goes through, which is what makes a failed growth leave the old
-        // buckets intact and consistent rather than unusable.
+        // index-allocating path goes through, which is what makes a failed growth leave the old
+        // index intact and consistent rather than unusable.
         m_shifts = shifts;
         describe_buckets(num_buckets);
     }
@@ -2065,7 +1705,7 @@ private:
     // The two values derived from the bucket array's size. Only ever called once the array of that
     // size exists; see the note above.
     void describe_buckets(std::size_t num_buckets) {
-        m_bucket_mask = static_cast<value_idx_type>(num_buckets / slots_per_bucket - 1);
+        m_group_mask = static_cast<value_idx_type>(num_buckets / slots_per_group - 1);
         if (num_buckets == max_bucket_count()) {
             // reached the maximum, make sure we can use each bucket
             m_max_bucket_capacity = max_bucket_count();
@@ -2097,16 +1737,9 @@ private:
         if (m_buckets.empty()) {
             return;
         }
-        if constexpr (!has_contiguous_buckets) {
-            for (auto&& e : m_buckets) {
-                std::memset(&e, 0, sizeof(e));
-            }
-        } else {
-            // bucket_count() and not the array size: the sentinels behind it stay. A group index
-            // clears its groups, which empties every slot and zeroes every counter; the value
-            // indices beside them are never read for an empty slot.
-            std::memset(m_buckets.data(), 0, sizeof(Bucket) * (bucket_count() / slots_per_bucket));
-        }
+        // Clearing the groups empties every slot and zeroes every counter; the value indices
+        // beside them are never read for an empty slot.
+        std::memset(m_buckets.data(), 0, sizeof(Bucket) * (bucket_count() / slots_per_group));
     }
 
     void clear_and_fill_buckets_from_values() {
@@ -2119,12 +1752,7 @@ private:
         for (std::size_t value_idx = 0, end_idx = m_values.size(); value_idx < end_idx; ++value_idx) {
             auto const& key = get_key(m_values[value_idx]);
             // we know for certain that key has not yet been inserted, so no need to check it.
-            if constexpr (is_group) {
-                place_group(mixed_hash(key), static_cast<value_idx_type>(value_idx));
-            } else {
-                auto [dist_and_fingerprint, bucket] = next_while_less(key);
-                place_and_shift_up({dist_and_fingerprint, static_cast<value_idx_type>(value_idx)}, bucket);
-            }
+            place_group(mixed_hash(key), static_cast<value_idx_type>(value_idx));
         }
     }
 
@@ -2166,30 +1794,20 @@ private:
             // update the value index of the moved entry
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
             auto const mh = mixed_hash(get_key(val));
-            if constexpr (is_group) {
-                m_buckets.index()[slot_of_value(mh, values_idx_back)] = value_idx_to_remove;
-            } else {
-                at(m_buckets, bucket_idx_of_value(bucket_idx_from_hash(mh), values_idx_back)).m_value_idx =
-                    value_idx_to_remove;
-            }
+            m_buckets.index()[slot_of_value(mh, values_idx_back)] = value_idx_to_remove;
         }
         m_values.pop_back();
     }
 
-    // bucket_idx is the bucket, or for a group index the slot, that points at the value. mh is
-    // the value's mixed hash, which a group index needs to undo the counters on the way to it.
+    // slot is the one that points at the value; mh is the value's mixed hash, which the counters
+    // on the way to it are undone with.
     template <typename Op>
-    void do_erase(value_idx_type bucket_idx, value_idx_type value_idx_to_remove, std::uint64_t mh, Op handle_erased_value) {
+    void do_erase(value_idx_type slot, value_idx_type value_idx_to_remove, std::uint64_t mh, Op handle_erased_value) {
         // both values are needed after the shift down; start fetching them now to overlap the latencies
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values[value_idx_to_remove]);
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values.back());
 
-        if constexpr (is_group) {
-            erase_group_slot(bucket_idx, mh);
-        } else {
-            static_cast<void>(mh);
-            erase_and_shift_down(bucket_idx);
-        }
+        erase_group_slot(slot, mh);
         auto&& erased_value = std::move(m_values[value_idx_to_remove]);
 
         // erase() hands the value to a callback that cannot throw, so the branch below is not even instantiated for it.
@@ -2219,7 +1837,7 @@ private:
         if (!r.found) {
             return 0;
         }
-        do_erase(r.bucket_idx, r.value_idx, mh, handle_erased_value);
+        do_erase(r.slot, r.value_idx, mh, handle_erased_value);
         return 1;
     }
 
@@ -2232,29 +1850,10 @@ private:
         return it_isinserted;
     }
 
+    // Appends the value and points a slot at it. What it needs to know is the key's hash: the
+    // probe that found the key absent left nothing an insert could reuse.
     template <typename... Args>
-    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, Args&&... args)
-        -> std::pair<iterator, bool> {
-
-        // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
-        m_values.emplace_back(std::forward<Args>(args)...);
-
-        auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full()))
-            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-                increase_size();
-            }
-        else {
-            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
-        }
-
-        // place element and shift up until we find an empty spot
-        return {begin() + static_cast<difference_type>(value_idx), true};
-    }
-
-    // The group index's twin of do_place_element: what it needs to know is the hash.
-    template <typename... Args>
-    auto do_place_element_group(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
+    auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::forward<Args>(args)...);
 
@@ -2277,18 +1876,10 @@ private:
         if (r.found) {
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
-        if constexpr (is_group) {
-            return do_place_element_group(mh,
-                                          std::piecewise_construct,
-                                          std::forward_as_tuple(std::forward<K>(key)),
-                                          std::forward_as_tuple(std::forward<Args>(args)...));
-        } else {
-            return do_place_element(r.dist_and_fingerprint,
-                                    r.bucket_idx,
-                                    std::piecewise_construct,
-                                    std::forward_as_tuple(std::forward<K>(key)),
-                                    std::forward_as_tuple(std::forward<Args>(args)...));
-        }
+        return do_place_element(mh,
+                                std::piecewise_construct,
+                                std::forward_as_tuple(std::forward<K>(key)),
+                                std::forward_as_tuple(std::forward<Args>(args)...));
     }
 
     template <typename K>
@@ -2301,194 +1892,9 @@ private:
         return do_find_hashed(key, mixed_hash(key));
     }
 
-    // Where a window of four buckets decided nothing, the next window: four buckets on, or fewer
-    // where the padding was among them -- which is also where the index wraps to zero. Returns how
-    // many buckets were real.
-    auto next_window(value_idx_type& bucket_idx) const -> std::size_t {
-        auto lanes = (std::min)(std::size_t{4}, std::size_t{m_bucket_mask} + 1 - bucket_idx);
-        bucket_idx = static_cast<value_idx_type>((bucket_idx + lanes) & m_bucket_mask);
-        return lanes;
-    }
-
-#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-    // NOLINTBEGIN(portability-simd-intrinsics) -- this is the x86 path, on purpose
-    // One field of each of the four buckets at gp, in four lanes: field 0 is
-    // m_dist_and_fingerprint, field 1 is m_value_idx.
-    template <int Field>
-    [[nodiscard]] static auto gather(Bucket const* gp) -> __m128i {
-        auto lo = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp));     // NOLINT
-        auto hi = _mm_loadu_si128(reinterpret_cast<__m128i const*>(gp + 2)); // NOLINT
-        return _mm_castps_si128(
-            _mm_shuffle_ps(_mm_castsi128_ps(lo), _mm_castsi128_ps(hi), _MM_SHUFFLE(2 + Field, Field, 2 + Field, Field)));
-    }
-    // NOLINTEND(portability-simd-intrinsics)
-#    endif
-
-    // The bucket that points at a value, searched from the value's home bucket. Every value has
-    // one, so there is no other stopping condition.
-    [[nodiscard]] auto bucket_idx_of_value(value_idx_type bucket_idx, value_idx_type value_idx) const -> value_idx_type {
-#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-        // NOLINTBEGIN(portability-simd-intrinsics)
-        if constexpr (has_simd_scan) {
-            // Four at a time, matching the value index: only one bucket in the table holds it, so
-            // its lane is the answer. The sentinels hold the one index a value can have only in a
-            // table at max_size(), which is what the scalar walk below is left with.
-            if (ANKERL_UNORDERED_DENSE_LIKELY(value_idx != sentinel_value_idx)) {
-                auto const* data = m_buckets.data();
-                auto const wanted = _mm_set1_epi32(static_cast<int>(value_idx));
-                while (true) {
-                    auto eq = static_cast<unsigned>(
-                        _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(gather<1>(data + bucket_idx), wanted))));
-                    if (ANKERL_UNORDERED_DENSE_LIKELY(eq != 0)) {
-                        return static_cast<value_idx_type>(bucket_idx + detail::countr_zero(eq));
-                    }
-                    next_window(bucket_idx);
-                }
-            }
-        }
-        // NOLINTEND(portability-simd-intrinsics)
-#    endif
-        while (value_idx != at(m_buckets, bucket_idx).m_value_idx) {
-            bucket_idx = next(bucket_idx);
-        }
-        return bucket_idx;
-    }
-
-    // One bucket at a time, from any point of a probe sequence.
-    template <typename K>
-    auto probe_scalar(K const& key, dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx) const
-        -> probe_result {
-        while (true) {
-            auto const* bucket = &at(m_buckets, bucket_idx);
-            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
-                if (m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
-                    return {dist_and_fingerprint, bucket_idx, bucket->m_value_idx, true};
-                }
-            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
-                return {dist_and_fingerprint, bucket_idx, 0, false};
-            }
-            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-            bucket_idx = next(bucket_idx);
-        }
-    }
-
-#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-    // NOLINTBEGIN(portability-simd-intrinsics) -- this is the x86 path, on purpose
-    // Four consecutive buckets per step, starting at the home bucket. For each lane the
-    // dist_and_fingerprint this key would have there is compared: equal is a fingerprint match
-    // worth a key comparison, less is the robin hood proof that the key is absent -- and where it
-    // would go. The lowest lane that is either decides, which makes the outcome independent of
-    // *where* in the probe sequence it happened: one data dependent branch per probe instead of one
-    // per bucket. The last three buckets of the array have no four buckets after them, and hand
-    // over to the scalar probe.
-    template <typename K>
-    auto probe_simd(K const& key, std::uint64_t mh) const -> probe_result {
-        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(mh);
-        auto bucket_idx = bucket_idx_from_hash(mh);
-        auto const* data = m_buckets.data();
-
-        auto expected = _mm_add_epi32(_mm_set1_epi32(static_cast<int>(dist_and_fingerprint)),
-                                      _mm_setr_epi32(0,
-                                                     static_cast<int>(Bucket::dist_inc),
-                                                     static_cast<int>(2 * Bucket::dist_inc),
-                                                     static_cast<int>(3 * Bucket::dist_inc)));
-        auto const step = _mm_set1_epi32(static_cast<int>(4 * Bucket::dist_inc));
-
-        while (true) {
-            auto const* gp = data + bucket_idx;
-            auto d = gather<0>(gp);
-
-            // Two lane masks from the sign bits: bucket - expected is negative where the bucket
-            // holds less (both are far below 2^31, so the difference cannot wrap), and a compare
-            // for equality is all ones where they are equal. Their or has a sign bit set in every
-            // lane that is either.
-            auto eqv = _mm_cmpeq_epi32(d, expected);
-            auto lessv = _mm_sub_epi32(d, expected);
-            auto candidates = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(_mm_or_si128(eqv, lessv))));
-            auto less = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(lessv)));
-            if (ANKERL_UNORDERED_DENSE_LIKELY(candidates != 0)) {
-                auto j = detail::countr_zero(candidates);
-                auto idx = static_cast<value_idx_type>(bucket_idx + j);
-                if (0 != ((less >> j) & 1U)) {
-                    return {
-                        static_cast<dist_and_fingerprint_type>(dist_and_fingerprint + (j * Bucket::dist_inc)), idx, 0, false};
-                }
-                auto value_idx = gp[j].m_value_idx;
-                if (ANKERL_UNORDERED_DENSE_LIKELY(m_equal(key, get_key(m_values[value_idx])))) {
-                    return {dist_and_fingerprint, idx, value_idx, true};
-                }
-                // A fingerprint collision. Rare enough that the scalar probe can take it from the
-                // next bucket on, which also keeps the vector state from having to survive the
-                // key comparison above.
-                return probe_scalar(
-                    key,
-                    static_cast<dist_and_fingerprint_type>(dist_and_fingerprint + ((j + 1) * Bucket::dist_inc)),
-                    next(idx));
-            }
-            // nothing decided in these four
-            auto lanes = next_window(bucket_idx);
-            dist_and_fingerprint = static_cast<dist_and_fingerprint_type>(dist_and_fingerprint + (lanes * Bucket::dist_inc));
-            if (ANKERL_UNORDERED_DENSE_UNLIKELY(lanes != 4 || dist_and_fingerprint >=
-                                                                  sentinel_dist_and_fingerprint - (4 * Bucket::dist_inc))) {
-                // a wrap, or a distance the lane arithmetic could not hold: the scalar probe takes it
-                return probe_scalar(key, dist_and_fingerprint, bucket_idx);
-            }
-            expected = _mm_add_epi32(expected, step);
-        }
-    }
-    // NOLINTEND(portability-simd-intrinsics)
-#    endif
-
-    // The find of a configuration without the vector probe: one bucket at a time, the first two
-    // unrolled. *Always* checking a few directly before entering the loop measured faster.
-    template <typename K>
-    auto do_find_scalar(K const& key, dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx) -> iterator {
-        auto* bucket = &at(m_buckets, bucket_idx);
-
-        if (dist_and_fingerprint == bucket->m_dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
-            return begin() + static_cast<difference_type>(bucket->m_value_idx);
-        }
-        dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-        bucket_idx = next(bucket_idx);
-        bucket = &at(m_buckets, bucket_idx);
-
-        if (dist_and_fingerprint == bucket->m_dist_and_fingerprint && m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
-            return begin() + static_cast<difference_type>(bucket->m_value_idx);
-        }
-        dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-        bucket_idx = next(bucket_idx);
-        bucket = &at(m_buckets, bucket_idx);
-
-        while (true) {
-            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
-                if (m_equal(key, get_key(m_values[bucket->m_value_idx]))) {
-                    return begin() + static_cast<difference_type>(bucket->m_value_idx);
-                }
-            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
-                return end();
-            }
-            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-            bucket_idx = next(bucket_idx);
-            bucket = &at(m_buckets, bucket_idx);
-        }
-    }
-
     template <typename K>
     auto probe(K const& key, std::uint64_t mh) const -> probe_result {
-        // An else chain, so that the calls not taken are not merely never reached but not there at
-        // all: MSVC warns about code it can prove unreachable, and this build treats warnings as
-        // errors.
-        if constexpr (is_group) {
-            return probe_group(key, mh);
-        } else
-#    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-            if constexpr (has_simd_scan) {
-            return probe_simd(key, mh);
-        } else
-#    endif
-        {
-            return probe_scalar(key, dist_and_fingerprint_from_hash(mh), bucket_idx_from_hash(mh));
-        }
+        return probe_group(key, mh);
     }
 
     // Same lookup with the hashing already done. Requires the bucket array to be allocated, which
@@ -2496,12 +1902,8 @@ private:
     // empty table returns without hashing anything.
     template <typename K>
     auto do_find_hashed(K const& key, std::uint64_t mh) -> iterator {
-        if constexpr (is_group || has_simd_scan) {
-            auto r = probe(key, mh);
-            return r.found ? begin() + static_cast<difference_type>(r.value_idx) : end();
-        } else {
-            return do_find_scalar(key, dist_and_fingerprint_from_hash(mh), bucket_idx_from_hash(mh));
-        }
+        auto r = probe(key, mh);
+        return r.found ? begin() + static_cast<difference_type>(r.value_idx) : end();
     }
 
     template <typename K>
@@ -2643,7 +2045,7 @@ public:
         : m_values(std::move(other.m_values), alloc)
         , m_buckets(std::move(other.m_buckets), alloc)
         , m_max_bucket_capacity(std::exchange(other.m_max_bucket_capacity, 0))
-        , m_bucket_mask(std::exchange(other.m_bucket_mask, 0))
+        , m_group_mask(std::exchange(other.m_group_mask, 0))
         , m_max_load_factor(std::exchange(other.m_max_load_factor, default_max_load_factor))
         , m_hash(std::move(other.m_hash))
         , m_equal(std::move(other.m_equal))
@@ -2870,11 +2272,7 @@ public:
                 }
                 m_values.pop_back();
             } else {
-                if constexpr (is_group) {
-                    place_group(mh, static_cast<value_idx_type>(value_idx));
-                } else {
-                    place_and_shift_up({r.dist_and_fingerprint, static_cast<value_idx_type>(value_idx)}, r.bucket_idx);
-                }
+                place_group(mh, static_cast<value_idx_type>(value_idx));
                 ++value_idx;
             }
         }
@@ -2936,11 +2334,7 @@ public:
         }
 
         // value is new, insert element first, so when exception happens we are in a valid state
-        if constexpr (is_group) {
-            return do_place_element_group(mh, std::forward<K>(key));
-        } else {
-            return do_place_element(r.dist_and_fingerprint, r.bucket_idx, std::forward<K>(key));
-        }
+        return do_place_element(mh, std::forward<K>(key));
     }
 
     template <class... Args>
@@ -2965,12 +2359,7 @@ public:
                 increase_size();
             }
         else {
-            if constexpr (is_group) {
-                place_group(mh, value_idx);
-            } else {
-                // place element and shift up until we find an empty spot
-                place_and_shift_up({r.dist_and_fingerprint, value_idx}, r.bucket_idx);
-            }
+            place_group(mh, value_idx);
         }
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
@@ -3034,74 +2423,35 @@ public:
     auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool> {
         auto const new_key_hash = mixed_hash(new_key);
 
-        if constexpr (is_group) {
-            // first, check if new_key already exists and return if so
-            auto const r = probe(new_key, new_key_hash);
-            if (r.found) {
-                return {begin() + static_cast<difference_type>(r.value_idx), false};
-            }
-
-            // const_cast is needed because iterator for the set is always const, so adding another get_key overload
-            // is not feasible.
-            auto& target_key = const_cast<key_type&>(get_key(*it));
-            auto const old_key_hash = mixed_hash(target_key);
-
-            // Replace the key before doing any index changes. If it throws, no harm done, we are still in a valid
-            // state as we have not modified the index yet.
-            target_key = std::forward<K>(new_key);
-
-            auto const value_idx = static_cast<value_idx_type>(it - begin());
-            erase_group_slot(slot_of_value(old_key_hash, value_idx), old_key_hash);
-            place_group(new_key_hash, value_idx);
-            return {it, true};
-        } else {
-            // first, check if new_key already exists and return if so
-            auto dist_and_fingerprint = dist_and_fingerprint_from_hash(new_key_hash);
-            auto bucket_idx = bucket_idx_from_hash(new_key_hash);
-            while (dist_and_fingerprint <= at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
-                auto const& bucket = at(m_buckets, bucket_idx);
-                if (dist_and_fingerprint == bucket.m_dist_and_fingerprint &&
-                    m_equal(new_key, get_key(m_values[bucket.m_value_idx]))) {
-                    return {begin() + static_cast<difference_type>(bucket.m_value_idx), false};
-                }
-                dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-                bucket_idx = next(bucket_idx);
-            }
-
-            // const_cast is needed because iterator for the set is always const, so adding another get_key overload is not
-            // feasible.
-            auto& target_key = const_cast<key_type&>(get_key(*it));
-            auto const old_key_bucket_idx = bucket_idx_from_hash(mixed_hash(target_key));
-
-            // Replace the key before doing any bucket changes. If it throws, no harm done, we are still in a valid state as we
-            // have not modified any buckets yet.
-            target_key = std::forward<K>(new_key);
-
-            auto const value_idx = static_cast<value_idx_type>(it - begin());
-
-            erase_and_shift_down(bucket_idx_of_value(old_key_bucket_idx, value_idx));
-
-            // place the new bucket
-            dist_and_fingerprint = dist_and_fingerprint_from_hash(new_key_hash);
-            bucket_idx = bucket_idx_from_hash(new_key_hash);
-            while (dist_and_fingerprint < at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
-                dist_and_fingerprint = dist_inc(dist_and_fingerprint);
-                bucket_idx = next(bucket_idx);
-            }
-            place_and_shift_up({dist_and_fingerprint, value_idx}, bucket_idx);
-
-            return {it, true};
+        // first, check if new_key already exists and return if so
+        auto const r = probe(new_key, new_key_hash);
+        if (r.found) {
+            return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
+
+        // const_cast is needed because iterator for the set is always const, so adding another get_key overload is not
+        // feasible.
+        auto& target_key = const_cast<key_type&>(get_key(*it));
+        auto const old_key_hash = mixed_hash(target_key);
+
+        // Replace the key before doing any index changes. If it throws, no harm done, we are still in a valid state as
+        // we have not modified the index yet.
+        target_key = std::forward<K>(new_key);
+
+        auto const value_idx = static_cast<value_idx_type>(it - begin());
+        erase_group_slot(slot_of_value(old_key_hash, value_idx), old_key_hash);
+        place_group(new_key_hash, value_idx);
+        return {it, true};
     }
 
     auto erase(iterator it) -> iterator {
         auto const value_idx_to_remove = static_cast<value_idx_type>(it - cbegin());
         auto const mh = mixed_hash(get_key(*it));
-        auto const bucket_idx = locate_value(mh, value_idx_to_remove);
+        auto const slot = slot_of_value(mh, value_idx_to_remove);
 
         // The noexcept here and on the other two erase callbacks is what keeps erase() out of do_erase()'s exception
         // guard: a call expression is noexcept only if the callee says so, an empty body is not enough.
-        do_erase(bucket_idx, value_idx_to_remove, mh, [](value_type const& /*unused*/) noexcept -> void {
+        do_erase(slot, value_idx_to_remove, mh, [](value_type const& /*unused*/) noexcept -> void {
         });
         return begin() + static_cast<difference_type>(value_idx_to_remove);
     }
@@ -3109,10 +2459,10 @@ public:
     auto extract(iterator it) -> value_type {
         auto const value_idx_to_remove = static_cast<value_idx_type>(it - cbegin());
         auto const mh = mixed_hash(get_key(*it));
-        auto const bucket_idx = locate_value(mh, value_idx_to_remove);
+        auto const slot = slot_of_value(mh, value_idx_to_remove);
 
         auto tmp = std::optional<value_type>{};
-        do_erase(bucket_idx, value_idx_to_remove, mh, [&tmp](value_type&& val) -> void {
+        do_erase(slot, value_idx_to_remove, mh, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return std::move(tmp).value();
@@ -3191,14 +2541,14 @@ public:
         // question the same way; see its definition for what the generic std::swap did instead.
         //
         // Calling it as a member rather than unqualified is not what fixes that -- the free swap
-        // beside it is found by ADL just the same. It is so that a BucketContainer supplied from
+        // beside it is found by ADL just the same. It is so that a value container supplied from
         // some other namespace cannot quietly fall back to the three-move std::swap: every
         // container is required to have the member, none is required to have the free function.
         m_values.swap(other.m_values);
         m_buckets.swap(other.m_buckets);
         using std::swap;
         swap(m_max_bucket_capacity, other.m_max_bucket_capacity);
-        swap(m_bucket_mask, other.m_bucket_mask);
+        swap(m_group_mask, other.m_group_mask);
         swap(m_max_load_factor, other.m_max_load_factor);
         swap(m_hash, other.m_hash);
         swap(m_equal, other.m_equal);
@@ -3436,9 +2786,8 @@ public:
     // bucket interface ///////////////////////////////////////////////////////
 
     auto bucket_count() const noexcept -> std::size_t { // NOLINT(modernize-use-nodiscard)
-        // from the mask rather than the array, which is bucket_padding longer than it counts; in
-        // slots, of which a group has sixteen
-        return m_buckets.empty() ? 0 : (std::size_t{m_bucket_mask} + 1) * slots_per_bucket;
+        // from the mask rather than the array, and in slots, of which a group has sixteen
+        return m_buckets.empty() ? 0 : (std::size_t{m_group_mask} + 1) * slots_per_group;
     }
 
     static constexpr auto max_bucket_count() noexcept -> std::size_t { // NOLINT(modernize-use-nodiscard)
@@ -3458,8 +2807,8 @@ public:
     void max_load_factor(float ml) {
         // A load factor above 1 is meaningful for a container that chains, and std::unordered_map takes one. Open
         // addressing cannot use it: m_max_bucket_capacity would exceed bucket_count(), is_full() would never fire, the
-        // table would fill completely, and place_and_shift_up() would then probe forever for an empty bucket that does
-        // not exist. Exactly 1 is fine, because is_full() is checked after the value is appended.
+        // table would fill completely, and place_group() would then probe forever for an empty slot that does not
+        // exist. Exactly 1 is fine, because is_full() is checked after the value is appended.
         m_max_load_factor = (std::min)(ml, 1.0F);
         if (bucket_count() != max_bucket_count()) {
             m_max_bucket_capacity = static_cast<value_idx_type>(static_cast<float>(bucket_count()) * max_load_factor());
@@ -3548,86 +2897,49 @@ template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-          class Bucket = bucket_type::standard,
-          class BucketContainer = detail::default_container_t>
-using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
+          class Bucket = bucket_type::group>
+using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
 
 template <class Key,
           class T,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-          class Bucket = bucket_type::standard,
-          class BucketContainer = detail::default_container_t>
-using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, true>;
+          class Bucket = bucket_type::group>
+using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
 
 template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::allocator<Key>,
-          class Bucket = bucket_type::standard,
-          class BucketContainer = detail::default_container_t>
-using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
+          class Bucket = bucket_type::group>
+using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
 
 template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::allocator<Key>,
-          class Bucket = bucket_type::standard,
-          class BucketContainer = detail::default_container_t>
-using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, true>;
+          class Bucket = bucket_type::group>
+using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
 
 #    if defined(ANKERL_UNORDERED_DENSE_PMR)
 
 namespace pmr {
 
-template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class Bucket = bucket_type::standard>
-using map = detail::table<Key,
-                          T,
-                          Hash,
-                          KeyEqual,
-                          ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>,
-                          Bucket,
-                          detail::default_container_t,
-                          false>;
+template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using map =
+    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, false>;
 
-template <class Key,
-          class T,
-          class Hash = hash<Key>,
-          class KeyEqual = std::equal_to<Key>,
-          class Bucket = bucket_type::standard>
-using segmented_map = detail::table<Key,
-                                    T,
-                                    Hash,
-                                    KeyEqual,
-                                    ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>,
-                                    Bucket,
-                                    detail::default_container_t,
-                                    true>;
+template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using segmented_map =
+    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, true>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
-using set = detail::table<Key,
-                          void,
-                          Hash,
-                          KeyEqual,
-                          ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>,
-                          Bucket,
-                          detail::default_container_t,
-                          false>;
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, false>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::standard>
-using segmented_set = detail::table<Key,
-                                    void,
-                                    Hash,
-                                    KeyEqual,
-                                    ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>,
-                                    Bucket,
-                                    detail::default_container_t,
-                                    true>;
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using segmented_set =
+    detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, true>;
 
 } // namespace pmr
 
@@ -3652,15 +2964,11 @@ template <class Key,
           class AllocatorOrContainer,
           class Bucket,
           class Pred,
-          class BucketContainer,
           bool IsSegmented>
 // NOLINTNEXTLINE(cert-dcl58-cpp)
-auto erase_if(
-    ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, IsSegmented>&
-        map,
-    Pred pred) -> std::size_t {
-    using map_t = ankerl::unordered_dense::detail::
-        table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, IsSegmented>;
+auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented>& map,
+              Pred pred) -> std::size_t {
+    using map_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented>;
 
     // going back to front because erase() invalidates the end iterator
     auto const old_size = map.size();

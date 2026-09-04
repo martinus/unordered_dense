@@ -199,7 +199,7 @@ TEST_CASE("bench_quick_overall_deque" * doctest::test_suite("bench") * doctest::
 }
 
 TEST_CASE("bench_quick_overall_udm_bigbucket" * doctest::test_suite("bench") * doctest::skip()) {
-    using bucket_t = ankerl::unordered_dense::bucket_type::big;
+    using bucket_t = ankerl::unordered_dense::bucket_type::group_big;
 
     ankerl::nanobench::Bench bench;
     // bench.minEpochTime(1s);

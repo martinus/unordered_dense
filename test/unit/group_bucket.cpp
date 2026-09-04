@@ -9,9 +9,9 @@
 #include <unordered_map>
 #include <vector>
 
-// The group index, bucket_type::group: sixteen fingerprints and eight overflow counters per
-// group, value indices beside them. Every TEST_CASE_MAP in the suite runs on it too, through
-// group_map in app/doctest.h; what is here is what only makes sense for this index.
+// The index: sixteen fingerprints and eight overflow counters per group, value indices beside
+// them. The whole suite runs on it, since it is the only index there is; what is here is what
+// only makes sense to ask of it directly.
 
 using group_map_t = ankerl::unordered_dense::map<std::string,
                                                  size_t,
@@ -199,7 +199,6 @@ TEST_CASE("group_index_churn_at_full_load") {
 }
 
 TEST_CASE_MAP("group_map_basics", counter::obj, counter::obj) {
-    // one map_t of the four is the group index; the rest of the suite covers the others as well
     counter counts;
     INFO(counts);
     auto map = map_t();
