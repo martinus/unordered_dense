@@ -58,13 +58,71 @@ class deque_set : public ankerl::unordered_dense::detail::
     using base_t::base_t;
 };
 
+// The map and set with the group index, so that every TEST_CASE_MAP runs on it too. Classes of
+// their own rather than aliases, the way deque_map is, so that they are distinct types even when a
+// test names its own bucket type or bucket container: the group index then gives way to what the
+// test asked for, and this is one more instantiation of that, which costs compile time and nothing
+// else -- where an alias would collapse onto the plain map and doctest refuses a type twice.
+template <class Bucket, class BucketContainer>
+using group_bucket_for =
+    std::conditional_t<std::is_same_v<Bucket, ankerl::unordered_dense::bucket_type::standard> &&
+                           std::is_same_v<BucketContainer, ankerl::unordered_dense::detail::default_container_t>,
+                       ankerl::unordered_dense::bucket_type::group,
+                       Bucket>;
+
+template <class Key,
+          class T,
+          class Hash = ankerl::unordered_dense::hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
+          class Bucket = ankerl::unordered_dense::bucket_type::standard,
+          class BucketContainer = ankerl::unordered_dense::detail::default_container_t>
+class group_map : public ankerl::unordered_dense::detail::table<Key,
+                                                                T,
+                                                                Hash,
+                                                                KeyEqual,
+                                                                AllocatorOrContainer,
+                                                                group_bucket_for<Bucket, BucketContainer>,
+                                                                BucketContainer,
+                                                                false> {
+    using base_t = ankerl::unordered_dense::detail::
+        table<Key, T, Hash, KeyEqual, AllocatorOrContainer, group_bucket_for<Bucket, BucketContainer>, BucketContainer, false>;
+    using base_t::base_t;
+};
+
+template <class Key,
+          class Hash = ankerl::unordered_dense::hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<Key>,
+          class Bucket = ankerl::unordered_dense::bucket_type::standard,
+          class BucketContainer = ankerl::unordered_dense::detail::default_container_t>
+class group_set : public ankerl::unordered_dense::detail::table<Key,
+                                                                void,
+                                                                Hash,
+                                                                KeyEqual,
+                                                                AllocatorOrContainer,
+                                                                group_bucket_for<Bucket, BucketContainer>,
+                                                                BucketContainer,
+                                                                false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key,
+                                                          void,
+                                                          Hash,
+                                                          KeyEqual,
+                                                          AllocatorOrContainer,
+                                                          group_bucket_for<Bucket, BucketContainer>,
+                                                          BucketContainer,
+                                                          false>;
+    using base_t::base_t;
+};
+
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage,misc-use-anonymous-namespace)
 #define TEST_CASE_MAP(name, ...)                                            \
     TEST_CASE_TEMPLATE(name,                                                \
                        map_t,                                               \
                        ankerl::unordered_dense::map<__VA_ARGS__>,           \
                        ankerl::unordered_dense::segmented_map<__VA_ARGS__>, \
-                       deque_map<__VA_ARGS__>)
+                       deque_map<__VA_ARGS__>,                              \
+                       group_map<__VA_ARGS__>)
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define TEST_CASE_SET(name, ...)                                            \
@@ -72,17 +130,20 @@ class deque_set : public ankerl::unordered_dense::detail::
                        set_t,                                               \
                        ankerl::unordered_dense::set<__VA_ARGS__>,           \
                        ankerl::unordered_dense::segmented_set<__VA_ARGS__>, \
-                       deque_set<__VA_ARGS__>)
+                       deque_set<__VA_ARGS__>,                              \
+                       group_set<__VA_ARGS__>)
 
 #define TYPE_TO_STRING_MAP(...)                                          /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::map<__VA_ARGS__>);           /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::segmented_map<__VA_ARGS__>); /*NOLINT*/ \
-    TYPE_TO_STRING(deque_map<__VA_ARGS__>)                               /*NOLINT*/
+    TYPE_TO_STRING(deque_map<__VA_ARGS__>);                              /*NOLINT*/ \
+    TYPE_TO_STRING(group_map<__VA_ARGS__>)                               /*NOLINT*/
 
 #define TYPE_TO_STRING_SET(...)                                          /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::set<__VA_ARGS__>);           /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::segmented_set<__VA_ARGS__>); /*NOLINT*/ \
-    TYPE_TO_STRING(deque_set<__VA_ARGS__>)                               /*NOLINT*/
+    TYPE_TO_STRING(deque_set<__VA_ARGS__>);                              /*NOLINT*/ \
+    TYPE_TO_STRING(group_set<__VA_ARGS__>)                               /*NOLINT*/
 
 #if defined(ANKERL_UNORDERED_DENSE_PMR)
 

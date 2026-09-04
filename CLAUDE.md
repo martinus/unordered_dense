@@ -140,6 +140,23 @@ where a random sequence costs the scalar probe 1.35. That under-reported the cos
 probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The workload now
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
+**The group index, `bucket_type::group`.** Added 2026-09-05 after a prototype in
+`martinus/ai#3`. It replaces only the index: 16 one-byte fingerprints per group compared with one
+SSE2 instruction, value indices in a second array, quadratic probing over groups, and eight
+overflow counters per group that an insert increments in every full group it passes and an erase
+decrements again (indivi flat_umap's idea, where boost's overflow bits can only be set). Nothing
+moves after it is placed. Paired against the robin hood index on the score: 1.10x on the geomean,
+churn 1.45x, misses 1.5x, hits 1.33x, insert-erase 1.2x, string workloads within 5%, iteration and
+big-value build unchanged; 5.5 bytes per slot instead of 8. Boost's flat map is still 1.27x ahead
+on integer hits and 1.4x on integer build. `scripts/ab/run.sh -g` benchmarks it as the candidate
+against any revision's default index. Layouts measured and rejected before this one, all in the
+issue: indices interleaved into the group (hits +9%, build -22%), 12 slots in one cache line (no
+better at matched load, and its capacities of 12*2^k made every comparison at matched entry count
+a comparison of loads), 4 bit counters, 16 bit fingerprints, groups of 8 or 32, fastrange group
+selection, max load 0.875 (its own cliff: misses +53% at 0.87). The one gain on top of the split
+layout is the prefetch of the group's index line, whose address needs only the group: 3 cycles
+off every hit.
+
 ## Optimization dead ends (verified with paired A/B runs; re-test before assuming they still hold)
 
 The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that consistently
