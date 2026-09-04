@@ -2,6 +2,19 @@
 
 Guidance for working on `unordered_dense` — a single-header C++17 dense open-addressing hash map/set (`ankerl::unordered_dense::{map, set}`).
 
+**The index is groups of sixteen, not robin hood.** Since 2026-09-05 the only index is
+`bucket_type::group`: sixteen one-byte fingerprints per group compared with one SSE2 instruction
+(eight per word with SWAR where there is no SSE2), the value indices in a second array, quadratic
+probing over groups, and eight overflow counters per group that an insert increments in every full
+group it passes and an erase decrements again. Nothing moves after it is placed, so a churned table
+is as good as a fresh one and there are no tombstones. `bucket_type::group_big` is the same with 64
+bit value indices. The robin hood index it replaced — the packed distance-and-fingerprint field,
+the four-bucket SSE2 probe, the vector shifts on insert and erase, the sentinel padding — is gone
+from the header; everything below that describes it is history, kept because the measurements and
+the reasoning behind them are still worth having. Paired against it on the score the group index
+was 1.10x, with churn at a fixed size 1.45x, misses 1.5x, hits 1.33x, insert-erase 1.2x, and 5.5
+bytes per slot instead of 8. The layouts measured and rejected on the way are in `martinus/ai#3`.
+
 The entire implementation lives in `include/ankerl/unordered_dense.h`. Tests and benchmarks are in `test/` and build into a single doctest executable `udm-test`.
 
 ## Build (meson)
@@ -48,11 +61,14 @@ Benchmarking practices:
 
 ## Where the time goes
 
-The u64 workloads are bound by branch mispredictions, the string workloads by the latency of a
-~167 instruction lookup of which the hash is ~59, and a model of 16 cycles per misprediction plus
-instructions at ~3.5 per cycle predicts changes within a cycle or two. The measurements behind
-that, and the per-workload numbers, are in `scripts/ab/README.md` with the paired A/B harness that
-produced them.
+The measurements in `scripts/ab/README.md`, with the paired A/B harness that produced them, were
+taken on the robin hood index: the u64 workloads bound by branch mispredictions, the string
+workloads by the latency of a ~167 instruction lookup of which the hash is ~59, and a model of 16
+cycles per misprediction plus instructions at ~3.5 per cycle predicting changes within a cycle or
+two. The group index that replaced it mispredicts far less -- one branch per group rather than one
+per bucket -- so treat those numbers as being about the workloads, which have not changed, rather
+than about the current lookup. Everything below in this section is about the workloads and still
+holds.
 
 **String keys must not all be the same length.** Until 2026-09-02 every string key of
 `bench_quick_overall_udm` was exactly 200 bytes. A hash dispatches on length, and one length makes
@@ -140,22 +156,13 @@ where a random sequence costs the scalar probe 1.35. That under-reported the cos
 probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The workload now
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
-**The group index, `bucket_type::group`.** Added 2026-09-05 after a prototype in
-`martinus/ai#3`. It replaces only the index: 16 one-byte fingerprints per group compared with one
-SSE2 instruction, value indices in a second array, quadratic probing over groups, and eight
-overflow counters per group that an insert increments in every full group it passes and an erase
-decrements again (indivi flat_umap's idea, where boost's overflow bits can only be set). Nothing
-moves after it is placed. Paired against the robin hood index on the score: 1.10x on the geomean,
-churn 1.45x, misses 1.5x, hits 1.33x, insert-erase 1.2x, string workloads within 5%, iteration and
-big-value build unchanged; 5.5 bytes per slot instead of 8. Boost's flat map is still 1.27x ahead
-on integer hits and 1.4x on integer build. `scripts/ab/run.sh -g` benchmarks it as the candidate
-against any revision's default index. Layouts measured and rejected before this one, all in the
-issue: indices interleaved into the group (hits +9%, build -22%), 12 slots in one cache line (no
-better at matched load, and its capacities of 12*2^k made every comparison at matched entry count
-a comparison of loads), 4 bit counters, 16 bit fingerprints, groups of 8 or 32, fastrange group
-selection, max load 0.875 (its own cliff: misses +53% at 0.87). The one gain on top of the split
-layout is the prefetch of the group's index line, whose address needs only the group: 3 cycles
-off every hit.
+## The robin hood index this replaced, and its dead ends
+
+Everything below describes the index that was removed on 2026-09-05: a packed
+distance-and-fingerprint field per bucket, a four-bucket SSE2 probe, and vector shifts on insert
+and erase. None of it can be re-run against the current header. It is kept because the measurements
+are real, the reasoning applies to anything that probes a flat array, and the same questions will
+be asked of the group index.
 
 ## Optimization dead ends (verified with paired A/B runs; re-test before assuming they still hold)
 
