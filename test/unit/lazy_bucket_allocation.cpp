@@ -48,16 +48,20 @@ auto tracked(test::alloc_counts& counts) -> Container {
 }
 
 // What a table costs before it has allocated anything of its own. Not zero everywhere: a table is
-// two containers, the values and the buckets, and MSVC's debug iterator support allocates a
-// _Container_proxy through the allocator for each one as it is constructed. So the floor is
-// measured rather than assumed -- two empty vectors' worth, whatever that is here.
+// three containers -- the values, the groups of the index, and the value index beside them -- and
+// MSVC's debug iterator support allocates a _Container_proxy through the allocator for each one as
+// it is constructed. So the floor is measured rather than assumed: three empty vectors' worth,
+// whatever that is here. It was two while the index was a single array of buckets, which is the
+// kind of thing only a Windows leg notices.
 auto empty_table_cost() -> int {
     auto counts = test::alloc_counts{};
     {
         auto values = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
-        auto buckets = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
+        auto groups = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
+        auto index = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
         static_cast<void>(values);
-        static_cast<void>(buckets);
+        static_cast<void>(groups);
+        static_cast<void>(index);
     }
     return counts.allocations;
 }
@@ -234,7 +238,7 @@ TEST_CASE("a_moved_from_table_keeps_no_buckets") {
 
         auto target = std::move(source);
 
-        // Nothing beyond bringing the target's own two containers into existence.
+        // Nothing beyond bringing the target's own three containers into existence.
         REQUIRE(counts.allocations == before + empty_table_cost());
         REQUIRE(target.find(1)->second == 2);
         REQUIRE(source.bucket_count() == 0); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
