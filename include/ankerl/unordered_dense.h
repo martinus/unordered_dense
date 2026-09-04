@@ -1352,9 +1352,13 @@ private:
     // that an insert increments in every full group it passes and an erase decrements again. A
     // probe stops at the first group whose counter for this hash is zero, since no entry with
     // those bits ever went past it. Nothing moves after it is placed, so a table that has churned
-    // is as good as a fresh one, and there are no tombstones to rehash away. A saturated counter
-    // is never decremented and merely sends a probe one group further for the rest of the array's
-    // life.
+    // is as good as a fresh one, and there are no tombstones to rehash away.
+    //
+    // That a miss terminates is the counters being exact: each one counts live entries that landed
+    // further along this sequence, so the group after the furthest of them has nothing counted in
+    // it. A counter saturates at 255 and is then never decremented, which costs every later probe
+    // for that fingerprint class one more group for the rest of the array's life -- and needs 255
+    // live entries of one class to have overflowed one group at the same moment to happen at all.
     //
     // The group is hash >> m_shifts, the fingerprint the low byte of the hash with 0 mapped to
     // 8 so that 0 means empty and (fingerprint & 7), which picks the counter, is unchanged.
