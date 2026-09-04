@@ -39,6 +39,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::standard`](#351-ankerlunordered_densebucket_typestandard)
     - [3.5.2. `ankerl::unordered_dense::bucket_type::big`](#352-ankerlunordered_densebucket_typebig)
+  - [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
 - [5. Design](#5-design)
   - [5.1. Inserts](#51-inserts)
@@ -127,6 +128,9 @@ clang++ -std=c++20 -fprebuilt-module-path=. ankerl.unordered_dense.o module_test
 ```
 
 A simple demo script can be found in `test/modules`.
+
+The module is built with the scalar probe, see [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe). If you
+wrap the header in a module of your own and build it with gcc, you need to do the same.
 
 ### 3.2. Hash
 
@@ -404,6 +408,20 @@ The map/set supports two different bucket types. The default should be good for 
 * Up to 2^63 = 9,223,372,036,854,775,808 elements.
 * 12 bytes overhead per bucket.
 
+### 3.6. Disabling the SSE2 Probe
+
+On x86-64 the map probes, places and erases four buckets at a time with SSE2 intrinsics. That needs no compiler
+flag, because SSE2 is part of the x86-64 baseline. Defining `ANKERL_UNORDERED_DENSE_HAS_SSE2` to 0 before the
+header is included switches to the scalar code that every other platform uses, e.g. with cmake:
+
+```cmake
+target_compile_definitions(your_target PRIVATE ANKERL_UNORDERED_DENSE_HAS_SSE2=0)
+```
+
+You want that when the header is compiled through a gcc C++20 module interface: gcc loses the alignment attribute
+of the unaligned vector types across a module boundary ([gcc bug 127193](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127193)),
+so the unaligned stores of the vector shifts become aligned ones and crash. The module in `src/` sets it already.
+
 ## 4. `segmented_map` and `segmented_set`
 
 `ankerl::unordered_dense` provides a custom container implementation that has lower memory requirements than the default `std::vector`. Memory is not contiguous, but it can allocate segments without having to reallocate and move all the elements. In summary, this leads to
@@ -448,6 +466,8 @@ deletion.
 ### 5.2. Lookups
 
 The key is hashed and the bucket array is searched to see if it has an entry at that location with that fingerprint. When found, the key in the data vector is compared, and when equal, the value is returned.
+
+On x86-64 the search reads four buckets at once with SSE2 and decides hit, miss or "look further" from one lane mask; see [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe) for the switch that turns it off.
 
 ### 5.3. Removals
 
