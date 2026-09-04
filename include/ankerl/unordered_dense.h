@@ -618,15 +618,15 @@ ANKERL_UNORDERED_DENSE_PACK(struct big {
 // robin hood table. See "5.4. The group index" in the README.
 struct group {
     using value_idx_type = std::uint32_t;
-    std::uint8_t m_fingerprints[16]; // one per slot; 0 is an empty slot
-    std::uint8_t m_overflows[8];     // how many entries with (fingerprint & 7) == i probed past this group
+    std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
+    std::array<std::uint8_t, 8> m_overflows;     // how many entries with (fingerprint & 7) == i probed past this group
 };
 
 // The same index with 64 bit value indices, for more than 2^32 elements: 24 + 128 bytes per sixteen slots.
 struct group_big {
     using value_idx_type = std::size_t;
-    std::uint8_t m_fingerprints[16]; // one per slot; 0 is an empty slot
-    std::uint8_t m_overflows[8];     // how many entries with (fingerprint & 7) == i probed past this group
+    std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
+    std::array<std::uint8_t, 8> m_overflows;     // how many entries with (fingerprint & 7) == i probed past this group
 };
 
 } // namespace bucket_type
@@ -1251,6 +1251,7 @@ public:
     explicit group_storage(allocator_type const& alloc)
         : m_groups(alloc)
         , m_index(index_allocator_type(alloc)) {}
+    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
     group_storage(group_storage&& other, allocator_type const& alloc)
         : m_groups(std::move(other.m_groups), alloc)
         , m_index(std::move(other.m_index), index_allocator_type(alloc)) {}
@@ -1544,7 +1545,7 @@ private:
     [[nodiscard]] static auto match_fingerprint(Bucket const& group, std::uint32_t word) -> unsigned {
 #    if ANKERL_UNORDERED_DENSE_HAS_SSE2
         // NOLINTBEGIN(portability-simd-intrinsics)
-        auto const fingerprints = _mm_loadu_si128(reinterpret_cast<__m128i const*>(group.m_fingerprints)); // NOLINT
+        auto const fingerprints = _mm_loadu_si128(reinterpret_cast<__m128i const*>(group.m_fingerprints.data())); // NOLINT
         return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(fingerprints, _mm_set1_epi32(static_cast<int>(word)))));
         // NOLINTEND(portability-simd-intrinsics)
 #    else
