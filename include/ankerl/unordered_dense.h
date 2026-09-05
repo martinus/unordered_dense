@@ -1478,7 +1478,7 @@ private:
 
     // Forced inline because gcc does not do it on its own in a large translation unit, and the
     // whole design assumes it is: the prefetch, the hoisted pointers and the early exit only pay
-    // inside the caller. Found in the paired harness, where gcc left probe<uint64_t> out of line
+    // inside the caller. Found in the paired harness, where gcc left the integer probe out of line
     // and every lookup paid a call -- with SWAR, whose match is bigger, random integer misses
     // measured 0.66 of the robin hood index, and forcing it took them to 1.23; with SSE2 the same
     // change was churn 1.32, string hits 1.22 and the integer build 1.42 against the commit before.
