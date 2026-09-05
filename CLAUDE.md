@@ -214,6 +214,17 @@ vector's own reallocations are 3% of an integer build and 11% of a 64 byte value
   1.024. Costs everywhere the vector grows: `build64` 0.953, `buildbig` 0.960, `iebig` 0.977,
   `churnbig` 0.984; integer churn is a tie. Net loss on the score, and 19% more memory for an
   8 byte value. The 2025 note above about storing the hash instead measured the same shape.
+- **The same back-pointer plus indivi's 4 bit distance nibbles**, so that `erase(iterator)` needs
+  no hash at all: the slot comes from the back-pointer, the counter from the slot's own
+  fingerprint, and home from reversing the quadratic walk by the stored distance. On the one
+  pattern it exists for, find then `erase(it)` then insert on a reserved table: **1.10x faster
+  with string keys** (1006 to 888 instructions per round, one wyhash and two probes gone) and
+  **1.10x slower with integer keys** (352 to 363, the saved hash is 8 instructions and the
+  back-pointer maintained on every insert costs more). On the score, where every erase is by key,
+  it can only cost, and does: geomean 0.959, `build64` 0.831, `buildbig` 0.893, `churn64` 0.900,
+  with `iestr` 1.052 the one workload ahead. Memory 31 to 38 MB per million 8 byte values. Not
+  worth an opt-in either: the win needs an expensive key *and* erase by iterator, and a caller with
+  both has `erase(key)` with the hash already paid by their own `find`.
 - **Growing the values with `realloc`** instead of allocate-move-free, for trivially copyable
   values. In isolation it removes a third of the vector's growth cost (0.242 to 0.164 ms for 16
   byte pairs, 0.713 to 0.476 for 72 byte ones, doubling to 200000), which is about 1% of an integer
