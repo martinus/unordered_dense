@@ -79,7 +79,7 @@
 # count for one fingerprint class, the miss has nothing to stop at. Measured on the sibling bug in
 # bugs/erase-path.txt, the suite hangs rather than fails.
 <<<
-        auto group_idx = bucket_idx_from_hash(mh);
+        auto group_idx = group_idx_from_hash(mh);
         if (group_idx != found_in) {
 ===
         auto group_idx = found_in;
@@ -91,7 +91,7 @@
 # is slot / 16. Swapping them clears some other slot's fingerprint, which loses that key and leaves
 # the erased one findable.
 <<<
-        groups[found_in].m_fingerprints[slot % 16] = 0;
+        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
 ===
         groups[found_in].m_fingerprints[slot / 16] = 0;
 >>>
@@ -169,7 +169,7 @@
 # growth allocates the bigger array but never refills it from the values
 # Every bucket is then zero, so the table reports the right size and finds nothing at all.
 <<<
-        clear_and_fill_buckets_from_values();
+        fill_buckets_from_values();
     }
 
     // Closes the hole that the erased value left in m_values
@@ -220,14 +220,14 @@
         auto shifts = calc_shifts_for_size((std::max)(capa, size()));
         if (0 == bucket_count() || shifts < m_shifts) {
             allocate_buckets_from_shift(shifts);
-            clear_and_fill_buckets_from_values();
+            fill_buckets_from_values();
         }
     }
 ===
         auto shifts = calc_shifts_for_size((std::max)(capa, size()));
         if (0 == bucket_count()) {
             allocate_buckets_from_shift(shifts);
-            clear_and_fill_buckets_from_values();
+            fill_buckets_from_values();
         }
     }
 >>>
@@ -238,7 +238,7 @@
         if (shifts != m_shifts) {
             allocate_buckets_from_shift(shifts);
             m_values.shrink_to_fit();
-            clear_and_fill_buckets_from_values();
+            fill_buckets_from_values();
         }
 ===
         if (shifts != m_shifts) {
@@ -251,9 +251,9 @@
 # Masking with the count instead of count-1 lets a probe address one group past the end, and stops
 # masking off the top bit that a hash puts there: the wrap is wrong and the read is out of bounds.
 <<<
-        m_group_mask = static_cast<value_idx_type>(num_buckets / slots_per_group - 1);
+        m_group_mask = static_cast<value_idx_type>(num_groups - 1);
 ===
-        m_group_mask = static_cast<value_idx_type>(num_buckets / slots_per_group);
+        m_group_mask = static_cast<value_idx_type>(num_groups);
 >>>
 
 # ---------------------------------------------------------------- the dense value array
@@ -290,15 +290,6 @@
 ===
         m_values.clear();
         return values;
->>>
-
-# the erased hole is closed by moving the last value in, without repointing its slot
-# The moved element keeps its old index in the slot that points at it, which is now the hole. Every
-# later lookup of that key reads whatever ends up there.
-<<<
-            m_buckets.index()[slot_of_value(mh, values_idx_back)] = value_idx_to_remove;
-===
-            m_buckets.index()[slot_of_value(mh, values_idx_back)] = values_idx_back;
 >>>
 
 # the last value is popped before the moved element's slot is repointed
@@ -430,7 +421,7 @@
 # The returned iterator is meant to be the position the erased element occupied, which after the
 # swap-with-last holds a different element -- that is what makes an erase-while-iterating loop work.
 <<<
-        return begin() + static_cast<difference_type>(value_idx_to_remove);
+        return begin() + static_cast<difference_type>(e.value_idx);
     }
 
     auto extract(iterator it) -> value_type {
@@ -493,7 +484,7 @@
 
 # a hash that never said it avalanches is used as-is
 # wyhash is what turns std::hash<int>'s identity function into something with entropy in the high
-# bits -- which is where bucket_idx_from_hash takes the index from. Without it every small integer
+# bits -- which is where group_idx_from_hash takes the index from. Without it every small integer
 # key lands in the same handful of buckets.
 <<<
             // not is_avalanching => apply wyhash

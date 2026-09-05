@@ -6,27 +6,21 @@
 #include <cstdint> // for uint64_t
 #include <vector>  // for vector
 
-// Insert and erase at a fixed size, for a long time, with the bucket array never rebuilt.
+// Insert and erase at a fixed size, for a long time, with the index never rebuilt.
 //
-// Every other churn test grows its map, and growth rebuilds every bucket from the values, so a
-// bucket the shift loops leave behind -- pointing at a value that has moved, or neither empty nor
-// at a valid distance -- does not live long there. Here nothing rebuilds it. Such a bucket is
-// invisible to a find, which compares the key it reaches, and to iteration, which walks the
-// values; it shows when an erase searching for the bucket of the value it is moving reaches a
-// stale one first and repoints that, leaving a live value no bucket finds, or when no bucket is
-// empty and an insert cannot end.
+// Every other churn test grows its map, and growth rebuilds the index from the values, so a
+// counter an erase left one too high or took down one too many does not live long there. Here
+// nothing rebuilds it. A counter that is too high only sends a probe one group further, which no
+// answer shows; one that is too low stops a probe short of an entry that overflowed past that
+// group, and that entry cannot be found -- and at a load near the maximum nearly every group is
+// full, so nearly every insert passes through a counter on its way to a slot.
 //
-// A mutation sweep of the vector shifts had already caught every mutant that does this, most of
-// them as a hang of the whole suite. Under this test the same mutants fail within 300 cycles,
-// by name, which is what a person fixing one needs. The sixteen that survived it as well are
-// equivalent: the sentinel guards, and table lanes the blend never reads.
-//
-// So: reserve, so the bucket count is fixed and asserted to stay so; fill to a load that shifts
-// often; then churn, and every so often ask for every live key.
+// So: reserve, so the bucket count is fixed and asserted to stay so; fill to just under the
+// maximum load; then churn, and every so often ask for every live key.
 TEST_CASE("erase_churn_keeps_every_live_key_findable") {
     using map_t = ankerl::unordered_dense::map<uint64_t, uint64_t>;
 
-    // splitmix64: random 64 bit keys, so the hash has real chains to shift
+    // splitmix64: random 64 bit keys, so the groups fill unevenly and entries overflow
     uint64_t state = 0x9E3779B97F4A7C15;
     auto next = [&state] {
         state += 0x9E3779B97F4A7C15;
@@ -37,12 +31,12 @@ TEST_CASE("erase_churn_keeps_every_live_key_findable") {
     };
 
     map_t map;
-    map.reserve(2800);
+    map.reserve(3200);
     auto const buckets = map.bucket_count();
     REQUIRE(buckets == 4096U);
 
     std::vector<uint64_t> live;
-    while (live.size() < 2900) {
+    while (live.size() < 3250) { // load 0.79 of the 0.8 maximum
         auto const key = next();
         if (map.try_emplace(key, ~key).second) {
             live.push_back(key);
@@ -67,7 +61,7 @@ TEST_CASE("erase_churn_keeps_every_live_key_findable") {
         if (cycle % check_every == check_every - 1) {
             INFO("after ", cycle + 1, " cycles");
             REQUIRE(map.size() == live.size());
-            REQUIRE(map.bucket_count() == buckets); // no growth, so nothing has cleaned the buckets
+            REQUIRE(map.bucket_count() == buckets); // no growth, so nothing has rebuilt the index
             for (auto const key : live) {
                 auto it = map.find(key);
                 REQUIRE(it != map.end());

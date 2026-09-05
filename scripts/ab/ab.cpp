@@ -24,19 +24,8 @@ namespace {
 using base_u64 = udmbase::unordered_dense::map<uint64_t, size_t>;
 using base_str = udmbase::unordered_dense::map<std::string, size_t>;
 using base_big = udmbase::unordered_dense::map<uint64_t, workloads::big_value>;
-#ifdef UDM_AB_GROUP
-// The candidate with the group index, against a baseline that is whatever its revision is.
-template <typename K, typename V>
-using cand_map = ankerl::unordered_dense::map<K,
-                                              V,
-                                              ankerl::unordered_dense::hash<K>,
-                                              std::equal_to<K>,
-                                              std::allocator<std::pair<K, V>>,
-                                              ankerl::unordered_dense::bucket_type::group>;
-#else
 template <typename K, typename V>
 using cand_map = ankerl::unordered_dense::map<K, V>;
-#endif
 using cand_u64 = cand_map<uint64_t, size_t>;
 using cand_str = cand_map<std::string, size_t>;
 using cand_big = cand_map<uint64_t, workloads::big_value>;

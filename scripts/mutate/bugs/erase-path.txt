@@ -48,9 +48,9 @@
 # names whatever the dense move put at that position: a lookup for the erased key
 # can come back with somebody else's value.
 <<<
-        groups[found_in].m_fingerprints[slot % 16] = 0;
+        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
 ===
-        groups[found_in].m_fingerprints[slot % 16] = groups[found_in].m_fingerprints[slot % 16];
+        groups[found_in].m_fingerprints[slot % slots_per_group] = groups[found_in].m_fingerprints[slot % slots_per_group];
 >>>
 
 # the moved element's slot is left pointing at the position it came from

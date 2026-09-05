@@ -343,7 +343,9 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   `memset` in `clear_and_fill_buckets_from_values`, which is redundant because
   `allocate_buckets_from_shift` hands back a freshly zeroed vector (0.7% on `build64`, ~1% *worse*
   on `iestr`); and hashing eight elements ahead in the rehash loop and prefetching the bucket each
-  will land in (nothing on `build64`, ~1% worse on `buildstr`).
+  will land in (nothing on `build64`, ~1% worse on `buildstr`). The redundant memset was removed
+  on the group index on 2026-09-05 as a simplification, not a speedup: paired on the score it is
+  within 1% everywhere, so the ~1% on `iestr` above was layout luck.
 - Scalar attempts to take the branch out of `place_and_shift_up`. The robin hood shift asks "is this
   bucket occupied" once per bucket and the answer is a coin flip (73% of inserts shift nothing, 11%
   shift one), which cost 0.61 mispredictions per insert. Settling the first two buckets with
