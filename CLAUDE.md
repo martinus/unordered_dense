@@ -162,6 +162,36 @@ where a random sequence costs the scalar probe 1.35. That under-reported the cos
 probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The workload now
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
+## Dead ends of the group index (paired A/B, 2026-09-05)
+
+Both came from reading how other maps do it, and both lose for the same kind of reason: they add
+work to a path that runs on every lookup in order to help a case that is rare.
+
+- **Cache-line aligning the value indices**, which boost and abseil get for free because their
+  groups are aligned. A group's sixteen indices are exactly 64 bytes, and glibc hands back large
+  allocations at 16 mod 64, so *every* group's indices straddle two lines -- which is why
+  `prefetch_index` asks for two. Giving the index array a 64 byte aligned block type does what it
+  should on lookups (`find64` and `rhit64` both 1.02) and costs 4-5% on `build64`, `churn64` and
+  `churnbig`, for a geomean of 0.993. The likely mechanism is conflict misses: with the group array
+  and the index array both at power-of-two offsets, a group's metadata and its indices collide in
+  the same cache sets more often than they do when one of them is skewed.
+- **A second fingerprint in the spare high bits of the value index**, which is emhash8's trick: the
+  index word has to be loaded to reach the value, so bits spent there are free, and they reject a
+  fingerprint collision before the value vector is touched. Eight bits cost nothing until a table
+  wants more than 2^24 slots. Measured: geomean 0.975, and the losses are exactly on lookups
+  (`find64` 0.912, `findbig` 0.919, `rhit64` 0.930, `churn64` 0.915). It puts an xor, a shift and a
+  compare into the dependent chain of *every* lookup to avoid a value access on the 3% that have a
+  fingerprint collision. It is free for emhash8 because that map has no group-level fingerprint and
+  must consult the word anyway; here the group already filtered, so the second filter is redundant
+  work in the hot spot. The general shape is worth remembering: a filter only pays where nothing
+  cheaper has filtered first.
+
+Where the map stands against others on the score, same hash for all, measured the same day:
+excluding the three iteration workloads, `boost::unordered_flat_map` is level (0.96) and **ahead on
+lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `emhash5` 28%. With
+iteration included this map leads all of them, because only `emhash8` is dense as well and the rest
+lose 3-10x there. The standing weakness is the same one this file has always named: building.
+
 ## The robin hood index this replaced, and its dead ends
 
 Everything below describes the index that was removed on 2026-09-05: a packed
