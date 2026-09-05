@@ -6,6 +6,11 @@
 name: ab-arm
 
 on:
+  # A workflow_dispatch only exists once the file is on the default branch; a push to this
+  # branch name runs the file as pushed, so a measurement can be taken from any branch by
+  # pushing it here: `git push origin HEAD:ab-arm`.
+  push:
+    branches: [ab-arm]
   workflow_dispatch:
     inputs:
       rev:
@@ -29,10 +34,10 @@ jobs:
         with:
           fetch-depth: 0 # the baseline is `git show REV:include/...`, so REV has to exist here
       - run: |
-          uname -m; nproc; ${{ inputs.compiler }} --version | head -1
+          uname -m; nproc; ${{ inputs.compiler || 'clang++' }} --version | head -1
           grep -m1 'model name\|CPU part' /proc/cpuinfo || true
-      - run: scripts/ab/run.sh -r ${{ inputs.rev }} -c ${{ inputs.compiler }} ${{ inputs.workload }} ${{ inputs.epochs }} 2>&1 | tee ab-arm.txt
+      - run: scripts/ab/run.sh -r ${{ inputs.rev || 'origin/main' }} -c ${{ inputs.compiler || 'clang++' }} ${{ inputs.workload || 'all' }} ${{ inputs.epochs || '12' }} 2>&1 | tee ab-arm.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: ab-arm-${{ inputs.compiler }}-${{ inputs.workload }}
+          name: ab-arm-${{ inputs.compiler || 'clang++' }}-${{ inputs.workload || 'all' }}
           path: ab-arm.txt
