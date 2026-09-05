@@ -221,6 +221,48 @@ vector's own reallocations are 3% of an integer build and 11% of a 64 byte value
   `AllocatorOrContainer` parameter already accepts, so it is available today as an opt-in and not
   worth changing what `values()` returns for.
 
+**The insert path is split in two by clang, and that is most of the build gap to boost.** Found
+2026-09-05 by counting instructions per insert on a reserved table, net of the benchmark loop:
+
+| compiler | this map, insert (miss) | boost | this map, `operator[]` on a present key |
+|---|---|---|---|
+| clang 22 | 128 instructions, 39 cycles | 64, 26.5 | 74 instructions |
+| gcc 16 | 82 instructions, 26 cycles | 55, 23 | 68 instructions |
+
+Under clang `do_try_emplace` is its own function with a six register prologue, and it calls
+`do_place_element` out of line, which clang refuses to inline at cost 480 against a threshold of
+250 (`vector::emplace_back` with `piecewise_construct` is 225 of that). gcc inlines the whole
+insert into the caller on its own. So the gap to boost on the insert path is 39% under clang and
+11% under gcc, and the score moves with it: **under gcc this map is 1.25x ahead of boost on
+`build64`** where under clang it is 0.70x behind, and 1.067 ahead of boost on the geomean without
+iteration where clang has it at 0.96. The full gcc score against main is 1.165, against 1.109 for
+clang, with `build64` 1.56 and `buildbig` 1.84. `scripts/ab/run.sh -c g++` reproduces it.
+
+What was tried for clang, all measured paired on the score:
+
+- **Forcing `do_place_element` and `place_group` inline** (`always_inline`): the miss path drops
+  from 128 to 100 instructions and 39 to 32 cycles, `build64` 1.070, `churn64` 1.061, `churnbig`
+  1.067, `buildbig` 1.041 -- and `operator[]` on a *present* key rises from 74 to 88 instructions,
+  because the merged function pays the placement code's register pressure on the path that never
+  places, so `ie64` 0.967, `iestr` 0.965, `iebig` 0.972, where half the inserts are hits. Geomean
+  **1.012**, every interval excluding 100%. A no-op for gcc. Forcing everything into the caller as
+  well gives the same numbers, so the hit-path cost is not about the caller's loop. Not applied: a
+  mixed trade that hard-codes one compiler's heuristic, and the cleaner fix is below.
+- **Handing the probe's fingerprint word and home group to an out-of-line `do_place_element`**, so
+  the insert derives nothing twice: 141.7 to 143.7, i.e. nothing. The 28 instructions are the call
+  boundary itself -- prologue, epilogue, a `pair<iterator, bool>` returned through memory -- not the
+  duplicated arithmetic.
+- **`increase_size` out of line** so the hot function shrinks: no change, clang's cost is in
+  `emplace_back`, not in the growth path.
+- **The erase path** is already flat: `erase(key)` is 102 instructions under clang with or without
+  forced inlining of `do_erase`, `erase_group_slot` and `finish_erase`.
+
+The next thing to try, not yet done: get `do_place_element` under clang's threshold *honestly*, by
+making the common-case append cheaper for its cost model than `emplace_back(piecewise_construct,
+forward_as_tuple(key), forward_as_tuple(args...))` -- for a map of trivially constructible types
+that is a 16 byte store dressed as 225 units of inline cost. Under gcc the same code is already
+fully inlined, so this is a clang-only 7% on builds and churn waiting on codegen, not on design.
+
 Read and found to have nothing to transfer, with the reason in each case:
 
 - **folly F14** is the closest relative, and its `outboundOverflowCount_` is this map's overflow
