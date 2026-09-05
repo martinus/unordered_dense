@@ -77,9 +77,13 @@
 #    define ANKERL_UNORDERED_DENSE_PREFETCH(addr) static_cast<void>(addr) // NOLINT(cppcoreguidelines-macro-usage)
 #endif
 
-// SSE2 is part of the x86-64 baseline, so the four-buckets-at-a-time probe is available on every
-// x86-64 build without asking for it. Elsewhere, and in a build that defines this to 0, the scalar
-// probe is used.
+// SSE2 is part of the x86-64 baseline, so comparing a group's sixteen fingerprints in one
+// instruction is available on every x86-64 build without asking for it. Elsewhere, and in a build
+// that defines this to 0, they are compared eight per machine word with ordinary arithmetic.
+//
+// This picks the code, never the layout: a group is sixteen slots either way, so two translation
+// units that disagree about this macro -- which they may, it is documented as a per-target switch
+// -- still agree about every byte of the index they share.
 #if !defined(ANKERL_UNORDERED_DENSE_HAS_SSE2)
 #    if defined(__SSE2__) || (defined(_MSC_VER) && (defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)))
 #        define ANKERL_UNORDERED_DENSE_HAS_SSE2 1 // NOLINT(cppcoreguidelines-macro-usage)
@@ -170,7 +174,7 @@ namespace detail {
 
 #    endif
 
-// Index of the lowest set bit, for the lane masks of the vector probe and of the group index. x
+// Index of the lowest set bit, for the lane mask a group compare produces. x
 // must not be zero.
 [[nodiscard]] inline auto countr_zero(std::uint32_t x) -> unsigned {
 #    if defined(_MSC_VER)

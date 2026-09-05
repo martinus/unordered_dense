@@ -129,7 +129,7 @@ clang++ -std=c++20 -fprebuilt-module-path=. ankerl.unordered_dense.o module_test
 
 A simple demo script can be found in `test/modules`.
 
-The module is built with the scalar probe, see [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe). If you
+The module compares fingerprints without SSE2, see [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe). If you
 wrap the header in a module of your own and build it with gcc, you need to do the same.
 
 ### 3.2. Hash
@@ -449,7 +449,7 @@ The segmenting is about the values, which are the larger part and the ones whose
 
 The map/set has two data structures:
 * `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
-* An indexing structure (bucket array), which is a flat array with 8-byte buckets.
+* An indexing structure, which is a flat array of groups of sixteen slots, and the value index of each slot beside it.
 
 ### 5.1. Inserts
 
