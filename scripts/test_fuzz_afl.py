@@ -250,13 +250,16 @@ class TestPlacement(ScriptTestCase):
         self.assertEqual(len(cpus), 16, "one instance per physical core, not per thread")
         self.assertEqual(sorted(cpus), sorted(set(cpus)), "a core was used twice")
 
-    def test_run_spreads_four_targets_over_every_core(self):
-        self.use_topology(smt_machine(16))
+    def test_run_spreads_every_target_over_every_core(self):
+        # Sized from the target list rather than to a fixed 16, so that adding a target changes
+        # what the machine has to be for the split to come out even, not whether the test passes.
+        cores = 4 * len(self.fuzz.ALL_TARGETS)
+        self.use_topology(smt_machine(cores))
         started = self.record_instances()
         with mock.patch("sys.stdout"):
             self.fuzz.cmd_run(list(self.fuzz.ALL_TARGETS))
         cpus = self.cpus_used(started)
-        self.assertEqual(len(cpus), 16)
+        self.assertEqual(len(cpus), cores, "an even split leaves no core idle")
         self.assertEqual(sorted(cpus), sorted(set(cpus)), "a core was used twice")
 
     def test_run_with_one_target_uses_every_core(self):
@@ -283,7 +286,7 @@ class TestPlacement(ScriptTestCase):
         with mock.patch("sys.stdout"):
             self.fuzz.cmd_run(list(self.fuzz.ALL_TARGETS))
         cpus = self.cpus_used(started)
-        self.assertEqual(len(cpus), 4)
+        self.assertEqual(len(cpus), len(self.fuzz.ALL_TARGETS), "every target still gets an instance")
         self.assertEqual(set(cpus), {0, 1})
 
     def test_unknown_topology_pins_nothing(self):
