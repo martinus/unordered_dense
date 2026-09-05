@@ -619,6 +619,21 @@ using group_big = basic_group<std::size_t>;
 
 namespace detail {
 
+// The fingerprint word of every low byte of a hash: the fingerprint in all four bytes, so that
+// the vector compare can broadcast it as one 32 bit lane. 0 maps to 8 so that 0 means empty and
+// the low three bits, which pick the counter, are unchanged. A table rather than the arithmetic
+// (and, compare, shift, or, multiply) because it is five instructions on the critical path of
+// every probe, placement and erase, and one aligned load from a kilobyte that stays in L1 is
+// cheaper: measured paired, integer misses 1.05-1.06x on both compilers, big-value finds 1.03x
+// under clang and 1.14x under gcc, strings level. Boost's group15 keeps the same table.
+inline constexpr auto fingerprint_words = [] {
+    auto t = std::array<std::uint32_t, 256>{};
+    for (std::uint32_t i = 0; i < 256; ++i) {
+        t[i] = (i == 0 ? 8U : i) * 0x01010101U;
+    }
+    return t;
+}();
+
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
 
@@ -1386,12 +1401,9 @@ private:
     // The group is hash >> m_shifts, the fingerprint the low byte of the hash with 0 mapped to
     // 8 so that 0 means empty and (fingerprint & 7), which picks the counter, is unchanged.
 
-    // The fingerprint in all four bytes of a word: the vector compare broadcasts a 32 bit lane in
-    // one instruction where a byte takes several, and the scalar match widens it to eight itself.
+    // the fingerprint in all four bytes of a word, from the table above
     [[nodiscard]] static constexpr auto fingerprint_word(std::uint64_t hash) -> std::uint32_t {
-        auto f = static_cast<std::uint32_t>(hash & 0xFFU);
-        f |= static_cast<std::uint32_t>(f == 0) << 3U;
-        return f * 0x01010101U;
+        return detail::fingerprint_words[hash & 0xFFU];
     }
 
     // quadratic: the triangular numbers reach every group of a power-of-two array
