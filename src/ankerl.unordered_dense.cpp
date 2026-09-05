@@ -23,6 +23,7 @@ import std;
 // reads and writes the same index. Everything else the module offers is unaffected, and a consumer
 // that includes the header directly still gets the vector compare.
 #define ANKERL_UNORDERED_DENSE_HAS_SSE2 0 // NOLINT(cppcoreguidelines-macro-usage)
+#define ANKERL_UNORDERED_DENSE_HAS_NEON 0 // NOLINT(cppcoreguidelines-macro-usage)
 
 #include <ankerl/unordered_dense.h>
 

@@ -94,6 +94,22 @@
 #    endif
 #endif
 
+// The same sixteen-at-once compare on AArch64, which is the other baseline worth having: NEON is
+// mandatory there, so this needs no runtime dispatch either. Restricted to little endian because
+// the mask below reads the comparison result as one 64 bit word, and to AArch64 because 32 bit ARM
+// lacks the horizontal ops -- both fall back to SWAR, which is correct everywhere.
+#if !defined(ANKERL_UNORDERED_DENSE_HAS_NEON)
+#    if defined(__ARM_NEON) && defined(__aarch64__) && \
+        (!defined(__BYTE_ORDER__) || !defined(__ORDER_BIG_ENDIAN__) || (__BYTE_ORDER__ != __ORDER_BIG_ENDIAN__))
+#        define ANKERL_UNORDERED_DENSE_HAS_NEON 1 // NOLINT(cppcoreguidelines-macro-usage)
+#    else
+#        define ANKERL_UNORDERED_DENSE_HAS_NEON 0 // NOLINT(cppcoreguidelines-macro-usage)
+#    endif
+#endif
+#if ANKERL_UNORDERED_DENSE_HAS_SSE2 && ANKERL_UNORDERED_DENSE_HAS_NEON
+#    error "ANKERL_UNORDERED_DENSE_HAS_SSE2 and ANKERL_UNORDERED_DENSE_HAS_NEON cannot both be on"
+#endif
+
 #if defined(__clang__) && defined(__has_attribute)
 #    if __has_attribute(__no_sanitize__)
 #        define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK \
@@ -119,6 +135,9 @@
 #    endif
 #    if ANKERL_UNORDERED_DENSE_HAS_SSE2
 #        include <emmintrin.h> // for _mm_loadu_si128, _mm_cmpeq_epi8, ...
+#    endif
+#    if ANKERL_UNORDERED_DENSE_HAS_NEON
+#        include <arm_neon.h> // for vld1q_u8, vceqq_u8, vshrn_n_u16, ...
 #    endif
 #    if defined(_MSC_VER)
 #        include <intrin.h> // for _BitScanForward
@@ -187,6 +206,19 @@ namespace detail {
     return static_cast<unsigned>(__builtin_ctz(x));
 #    endif
 }
+
+#    if ANKERL_UNORDERED_DENSE_HAS_NEON
+// NEON's match mask is one bit per lane four bits apart, so it needs the whole word.
+[[nodiscard]] inline auto countr_zero(std::uint64_t x) -> unsigned {
+#        if defined(_MSC_VER)
+    unsigned long idx{};
+    _BitScanForward64(&idx, x);
+    return static_cast<unsigned>(idx);
+#        else
+    return static_cast<unsigned>(__builtin_ctzll(x));
+#        endif
+}
+#    endif
 
 } // namespace detail
 
@@ -1446,12 +1478,40 @@ private:
     }
 #    endif
 
+    // What a compare of sixteen fingerprints answers with: one bit per matching lane. SSE2 and the
+    // word-at-a-time fallback put those bits next to each other; NEON has no movemask, and the
+    // cheapest stand-in leaves them four apart, so the stride is a constant rather than 1 and
+    // first_lane() divides by it. Everything else -- testing for any match, taking the lowest,
+    // clearing it with `m & (m - 1)` -- is then written once for all three.
+#    if ANKERL_UNORDERED_DENSE_HAS_NEON
+    using lane_mask = std::uint64_t;
+    static constexpr unsigned lane_stride = 4;
+#    else
+    using lane_mask = unsigned;
+    static constexpr unsigned lane_stride = 1;
+#    endif
+
+    [[nodiscard]] static auto first_lane(lane_mask lanes) -> unsigned {
+        return detail::countr_zero(lanes) / lane_stride;
+    }
+
     // lanes whose fingerprint is the word's; every byte of the word is the same
-    [[nodiscard]] static auto match_fingerprint(Bucket const& group, std::uint32_t word) -> unsigned {
+    [[nodiscard]] static auto match_fingerprint(Bucket const& group, std::uint32_t word) -> lane_mask {
 #    if ANKERL_UNORDERED_DENSE_HAS_SSE2
         // NOLINTBEGIN(portability-simd-intrinsics)
         auto const fingerprints = _mm_loadu_si128(reinterpret_cast<__m128i const*>(group.m_fingerprints.data())); // NOLINT
         return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(fingerprints, _mm_set1_epi32(static_cast<int>(word)))));
+        // NOLINTEND(portability-simd-intrinsics)
+#    elif ANKERL_UNORDERED_DENSE_HAS_NEON
+        // NOLINTBEGIN(portability-simd-intrinsics)
+        // vceqq_u8 gives 0xFF per matching byte. Reading that as eight 16 bit lanes, shifting each
+        // right by four and narrowing back to bytes packs the two comparisons of a 16 bit lane into
+        // one byte -- lane 2j as its low nibble, lane 2j+1 as its high one -- so the whole answer
+        // fits in a 64 bit word with lane i at nibble i. Keeping only the low bit of each nibble
+        // leaves exactly one bit per matching lane, four apart, which is what lane_stride is.
+        auto const cmp = vceqq_u8(vld1q_u8(group.m_fingerprints.data()), vdupq_n_u8(static_cast<std::uint8_t>(word)));
+        auto const nibbles = vshrn_n_u16(vreinterpretq_u16_u8(cmp), 4);
+        return vget_lane_u64(vreinterpret_u64_u8(nibbles), 0) & UINT64_C(0x1111111111111111);
         // NOLINTEND(portability-simd-intrinsics)
 #    else
         auto const wanted = static_cast<std::uint64_t>(static_cast<std::uint8_t>(word)) * UINT64_C(0x0101010101010101);
@@ -1460,7 +1520,7 @@ private:
 #    endif
     }
 
-    [[nodiscard]] static auto match_empty(Bucket const& group) -> unsigned {
+    [[nodiscard]] static auto match_empty(Bucket const& group) -> lane_mask {
         return match_fingerprint(group, 0);
     }
 
@@ -1496,8 +1556,7 @@ private:
             auto const& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
-                auto const slot =
-                    static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + detail::countr_zero(lanes));
+                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + first_lane(lanes));
                 auto const value_idx = index[slot];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
                     return {slot, value_idx, true};
@@ -1525,7 +1584,7 @@ private:
             auto& group = groups[group_idx];
             auto const empties = match_empty(group);
             if (empties != 0) {
-                auto const lane = detail::countr_zero(empties);
+                auto const lane = first_lane(empties);
                 group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
                 m_buckets.index()[std::size_t{group_idx} * slots_per_group + lane] = value_idx;
                 return;
@@ -1568,8 +1627,7 @@ private:
             prefetch_index(index, group_idx);
             auto lanes = match_fingerprint(groups[group_idx], word);
             while (lanes != 0) {
-                auto const slot =
-                    static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + detail::countr_zero(lanes));
+                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + first_lane(lanes));
                 if (index[slot] == value_idx) {
                     return slot;
                 }
