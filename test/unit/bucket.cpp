@@ -36,11 +36,7 @@ static_assert(map_big_t::max_size() == uint64_t{1} << 63U);
 
 // A one byte value index, so that max_size() is 256 rather than 2^32 and the boundaries below can
 // be reached at all.
-struct group_micro {
-    using value_idx_type = uint8_t;
-    std::array<uint8_t, 16> m_fingerprints;
-    std::array<uint8_t, 8> m_overflows;
-};
+using group_micro = ankerl::unordered_dense::bucket_type::basic_group<uint8_t>;
 
 TYPE_TO_STRING_MAP(counter::obj,
                    counter::obj,

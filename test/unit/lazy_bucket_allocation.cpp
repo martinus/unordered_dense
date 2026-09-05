@@ -48,20 +48,18 @@ auto tracked(test::alloc_counts& counts) -> Container {
 }
 
 // What a table costs before it has allocated anything of its own. Not zero everywhere: a table is
-// three containers -- the values, the groups of the index, and the value index beside them -- and
+// the values plus the arrays of the index -- the groups, and the value index beside them -- and
 // MSVC's debug iterator support allocates a _Container_proxy through the allocator for each one as
-// it is constructed. So the floor is measured rather than assumed: three empty vectors' worth,
-// whatever that is here. It was two while the index was a single array of buckets, which is the
-// kind of thing only a Windows leg notices.
+// it is constructed. So the floor is measured rather than assumed: that many empty vectors' worth,
+// whatever that is here. It was one fewer while the index was a single array of buckets, which is
+// the kind of thing only a Windows leg notices.
 auto empty_table_cost() -> int {
+    using index_t =
+        ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group, std::allocator<pair_t>>;
     auto counts = test::alloc_counts{};
-    {
-        auto values = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
-        auto groups = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
-        auto index = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
-        static_cast<void>(values);
-        static_cast<void>(groups);
-        static_cast<void>(index);
+    for (size_t i = 0; i < 1 + index_t::array_count; ++i) {
+        auto v = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
+        static_cast<void>(v);
     }
     return counts.allocations;
 }

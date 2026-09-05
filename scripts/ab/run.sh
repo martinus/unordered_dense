@@ -5,19 +5,17 @@
 #
 #   -r REV       baseline revision (default HEAD)
 #   -b           also measure boost::unordered_flat_map (needs boost headers)
-#   -g           the candidate uses bucket_type::group, the baseline stays as its revision is
 #   -c COMPILER  default clang++
 #
 # Uses the vendored nanobench (test/third-party, >= 4.6 for Bench::compare()); NANOBENCH_INCLUDE
 # overrides it. The workloads come from test/bench/workloads.h, the benchmark's own. Everything is built in $AB_BUILD (default: a temporary directory), the tree is not
 # touched.
 set -euo pipefail
-rev=HEAD boost=0 group=0 cxx=clang++
-while getopts "r:bgc:" opt; do
+rev=HEAD boost=0 cxx=clang++
+while getopts "r:bc:" opt; do
     case $opt in
         r) rev=$OPTARG ;;
         b) boost=1 ;;
-        g) group=1 ;;
         c) cxx=$OPTARG ;;
         *) exit 1 ;;
     esac
@@ -33,7 +31,6 @@ git -C "$root" show "$rev:include/ankerl/unordered_dense.h" \
     > "$build/base.h"
 flags=(-O3 -DNDEBUG -std=c++17 -I"$build" -I"$root/include" -I"$root/test")
 [ $boost = 1 ] && flags+=(-DUDM_AB_HAVE_BOOST)
-[ $group = 1 ] && flags+=(-DUDM_AB_GROUP)
 [ -f "$build/nanobench_$cxx.o" ] || (cd "$build" && printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > nb.cpp && "$cxx" "${flags[@]}" -c nb.cpp -o "nanobench_$cxx.o")
 "$cxx" "${flags[@]}" "$root/scripts/ab/ab.cpp" "$build/nanobench_$cxx.o" -o "$build/ab"
 echo "baseline $rev vs working tree, $cxx, in $build" >&2

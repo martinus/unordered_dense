@@ -118,7 +118,7 @@
 #        include "stl.h"
 #    endif
 #    if ANKERL_UNORDERED_DENSE_HAS_SSE2
-#        include <emmintrin.h> // for _mm_loadu_si128, _mm_cmpeq_epi32, ...
+#        include <emmintrin.h> // for _mm_loadu_si128, _mm_cmpeq_epi8, ...
 #    endif
 #    if defined(_MSC_VER)
 #        include <intrin.h> // for _BitScanForward
@@ -603,19 +603,17 @@ namespace bucket_type {
 // is placed and no tombstone is left behind. The value indices sit in a second array beside the
 // groups: 24 + 64 bytes per sixteen slots, 5.5 bytes per slot. See "5. Design" in the README.
 //
-// `group` indexes up to 2^32 values, `group_big` up to 2^63.
-struct group {
-    using value_idx_type = std::uint32_t;
+// The width of the value index is the one thing the two bucket types differ in: `group` indexes
+// up to 2^32 values at 24 + 64 bytes per sixteen slots, `group_big` up to 2^63 at 24 + 128.
+template <typename ValueIdx>
+struct basic_group {
+    using value_idx_type = ValueIdx;
     std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
     std::array<std::uint8_t, 8> m_overflows;     // how many entries with (fingerprint & 7) == i probed past this group
 };
 
-// 24 + 128 bytes per sixteen slots.
-struct group_big {
-    using value_idx_type = std::size_t;
-    std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
-    std::array<std::uint8_t, 8> m_overflows;     // how many entries with (fingerprint & 7) == i probed past this group
-};
+using group = basic_group<std::uint32_t>;
+using group_big = basic_group<std::size_t>;
 
 } // namespace bucket_type
 
@@ -1170,15 +1168,20 @@ namespace detail {
 // rather than one struct because the groups are what a probe reads -- a miss touches nothing else,
 // and a rehash writes them at random -- and 24 bytes per sixteen slots keeps far more of them in
 // cache than 88 would. Measured, the split is 10% faster on a build for the same lookups.
+//
+// Alloc is the table's value allocator; both arrays rebind it.
 template <typename Group, typename Alloc>
 class group_storage {
 public:
     using value_idx_type = typename Group::value_idx_type;
     using allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<Group>;
 
+    // How many arrays this allocates, for a test that counts what an empty table costs.
+    static constexpr std::size_t array_count = 2;
+
 private:
     using index_allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>;
-    static constexpr std::size_t slots = 16;
+    static constexpr std::size_t slots = std::tuple_size<decltype(Group::m_fingerprints)>::value;
 
     std::vector<Group, allocator_type> m_groups{};
     std::vector<value_idx_type, index_allocator_type> m_index{}; // slots * m_groups.size()
@@ -1195,8 +1198,7 @@ public:
     group_storage(group_storage const&) = default;
     group_storage(group_storage&&) noexcept = default;
     auto operator=(group_storage const&) -> group_storage& = default;
-    auto operator=(group_storage&&) noexcept(std::is_nothrow_move_assignable_v<std::vector<Group, allocator_type>>)
-        -> group_storage& = default;
+    auto operator=(group_storage&&) -> group_storage& = default;
     ~group_storage() = default;
 
     [[nodiscard]] auto get_allocator() const -> allocator_type {
@@ -1261,16 +1263,16 @@ public:
         conditional_t<is_detected_v<detect_iterator, AllocatorOrContainer>, AllocatorOrContainer, underlying_container_type>;
 
 private:
-    using bucket_alloc =
-        typename std::allocator_traits<typename value_container_type::allocator_type>::template rebind_alloc<Bucket>;
-
     // IsSegmented is about the values -- stable references, no reallocation of the payload. The
     // index is two plain arrays either way: it is 5.5 bytes per slot, and a probe reads it by
     // pointer.
-    using bucket_container_type = detail::group_storage<Bucket, bucket_alloc>;
+    using bucket_container_type = detail::group_storage<Bucket, typename value_container_type::allocator_type>;
 
-    // Slots per group. bucket_count() counts slots, m_group_mask counts groups.
-    static constexpr std::size_t slots_per_group = 16;
+    // Slots per group, from the group. bucket_count() counts slots, m_group_mask counts groups.
+    static constexpr std::size_t slots_per_group = std::tuple_size<decltype(Bucket::m_fingerprints)>::value;
+    static_assert(slots_per_group == 16 && std::tuple_size<decltype(Bucket::m_overflows)>::value == 8,
+                  "a group is sixteen fingerprints, matched as one vector or two words, and eight counters, picked by "
+                  "the low three bits of the fingerprint");
 
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
     static constexpr float default_max_load_factor = 0.8F;
@@ -1338,7 +1340,7 @@ private:
         }
     }
 
-    [[nodiscard]] constexpr auto bucket_idx_from_hash(std::uint64_t hash) const -> value_idx_type {
+    [[nodiscard]] constexpr auto group_idx_from_hash(std::uint64_t hash) const -> value_idx_type {
         return static_cast<value_idx_type>(hash >> m_shifts);
     }
 
@@ -1378,7 +1380,8 @@ private:
     // The group is hash >> m_shifts, the fingerprint the low byte of the hash with 0 mapped to
     // 8 so that 0 means empty and (fingerprint & 7), which picks the counter, is unchanged.
 
-    // the fingerprint in all four bytes of a word, which is what the vector compare broadcasts
+    // The fingerprint in all four bytes of a word: the vector compare broadcasts a 32 bit lane in
+    // one instruction where a byte takes several, and the scalar match widens it to eight itself.
     [[nodiscard]] static constexpr auto fingerprint_word(std::uint64_t hash) -> std::uint32_t {
         auto f = static_cast<std::uint32_t>(hash & 0xFFU);
         f |= static_cast<std::uint32_t>(f == 0) << 3U;
@@ -1445,29 +1448,30 @@ private:
     // The value indices of a group are the next thing a hit reads, and their address needs only
     // the group, so they are asked for before the fingerprints have arrived: the two latencies
     // overlap instead of adding. Measured 3 cycles off every hit, 0.2 onto every miss.
-    void prefetch_index(value_idx_type group_idx) const {
-        auto const* p = m_buckets.index() + std::size_t{group_idx} * 16;
+    static void prefetch_index(value_idx_type const* index, value_idx_type group_idx) {
+        auto const* p = index + std::size_t{group_idx} * slots_per_group;
         ANKERL_UNORDERED_DENSE_PREFETCH(p);
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + 15); // the array is not line aligned, so the sixteen may straddle
+        ANKERL_UNORDERED_DENSE_PREFETCH(p + slots_per_group - 1); // the array is not line aligned, so it may straddle
         if constexpr (sizeof(value_idx_type) > 4) {
             ANKERL_UNORDERED_DENSE_PREFETCH(p + 8);
         }
     }
 
     template <typename K>
-    auto probe_group(K const& key, std::uint64_t mh) const -> probe_result {
+    auto probe(K const& key, std::uint64_t mh) const -> probe_result {
         auto const word = fingerprint_word(mh);
         auto const counter = word & 7U;
-        auto group_idx = bucket_idx_from_hash(mh);
+        auto group_idx = group_idx_from_hash(mh);
         auto const* groups = m_buckets.data();
         auto const* index = m_buckets.index();
         value_idx_type delta = 0;
         while (true) {
-            prefetch_index(group_idx);
+            prefetch_index(index, group_idx);
             auto const& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * 16 + detail::countr_zero(lanes));
+                auto const slot =
+                    static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + detail::countr_zero(lanes));
                 auto const value_idx = index[slot];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
                     return {slot, value_idx, true};
@@ -1486,7 +1490,7 @@ private:
     ANKERL_UNORDERED_DENSE_FORCEINLINE void place_group(std::uint64_t mh, value_idx_type value_idx) {
         auto const word = fingerprint_word(mh);
         auto const counter = word & 7U;
-        auto group_idx = bucket_idx_from_hash(mh);
+        auto group_idx = group_idx_from_hash(mh);
         auto* groups = m_buckets.data();
         value_idx_type delta = 0;
         while (true) {
@@ -1495,7 +1499,7 @@ private:
             if (empties != 0) {
                 auto const lane = detail::countr_zero(empties);
                 group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
-                m_buckets.index()[std::size_t{group_idx} * 16 + lane] = value_idx;
+                m_buckets.index()[std::size_t{group_idx} * slots_per_group + lane] = value_idx;
                 return;
             }
             if (group.m_overflows[counter] != 255) {
@@ -1509,9 +1513,9 @@ private:
     // from home that placed it, up to the group it landed in.
     void erase_group_slot(value_idx_type slot, std::uint64_t mh) {
         auto* groups = m_buckets.data();
-        auto const found_in = static_cast<value_idx_type>(slot / 16);
-        groups[found_in].m_fingerprints[slot % 16] = 0;
-        auto group_idx = bucket_idx_from_hash(mh);
+        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
+        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
+        auto group_idx = group_idx_from_hash(mh);
         if (group_idx != found_in) {
             auto const counter = fingerprint_word(mh) & 7U;
             value_idx_type delta = 0;
@@ -1528,15 +1532,16 @@ private:
     // so there is no other stopping condition.
     [[nodiscard]] auto slot_of_value(std::uint64_t mh, value_idx_type value_idx) const -> value_idx_type {
         auto const word = fingerprint_word(mh);
-        auto group_idx = bucket_idx_from_hash(mh);
+        auto group_idx = group_idx_from_hash(mh);
         auto const* groups = m_buckets.data();
         auto const* index = m_buckets.index();
         value_idx_type delta = 0;
         while (true) {
-            prefetch_index(group_idx);
+            prefetch_index(index, group_idx);
             auto lanes = match_fingerprint(groups[group_idx], word);
             while (lanes != 0) {
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * 16 + detail::countr_zero(lanes));
+                auto const slot =
+                    static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + detail::countr_zero(lanes));
                 if (index[slot] == value_idx) {
                     return slot;
                 }
@@ -1554,9 +1559,13 @@ private:
         }
     }
 
+    [[nodiscard]] static constexpr auto calc_num_groups(std::uint8_t shifts) -> std::size_t {
+        return (std::min)(max_bucket_count() / slots_per_group, std::size_t{1} << (64U - shifts));
+    }
+
+    // in slots, which is what the bucket interface counts in
     [[nodiscard]] static constexpr auto calc_num_buckets(std::uint8_t shifts) -> std::size_t {
-        // in slots; the array is a sixteenth as many groups
-        return (std::min)(max_bucket_count(), (std::size_t{1} << (64U - shifts)) * slots_per_group);
+        return calc_num_groups(shifts) * slots_per_group;
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(std::size_t s) const -> std::uint8_t {
@@ -1584,20 +1593,18 @@ private:
             // first insert allocate. Copying an empty table therefore allocates nothing either.
             m_shifts = initial_shifts;
         } else {
-            {
-                // One pass, not two. This used to grow the array with resize(), which value
-                // initialises every bucket it adds, and then memcpy over all of it -- so every byte
-                // of the bucket array was written twice, and for a large map the wasted half is a
-                // memset of megabytes. assign() copies straight into the new storage.
-                //
-                // assign() and not m_buckets = other.m_buckets, which would consult pocca: the
-                // allocator question is answered by the caller, and this is also reached from the
-                // move assignment's differing-allocator branch, where adopting other's would be
-                // exactly wrong.
-                m_buckets.assign(other.m_buckets);
-                m_shifts = other.m_shifts;
-                describe_buckets(other.bucket_count());
-            }
+            // One pass, not two. This used to grow the array with resize(), which value
+            // initialises every bucket it adds, and then memcpy over all of it -- so every byte
+            // of the bucket array was written twice, and for a large map the wasted half is a
+            // memset of megabytes. assign() copies straight into the new storage.
+            //
+            // assign() and not m_buckets = other.m_buckets, which would consult pocca: the
+            // allocator question is answered by the caller, and this is also reached from the
+            // move assignment's differing-allocator branch, where adopting other's would be
+            // exactly wrong.
+            m_buckets.assign(other.m_buckets);
+            m_shifts = other.m_shifts;
+            describe_buckets(other.m_buckets.size());
         }
     }
 
@@ -1700,7 +1707,7 @@ private:
     // written until an array of that size exists. Callers used to assign m_shifts and then
     // allocate, which left a gap for a failed allocation to stop in.
     void allocate_buckets_from_shift(std::uint8_t shifts) {
-        auto num_buckets = calc_num_buckets(shifts);
+        auto const num_groups = calc_num_groups(shifts);
         {
             // Built beside the old array rather than over it, so that a failure here leaves the
             // table exactly as it was. Callers used to give the old array back first, which made
@@ -1708,9 +1715,12 @@ private:
             // no buckets to find them by, which is not a state anything can recover from without
             // allocating again.
             auto fresh = bucket_container_type(m_buckets.get_allocator());
-            fresh.resize(num_buckets / slots_per_group);
+            fresh.resize(num_groups);
             m_buckets = std::move(fresh);
         }
+        // The groups come back zeroed, which is an empty index: every slot free, every counter at
+        // zero. Nothing that allocates clears afterwards.
+        //
         // All three commit here, together, and only once the array they describe exists. They have
         // to move as one: a probe indexes its first group with hash >> m_shifts and does not mask,
         // so a shift that has run ahead of the array reads past the end of it, and a mask published
@@ -1718,13 +1728,14 @@ private:
         // index-allocating path goes through, which is what makes a failed growth leave the old
         // index intact and consistent rather than unusable.
         m_shifts = shifts;
-        describe_buckets(num_buckets);
+        describe_buckets(num_groups);
     }
 
     // The two values derived from the bucket array's size. Only ever called once the array of that
     // size exists; see the note above.
-    void describe_buckets(std::size_t num_buckets) {
-        m_group_mask = static_cast<value_idx_type>(num_buckets / slots_per_group - 1);
+    void describe_buckets(std::size_t num_groups) {
+        m_group_mask = static_cast<value_idx_type>(num_groups - 1);
+        auto const num_buckets = num_groups * slots_per_group;
         if (num_buckets == max_bucket_count()) {
             // reached the maximum, make sure we can use each bucket
             m_max_bucket_capacity = max_bucket_count();
@@ -1744,7 +1755,6 @@ private:
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_buckets.empty()))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
                 allocate_buckets_from_shift(m_shifts);
-                clear_buckets();
             }
     }
 
@@ -1758,11 +1768,11 @@ private:
         }
         // Clearing the groups empties every slot and zeroes every counter; the value indices
         // beside them are never read for an empty slot.
-        std::memset(m_buckets.data(), 0, sizeof(Bucket) * (bucket_count() / slots_per_group));
+        std::memset(m_buckets.data(), 0, sizeof(Bucket) * m_buckets.size());
     }
 
-    void clear_and_fill_buckets_from_values() {
-        clear_buckets();
+    // Into an index just allocated, so already empty.
+    void fill_buckets_from_values() {
         // Counted in std::size_t, for the reason spelled out in replace(): max_size() is exactly
         // what value_idx_type can hold, so a container of precisely that many has a size that is
         // not representable in it and the cast wraps to zero. Latent here rather than live -- a
@@ -1797,7 +1807,7 @@ private:
         } else {
             allocate_buckets_from_shift(static_cast<std::uint8_t>(m_shifts - 1));
         }
-        clear_and_fill_buckets_from_values();
+        fill_buckets_from_values();
     }
 
     // Closes the hole that the erased value left in m_values, by moving the last value into it and repointing that
@@ -1822,7 +1832,7 @@ private:
     // on the way to it are undone with.
     template <typename Op>
     void do_erase(value_idx_type slot, value_idx_type value_idx_to_remove, std::uint64_t mh, Op handle_erased_value) {
-        // both values are needed after the shift down; start fetching them now to overlap the latencies
+        // both values are needed once the slot is freed; start fetching them now to overlap the latencies
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values[value_idx_to_remove]);
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values.back());
 
@@ -1922,11 +1932,6 @@ private:
             }
 
         return do_find_hashed(key, mixed_hash(key));
-    }
-
-    template <typename K>
-    auto probe(K const& key, std::uint64_t mh) const -> probe_result {
-        return probe_group(key, mh);
     }
 
     // Same lookup with the hashing already done. Requires the bucket array to be allocated, which
@@ -2284,7 +2289,7 @@ public:
 
         m_values = std::move(container);
 
-        // can't use clear_and_fill_buckets_from_values() because container elements might not be unique
+        // can't use fill_buckets_from_values() because container elements might not be unique
         //
         // Counted in std::size_t rather than in value_idx_type. max_size() is exactly the number
         // values that type can hold, so a container of precisely that many has a size that is not
@@ -2383,7 +2388,7 @@ public:
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
 
-        // value is new, place the bucket and shift up until we find an empty spot
+        // value is new, place it in the first free slot on its probe sequence
         auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full()))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
@@ -2476,25 +2481,33 @@ public:
         return {it, true};
     }
 
-    auto erase(iterator it) -> iterator {
-        auto const value_idx_to_remove = static_cast<value_idx_type>(it - cbegin());
-        auto const mh = mixed_hash(get_key(*it));
-        auto const slot = slot_of_value(mh, value_idx_to_remove);
+    // What do_erase needs of the element an iterator points at: its index, the mixed hash of its
+    // key, and the slot pointing at it, which is searched from the hash.
+    struct located {
+        value_idx_type value_idx;
+        std::uint64_t mh;
+        value_idx_type slot;
+    };
 
+    [[nodiscard]] auto locate(iterator it) const -> located {
+        auto const value_idx = static_cast<value_idx_type>(it - cbegin());
+        auto const mh = mixed_hash(get_key(*it));
+        return {value_idx, mh, slot_of_value(mh, value_idx)};
+    }
+
+    auto erase(iterator it) -> iterator {
+        auto const e = locate(it);
         // The noexcept here and on the other two erase callbacks is what keeps erase() out of do_erase()'s exception
         // guard: a call expression is noexcept only if the callee says so, an empty body is not enough.
-        do_erase(slot, value_idx_to_remove, mh, [](value_type const& /*unused*/) noexcept -> void {
+        do_erase(e.slot, e.value_idx, e.mh, [](value_type const& /*unused*/) noexcept -> void {
         });
-        return begin() + static_cast<difference_type>(value_idx_to_remove);
+        return begin() + static_cast<difference_type>(e.value_idx);
     }
 
     auto extract(iterator it) -> value_type {
-        auto const value_idx_to_remove = static_cast<value_idx_type>(it - cbegin());
-        auto const mh = mixed_hash(get_key(*it));
-        auto const slot = slot_of_value(mh, value_idx_to_remove);
-
+        auto const e = locate(it);
         auto tmp = std::optional<value_type>{};
-        do_erase(slot, value_idx_to_remove, mh, [&tmp](value_type&& val) -> void {
+        do_erase(e.slot, e.value_idx, e.mh, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return std::move(tmp).value();
@@ -2853,7 +2866,7 @@ public:
         if (shifts != m_shifts) {
             allocate_buckets_from_shift(shifts);
             m_values.shrink_to_fit();
-            clear_and_fill_buckets_from_values();
+            fill_buckets_from_values();
         }
     }
 
@@ -2866,7 +2879,7 @@ public:
         auto shifts = calc_shifts_for_size((std::max)(capa, size()));
         if (0 == bucket_count() || shifts < m_shifts) {
             allocate_buckets_from_shift(shifts);
-            clear_and_fill_buckets_from_values();
+            fill_buckets_from_values();
         }
     }
 
