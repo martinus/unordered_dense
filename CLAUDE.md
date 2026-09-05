@@ -640,6 +640,19 @@ The `fuzz` test suite replays the committed corpora in `data/fuzz/<target>` on e
 only ever re-finds what has already been found. The libFuzzer targets are what go looking. They are
 clang only and not built by default:
 
+**`fuzz_group_index` is the one that can reach the index's own structure, and the reason it exists
+is worth keeping.** The other targets already hash with an identity over the whole 64 bit key, so
+steerability was never what they lacked -- it is *structure*. Filling a group and then emptying it
+again means sixteen keys agreeing in their top bits followed by sixteen erases of those same keys,
+which a random key stream does not produce, and that is how an unbounded miss survived all of them
+plus 767 unit tests. This target splits a key into three bytes the fuzzer chooses separately --
+group, identity, fingerprint -- and gives it fill-a-group and erase-a-run as single operations, so
+"fill this group, send one key of this class past it, take the fillers back out" is a handful of
+mutations rather than a coincidence. Validated by removing the probe's bound and re-running: it
+comes back as a libFuzzer timeout inside `probe` within seconds, *from the seed corpus alone*.
+`data/fuzz/fuzz_group_index/cb8d5c38...` is that input, kept as a regression seed; note that
+coverage minimization drops it, because against the fixed header it is no longer distinctive.
+
 ```sh
 CXX=clang++ meson setup builddir/fuzz
 ninja -C builddir/fuzz test/fuzz_api          # or fuzz_insert_erase, fuzz_replace_map, fuzz_string
@@ -669,7 +682,7 @@ afl-fuzz -i data/fuzz/fuzz_api -o out -- ./builddir/afl/test/fuzz_api   # -i is 
 easy to get subtly wrong:
 
 ```sh
-scripts/fuzz_afl.py run              # every core, all four targets, until Ctrl-C
+scripts/fuzz_afl.py run              # every core, every target, until Ctrl-C
 scripts/fuzz_afl.py run fuzz_api     # every core on one target
 scripts/fuzz_afl.py sweep            # each target in turn, moving on when it goes quiet
 scripts/fuzz_afl.py sweep --idle 15m # ... giving each one longer to prove it is done

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fuzz with AFL++ across every core, then fold what it found back into data/fuzz as a minimal set.
 
-    scripts/fuzz_afl.py run                     # all four targets, one core each, until Ctrl-C
+    scripts/fuzz_afl.py run                     # every target, one core each, until Ctrl-C
     scripts/fuzz_afl.py run fuzz_api            # one target on every core, until Ctrl-C
     scripts/fuzz_afl.py sweep                   # each target in turn, moving on when it goes quiet
     scripts/fuzz_afl.py sweep --idle 15m        # ... giving each one longer to prove it is done
@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ALL_TARGETS = ("fuzz_api", "fuzz_insert_erase", "fuzz_replace_map", "fuzz_string")
+ALL_TARGETS = ("fuzz_api", "fuzz_group_index", "fuzz_insert_erase", "fuzz_replace_map", "fuzz_string")
 FINDINGS = Path(os.environ.get("FINDINGS") or ROOT / "fuzz-findings")  # gitignored, see .gitignore
 BUILD_AFL = Path("builddir/afl")
 BUILD_AFL_FAST = Path("builddir/afl-fast")
