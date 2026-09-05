@@ -164,6 +164,27 @@ decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 
+**Which counter a probe consults at each step of its sequence** (2026-09-05). The design reads the
+class of the fingerprint's low three bits at every group. The false continues of a churned miss
+come largely from *siblings* -- entries with the same home group, which walk the same sequence, so
+a displaced sibling of the same class carries the miss along its whole displacement: 17.5% of
+churned misses continue at step 0 and about half of those continue again at step 1, far above the
+1/8 a fresh class check would give. Two alternatives, measured with a compile-time switch:
+
+- **Class plus distance, `(fp + d) & 7`**: exactly a no-op, as the arithmetic says it must be --
+  the sibling and the miss add the same d at every step, so if they agree at step 0 they agree
+  everywhere. Churned miss 1.263 groups against 1.262.
+- **Three fresh hash bits per step** (bits above the fingerprint, rotated by three per group): does
+  break the lockstep, and the churned miss drops from 1.262 to 1.238 groups with the step-0 rate
+  unchanged by construction. But that is 2% of a miss's probe work in the tail, on a path 17.5% of
+  churned misses reach, and the paired measurement on the six workloads that can see it is noise:
+  `rmiss64` 1.00, `churn64` 0.99, `find64` 0.99, `churnbig` 0.98, `findbig` 1.03, `rmissstr` 0.98,
+  with the refactor control at 1.00 everywhere. The saving is real and smaller than the register the
+  rotating word occupies.
+
+Neither kept. What would move a miss is the step-0 decision, and that is the counter's class count,
+which the row below settles.
+
 **The width of the overflow counter, all four divisions of a group's eight counter bytes measured
 against the design's eight one-byte counters** (2026-09-05, prompted by asking whether folly's
 single per-group counter would help). It is the axis the design already sits at the top of, and the
