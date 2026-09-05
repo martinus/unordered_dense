@@ -52,10 +52,9 @@
 # key is stored in a slot that every later probe reads as free: the key cannot be found, and the
 # next insert overwrites its slot.
 <<<
-        auto f = static_cast<std::uint32_t>(hash & 0xFFU);
-        f |= static_cast<std::uint32_t>(f == 0) << 3U;
+        t[i] = (i == 0 ? 8U : i) * 0x01010101U;
 ===
-        auto f = static_cast<std::uint32_t>(hash & 0xFFU);
+        t[i] = i * 0x01010101U;
 >>>
 
 # an insert that leaves a full group behind does not record that it did

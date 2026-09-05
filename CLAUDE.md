@@ -417,6 +417,36 @@ kinds: deletions and bitwise rewrites inside the SWAR fallback, which an SSE2 bu
 at all; prefetch deletions, which are semantic no-ops; and the erase decrement again. None is a test
 hole. `erase-path.txt` is 5 of 6, the sixth being that same decrement.
 
+**The gcc string-lookup gap, explained and mostly closed** (2026-09-05). Under gcc the branch's
+string lookups measured 0.88-0.91 of main, the one workload family it lost, and the instruction
+counts say why: per string hit, main 200 instructions and the branch 224 under gcc, against 235
+and 239 under clang, with branch misses identical at 1.8. gcc compiles main's robin hood probe
+unusually tightly, and on string keys there are no probe mispredictions for the group index to win
+back -- the 1.8 are the hash's length dispatch and `memcmp` -- so the group probe's extra
+instructions show undiluted. The assembly is the same shape CLAUDE.md recorded for the old SSE2
+probe: gcc spills the loop state, the broadcast fingerprint among it, around the `memcmp` call,
+and that plus the prefetches, movemask, tzcnt and the second array are the two dozen. Of those,
+five were fixable: building the fingerprint word was an and, a compare, a shift, an or and a
+multiply on the critical path of every probe, placement and erase, and a 256-entry table of the
+finished words (which the prototype had and the header had lost) makes it one L1 load. Paired,
+both compilers: integer misses 1.05-1.06x, `findbig` 1.03x clang and **1.14x gcc**, `rhit64`
+1.02x gcc, `ie64` 1.03x gcc, strings 1.00-1.01. Kept. The rest of the string gap under gcc is the
+spill set around the call, which the old probe paid too and which no arrangement of this loop
+avoided last time.
+
+**On ARM the branch is 1.11x main, the same overall as on x86, split the opposite way** (2026-09-05,
+`.github/workflows/ab-arm.yml`: the paired harness on a GitHub `ubuntu-24.04-arm` runner, Neoverse
+N2, 4 cores, clang 18, 12 interleaved epochs, `origin/main` against the branch, so main's scalar
+robin hood probe against the branch's SWAR fingerprint compare -- neither has a vector path there).
+Geomean of the scored fifteen **1.112**, without iteration 1.14. Builds are far ahead (`build64`
+1.67, `buildbig` 1.54, `buildstr` 1.25) and churn is ahead (`churn64` 1.20, `churnstr` 1.09), but
+**lookups are behind main**: `rhit64` 0.914, `findbig` 0.912, `rmissstr` 0.939, `findstr` 0.967,
+`find64` 1.03. That is the SWAR match, about 36 instructions for two words where SSE2 does sixteen
+bytes in three, paid on every probe, against a robin hood probe that on ARM was never vectorised
+either and so lost nothing. It is the number a NEON match is for: `vceqq_u8` plus a narrowing
+shift is a handful of instructions, and indivi has the port. Push any branch to `ab-arm` to
+re-measure; a `workflow_dispatch` would need the file on main first.
+
 **`ie64` ties boost while executing 58% more instructions, and the counts say why** (2026-09-05,
 the workload run on each map alone under `perf stat`, net of its own rng and key scrambling,
 `/tmp/ie_count.cpp`):
