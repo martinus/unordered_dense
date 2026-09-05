@@ -164,6 +164,40 @@ decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 
+**The width of the overflow counter, all four divisions of a group's eight counter bytes measured
+against the design's eight one-byte counters** (2026-09-05, prompted by asking whether folly's
+single per-group counter would help). It is the axis the design already sits at the top of, and the
+two directions off it lose for opposite reasons. Fresh and after 200 turnovers at load 0.76, the
+share of misses that continue past their home group, and the score:
+
+| counters per group | fresh miss | churned miss | misses continuing (churned) | saturated at 200 turnovers | score |
+|---|---|---|---|---|---|
+| 1, F14 style (class ignored) | 1.21 | 2.79 | 60% | 0 | **0.959** |
+| 8 x 1 byte (the design) | 1.06 | 1.26 | 17.5% | 0 | 1.000 |
+| 16 x nibble | 1.03 | 1.13 | 9.7% | 0 | 0.986 |
+| 32 x 2 bit | 1.02 | 1.15 rising | rising | 36063 | 0.988 |
+
+Folly's one counter is the worst of the four, not the best: it does not know the fingerprint class,
+so *any* overflow past a group makes every later miss into it continue, and a churned table where
+most groups have seen an overflow sends 60% of misses on. Its score is 0.959 and its churn 0.83.
+The idea that a shared counter saturates faster and so helps is aimed at the wrong thing --
+saturation was never what stops a miss, the `delta == m_group_mask` bound is, and once saturated a
+counter is *worse*, since it never comes back down. That is exactly what sinks the 2 bit counter:
+it filters best of all when fresh (1.3% continue) but its max of 3 is reached constantly under
+churn, and a saturated counter lengthens every later miss for the life of the array.
+
+The nibble is the interesting direction and still loses. It genuinely filters better -- half as many
+fingerprints per counter, so 9.7% of churned misses continue against the design's 17.5%, at no
+memory cost and with a max of 15 that nothing reached even after 200 turnovers. But a sub-byte
+counter is a load-mask-compare on the read and a read-modify-write on the increment, and that is
+paid on *every* lookup, while the continuation it saves was already rare (4% fresh). So `find64`
+0.908, `rhit64` 0.940, `findbig` 0.923: the per-probe arithmetic costs more than the rarer group
+hop saves. The general shape is the one this file keeps rediscovering -- a filter only pays where
+nothing cheaper filtered first, and here the group's own fingerprint compare already did most of it,
+so a finer counter is refining a decision that is nearly always already made. A byte per class is
+the point where the counter is a single aligned load and still per-class.
+
+
 Both came from reading how other maps do it, and both lose for the same kind of reason: they add
 work to a path that runs on every lookup in order to help a case that is rare.
 
