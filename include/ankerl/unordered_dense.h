@@ -626,13 +626,14 @@ namespace detail {
 // every probe, placement and erase, and one aligned load from a kilobyte that stays in L1 is
 // cheaper: measured paired, integer misses 1.05-1.06x on both compilers, big-value finds 1.03x
 // under clang and 1.14x under gcc, strings level. Boost's group15 keeps the same table.
-inline constexpr auto fingerprint_words = [] {
+[[nodiscard]] constexpr auto make_fingerprint_words() -> std::array<std::uint32_t, 256> {
     auto t = std::array<std::uint32_t, 256>{};
     for (std::uint32_t i = 0; i < 256; ++i) {
         t[i] = (i == 0 ? 8U : i) * 0x01010101U;
     }
     return t;
-}();
+}
+inline constexpr std::array<std::uint32_t, 256> fingerprint_words = make_fingerprint_words();
 
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
