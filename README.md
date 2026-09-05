@@ -410,22 +410,26 @@ works.
 * Up to 2^63 = 9,223,372,036,854,775,808 elements.
 * 9.5 bytes overhead per slot: an 8 byte value index instead of a 4 byte one.
 
-### 3.6. Disabling the SSE2 Probe
+### 3.6. Disabling the Vector Probe
 
-On x86-64 a probe compares a group's sixteen fingerprints with one SSE2 instruction. That needs no
-compiler flag, because SSE2 is part of the x86-64 baseline. Defining
-`ANKERL_UNORDERED_DENSE_HAS_SSE2` to 0 before the header is included switches to the portable
-fallback, which compares eight fingerprints per machine word with ordinary arithmetic, e.g. with
-cmake:
+A probe compares a group's sixteen fingerprints at once: with one SSE2 instruction on x86-64, and
+with NEON on AArch64. Neither needs a compiler flag, because both are part of their target's
+baseline. Defining `ANKERL_UNORDERED_DENSE_HAS_SSE2` or `ANKERL_UNORDERED_DENSE_HAS_NEON` to 0
+before the header is included switches to the portable fallback, which compares eight fingerprints
+per machine word with ordinary arithmetic, e.g. with cmake:
 
 ```cmake
 target_compile_definitions(your_target PRIVATE ANKERL_UNORDERED_DENSE_HAS_SSE2=0)
 ```
 
-The module in `src/` sets it already, because the intrinsics are declared by a header included in
+The module in `src/` sets both already, because the intrinsics are declared by headers included in
 the global module fragment and those declarations do not reach a translation unit that imports the
-module. Wrapping the header in a module of your own means doing the same. The fallback is within a
-few percent of the SSE2 path on the benchmark's workloads, so this costs little.
+module. Wrapping the header in a module of your own means doing the same.
+
+All three compare the same sixteen bytes and differ only in how they report which lanes matched, so
+translation units that disagree about these macros still agree about every byte of the index they
+share. On x86-64 the word-at-a-time fallback is within a few percent of SSE2 on the benchmark's
+workloads; on AArch64 it is not, which is why the NEON path exists.
 
 ## 4. `segmented_map` and `segmented_set`
 
