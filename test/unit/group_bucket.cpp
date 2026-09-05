@@ -160,12 +160,13 @@ TEST_CASE("group_index_against_reference") {
     run_against_reference<u64_map<ankerl::unordered_dense::bucket_type::group_big>>(4, 3000, 200000, false);
 }
 
-// A table that only churns. Every insert into a full group counts itself in that group's
-// counter and every erase counts itself out again, so after every key has been erased the
-// index is exactly what a fresh one is, and the same keys go back in as if for the first time.
-// If a counter were left behind, the second round would still work -- a stale counter only
-// makes a probe walk further -- so this asks the one thing that is observable from outside:
-// that the table stays correct across many rounds at a load where nearly every group is full.
+// A table that only churns. Every insert into a full group counts itself in that group's counter
+// and every erase counts itself out again, so the counters are exactly what a fresh table's are.
+// The positions are not: an element that arrived while its home group was full stays where it
+// landed, so probes get slightly longer and settle. That is a cost rather than a defect, and it is
+// not observable through the API, so what this asks is the thing that is: that the table stays
+// correct across many rounds at a load where nearly every group is full -- which is where a
+// counter left behind, or one taken away twice, would show up as a key that cannot be found.
 TEST_CASE("group_index_churn_at_full_load") {
     auto map = u64_map<ankerl::unordered_dense::bucket_type::group>();
     counter counts;

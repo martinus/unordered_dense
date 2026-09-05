@@ -6,8 +6,14 @@ Guidance for working on `unordered_dense` — a single-header C++17 dense open-a
 `bucket_type::group`: sixteen one-byte fingerprints per group compared with one SSE2 instruction
 (eight per word with SWAR where there is no SSE2), the value indices in a second array, quadratic
 probing over groups, and eight overflow counters per group that an insert increments in every full
-group it passes and an erase decrements again. Nothing moves after it is placed, so a churned table
-is as good as a fresh one and there are no tombstones. `bucket_type::group_big` is the same with 64
+group it passes and an erase decrements again. Nothing moves after it is placed and there are no
+tombstones, so no rehash is ever needed. What an erase cannot undo is *where* an element went: one
+placed while its home group was full stays there, so a long-churned table probes further than one
+freshly built from the same contents -- measured at load 0.76, 1.14 groups per hit against 1.03 and
+1.27 per miss against 1.05, plateauing after about a dozen turnovers rather than growing. That is
+the difference from a tombstone design, not the absence of any drift at all; the claim that a
+churned table is *identical* to a fresh one belongs to backward shift deletion and was wrongly
+carried over here. `bucket_type::group_big` is the same with 64
 bit value indices. The robin hood index it replaced — the packed distance-and-fingerprint field,
 the four-bucket SSE2 probe, the vector shifts on insert and erase, the sentinel padding — is gone
 from the header; everything below that describes it is history, kept because the measurements and

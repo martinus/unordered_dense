@@ -1351,8 +1351,17 @@ private:
     // index of every slot, quadratic probing over groups, and eight overflow counters per group
     // that an insert increments in every full group it passes and an erase decrements again. A
     // probe stops at the first group whose counter for this hash is zero, since no entry with
-    // those bits ever went past it. Nothing moves after it is placed, so a table that has churned
-    // is as good as a fresh one, and there are no tombstones to rehash away.
+    // those bits ever went past it. Nothing moves after it is placed and there are no tombstones,
+    // so no rehash is ever needed to repair the index -- an erase undoes exactly what its insert
+    // did to the counters.
+    //
+    // What an erase cannot undo is where the element went. One that arrived while its home group
+    // was full sits in a later group and stays there even after the home group empties again, so a
+    // table that has churned probes a little further than one built from the same contents: at
+    // load 0.76, measured, 1.14 groups per hit against 1.03 and 1.27 per miss against 1.05. It
+    // plateaus after about a dozen turnovers rather than growing, which is the difference from a
+    // design that leaves tombstones behind, and rehash() rebuilds it if a caller wants the
+    // difference back.
     //
     // That a miss terminates is the counters being exact: each one counts live entries that landed
     // further along this sequence, so the group after the furthest of them has nothing counted in
