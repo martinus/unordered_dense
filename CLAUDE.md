@@ -520,7 +520,25 @@ both compilers: integer misses 1.05-1.06x, `findbig` 1.03x clang and **1.14x gcc
 1.02x gcc, `ie64` 1.03x gcc, strings 1.00-1.01. Kept. The rest of the string gap under gcc turned out to be the probe not being inlined at all
 in that binary -- the entry above this one -- and is closed.
 
-**On ARM the branch is 1.11x main, the same overall as on x86, split the opposite way** (2026-09-05,
+**NEON closed the ARM lookup gap, and it was the whole gap** (2026-09-05). The SWAR row below is
+what prompted it: on a Neoverse N2 the branch was 1.11x main overall but *behind* on every lookup,
+because the word-at-a-time compare replaces a robin hood probe that was never vectorised on ARM and
+so lost nothing to begin with. With `vceqq_u8` and a narrowing shift the same runner gives, main's
+time over the branch's, SWAR first and NEON second: `rhit64` 0.91 to **1.48**, `rmiss64` 1.01 to
+**1.62**, `find64` 1.03 to 1.26, `findbig` 0.91 to 1.18, `rhitstr` 1.02 to 1.10. Nothing is behind
+main any more except `findstr` at 0.97, where the hash rather than the probe is the cost. The score
+goes 1.112 to **1.244** and without iteration 1.140 to **1.312**, which puts ARM ahead of where x86
+sat before the rehash fix and level with it now. Builds and churn gained too (`build64` 1.67 to
+2.08, `churn64` 1.20 to 1.43), since both place through the same compare.
+
+NEON has no movemask and the cheap stand-in does not give the same mask shape: the sixteen answers
+land one nibble apart in a 64 bit word, so the mask type and a lane stride are named once and
+`first_lane()` divides by the stride. Testing for a match, taking the lowest and clearing it with
+`m & (m - 1)` are then written once for all three backends. Guarded to little endian AArch64 --
+the mask reads the comparison as one word, and 32 bit ARM has no horizontal ops -- with SWAR, which
+is correct everywhere, behind both.
+
+**Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way** (2026-09-05,
 `.github/workflows/ab-arm.yml`: the paired harness on a GitHub `ubuntu-24.04-arm` runner, Neoverse
 N2, 4 cores, clang 18, 12 interleaved epochs, `origin/main` against the branch, so main's scalar
 robin hood probe against the branch's SWAR fingerprint compare -- neither has a vector path there).
