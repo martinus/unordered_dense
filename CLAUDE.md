@@ -380,6 +380,31 @@ lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `e
 iteration included this map leads all of them, because only `emhash8` is dense as well and the rest
 lose 3-10x there. The standing weakness is the same one this file has always named: building.
 
+**That last sentence stopped being true on 2026-09-05.** Re-measured against
+`boost::unordered_flat_map` after the rehash fix, same hash, 12 paired epochs, boost's time over
+this map's:
+
+| | clang | gcc |
+|---|---|---|
+| score, 15 workloads | **1.56** | **1.49** |
+| without the three iteration workloads | 1.13 | 1.17 |
+| iterate | 5.76 | 3.91 |
+| build | 1.62 | 1.77 |
+| churn at a fixed size | 1.16 | 1.21 |
+| insert and erase | 0.96 | 0.99 |
+| find, half hits | 0.90 | 0.88 |
+| random hits and misses | 0.92 | 0.92 |
+
+Building is now a *win* rather than the weakness -- `build64` 1.39x and 1.64x, `buildbig` 2.09x on
+both compilers -- because the store-to-load chain in the rehash was what held it back, not the
+design. What is left of boost's advantage is exactly one thing, fresh-table lookups, and it is
+worth stating plainly: boost is **10-13% faster on a hit** (`rhit64` 0.80, `findbig` 0.87) and this
+map is faster on a miss (`rmiss64` 1.12 under clang). That is the value-index indirection, one more
+dependent load than a flat map needs, and it is the price of the dense value vector -- which is the
+same property that pays 3.9-5.8x on iteration and 2.1x on a 64 byte build. Memory for a million
+entries, steady state: 39.5 MB against boost's 67.9 with an 8 byte value, 144.5 against 209.0 peak
+with a 64 byte one.
+
 **A miss had no bound, and eight chosen keys made it loop forever** (found 2026-09-05, in the
 review before release). The probe stopped only at a group whose counter for the key's class was
 zero, on the argument that exact counters put a zero right after the furthest entry of that class.
