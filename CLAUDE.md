@@ -186,6 +186,45 @@ work to a path that runs on every lookup in order to help a case that is rare.
   work in the hot spot. The general shape is worth remembering: a filter only pays where nothing
   cheaper has filtered first.
 
+- **A 16 bit value index for small maps**, which is CPython's compact dict: it stores 1, 2, 4 or 8
+  byte indices depending on capacity, where this always stores 4. A `bucket_type::group_small` with
+  `value_idx_type = std::uint16_t` makes the index 3.5 bytes per slot instead of 5.5 and puts two
+  groups' indices in one cache line. Measured on the thirteen scored workloads that fit under 2^16
+  elements: geomean **0.986**, with only `rhit64` (1.03) and `findstr` (1.02) ahead and `churn64`,
+  `churnstr` and `findbig` 3-4% behind. The reason kills the adaptive version too, not just this
+  one: a map small enough to be indexed in 16 bits has an index of at most 128 KB, which is already
+  inside L2, so halving something that already fits buys nothing -- and the maps whose index
+  footprint actually hurts are exactly the ones that need more than 16 bits. The narrow loads also
+  cost a zero-extension on every use. `group_small` was not kept.
+
+Read and found to have nothing to transfer, with the reason in each case:
+
+- **folly F14** is the closest relative, and its `outboundOverflowCount_` is this map's overflow
+  counter exactly -- saturating, decremented on erase, used to stop a miss. Arrived at
+  independently. One difference favours this map: F14 keeps *one* counter per 14 slot chunk where
+  this keeps eight per 16 slot group, split by fingerprint class, so a miss here stops sooner.
+- **abseil**'s probe sequence is the same triangular one, `(i^2+i)/2` over a power-of-two number of
+  groups; its `next()` adds `Width` per step where `next_group()` adds one group, which is the same
+  progression written differently. Its newer small-object optimization holds one element without
+  allocating; this map already allocates nothing until the first insert, and the score has no
+  workload of tiny maps, so it was not pursued.
+- **bytell** puts a chain-head bit and a 7 bit index into a 126 entry jump-distance table in one
+  byte per slot, so chains are linked lists with one byte links and the first sixteen distances are
+  0..15 to keep short chains inside a block. It buys the ability to *skip* groups, and a lookup here
+  visits 1.03 groups fresh and 1.27 churned. There is nothing to skip.
+- **Verstable** packs a 4 bit hash fragment, an in-home-bucket bit and an 11 bit quadratic
+  displacement into one 16 bit word per bucket. Same conclusion, and it confirms a detail: it takes
+  the fragment from the *high* bits because the bucket comes from the low ones, which is the same
+  independence this map gets by taking the group from the top of the hash and the fingerprint from
+  the bottom.
+- **tsl::hopscotch_map** keeps a per-bucket bitmap of which of the next N buckets hold keys
+  belonging here. It is positional where the counters are numeric, but it is *coarser* -- one
+  bitmap per bucket against eight counters per group -- and it maintains its invariant by moving
+  elements closer to home, which is the work this design exists to avoid.
+- **Go's map** evacuates one bucket per operation instead of rehashing at once. That trades total
+  throughput for tail latency, which is a different goal from the one the score measures, and it is
+  a redesign of growth rather than a transfer. Not attempted.
+
 Where the map stands against others on the score, same hash for all, measured the same day:
 excluding the three iteration workloads, `boost::unordered_flat_map` is level (0.96) and **ahead on
 lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `emhash5` 28%. With
