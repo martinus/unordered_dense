@@ -66,8 +66,10 @@
 #endif
 #ifdef _MSC_VER
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __declspec(noinline)
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE __forceinline
 #else
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE inline __attribute__((always_inline))
 #endif
 
 // data prefetch hint, a no-op when not supported
@@ -1481,7 +1483,7 @@ private:
 
     // The first free slot on the key's probe sequence takes it; every full group on the way
     // counts it.
-    void place_group(std::uint64_t mh, value_idx_type value_idx) {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void place_group(std::uint64_t mh, value_idx_type value_idx) {
         auto const word = fingerprint_word(mh);
         auto const counter = word & 7U;
         auto group_idx = bucket_idx_from_hash(mh);
@@ -1869,8 +1871,21 @@ private:
 
     // Appends the value and points a slot at it. What it needs to know is the key's hash: the
     // probe that found the key absent left nothing an insert could reuse.
+    //
+    // Forced inline, and the reason is a trade worth knowing. clang prices this function at 480
+    // against an inlining threshold of 250 (vector::emplace_back with piecewise_construct is 225
+    // of it) and so calls it out of line from do_try_emplace, which costs every insert a call, a
+    // six register prologue and epilogue: 28 of the 128 instructions an insert took, measured
+    // net of the benchmark loop. Merged, an insert is 100 instructions and builds and churn are
+    // 6-7% faster -- and operator[] on a key that is already present pays 14 instructions more,
+    // because the merged function's register pressure is paid on the path that never places, so
+    // a workload that mixes hits and inserts loses 3.5%. 1.012 on the geomean, every interval
+    // excluding 100%. gcc had already inlined all of this on its own, so for gcc this is a no-op.
+    // Handing the probe's fingerprint to the callee, returning the index in a register, and moving
+    // increase_size() out of line were each measured and each changed nothing: the cost is the
+    // boundary itself.
     template <typename... Args>
-    auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::forward<Args>(args)...);
 
