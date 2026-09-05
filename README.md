@@ -476,7 +476,11 @@ key's fingerprint in one instruction, and the result is a 16 bit mask of candida
 candidate the value index is read and the key in the data vector is compared; when equal, the value
 is returned. If no candidate matched, the one overflow counter that the fingerprint selects decides:
 zero means no entry with those bits ever left this group, so the key is absent, and otherwise the
-probe moves to the next group.
+probe moves to the next group. It also gives up once it has visited every group, which is as far as
+any key that exists can have been placed. That bound matters: a counter counts the entries that
+overflowed past its group on *their* probe sequences, so with a hash the caller controls every
+group's counter can be left positive by a handful of keys, and a miss would then have nothing on
+its sequence to stop at.
 
 The value indices of a group have an address that depends only on the group, so they are prefetched
 while the fingerprints are still on their way.
