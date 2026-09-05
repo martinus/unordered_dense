@@ -244,6 +244,18 @@ jobs:
             cxx: clang++
             cpp_std: '23'
             apt: libboost-dev clang
+          # The two legs above compile the NEON compare, since AArch64 selects it on its own. This
+          # one forces the word-at-a-time fallback on the same machine, which is what a big endian
+          # or 32 bit ARM target gets and what nothing else here builds: the fallback is reached on
+          # x86-64 only through -DANKERL_UNORDERED_DENSE_HAS_SSE2=0, so a change that broke it for
+          # ARM alone -- the endianness swap in load_fingerprints is exactly that shape -- would
+          # pass every other leg. Same reason as the no-SSE2 leg above, for the other switch.
+          - name: Linux ARM64 (gcc, C++17, no NEON)
+            id: linux-arm64-gcc-cpp17-noneon
+            os: ubuntu-24.04-arm
+            cxx: g++
+            apt: libboost-dev
+            setup_args: -Dcpp_args=-DANKERL_UNORDERED_DENSE_HAS_NEON=0
 
           # address and undefined are one leg per compiler rather than two: they compose, and the
           # pair costs one build instead of two. halt_on_error is the point of running UBSan at
