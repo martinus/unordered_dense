@@ -1371,11 +1371,17 @@ private:
     // design that leaves tombstones behind, and rehash() rebuilds it if a caller wants the
     // difference back.
     //
-    // That a miss terminates is the counters being exact: each one counts live entries that landed
-    // further along this sequence, so the group after the furthest of them has nothing counted in
-    // it. A counter saturates at 255 and is then never decremented, which costs every later probe
-    // for that fingerprint class one more group for the rest of the array's life -- and needs 255
-    // live entries of one class to have overflowed one group at the same moment to happen at all.
+    // A miss usually stops within a group or two, at the first counter that is zero: the counters
+    // are exact, so zero means no live entry of this class ever overflowed past that group.
+    // Usually, not always. A counter counts entries that passed the group on *their* sequence,
+    // which need not be this one, so every group on a sequence can be positive at once -- eight
+    // keys chosen against a known hash do it, each overflowed past one group while fillers made it
+    // full and the fillers erased again -- and then no zero is ever reached. So a miss also stops
+    // once it has visited every group, which is as far as any key that exists can have been
+    // placed, and that bound is what makes a lookup terminate for any input at all. A counter
+    // saturates at 255 and is then never decremented, which costs every later probe for that
+    // fingerprint class one more group for the rest of the array's life -- and needs 255 live
+    // entries of one class to have overflowed one group at the same moment to happen at all.
     //
     // The group is hash >> m_shifts, the fingerprint the low byte of the hash with 0 mapped to
     // 8 so that 0 means empty and (fingerprint & 7), which picks the counter, is unchanged.
@@ -1478,7 +1484,9 @@ private:
                 }
                 lanes &= lanes - 1;
             }
-            if (group.m_overflows[counter] == 0) {
+            // Not here if nothing of this class ever overflowed past this group, and not anywhere
+            // once every group has been looked at: see the note on termination above.
+            if (group.m_overflows[counter] == 0 || delta == m_group_mask) {
                 return {0, 0, false};
             }
             group_idx = next_group(group_idx, delta);

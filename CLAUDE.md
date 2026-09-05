@@ -310,6 +310,43 @@ lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `e
 iteration included this map leads all of them, because only `emhash8` is dense as well and the rest
 lose 3-10x there. The standing weakness is the same one this file has always named: building.
 
+**A miss had no bound, and eight chosen keys made it loop forever** (found 2026-09-05, in the
+review before release). The probe stopped only at a group whose counter for the key's class was
+zero, on the argument that exact counters put a zero right after the furthest entry of that class.
+The argument is wrong: a counter counts entries that overflowed past its group on *their* probe
+sequences, not on the one being walked. Fill a group, send one key of class 1 past it, erase the
+fillers -- the passer stays, so the counter stays -- and do that for every group: eight live keys,
+every class-1 counter positive, and `contains()` on an absent class-1 key never returns. Any hash
+the caller controls reaches it, and the default hash with attacker-chosen keys does too, since only
+the top few bits and the low byte need steering. `indivi::flat_umap`, where the counters came from,
+has the same hole (`find_impl` loops on `gIndex <= mGMask`, which the mask makes always true); the
+same eight keys hang it. The fix is `|| delta == m_group_mask` on the miss exit: a key that exists
+was placed within one cycle of its sequence, so a walk that has seen every group can stop. By
+mechanism it is free -- per lookup on a 200k table, 83.6 to 82.7 instructions on a hit, 69.5 to
+67.6 on a miss, cycles and mispredictions unchanged -- and the paired score read 0.99 with three
+workloads at 0.95 beside a 1.16 on `hashstr`, which never touches the map, so that run's layout
+moved. `test/unit/probe_termination.cpp` builds both this table and a saturated counter with the
+identity hash; the corpus fuzzers, all on wyhash, could not have reached either. The bound has a
+second effect worth knowing: it converts a *missing or wrong-home* erase decrement from a hang into
+a silent slowdown. That fault used to be caught loudly -- the counters only grew, a miss found no
+zero, the suite hung -- and now the miss stops at the end of the array and the table stays correct,
+just slower. So the erase decrement is no longer covered by any correctness test (mutating it away
+SURVIVES the suite), only by the A/B score. That is the deliberate trade of making the map robust
+to a hostile hash: a hang is loud, degradation is quiet, and the map has to prefer the quiet one.
+
+**Mutation triage after the bound** (2026-09-05, `invariants.txt` and `erase-path.txt` re-run,
+plus a `bitwise,deletions` sweep of the index functions, lines 1380-1560). `invariants.txt` is 45
+of 46 caught after a test was added for the one real gap the sweep found: copying an *emptied but
+grown* table by assignment into a grown target left the copy at the source's shift, so its first
+insert allocated the large array instead of the smallest (2048 buckets against 64) -- observable,
+and nothing checked it, now `copying_an_emptied_table_starts_from_the_smallest_array` in
+`lazy_bucket_allocation.cpp`. The two `invariants.txt` survivors are equivalent: the moved-from mask
+(every find and erase checks `empty()` before it could read the mask, and a moved-from table is
+empty) and the erase decrement just above. The sweep's sixteen survivors are all one of three
+kinds: deletions and bitwise rewrites inside the SWAR fallback, which an SSE2 build does not compile
+at all; prefetch deletions, which are semantic no-ops; and the erase decrement again. None is a test
+hole. `erase-path.txt` is 5 of 6, the sixth being that same decrement.
+
 **`ie64` ties boost while executing 58% more instructions, and the counts say why** (2026-09-05,
 the workload run on each map alone under `perf stat`, net of its own rng and key scrambling,
 `/tmp/ie_count.cpp`):

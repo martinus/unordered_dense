@@ -397,3 +397,31 @@ TEST_CASE_MAP("reserve_sizes_the_buckets_not_just_the_values", int, int) {
     REQUIRE(map.bucket_count() == after_reserve);
     REQUIRE(map.size() == 200);
 }
+
+// An emptied table is meant to be indistinguishable from a fresh one: its first insert allocates
+// the smallest array, whatever size the table had grown to before it was cleared. Copying one has
+// to carry that over -- the copy must also start from the smallest array, not from the source's
+// grown shift. Only visible when the copy already has buckets of its own, i.e. copy-assignment
+// into a grown target, since a fresh target is at the initial shift anyway.
+TEST_CASE_MAP("copying_an_emptied_table_starts_from_the_smallest_array", uint64_t, uint64_t) {
+    auto source = map_t();
+    for (uint64_t i = 0; i < 1000; ++i) {
+        source[i] = i;
+    }
+    source.clear(); // grown, then empty
+    REQUIRE(source.empty());
+
+    auto target = map_t();
+    for (uint64_t i = 0; i < 1000; ++i) {
+        target[i] = i; // so the target has a grown array of its own to overwrite
+    }
+    auto const grown = target.bucket_count();
+    REQUIRE(grown > 64);
+
+    target = source;
+    REQUIRE(target.empty());
+    REQUIRE(target.bucket_count() == 0);
+
+    target[7] = 7;
+    REQUIRE(target.bucket_count() == 64); // the smallest array, not the source's or the target's old one
+}
