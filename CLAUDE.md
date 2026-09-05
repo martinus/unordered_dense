@@ -417,6 +417,33 @@ kinds: deletions and bitwise rewrites inside the SWAR fallback, which an SSE2 bu
 at all; prefetch deletions, which are semantic no-ops; and the erase decrement again. None is a test
 hole. `erase-path.txt` is 5 of 6, the sixth being that same decrement.
 
+**Indexing the value container in the rehash cost clang a memory latency per element** (2026-09-05,
+from comparing the two compilers' absolute times on the branch rather than their ratios to main).
+`build64` was the one large branch-specific compiler gap left: 3.36 ms under clang against 1.97 under
+gcc, where main's own gcc/clang ratio on the same workload is 1.04. Splitting a 200000 element build
+into inserts into a reserved table and the growth on top of them says where it lived -- clang was
+**1.44x faster** on the reserved inserts (6.30 ns against 9.08) and **4.9x slower** on growth (10.43
+ns per insert against 2.15). So it was never the insert path; it was `fill_buckets_from_values`.
+
+The loop read `m_values[value_idx]`. Placing an entry stores a fingerprint, a `std::uint8_t` store
+may alias any object at all, and the container's own data pointer is such an object -- so after
+every placement an indexed read has to load that pointer back out of the container before it can
+form the address of the next key. The random group access that follows cannot start until that
+resolves, so the chain costs one memory latency per element and the placements, which are
+independent, run one at a time. Walking with an iterator keeps the address in a register: **growth
+10.43 ns per insert to 2.74, the whole build 16.72 to 8.96**, i.e. clang's build is now faster than
+gcc's rather than 1.7x slower. Paired on the score, clang `build64` **1.80**, `buildbig` **1.61**,
+geomean **1.076**, everything else within noise; gcc 1.03 and 1.03, geomean 1.006, since it
+disambiguated on its own.
+
+What did *not* work, all measured: hoisting `m_buckets.index()` out of `place_group` (the same
+store-to-load shape, but that pointer was already in a register), `__restrict__` on the group and
+index pointers (says nothing about the container's pointer, which is the one being reloaded), and
+every combination of forcing `place_group` and `fill_buckets_from_values` inline or out of line
+(a 3x2 matrix, all within 2%). The lesson is the one the old rehash section already stated for a
+different loop -- what matters is what sits on the path to an address -- and the new part is that a
+byte-sized store is enough to put a container's own bookkeeping there.
+
 **gcc left `probe` out of line, and forcing it inline is the largest single gcc gain on the branch**
 (2026-09-05). Found from the full score without SSE2 under gcc, where random integer misses read
 0.66 of main while a standalone loop had gcc's SWAR miss *faster* than clang's. `perf` on the
