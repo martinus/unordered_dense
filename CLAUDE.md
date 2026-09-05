@@ -417,6 +417,22 @@ kinds: deletions and bitwise rewrites inside the SWAR fallback, which an SSE2 bu
 at all; prefetch deletions, which are semantic no-ops; and the erase decrement again. None is a test
 hole. `erase-path.txt` is 5 of 6, the sixth being that same decrement.
 
+**gcc left `probe` out of line, and forcing it inline is the largest single gcc gain on the branch**
+(2026-09-05). Found from the full score without SSE2 under gcc, where random integer misses read
+0.66 of main while a standalone loop had gcc's SWAR miss *faster* than clang's. `perf` on the
+harness binary put 59% of the time in `table::probe<unsigned long>` as its own symbol, called from
+`find_all`, where main's lookup was fully inlined: in a large translation unit gcc's unit-growth
+budget runs out and the probe, bigger with the SWAR match, is the function it stops inlining. The
+symbol exists in the SSE2 binary as well. `ANKERL_UNORDERED_DENSE_FORCEINLINE` on `probe`, paired
+against the commit before it: **gcc without SSE2** `rmiss64` 0.66 to 1.23 against main, `rhit64`
+1.16 to 1.50, `churn64` 1.19 to 1.48; **gcc with SSE2** `churn64` 1.32, `rhitstr` 1.22, `build64`
+1.42; **clang** 1.00 on every workload, with and without SSE2, since it inlined it already. The
+whole design assumes the probe is inlined -- the prefetch, the hoisted pointers and the early exit
+only pay inside the caller -- so this is the attribute saying what the code already meant. The
+full score against main under gcc went from 1.149 to **1.244** with SSE2 (`build64` 1.97,
+`buildbig` 1.68) and from 1.097 to **1.165** without, and the gcc string lookups that were the one
+workload family behind main are now ahead of it: `rhitstr` 1.13, `rmissstr` 1.05, `findstr` 1.10.
+
 **The gcc string-lookup gap, explained and mostly closed** (2026-09-05). Under gcc the branch's
 string lookups measured 0.88-0.91 of main, the one workload family it lost, and the instruction
 counts say why: per string hit, main 200 instructions and the branch 224 under gcc, against 235
@@ -430,9 +446,8 @@ five were fixable: building the fingerprint word was an and, a compare, a shift,
 multiply on the critical path of every probe, placement and erase, and a 256-entry table of the
 finished words (which the prototype had and the header had lost) makes it one L1 load. Paired,
 both compilers: integer misses 1.05-1.06x, `findbig` 1.03x clang and **1.14x gcc**, `rhit64`
-1.02x gcc, `ie64` 1.03x gcc, strings 1.00-1.01. Kept. The rest of the string gap under gcc is the
-spill set around the call, which the old probe paid too and which no arrangement of this loop
-avoided last time.
+1.02x gcc, `ie64` 1.03x gcc, strings 1.00-1.01. Kept. The rest of the string gap under gcc turned out to be the probe not being inlined at all
+in that binary -- the entry above this one -- and is closed.
 
 **On ARM the branch is 1.11x main, the same overall as on x86, split the opposite way** (2026-09-05,
 `.github/workflows/ab-arm.yml`: the paired harness on a GitHub `ubuntu-24.04-arm` runner, Neoverse
