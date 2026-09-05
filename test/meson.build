@@ -46,9 +46,11 @@ test_sources = [
     'unit/explicit.cpp',
     'unit/extract.cpp',
     'unit/fuzz_api.cpp',
+    'unit/fuzz_group_index.cpp',
     'unit/fuzz_insert_erase.cpp',
     'unit/fuzz_replace_map.cpp',
     'unit/fuzz_string.cpp',
+    'unit/group_bucket.cpp',
     'unit/growth_exception_safety.cpp',
     'unit/hash_scalar_types.cpp',
     'unit/hash_smart_ptr.cpp',
@@ -75,6 +77,7 @@ test_sources = [
     'unit/not_moveable.cpp',
     'unit/pmr_move_with_allocators.cpp',
     'unit/precomputed_hash.cpp',
+    'unit/probe_termination.cpp',
     'unit/probe_wrap.cpp',
     'unit/pmr.cpp',
     'unit/reentrant.cpp',
@@ -286,7 +289,7 @@ if compiler.get_id() == 'clang'
         fuzz_compile_sanitizers += '-fsanitize=address,undefined'
         fuzz_link_sanitizers += '-fsanitize=address,undefined'
     endif
-    foreach fuzz_target : ['fuzz_api', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
+    foreach fuzz_target : ['fuzz_api', 'fuzz_group_index', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
         executable(
             fuzz_target,
             ['unit/' + fuzz_target + '.cpp', 'app/counter.cpp'],

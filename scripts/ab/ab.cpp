@@ -22,11 +22,13 @@
 namespace {
 
 using base_u64 = udmbase::unordered_dense::map<uint64_t, size_t>;
-using cand_u64 = ankerl::unordered_dense::map<uint64_t, size_t>;
 using base_str = udmbase::unordered_dense::map<std::string, size_t>;
-using cand_str = ankerl::unordered_dense::map<std::string, size_t>;
 using base_big = udmbase::unordered_dense::map<uint64_t, workloads::big_value>;
-using cand_big = ankerl::unordered_dense::map<uint64_t, workloads::big_value>;
+template <typename K, typename V>
+using cand_map = ankerl::unordered_dense::map<K, V>;
+using cand_u64 = cand_map<uint64_t, size_t>;
+using cand_str = cand_map<std::string, size_t>;
+using cand_big = cand_map<uint64_t, workloads::big_value>;
 #ifdef UDM_AB_HAVE_BOOST
 using boost_u64 = boost::unordered_flat_map<uint64_t, size_t, ankerl::unordered_dense::hash<uint64_t>>;
 using boost_str = boost::unordered_flat_map<std::string, size_t, ankerl::unordered_dense::hash<std::string>>;

@@ -48,16 +48,18 @@ auto tracked(test::alloc_counts& counts) -> Container {
 }
 
 // What a table costs before it has allocated anything of its own. Not zero everywhere: a table is
-// two containers, the values and the buckets, and MSVC's debug iterator support allocates a
-// _Container_proxy through the allocator for each one as it is constructed. So the floor is
-// measured rather than assumed -- two empty vectors' worth, whatever that is here.
+// the values plus the arrays of the index -- the groups, and the value index beside them -- and
+// MSVC's debug iterator support allocates a _Container_proxy through the allocator for each one as
+// it is constructed. So the floor is measured rather than assumed: that many empty vectors' worth,
+// whatever that is here. It was one fewer while the index was a single array of buckets, which is
+// the kind of thing only a Windows leg notices.
 auto empty_table_cost() -> int {
+    using index_t =
+        ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group, std::allocator<pair_t>>;
     auto counts = test::alloc_counts{};
-    {
-        auto values = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
-        auto buckets = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
-        static_cast<void>(values);
-        static_cast<void>(buckets);
+    for (size_t i = 0; i < 1 + index_t::array_count; ++i) {
+        auto v = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
+        static_cast<void>(v);
     }
     return counts.allocations;
 }
@@ -234,7 +236,7 @@ TEST_CASE("a_moved_from_table_keeps_no_buckets") {
 
         auto target = std::move(source);
 
-        // Nothing beyond bringing the target's own two containers into existence.
+        // Nothing beyond bringing the target's own three containers into existence.
         REQUIRE(counts.allocations == before + empty_table_cost());
         REQUIRE(target.find(1)->second == 2);
         REQUIRE(source.bucket_count() == 0); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
@@ -394,4 +396,32 @@ TEST_CASE_MAP("reserve_sizes_the_buckets_not_just_the_values", int, int) {
     }
     REQUIRE(map.bucket_count() == after_reserve);
     REQUIRE(map.size() == 200);
+}
+
+// An emptied table is meant to be indistinguishable from a fresh one: its first insert allocates
+// the smallest array, whatever size the table had grown to before it was cleared. Copying one has
+// to carry that over -- the copy must also start from the smallest array, not from the source's
+// grown shift. Only visible when the copy already has buckets of its own, i.e. copy-assignment
+// into a grown target, since a fresh target is at the initial shift anyway.
+TEST_CASE_MAP("copying_an_emptied_table_starts_from_the_smallest_array", uint64_t, uint64_t) {
+    auto source = map_t();
+    for (uint64_t i = 0; i < 1000; ++i) {
+        source[i] = i;
+    }
+    source.clear(); // grown, then empty
+    REQUIRE(source.empty());
+
+    auto target = map_t();
+    for (uint64_t i = 0; i < 1000; ++i) {
+        target[i] = i; // so the target has a grown array of its own to overwrite
+    }
+    auto const grown = target.bucket_count();
+    REQUIRE(grown > 64);
+
+    target = source;
+    REQUIRE(target.empty());
+    REQUIRE(target.bucket_count() == 0);
+
+    target[7] = 7;
+    REQUIRE(target.bucket_count() == 64); // the smallest array, not the source's or the target's old one
 }

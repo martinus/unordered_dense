@@ -35,7 +35,7 @@ jobs:
       # One target finding something should not stop the others from running.
       fail-fast: false
       matrix:
-        target: [fuzz_api, fuzz_insert_erase, fuzz_replace_map, fuzz_string]
+        target: [fuzz_api, fuzz_group_index, fuzz_insert_erase, fuzz_replace_map, fuzz_string]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -116,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [fuzz_api, fuzz_insert_erase, fuzz_replace_map, fuzz_string]
+        target: [fuzz_api, fuzz_group_index, fuzz_insert_erase, fuzz_replace_map, fuzz_string]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

@@ -31,17 +31,17 @@ namespace doctest {
 #include <deque>
 #include <sstream>
 
+// A map and a set whose values live in a std::deque: the value container is a template parameter,
+// and a container that is not a std::vector is the one thing the table cannot assume anything
+// about.
 template <class Key,
           class T,
           class Hash = ankerl::unordered_dense::hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::deque<std::pair<Key, T>>,
-          class Bucket = ankerl::unordered_dense::bucket_type::standard,
-          class BucketContainer = std::deque<Bucket>>
-class deque_map : public ankerl::unordered_dense::detail::
-                      table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false> {
-    using base_t =
-        ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
+          class Bucket = ankerl::unordered_dense::bucket_type::group>
+class deque_map : public ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
     using base_t::base_t;
 };
 
@@ -49,12 +49,32 @@ template <class Key,
           class Hash = ankerl::unordered_dense::hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::deque<Key>,
-          class Bucket = ankerl::unordered_dense::bucket_type::standard,
-          class BucketContainer = std::deque<Bucket>>
-class deque_set : public ankerl::unordered_dense::detail::
-                      table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false> {
-    using base_t = ankerl::unordered_dense::detail::
-        table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, BucketContainer, false>;
+          class Bucket = ankerl::unordered_dense::bucket_type::group>
+class deque_set
+    : public ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
+    using base_t::base_t;
+};
+
+// The map with the wide value index, so that every TEST_CASE_MAP covers it as well.
+template <class Key,
+          class T,
+          class Hash = ankerl::unordered_dense::hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
+          class Bucket = ankerl::unordered_dense::bucket_type::group_big>
+class big_map : public ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
+    using base_t::base_t;
+};
+
+template <class Key,
+          class Hash = ankerl::unordered_dense::hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class AllocatorOrContainer = std::allocator<Key>,
+          class Bucket = ankerl::unordered_dense::bucket_type::group_big>
+class big_set : public ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
     using base_t::base_t;
 };
 
@@ -64,7 +84,8 @@ class deque_set : public ankerl::unordered_dense::detail::
                        map_t,                                               \
                        ankerl::unordered_dense::map<__VA_ARGS__>,           \
                        ankerl::unordered_dense::segmented_map<__VA_ARGS__>, \
-                       deque_map<__VA_ARGS__>)
+                       deque_map<__VA_ARGS__>,                              \
+                       big_map<__VA_ARGS__>)
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define TEST_CASE_SET(name, ...)                                            \
@@ -72,17 +93,20 @@ class deque_set : public ankerl::unordered_dense::detail::
                        set_t,                                               \
                        ankerl::unordered_dense::set<__VA_ARGS__>,           \
                        ankerl::unordered_dense::segmented_set<__VA_ARGS__>, \
-                       deque_set<__VA_ARGS__>)
+                       deque_set<__VA_ARGS__>,                              \
+                       big_set<__VA_ARGS__>)
 
 #define TYPE_TO_STRING_MAP(...)                                          /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::map<__VA_ARGS__>);           /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::segmented_map<__VA_ARGS__>); /*NOLINT*/ \
-    TYPE_TO_STRING(deque_map<__VA_ARGS__>)                               /*NOLINT*/
+    TYPE_TO_STRING(deque_map<__VA_ARGS__>);                              /*NOLINT*/ \
+    TYPE_TO_STRING(big_map<__VA_ARGS__>)                                 /*NOLINT*/
 
 #define TYPE_TO_STRING_SET(...)                                          /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::set<__VA_ARGS__>);           /*NOLINT*/ \
     TYPE_TO_STRING(ankerl::unordered_dense::segmented_set<__VA_ARGS__>); /*NOLINT*/ \
-    TYPE_TO_STRING(deque_set<__VA_ARGS__>)                               /*NOLINT*/
+    TYPE_TO_STRING(deque_set<__VA_ARGS__>);                              /*NOLINT*/ \
+    TYPE_TO_STRING(big_set<__VA_ARGS__>)                                 /*NOLINT*/
 
 #if defined(ANKERL_UNORDERED_DENSE_PMR)
 

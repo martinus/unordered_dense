@@ -150,6 +150,12 @@ void show([[maybe_unused]] track_peak_memory_resource const& mr, [[maybe_unused]
 }
 
 // the following tests are vector specific, so don't use segmented_vector
+//
+// The counts below are one higher per index allocation than they were while the index was one
+// array of buckets: it is two now, the groups and the value indices beside them, and both come
+// from the same resource. Every difference here is exactly that -- an insert into an empty map
+// allocates three times (values, groups, indices) rather than twice, and an assignment that
+// builds an index allocates twice rather than once.
 
 TEST_CASE("pmr_copy") {
     using map_t = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>;
@@ -169,11 +175,11 @@ TEST_CASE("pmr_copy") {
     show(mr1, "mr1");
     show(mr2, "mr2");
 
-    REQUIRE(mr1.num_allocs() == 3);
-    REQUIRE(mr1.num_deallocs() == 1);
+    REQUIRE(mr1.num_allocs() == 5);
+    REQUIRE(mr1.num_deallocs() == 2);
     REQUIRE(mr1.num_is_equals() == 0);
 
-    REQUIRE(mr2.num_allocs() == 2);
+    REQUIRE(mr2.num_allocs() == 3);
     REQUIRE(mr2.num_deallocs() == 0);
     REQUIRE(mr2.num_is_equals() == 0);
 }
@@ -197,10 +203,10 @@ TEST_CASE("pmr_move_different_mr") {
     show(mr1, "mr1");
     show(mr2, "mr2");
 
-    REQUIRE(mr1.num_allocs() == 3);
-    REQUIRE(mr1.num_deallocs() == 1);
+    REQUIRE(mr1.num_allocs() == 5);
+    REQUIRE(mr1.num_deallocs() == 2);
 
-    REQUIRE(mr2.num_allocs() == 2);
+    REQUIRE(mr2.num_allocs() == 3);
     REQUIRE(mr2.num_deallocs() == 0);
 
     // The total, not one comparison per resource -- that split is only how libstdc++ and Apple's
@@ -223,7 +229,7 @@ TEST_CASE("pmr_move_same_mr") {
     auto mr1 = track_peak_memory_resource();
     auto map1 = map_t(&mr1);
     map1[1] = 2;
-    REQUIRE(mr1.num_allocs() == 2);
+    REQUIRE(mr1.num_allocs() == 3);
     REQUIRE(mr1.num_deallocs() == 0);
     REQUIRE(mr1.num_is_equals() == 0);
 
@@ -236,12 +242,12 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(map1.find(3) != map1.end());
     show(mr1, "mr1");
 
-    // Two allocations per map, values and buckets, and nothing for the move: map1's buckets and
-    // values are handed over rather than copied, and map2 is left as a default constructed map,
-    // which no longer means "with a freshly allocated bucket array". That last one is what used to
-    // make this 5.
-    REQUIRE(mr1.num_allocs() == 4);
-    REQUIRE(mr1.num_deallocs() == 2);
+    // Three allocations per map, the values and the two arrays of the index, and nothing for the
+    // move: map1's index and values are handed over rather than copied, and map2 is left as a
+    // default constructed map, which no longer means "with a freshly allocated index". That last
+    // one is what used to make this one higher still.
+    REQUIRE(mr1.num_allocs() == 6);
+    REQUIRE(mr1.num_deallocs() == 3);
     REQUIRE(mr1.num_is_equals() == 0);
 }
 

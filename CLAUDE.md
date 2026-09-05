@@ -2,6 +2,25 @@
 
 Guidance for working on `unordered_dense` — a single-header C++17 dense open-addressing hash map/set (`ankerl::unordered_dense::{map, set}`).
 
+**The index is groups of sixteen, not robin hood.** Since 2026-09-05 the only index is
+`bucket_type::group`: sixteen one-byte fingerprints per group compared with one SSE2 instruction
+(eight per word with SWAR where there is no SSE2), the value indices in a second array, quadratic
+probing over groups, and eight overflow counters per group that an insert increments in every full
+group it passes and an erase decrements again. Nothing moves after it is placed and there are no
+tombstones, so no rehash is ever needed. What an erase cannot undo is *where* an element went: one
+placed while its home group was full stays there, so a long-churned table probes further than one
+freshly built from the same contents -- measured at load 0.76, 1.14 groups per hit against 1.03 and
+1.27 per miss against 1.05, plateauing after about a dozen turnovers rather than growing. That is
+the difference from a tombstone design, not the absence of any drift at all; the claim that a
+churned table is *identical* to a fresh one belongs to backward shift deletion and was wrongly
+carried over here. `bucket_type::group_big` is the same with 64
+bit value indices. The robin hood index it replaced — the packed distance-and-fingerprint field,
+the four-bucket SSE2 probe, the vector shifts on insert and erase, the sentinel padding — is gone
+from the header; everything below that describes it is history, kept because the measurements and
+the reasoning behind them are still worth having. Paired against it on the score the group index
+was 1.10x, with churn at a fixed size 1.45x, misses 1.5x, hits 1.33x, insert-erase 1.2x, and 5.5
+bytes per slot instead of 8. The layouts measured and rejected on the way are in `martinus/ai#3`.
+
 The entire implementation lives in `include/ankerl/unordered_dense.h`. Tests and benchmarks are in `test/` and build into a single doctest executable `udm-test`.
 
 ## Build (meson)
@@ -48,11 +67,14 @@ Benchmarking practices:
 
 ## Where the time goes
 
-The u64 workloads are bound by branch mispredictions, the string workloads by the latency of a
-~167 instruction lookup of which the hash is ~59, and a model of 16 cycles per misprediction plus
-instructions at ~3.5 per cycle predicts changes within a cycle or two. The measurements behind
-that, and the per-workload numbers, are in `scripts/ab/README.md` with the paired A/B harness that
-produced them.
+The measurements in `scripts/ab/README.md`, with the paired A/B harness that produced them, were
+taken on the robin hood index: the u64 workloads bound by branch mispredictions, the string
+workloads by the latency of a ~167 instruction lookup of which the hash is ~59, and a model of 16
+cycles per misprediction plus instructions at ~3.5 per cycle predicting changes within a cycle or
+two. The group index that replaced it mispredicts far less -- one branch per group rather than one
+per bucket -- so treat those numbers as being about the workloads, which have not changed, rather
+than about the current lookup. Everything below in this section is about the workloads and still
+holds.
 
 **String keys must not all be the same length.** Until 2026-09-02 every string key of
 `bench_quick_overall_udm` was exactly 200 bytes. A hash dispatches on length, and one length makes
@@ -140,6 +162,432 @@ where a random sequence costs the scalar probe 1.35. That under-reported the cos
 probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The workload now
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
+## Dead ends of the group index (paired A/B, 2026-09-05)
+
+**Fingerprints and counters in two arrays instead of one 24 byte group** (2026-09-05). The layout
+sweep in `martinus/ai#3` kept the two together in every one of its eleven layouts, so the split was
+the one form never measured. The case for it: sixteen fingerprints are a quarter of a cache line,
+so four groups fit a line exactly and none straddles, where a 24 byte group straddles one time in
+four; the case against: a miss then needs a second line for its counter. Measured paired on the
+nine workloads that touch the index, with the unchanged layout as a control: every ratio within
+noise (`rhit64` 1.00, `rmiss64` 1.01, `find64` 0.99, `churn64` 1.00, `ie64` 1.02, control 1.00
+throughout), and on a 20M entry table whose index is 37 MB and lives in DRAM, 57.1 against 57.0 ns
+per hit and 34.3 against 34.1 per miss. A tie both in cache and out of it. The straddle is free
+because the second line is the adjacent one, which the spatial prefetcher brings in with the first;
+the counter line is free because its address depends only on the group, so the load issues beside
+the fingerprint load rather than after it. Not kept: one array is simpler than two for the same
+speed, and the same reasoning says the padded 32 byte group and the 16-fingerprint-plus-8-counter
+split are the same question, already answered.
+
+**Which counter a probe consults at each step of its sequence** (2026-09-05). The design reads the
+class of the fingerprint's low three bits at every group. The false continues of a churned miss
+come largely from *siblings* -- entries with the same home group, which walk the same sequence, so
+a displaced sibling of the same class carries the miss along its whole displacement: 17.5% of
+churned misses continue at step 0 and about half of those continue again at step 1, far above the
+1/8 a fresh class check would give. Two alternatives, measured with a compile-time switch:
+
+- **Class plus distance, `(fp + d) & 7`**: exactly a no-op, as the arithmetic says it must be --
+  the sibling and the miss add the same d at every step, so if they agree at step 0 they agree
+  everywhere. Churned miss 1.263 groups against 1.262.
+- **Three fresh hash bits per step** (bits above the fingerprint, rotated by three per group): does
+  break the lockstep, and the churned miss drops from 1.262 to 1.238 groups with the step-0 rate
+  unchanged by construction. But that is 2% of a miss's probe work in the tail, on a path 17.5% of
+  churned misses reach, and the paired measurement on the six workloads that can see it is noise:
+  `rmiss64` 1.00, `churn64` 0.99, `find64` 0.99, `churnbig` 0.98, `findbig` 1.03, `rmissstr` 0.98,
+  with the refactor control at 1.00 everywhere. The saving is real and smaller than the register the
+  rotating word occupies.
+
+Neither kept. What would move a miss is the step-0 decision, and that is the counter's class count,
+which the row below settles.
+
+**The width of the overflow counter, all four divisions of a group's eight counter bytes measured
+against the design's eight one-byte counters** (2026-09-05, prompted by asking whether folly's
+single per-group counter would help). It is the axis the design already sits at the top of, and the
+two directions off it lose for opposite reasons. Fresh and after 200 turnovers at load 0.76, the
+share of misses that continue past their home group, and the score:
+
+| counters per group | fresh miss | churned miss | misses continuing (churned) | saturated at 200 turnovers | score |
+|---|---|---|---|---|---|
+| 1, F14 style (class ignored) | 1.21 | 2.79 | 60% | 0 | **0.959** |
+| 8 x 1 byte (the design) | 1.06 | 1.26 | 17.5% | 0 | 1.000 |
+| 16 x nibble | 1.03 | 1.13 | 9.7% | 0 | 0.986 |
+| 32 x 2 bit | 1.02 | 1.15 rising | rising | 36063 | 0.988 |
+
+Folly's one counter is the worst of the four, not the best: it does not know the fingerprint class,
+so *any* overflow past a group makes every later miss into it continue, and a churned table where
+most groups have seen an overflow sends 60% of misses on. Its score is 0.959 and its churn 0.83.
+The idea that a shared counter saturates faster and so helps is aimed at the wrong thing --
+saturation was never what stops a miss, the `delta == m_group_mask` bound is, and once saturated a
+counter is *worse*, since it never comes back down. That is exactly what sinks the 2 bit counter:
+it filters best of all when fresh (1.3% continue) but its max of 3 is reached constantly under
+churn, and a saturated counter lengthens every later miss for the life of the array.
+
+The nibble is the interesting direction and still loses. It genuinely filters better -- half as many
+fingerprints per counter, so 9.7% of churned misses continue against the design's 17.5%, at no
+memory cost and with a max of 15 that nothing reached even after 200 turnovers. But a sub-byte
+counter is a load-mask-compare on the read and a read-modify-write on the increment, and that is
+paid on *every* lookup, while the continuation it saves was already rare (4% fresh). So `find64`
+0.908, `rhit64` 0.940, `findbig` 0.923: the per-probe arithmetic costs more than the rarer group
+hop saves. The general shape is the one this file keeps rediscovering -- a filter only pays where
+nothing cheaper filtered first, and here the group's own fingerprint compare already did most of it,
+so a finer counter is refining a decision that is nearly always already made. A byte per class is
+the point where the counter is a single aligned load and still per-class.
+
+
+Both came from reading how other maps do it, and both lose for the same kind of reason: they add
+work to a path that runs on every lookup in order to help a case that is rare.
+
+- **Cache-line aligning the value indices**, which boost and abseil get for free because their
+  groups are aligned. A group's sixteen indices are exactly 64 bytes, and glibc hands back large
+  allocations at 16 mod 64, so *every* group's indices straddle two lines -- which is why
+  `prefetch_index` asks for two. Giving the index array a 64 byte aligned block type does what it
+  should on lookups (`find64` and `rhit64` both 1.02) and costs 4-5% on `build64`, `churn64` and
+  `churnbig`, for a geomean of 0.993. The likely mechanism is conflict misses: with the group array
+  and the index array both at power-of-two offsets, a group's metadata and its indices collide in
+  the same cache sets more often than they do when one of them is skewed.
+- **A second fingerprint in the spare high bits of the value index**, which is emhash8's trick: the
+  index word has to be loaded to reach the value, so bits spent there are free, and they reject a
+  fingerprint collision before the value vector is touched. Eight bits cost nothing until a table
+  wants more than 2^24 slots. Measured: geomean 0.975, and the losses are exactly on lookups
+  (`find64` 0.912, `findbig` 0.919, `rhit64` 0.930, `churn64` 0.915). It puts an xor, a shift and a
+  compare into the dependent chain of *every* lookup to avoid a value access on the 3% that have a
+  fingerprint collision. It is free for emhash8 because that map has no group-level fingerprint and
+  must consult the word anyway; here the group already filtered, so the second filter is redundant
+  work in the hot spot. The general shape is worth remembering: a filter only pays where nothing
+  cheaper has filtered first.
+
+- **A 16 bit value index for small maps**, which is CPython's compact dict: it stores 1, 2, 4 or 8
+  byte indices depending on capacity, where this always stores 4. A `bucket_type::group_small` with
+  `value_idx_type = std::uint16_t` makes the index 3.5 bytes per slot instead of 5.5 and puts two
+  groups' indices in one cache line. Measured on the thirteen scored workloads that fit under 2^16
+  elements: geomean **0.986**, with only `rhit64` (1.03) and `findstr` (1.02) ahead and `churn64`,
+  `churnstr` and `findbig` 3-4% behind. The reason kills the adaptive version too, not just this
+  one: a map small enough to be indexed in 16 bits has an index of at most 128 KB, which is already
+  inside L2, so halving something that already fits buys nothing -- and the maps whose index
+  footprint actually hurts are exactly the ones that need more than 16 bits. The narrow loads also
+  cost a zero-extension on every use. `group_small` was not kept.
+
+Three on the value vector, the one part nothing had touched, all keeping it dense (2026-09-05).
+For scale first: growth is 54% of a 200000 element integer build here and 59% of boost's, so the
+rehash is not where this map loses; the pure insert path is, 140 instructions per insert against
+boost's 77, spread over a probe, a vector append, a second walk in `place_group` (4% of cycles, the
+ceiling on any one-pass insert) and the spills of holding two index arrays plus a vector live. The
+vector's own reallocations are 3% of an integer build and 11% of a 64 byte value build.
+
+- **Reserving the values to the index's capacity at every index growth**, so the two grow together
+  instead of on their own cadences: `build64` 0.985, `buildstr` 0.972, `buildbig` 0.967, nothing
+  elsewhere. The total bytes copied are the same either way; what changes is that a full copy of
+  the values now lands immediately before a rehash that wants the cache for the index.
+- **A slot back-pointer per value** (a parallel `std::vector<value_idx_type>`, +4 bytes per entry),
+  so closing the hole an erase leaves repoints the moved element's slot directly instead of hashing
+  its key and walking to it. Pays exactly where that hash is expensive: `churnstr` 1.045, `iestr`
+  1.024. Costs everywhere the vector grows: `build64` 0.953, `buildbig` 0.960, `iebig` 0.977,
+  `churnbig` 0.984; integer churn is a tie. Net loss on the score, and 19% more memory for an
+  8 byte value. The 2025 note above about storing the hash instead measured the same shape.
+- **The same back-pointer plus indivi's 4 bit distance nibbles**, so that `erase(iterator)` needs
+  no hash at all: the slot comes from the back-pointer, the counter from the slot's own
+  fingerprint, and home from reversing the quadratic walk by the stored distance. On the one
+  pattern it exists for, find then `erase(it)` then insert on a reserved table: **1.10x faster
+  with string keys** (1006 to 888 instructions per round, one wyhash and two probes gone) and
+  **1.10x slower with integer keys** (352 to 363, the saved hash is 8 instructions and the
+  back-pointer maintained on every insert costs more). On the score, where every erase is by key,
+  it can only cost, and does: geomean 0.959, `build64` 0.831, `buildbig` 0.893, `churn64` 0.900,
+  with `iestr` 1.052 the one workload ahead. Memory 31 to 38 MB per million 8 byte values. Not
+  worth an opt-in either: the win needs an expensive key *and* erase by iterator, and a caller with
+  both has `erase(key)` with the hash already paid by their own `find`.
+- **Growing the values with `realloc`** instead of allocate-move-free, for trivially copyable
+  values. In isolation it removes a third of the vector's growth cost (0.242 to 0.164 ms for 16
+  byte pairs, 0.713 to 0.476 for 72 byte ones, doubling to 200000), which is about 1% of an integer
+  build and 4% of a big value one. It needs a container that is not `std::vector`, which the
+  `AllocatorOrContainer` parameter already accepts, so it is available today as an opt-in and not
+  worth changing what `values()` returns for.
+
+**The insert path is split in two by clang, and that is most of the build gap to boost.** Found
+2026-09-05 by counting instructions per insert on a reserved table, net of the benchmark loop:
+
+| compiler | this map, insert (miss) | boost | this map, `operator[]` on a present key |
+|---|---|---|---|
+| clang 22 | 128 instructions, 39 cycles | 64, 26.5 | 74 instructions |
+| gcc 16 | 82 instructions, 26 cycles | 55, 23 | 68 instructions |
+
+Under clang `do_try_emplace` is its own function with a six register prologue, and it calls
+`do_place_element` out of line, which clang refuses to inline at cost 480 against a threshold of
+250 (`vector::emplace_back` with `piecewise_construct` is 225 of that). gcc inlines the whole
+insert into the caller on its own. So the gap to boost on the insert path is 39% under clang and
+11% under gcc, and the score moves with it: **under gcc this map is 1.25x ahead of boost on
+`build64`** where under clang it is 0.70x behind, and 1.067 ahead of boost on the geomean without
+iteration where clang has it at 0.96. The full gcc score against main is 1.165, against 1.109 for
+clang, with `build64` 1.56 and `buildbig` 1.84. `scripts/ab/run.sh -c g++` reproduces it.
+
+What was tried for clang, all measured paired on the score:
+
+- **Forcing `do_place_element` and `place_group` inline** (`always_inline`): the miss path drops
+  from 128 to 100 instructions and 39 to 32 cycles, `build64` 1.070, `churn64` 1.061, `churnbig`
+  1.067, `buildbig` 1.041 -- and `operator[]` on a *present* key rises from 74 to 88 instructions,
+  because the merged function pays the placement code's register pressure on the path that never
+  places, so `ie64` 0.967, `iestr` 0.965, `iebig` 0.972, where half the inserts are hits. Geomean
+  **1.012**, every interval excluding 100%. A no-op for gcc. Forcing everything into the caller as
+  well gives the same numbers, so the hit-path cost is not about the caller's loop. **Applied**: by this file's own
+  rule an interval that excludes 100% on the score is a change to believe, and the trade is written
+  above the attribute in the header so it can be reversed knowingly.
+- **Handing the probe's fingerprint word and home group to an out-of-line `do_place_element`**, so
+  the insert derives nothing twice: 141.7 to 143.7, i.e. nothing. **Returning the value index in a
+  register** instead of a `pair<iterator, bool>`: 141.7 to 141.7, clang already returns that pair
+  in registers. The 28 instructions are the call boundary itself -- prologue, epilogue, argument
+  setup -- and only merging removes them.
+- **`increase_size` out of line** so the hot function shrinks: no change, clang's cost is in
+  `emplace_back`, not in the growth path.
+- **The erase path** is already flat: `erase(key)` is 102 instructions under clang with or without
+  forced inlining of `do_erase`, `erase_group_slot` and `finish_erase`.
+
+The next thing to try, not yet done: get `do_place_element` under clang's threshold *honestly*, by
+making the common-case append cheaper for its cost model than `emplace_back(piecewise_construct,
+forward_as_tuple(key), forward_as_tuple(args...))` -- for a map of trivially constructible types
+that is a 16 byte store dressed as 225 units of inline cost. Under gcc the same code is already
+fully inlined, so this is a clang-only 7% on builds and churn waiting on codegen, not on design.
+
+Read and found to have nothing to transfer, with the reason in each case:
+
+- **folly F14** is the closest relative, and its `outboundOverflowCount_` is this map's overflow
+  counter exactly -- saturating, decremented on erase, used to stop a miss. Arrived at
+  independently. One difference favours this map: F14 keeps *one* counter per 14 slot chunk where
+  this keeps eight per 16 slot group, split by fingerprint class, so a miss here stops sooner.
+- **abseil**'s probe sequence is the same triangular one, `(i^2+i)/2` over a power-of-two number of
+  groups; its `next()` adds `Width` per step where `next_group()` adds one group, which is the same
+  progression written differently. Its newer small-object optimization holds one element without
+  allocating; this map already allocates nothing until the first insert, and the score has no
+  workload of tiny maps, so it was not pursued.
+- **bytell** puts a chain-head bit and a 7 bit index into a 126 entry jump-distance table in one
+  byte per slot, so chains are linked lists with one byte links and the first sixteen distances are
+  0..15 to keep short chains inside a block. It buys the ability to *skip* groups, and a lookup here
+  visits 1.03 groups fresh and 1.27 churned. There is nothing to skip.
+- **Verstable** packs a 4 bit hash fragment, an in-home-bucket bit and an 11 bit quadratic
+  displacement into one 16 bit word per bucket. Same conclusion, and it confirms a detail: it takes
+  the fragment from the *high* bits because the bucket comes from the low ones, which is the same
+  independence this map gets by taking the group from the top of the hash and the fingerprint from
+  the bottom.
+- **tsl::hopscotch_map** keeps a per-bucket bitmap of which of the next N buckets hold keys
+  belonging here. It is positional where the counters are numeric, but it is *coarser* -- one
+  bitmap per bucket against eight counters per group -- and it maintains its invariant by moving
+  elements closer to home, which is the work this design exists to avoid.
+- **Go's map** evacuates one bucket per operation instead of rehashing at once. That trades total
+  throughput for tail latency, which is a different goal from the one the score measures, and it is
+  a redesign of growth rather than a transfer. Not attempted.
+
+Where the map stands against others on the score, same hash for all, measured the same day:
+excluding the three iteration workloads, `boost::unordered_flat_map` is level (0.96) and **ahead on
+lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `emhash5` 28%. With
+iteration included this map leads all of them, because only `emhash8` is dense as well and the rest
+lose 3-10x there. The standing weakness is the same one this file has always named: building.
+
+**That last sentence stopped being true on 2026-09-05.** Re-measured against
+`boost::unordered_flat_map` after the rehash fix, same hash, 12 paired epochs, boost's time over
+this map's:
+
+| | clang | gcc |
+|---|---|---|
+| score, 15 workloads | **1.56** | **1.49** |
+| without the three iteration workloads | 1.13 | 1.17 |
+| iterate | 5.76 | 3.91 |
+| build | 1.62 | 1.77 |
+| churn at a fixed size | 1.16 | 1.21 |
+| insert and erase | 0.96 | 0.99 |
+| find, half hits | 0.90 | 0.88 |
+| random hits and misses | 0.92 | 0.92 |
+
+Building is now a *win* rather than the weakness -- `build64` 1.39x and 1.64x, `buildbig` 2.09x on
+both compilers -- because the store-to-load chain in the rehash was what held it back, not the
+design. What is left of boost's advantage is exactly one thing, fresh-table lookups, and it is
+worth stating plainly: boost is **10-13% faster on a hit** (`rhit64` 0.80, `findbig` 0.87) and this
+map is faster on a miss (`rmiss64` 1.12 under clang). That is the value-index indirection, one more
+dependent load than a flat map needs, and it is the price of the dense value vector -- which is the
+same property that pays 3.9-5.8x on iteration and 2.1x on a 64 byte build. Memory for a million
+entries, steady state: 39.5 MB against boost's 67.9 with an 8 byte value, 144.5 against 209.0 peak
+with a 64 byte one.
+
+**A miss had no bound, and eight chosen keys made it loop forever** (found 2026-09-05, in the
+review before release). The probe stopped only at a group whose counter for the key's class was
+zero, on the argument that exact counters put a zero right after the furthest entry of that class.
+The argument is wrong: a counter counts entries that overflowed past its group on *their* probe
+sequences, not on the one being walked. Fill a group, send one key of class 1 past it, erase the
+fillers -- the passer stays, so the counter stays -- and do that for every group: eight live keys,
+every class-1 counter positive, and `contains()` on an absent class-1 key never returns. Any hash
+the caller controls reaches it, and the default hash with attacker-chosen keys does too, since only
+the top few bits and the low byte need steering. `indivi::flat_umap`, where the counters came from,
+has the same hole (`find_impl` loops on `gIndex <= mGMask`, which the mask makes always true); the
+same eight keys hang it. The fix is `|| delta == m_group_mask` on the miss exit: a key that exists
+was placed within one cycle of its sequence, so a walk that has seen every group can stop. By
+mechanism it is free -- per lookup on a 200k table, 83.6 to 82.7 instructions on a hit, 69.5 to
+67.6 on a miss, cycles and mispredictions unchanged -- and the paired score read 0.99 with three
+workloads at 0.95 beside a 1.16 on `hashstr`, which never touches the map, so that run's layout
+moved. `test/unit/probe_termination.cpp` builds both this table and a saturated counter with the
+identity hash; the corpus fuzzers, all on wyhash, could not have reached either. The bound has a
+second effect worth knowing: it converts a *missing or wrong-home* erase decrement from a hang into
+a silent slowdown. That fault used to be caught loudly -- the counters only grew, a miss found no
+zero, the suite hung -- and now the miss stops at the end of the array and the table stays correct,
+just slower. So the erase decrement is no longer covered by any correctness test (mutating it away
+SURVIVES the suite), only by the A/B score. That is the deliberate trade of making the map robust
+to a hostile hash: a hang is loud, degradation is quiet, and the map has to prefer the quiet one.
+
+**Mutation triage after the bound** (2026-09-05, `invariants.txt` and `erase-path.txt` re-run,
+plus a `bitwise,deletions` sweep of the index functions, lines 1380-1560). `invariants.txt` is 45
+of 46 caught after a test was added for the one real gap the sweep found: copying an *emptied but
+grown* table by assignment into a grown target left the copy at the source's shift, so its first
+insert allocated the large array instead of the smallest (2048 buckets against 64) -- observable,
+and nothing checked it, now `copying_an_emptied_table_starts_from_the_smallest_array` in
+`lazy_bucket_allocation.cpp`. The two `invariants.txt` survivors are equivalent: the moved-from mask
+(every find and erase checks `empty()` before it could read the mask, and a moved-from table is
+empty) and the erase decrement just above. The sweep's sixteen survivors are all one of three
+kinds: deletions and bitwise rewrites inside the SWAR fallback, which an SSE2 build does not compile
+at all; prefetch deletions, which are semantic no-ops; and the erase decrement again. None is a test
+hole. `erase-path.txt` is 5 of 6, the sixth being that same decrement.
+
+**Indexing the value container in the rehash cost clang a memory latency per element** (2026-09-05,
+from comparing the two compilers' absolute times on the branch rather than their ratios to main).
+`build64` was the one large branch-specific compiler gap left: 3.36 ms under clang against 1.97 under
+gcc, where main's own gcc/clang ratio on the same workload is 1.04. Splitting a 200000 element build
+into inserts into a reserved table and the growth on top of them says where it lived -- clang was
+**1.44x faster** on the reserved inserts (6.30 ns against 9.08) and **4.9x slower** on growth (10.43
+ns per insert against 2.15). So it was never the insert path; it was `fill_buckets_from_values`.
+
+The loop read `m_values[value_idx]`. Placing an entry stores a fingerprint, a `std::uint8_t` store
+may alias any object at all, and the container's own data pointer is such an object -- so after
+every placement an indexed read has to load that pointer back out of the container before it can
+form the address of the next key. The random group access that follows cannot start until that
+resolves, so the chain costs one memory latency per element and the placements, which are
+independent, run one at a time. Walking with an iterator keeps the address in a register: **growth
+10.43 ns per insert to 2.74, the whole build 16.72 to 8.96**, i.e. clang's build is now faster than
+gcc's rather than 1.7x slower. Paired on the score, clang `build64` **1.80**, `buildbig` **1.61**,
+geomean **1.076**, everything else within noise; gcc 1.03 and 1.03, geomean 1.006, since it
+disambiguated on its own.
+
+What did *not* work, all measured: hoisting `m_buckets.index()` out of `place_group` (the same
+store-to-load shape, but that pointer was already in a register), `__restrict__` on the group and
+index pointers (says nothing about the container's pointer, which is the one being reloaded), and
+every combination of forcing `place_group` and `fill_buckets_from_values` inline or out of line
+(a 3x2 matrix, all within 2%). The lesson is the one the old rehash section already stated for a
+different loop -- what matters is what sits on the path to an address -- and the new part is that a
+byte-sized store is enough to put a container's own bookkeeping there.
+
+**The rest of the header was then audited for the same shape, and it is the only instance.** Every
+site that reads a container by index after a store: `replace()` has the identical loop and is
+*correct* as written, because that loop moves elements and pops the back, so the pointer and the
+size genuinely change and the reload is required; `erase_if` recomputes `begin()` around an
+`erase()` that moves elements, likewise; `probe` reads `m_values` to compare keys but stores
+nothing, so nothing serialises inside one probe; and `place_group` still asks for
+`m_buckets.index()` after writing a fingerprint, re-measured once the big effect was gone and worth
+nothing either way (reserved inserts 6.92 ns against 5.84, growth 2.17 against 2.38, mixed and
+within noise). What made the rehash unique is that the reload was the *only* work between
+iterations, so it landed directly on the address path of the next random group access; everywhere
+else there is enough independent work to hide it.
+
+Checking the two compilers against each other is what found it, and it has a blind spot worth
+naming: it can only see a loop where one compiler disambiguates and the other does not. A loop both
+serialise looks normal. After the fix no workload shows a branch-specific compiler gap any more --
+`build64` is 1.82 ms under clang against 1.88 under gcc, where it was 3.36 against 1.97 -- and the
+only large remaining difference, integer iteration at 1.65x slower under gcc, is shared with main
+and so is not about this index at all.
+
+**gcc left `probe` out of line, and forcing it inline is the largest single gcc gain on the branch**
+(2026-09-05). Found from the full score without SSE2 under gcc, where random integer misses read
+0.66 of main while a standalone loop had gcc's SWAR miss *faster* than clang's. `perf` on the
+harness binary put 59% of the time in `table::probe<unsigned long>` as its own symbol, called from
+`find_all`, where main's lookup was fully inlined: in a large translation unit gcc's unit-growth
+budget runs out and the probe, bigger with the SWAR match, is the function it stops inlining. The
+symbol exists in the SSE2 binary as well. `ANKERL_UNORDERED_DENSE_FORCEINLINE` on `probe`, paired
+against the commit before it: **gcc without SSE2** `rmiss64` 0.66 to 1.23 against main, `rhit64`
+1.16 to 1.50, `churn64` 1.19 to 1.48; **gcc with SSE2** `churn64` 1.32, `rhitstr` 1.22, `build64`
+1.42; **clang** 1.00 on every workload, with and without SSE2, since it inlined it already. The
+whole design assumes the probe is inlined -- the prefetch, the hoisted pointers and the early exit
+only pay inside the caller -- so this is the attribute saying what the code already meant. The
+full score against main under gcc went from 1.149 to **1.244** with SSE2 (`build64` 1.97,
+`buildbig` 1.68) and from 1.097 to **1.165** without, and the gcc string lookups that were the one
+workload family behind main are now ahead of it: `rhitstr` 1.13, `rmissstr` 1.05, `findstr` 1.10.
+
+**The gcc string-lookup gap, explained and mostly closed** (2026-09-05). Under gcc the branch's
+string lookups measured 0.88-0.91 of main, the one workload family it lost, and the instruction
+counts say why: per string hit, main 200 instructions and the branch 224 under gcc, against 235
+and 239 under clang, with branch misses identical at 1.8. gcc compiles main's robin hood probe
+unusually tightly, and on string keys there are no probe mispredictions for the group index to win
+back -- the 1.8 are the hash's length dispatch and `memcmp` -- so the group probe's extra
+instructions show undiluted. The assembly is the same shape CLAUDE.md recorded for the old SSE2
+probe: gcc spills the loop state, the broadcast fingerprint among it, around the `memcmp` call,
+and that plus the prefetches, movemask, tzcnt and the second array are the two dozen. Of those,
+five were fixable: building the fingerprint word was an and, a compare, a shift, an or and a
+multiply on the critical path of every probe, placement and erase, and a 256-entry table of the
+finished words (which the prototype had and the header had lost) makes it one L1 load. Paired,
+both compilers: integer misses 1.05-1.06x, `findbig` 1.03x clang and **1.14x gcc**, `rhit64`
+1.02x gcc, `ie64` 1.03x gcc, strings 1.00-1.01. Kept. The rest of the string gap under gcc turned out to be the probe not being inlined at all
+in that binary -- the entry above this one -- and is closed.
+
+**NEON closed the ARM lookup gap, and it was the whole gap** (2026-09-05). The SWAR row below is
+what prompted it: on a Neoverse N2 the branch was 1.11x main overall but *behind* on every lookup,
+because the word-at-a-time compare replaces a robin hood probe that was never vectorised on ARM and
+so lost nothing to begin with. With `vceqq_u8` and a narrowing shift the same runner gives, main's
+time over the branch's, SWAR first and NEON second: `rhit64` 0.91 to **1.48**, `rmiss64` 1.01 to
+**1.62**, `find64` 1.03 to 1.26, `findbig` 0.91 to 1.18, `rhitstr` 1.02 to 1.10. Nothing is behind
+main any more except `findstr` at 0.97, where the hash rather than the probe is the cost. The score
+goes 1.112 to **1.244** and without iteration 1.140 to **1.312**, which puts ARM ahead of where x86
+sat before the rehash fix and level with it now. Builds and churn gained too (`build64` 1.67 to
+2.08, `churn64` 1.20 to 1.43), since both place through the same compare.
+
+NEON has no movemask and the cheap stand-in does not give the same mask shape: the sixteen answers
+land one nibble apart in a 64 bit word, so the mask type and a lane stride are named once and
+`first_lane()` divides by the stride. Testing for a match, taking the lowest and clearing it with
+`m & (m - 1)` are then written once for all three backends. Guarded to little endian AArch64 --
+the mask reads the comparison as one word, and 32 bit ARM has no horizontal ops -- with SWAR, which
+is correct everywhere, behind both.
+
+**Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way** (2026-09-05,
+`.github/workflows/ab-arm.yml`: the paired harness on a GitHub `ubuntu-24.04-arm` runner, Neoverse
+N2, 4 cores, clang 18, 12 interleaved epochs, `origin/main` against the branch, so main's scalar
+robin hood probe against the branch's SWAR fingerprint compare -- neither has a vector path there).
+Geomean of the scored fifteen **1.112**, without iteration 1.14. Builds are far ahead (`build64`
+1.67, `buildbig` 1.54, `buildstr` 1.25) and churn is ahead (`churn64` 1.20, `churnstr` 1.09), but
+**lookups are behind main**: `rhit64` 0.914, `findbig` 0.912, `rmissstr` 0.939, `findstr` 0.967,
+`find64` 1.03. That is the SWAR match, about 36 instructions for two words where SSE2 does sixteen
+bytes in three, paid on every probe, against a robin hood probe that on ARM was never vectorised
+either and so lost nothing. It is the number a NEON match is for: `vceqq_u8` plus a narrowing
+shift is a handful of instructions, and indivi has the port. Push any branch to `ab-arm` to
+re-measure; a `workflow_dispatch` would need the file on main first.
+
+**`ie64` ties boost while executing 58% more instructions, and the counts say why** (2026-09-05,
+the workload run on each map alone under `perf stat`, net of its own rng and key scrambling,
+`/tmp/ie_count.cpp`):
+
+| per operation | this map | boost |
+|---|---|---|
+| instructions | 89 | 56 |
+| cycles | 43.8 | 43.5 |
+| branch mispredictions | 0.61 | 0.67 |
+| L1 data misses | 1.7 | 1.2 |
+| L2 misses | ~0 | ~0 |
+
+Neither map is instruction-bound: boost retires 1.3 per cycle, this map 2.0, on a core that can do
+four. What both wait on is the workload. Every `operator[]` and every `erase` in `ie64` is a coin
+flip on whether the key is present -- measured 49.9% hits for both -- so each operation costs about
+half a misprediction at ~16 cycles whatever the map, and then one chain of dependent loads that at
+10k entries sit in L2: hash, group metadata at a random address, the element to compare. Boost's
+chain is metadata then a 16 byte slot; this map's is metadata, index, value, but the index line is
+prefetched from the group address before the fingerprints arrive, so the extra hop mostly overlaps.
+The 33 extra instructions -- vector append and pop, the counter walks, the second probe on a
+successful erase -- run in the shadow of those stalls with issue slots to spare. Boost pays slightly
+more in mispredictions because its overflow bits stay set until the next rehash and the table
+churns between growths, so its misses walk one group further than a fresh table's.
+
+The same numbers say where the tie ends: on a table that does not fit in cache, or a workload with
+no coin flip, the memory chain dominates and boost's shorter one shows -- that is the 11% on
+lookups. And nothing here is spare on the instruction side: a change that lengthens the dependent
+chain costs at once, a change that only saves instructions on this workload is invisible.
+
+## The robin hood index this replaced, and its dead ends
+
+Everything below describes the index that was removed on 2026-09-05: a packed
+distance-and-fingerprint field per bucket, a four-bucket SSE2 probe, and vector shifts on insert
+and erase. None of it can be re-run against the current header. It is kept because the measurements
+are real, the reasoning applies to anything that probes a flat array, and the same questions will
+be asked of the group index.
+
 ## Optimization dead ends (verified with paired A/B runs; re-test before assuming they still hold)
 
 The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that consistently
@@ -165,7 +613,9 @@ The `bench_quick_overall_udm` hot paths are close to machine limits. Ideas that 
   `memset` in `clear_and_fill_buckets_from_values`, which is redundant because
   `allocate_buckets_from_shift` hands back a freshly zeroed vector (0.7% on `build64`, ~1% *worse*
   on `iestr`); and hashing eight elements ahead in the rehash loop and prefetching the bucket each
-  will land in (nothing on `build64`, ~1% worse on `buildstr`).
+  will land in (nothing on `build64`, ~1% worse on `buildstr`). The redundant memset was removed
+  on the group index on 2026-09-05 as a simplification, not a speedup: paired on the score it is
+  within 1% everywhere, so the ~1% on `iestr` above was layout luck.
 - Scalar attempts to take the branch out of `place_and_shift_up`. The robin hood shift asks "is this
   bucket occupied" once per bucket and the answer is a coin flip (73% of inserts shift nothing, 11%
   shift one), which cost 0.61 mispredictions per insert. Settling the first two buckets with
@@ -394,6 +844,19 @@ The `fuzz` test suite replays the committed corpora in `data/fuzz/<target>` on e
 only ever re-finds what has already been found. The libFuzzer targets are what go looking. They are
 clang only and not built by default:
 
+**`fuzz_group_index` is the one that can reach the index's own structure, and the reason it exists
+is worth keeping.** The other targets already hash with an identity over the whole 64 bit key, so
+steerability was never what they lacked -- it is *structure*. Filling a group and then emptying it
+again means sixteen keys agreeing in their top bits followed by sixteen erases of those same keys,
+which a random key stream does not produce, and that is how an unbounded miss survived all of them
+plus 767 unit tests. This target splits a key into three bytes the fuzzer chooses separately --
+group, identity, fingerprint -- and gives it fill-a-group and erase-a-run as single operations, so
+"fill this group, send one key of this class past it, take the fillers back out" is a handful of
+mutations rather than a coincidence. Validated by removing the probe's bound and re-running: it
+comes back as a libFuzzer timeout inside `probe` within seconds, *from the seed corpus alone*.
+`data/fuzz/fuzz_group_index/cb8d5c38...` is that input, kept as a regression seed; note that
+coverage minimization drops it, because against the fixed header it is no longer distinctive.
+
 ```sh
 CXX=clang++ meson setup builddir/fuzz
 ninja -C builddir/fuzz test/fuzz_api          # or fuzz_insert_erase, fuzz_replace_map, fuzz_string
@@ -423,7 +886,7 @@ afl-fuzz -i data/fuzz/fuzz_api -o out -- ./builddir/afl/test/fuzz_api   # -i is 
 easy to get subtly wrong:
 
 ```sh
-scripts/fuzz_afl.py run              # every core, all four targets, until Ctrl-C
+scripts/fuzz_afl.py run              # every core, every target, until Ctrl-C
 scripts/fuzz_afl.py run fuzz_api     # every core on one target
 scripts/fuzz_afl.py sweep            # each target in turn, moving on when it goes quiet
 scripts/fuzz_afl.py sweep --idle 15m # ... giving each one longer to prove it is done
