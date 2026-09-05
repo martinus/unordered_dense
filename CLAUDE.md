@@ -164,6 +164,21 @@ decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 
+**Fingerprints and counters in two arrays instead of one 24 byte group** (2026-09-05). The layout
+sweep in `martinus/ai#3` kept the two together in every one of its eleven layouts, so the split was
+the one form never measured. The case for it: sixteen fingerprints are a quarter of a cache line,
+so four groups fit a line exactly and none straddles, where a 24 byte group straddles one time in
+four; the case against: a miss then needs a second line for its counter. Measured paired on the
+nine workloads that touch the index, with the unchanged layout as a control: every ratio within
+noise (`rhit64` 1.00, `rmiss64` 1.01, `find64` 0.99, `churn64` 1.00, `ie64` 1.02, control 1.00
+throughout), and on a 20M entry table whose index is 37 MB and lives in DRAM, 57.1 against 57.0 ns
+per hit and 34.3 against 34.1 per miss. A tie both in cache and out of it. The straddle is free
+because the second line is the adjacent one, which the spatial prefetcher brings in with the first;
+the counter line is free because its address depends only on the group, so the load issues beside
+the fingerprint load rather than after it. Not kept: one array is simpler than two for the same
+speed, and the same reasoning says the padded 32 byte group and the 16-fingerprint-plus-8-counter
+split are the same question, already answered.
+
 **Which counter a probe consults at each step of its sequence** (2026-09-05). The design reads the
 class of the fingerprint's low three bits at every group. The false continues of a churned miss
 come largely from *siblings* -- entries with the same home group, which walk the same sequence, so
