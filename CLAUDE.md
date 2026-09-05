@@ -444,6 +444,25 @@ every combination of forcing `place_group` and `fill_buckets_from_values` inline
 different loop -- what matters is what sits on the path to an address -- and the new part is that a
 byte-sized store is enough to put a container's own bookkeeping there.
 
+**The rest of the header was then audited for the same shape, and it is the only instance.** Every
+site that reads a container by index after a store: `replace()` has the identical loop and is
+*correct* as written, because that loop moves elements and pops the back, so the pointer and the
+size genuinely change and the reload is required; `erase_if` recomputes `begin()` around an
+`erase()` that moves elements, likewise; `probe` reads `m_values` to compare keys but stores
+nothing, so nothing serialises inside one probe; and `place_group` still asks for
+`m_buckets.index()` after writing a fingerprint, re-measured once the big effect was gone and worth
+nothing either way (reserved inserts 6.92 ns against 5.84, growth 2.17 against 2.38, mixed and
+within noise). What made the rehash unique is that the reload was the *only* work between
+iterations, so it landed directly on the address path of the next random group access; everywhere
+else there is enough independent work to hide it.
+
+Checking the two compilers against each other is what found it, and it has a blind spot worth
+naming: it can only see a loop where one compiler disambiguates and the other does not. A loop both
+serialise looks normal. After the fix no workload shows a branch-specific compiler gap any more --
+`build64` is 1.82 ms under clang against 1.88 under gcc, where it was 3.36 against 1.97 -- and the
+only large remaining difference, integer iteration at 1.65x slower under gcc, is shared with main
+and so is not about this index at all.
+
 **gcc left `probe` out of line, and forcing it inline is the largest single gcc gain on the branch**
 (2026-09-05). Found from the full score without SSE2 under gcc, where random integer misses read
 0.66 of main while a standalone loop had gcc's SWAR miss *faster* than clang's. `perf` on the
