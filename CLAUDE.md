@@ -310,6 +310,35 @@ lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `e
 iteration included this map leads all of them, because only `emhash8` is dense as well and the rest
 lose 3-10x there. The standing weakness is the same one this file has always named: building.
 
+**`ie64` ties boost while executing 58% more instructions, and the counts say why** (2026-09-05,
+the workload run on each map alone under `perf stat`, net of its own rng and key scrambling,
+`/tmp/ie_count.cpp`):
+
+| per operation | this map | boost |
+|---|---|---|
+| instructions | 89 | 56 |
+| cycles | 43.8 | 43.5 |
+| branch mispredictions | 0.61 | 0.67 |
+| L1 data misses | 1.7 | 1.2 |
+| L2 misses | ~0 | ~0 |
+
+Neither map is instruction-bound: boost retires 1.3 per cycle, this map 2.0, on a core that can do
+four. What both wait on is the workload. Every `operator[]` and every `erase` in `ie64` is a coin
+flip on whether the key is present -- measured 49.9% hits for both -- so each operation costs about
+half a misprediction at ~16 cycles whatever the map, and then one chain of dependent loads that at
+10k entries sit in L2: hash, group metadata at a random address, the element to compare. Boost's
+chain is metadata then a 16 byte slot; this map's is metadata, index, value, but the index line is
+prefetched from the group address before the fingerprints arrive, so the extra hop mostly overlaps.
+The 33 extra instructions -- vector append and pop, the counter walks, the second probe on a
+successful erase -- run in the shadow of those stalls with issue slots to spare. Boost pays slightly
+more in mispredictions because its overflow bits stay set until the next rehash and the table
+churns between growths, so its misses walk one group further than a fresh table's.
+
+The same numbers say where the tie ends: on a table that does not fit in cache, or a workload with
+no coin flip, the memory chain dominates and boost's shorter one shows -- that is the 11% on
+lookups. And nothing here is spare on the instruction side: a change that lengthens the dependent
+chain costs at once, a change that only saves instructions on this workload is invisible.
+
 ## The robin hood index this replaced, and its dead ends
 
 Everything below describes the index that was removed on 2026-09-05: a packed
