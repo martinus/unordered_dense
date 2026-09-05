@@ -246,12 +246,14 @@ What was tried for clang, all measured paired on the score:
   because the merged function pays the placement code's register pressure on the path that never
   places, so `ie64` 0.967, `iestr` 0.965, `iebig` 0.972, where half the inserts are hits. Geomean
   **1.012**, every interval excluding 100%. A no-op for gcc. Forcing everything into the caller as
-  well gives the same numbers, so the hit-path cost is not about the caller's loop. Not applied: a
-  mixed trade that hard-codes one compiler's heuristic, and the cleaner fix is below.
+  well gives the same numbers, so the hit-path cost is not about the caller's loop. **Applied**: by this file's own
+  rule an interval that excludes 100% on the score is a change to believe, and the trade is written
+  above the attribute in the header so it can be reversed knowingly.
 - **Handing the probe's fingerprint word and home group to an out-of-line `do_place_element`**, so
-  the insert derives nothing twice: 141.7 to 143.7, i.e. nothing. The 28 instructions are the call
-  boundary itself -- prologue, epilogue, a `pair<iterator, bool>` returned through memory -- not the
-  duplicated arithmetic.
+  the insert derives nothing twice: 141.7 to 143.7, i.e. nothing. **Returning the value index in a
+  register** instead of a `pair<iterator, bool>`: 141.7 to 141.7, clang already returns that pair
+  in registers. The 28 instructions are the call boundary itself -- prologue, epilogue, argument
+  setup -- and only merging removes them.
 - **`increase_size` out of line** so the hot function shrinks: no change, clang's cost is in
   `emplace_back`, not in the growth path.
 - **The erase path** is already flat: `erase(key)` is 102 instructions under clang with or without
