@@ -1,0 +1,38 @@
+# The paired A/B harness on an ARM runner, on demand. Everything measured locally is x86-64 with
+# SSE2; on ARM the header compares fingerprints eight per word with SWAR, and this is the only
+# machine in reach where that path runs at native speed. The harness interleaves baseline and
+# candidate in one process, so a shared and noisy runner still gives a usable ratio -- believe an
+# interval that excludes 100%, as on any machine.
+name: ab-arm
+
+on:
+  workflow_dispatch:
+    inputs:
+      rev:
+        description: baseline revision the working tree is measured against
+        default: origin/main
+      workload:
+        description: one workload name, or all
+        default: all
+      epochs:
+        description: paired rounds
+        default: "12"
+      compiler:
+        description: clang++ or g++
+        default: clang++
+
+jobs:
+  ab:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the baseline is `git show REV:include/...`, so REV has to exist here
+      - run: |
+          uname -m; nproc; ${{ inputs.compiler }} --version | head -1
+          grep -m1 'model name\|CPU part' /proc/cpuinfo || true
+      - run: scripts/ab/run.sh -r ${{ inputs.rev }} -c ${{ inputs.compiler }} ${{ inputs.workload }} ${{ inputs.epochs }} 2>&1 | tee ab-arm.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ab-arm-${{ inputs.compiler }}-${{ inputs.workload }}
+          path: ab-arm.txt
