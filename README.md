@@ -481,6 +481,13 @@ probe moves to the next group.
 The value indices of a group have an address that depends only on the group, so they are prefetched
 while the fingerprints are still on their way.
 
+An element that arrived while its home group was full sits in a later group, and it stays there
+even after the home group empties again. So a long-churned table probes a little further than one
+built from the same contents: at a load of 0.76, 1.14 groups per hit against 1.03, and 1.27 per
+miss against 1.05. It settles there after about a dozen turnovers instead of growing, which is the
+difference from a design that leaves tombstones behind and has to rehash them away; `rehash()`
+rebuilds the index if you want the difference back.
+
 Without SSE2 the same sixteen bytes are compared eight at a time with ordinary arithmetic, see
 [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe).
 
@@ -490,9 +497,8 @@ Since all data is stored in a vector, removals are a bit more complicated:
 
 1. First, look up the element to delete in the index.
 2. Clear its fingerprint, and decrement the overflow counter in every group between its home group
-   and the one it landed in. That leaves the index exactly as it would have been had the element
-   never been inserted, so a table that has churned for a long time is as good as a fresh one, and
-   there are no tombstones and no rehash to repair them. Nothing else moves.
+   and the one it landed in. An erase undoes exactly what the insert did, so there are no
+   tombstones and no rehash is ever needed to repair the index. Nothing else moves.
 3. Replace that element in the vector with the last element in the vector.
 4. Update the slot of the moved element, which requires another lookup.
 
