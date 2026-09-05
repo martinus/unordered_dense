@@ -197,6 +197,30 @@ work to a path that runs on every lookup in order to help a case that is rare.
   footprint actually hurts are exactly the ones that need more than 16 bits. The narrow loads also
   cost a zero-extension on every use. `group_small` was not kept.
 
+Three on the value vector, the one part nothing had touched, all keeping it dense (2026-09-05).
+For scale first: growth is 54% of a 200000 element integer build here and 59% of boost's, so the
+rehash is not where this map loses; the pure insert path is, 140 instructions per insert against
+boost's 77, spread over a probe, a vector append, a second walk in `place_group` (4% of cycles, the
+ceiling on any one-pass insert) and the spills of holding two index arrays plus a vector live. The
+vector's own reallocations are 3% of an integer build and 11% of a 64 byte value build.
+
+- **Reserving the values to the index's capacity at every index growth**, so the two grow together
+  instead of on their own cadences: `build64` 0.985, `buildstr` 0.972, `buildbig` 0.967, nothing
+  elsewhere. The total bytes copied are the same either way; what changes is that a full copy of
+  the values now lands immediately before a rehash that wants the cache for the index.
+- **A slot back-pointer per value** (a parallel `std::vector<value_idx_type>`, +4 bytes per entry),
+  so closing the hole an erase leaves repoints the moved element's slot directly instead of hashing
+  its key and walking to it. Pays exactly where that hash is expensive: `churnstr` 1.045, `iestr`
+  1.024. Costs everywhere the vector grows: `build64` 0.953, `buildbig` 0.960, `iebig` 0.977,
+  `churnbig` 0.984; integer churn is a tie. Net loss on the score, and 19% more memory for an
+  8 byte value. The 2025 note above about storing the hash instead measured the same shape.
+- **Growing the values with `realloc`** instead of allocate-move-free, for trivially copyable
+  values. In isolation it removes a third of the vector's growth cost (0.242 to 0.164 ms for 16
+  byte pairs, 0.713 to 0.476 for 72 byte ones, doubling to 200000), which is about 1% of an integer
+  build and 4% of a big value one. It needs a container that is not `std::vector`, which the
+  `AllocatorOrContainer` parameter already accepts, so it is available today as an opt-in and not
+  worth changing what `values()` returns for.
+
 Read and found to have nothing to transfer, with the reason in each case:
 
 - **folly F14** is the closest relative, and its `outboundOverflowCount_` is this map's overflow
