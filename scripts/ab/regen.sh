@@ -18,6 +18,17 @@
 # not make it safe to compile on the others meanwhile.
 set -euo pipefail
 
+# Bash reads a script as it runs it, so editing this file while it is running resumes execution at a
+# shifted offset and produces nonsense -- which happened, three hours into a run. Re-exec from a copy
+# once, so the copy is what bash is reading and the original is free to be edited.
+if [ "${AB_REEXEC:-}" != "1" ]; then
+    snapshot=$(mktemp /tmp/regen.XXXXXX.sh)
+    cp "$0" "$snapshot"
+    # The copy is outside the repository, so the root has to travel with it.
+    AB_ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) AB_REEXEC=1 exec bash "$snapshot" "$@"
+fi
+trap 'rm -f "$0"' EXIT # the snapshot is this file; bash keeps its fd, so removing it now is safe
+
 redraw=0 quick=0 rev=origin/main jan=3234af2 cxx=clang++ core=2
 while [ $# -gt 0 ]; do
     case $1 in
@@ -32,7 +43,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+root=${AB_ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}
 cd "$root"
 doc=$root/doc
 plot=$root/scripts/ab/plot.py
