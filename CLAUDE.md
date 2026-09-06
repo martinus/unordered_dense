@@ -306,15 +306,38 @@ speed in exactly the regime the score cannot see -- 200000 entries is the larges
 builds -- and it does not change the ranking, since it helps both equally. Worth doing as an opt-in
 allocator and worth documenting; not worth pretending it closes the gap to boost.
 
-**Merging the group metadata with its own value indices has never been tried.** The layout sweep in
-`martinus/ai#3` and the entry below both varied how the 24 byte group is split, and the aligned-index
-experiment moved the index array as a whole -- but the index array being a *separate allocation from
-the group array* has been a constant. One 88 byte block per group (16 fingerprints, 8 counters, 16
-indices) would take a lookup from three regions to two, which is the dTLB number above. Against it:
-`prefetch_index` already issues the index load off the group address before the fingerprints resolve,
-so the latency may already be hidden, and the aligned-index attempt lost 4-5% on the mutating
-workloads to what looked like conflict misses. Untested, and the one structural idea left that
-addresses the measured cost rather than a guess about it.
+**Merging the group metadata with its own value indices: measured, and kept.** The claim above that
+it had never been tried was wrong -- the split's own comment in the header recorded trying it and
+finding the split "10% faster on a build for the same lookups". I had read `CLAUDE.md` and not the
+header. So this is a re-test, and it is the same shape as the back-pointer case: the earlier verdict
+came from a regime that does not cover where the cost now is.
+
+One 88 byte block per group -- 16 fingerprints, 8 counters, 16 value indices, `struct block : Group`
+so every existing use of the metadata reads unchanged -- and no padding, so it is the same bytes the
+two arrays took, in one allocation rather than two. Memory is unchanged to the byte: 27.0 per entry
+steady and 32.5 at the growth peak, exactly as before.
+
+Against `HEAD`, two independent paired runs under clang and one under gcc: score **1.018, 1.022 and
+1.015**, find **1.045, 1.053 and 1.044** as a group, `rhit64` 7.1-7.5%, `findbig` 6.2%, and builds,
+churn and insert-erase neutral (`build64` 100.0% and 101.2% under clang, build 0.999 under gcc,
+intervals straddling parity). So the build advantage the split was kept for is gone, most likely
+taken by the rehash's store-to-load fix, which changed where a build spends its time.
+
+The mechanism is in the counters rather than in the score, which is what makes it believable -- one
+map per binary, all-hits lookups at 200000, 800000 and 4M entries, split against merged: **7% fewer
+instructions** (66.9 to 62.0 per lookup at 200000), because the index is at a fixed offset from the
+group rather than a second address to compute; **12-14% fewer L1 misses**; and **28% fewer dTLB
+misses at 4M** (5.30 to 3.79), because a lookup touches two regions rather than three. Cycles per
+lookup 46.6 to 42.5, 96.1 to 88.6, 470.8 to 457.5.
+
+`hashstr` is the control worth keeping in mind here: it never touches the map, and it read 0.923 in
+one run and 1.126 in the other. That is the size of pure code-layout luck in this binary, and it is
+why the counters rather than the score are what this rests on.
+
+Three `pmr` tests failed on it, all of them counting allocations: a table is now the values plus one
+index array rather than two. They asserted 5, 3, 3, 6 and 2 as literals; they now derive from
+`index_t::array_count`, which is what that constant is for and what `lazy_bucket_allocation.cpp`
+already did.
 
 **The four charts worth keeping, and the two axes that had none** (2026-09-06). Asked which four
 graphs decide a map, the answer needed two new tools, because two of the four axes were unmeasured:
