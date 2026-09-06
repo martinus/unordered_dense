@@ -14,17 +14,24 @@ would leave the length dispatch of the hash perfectly predicted. Believe a chang
 
 ## Lookup cost against table size
 
-`scripts/ab/sweep.cpp` walks the size axis instead of the workload axis: it builds
-`map<uint64_t, size_t>` at every power of two from 16 to 8 million and times lookups that hit and
-lookups that miss, for the working tree, a baseline revision and boost. `scripts/ab/plot.py` draws
-the CSV as an SVG with no dependency beyond the standard library.
+`scripts/ab/sweep.cpp` walks the size axis instead of the workload axis: it grows
+`map<uint64_t, size_t>` through 193 sizes from 16 to a million entries and times one operation at
+each, for the working tree, a baseline revision and boost. `scripts/ab/plot.py` draws the CSV as an
+SVG with no dependency beyond the standard library.
 
 ```sh
 clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -I"$build" -Iinclude -Itest \
     scripts/ab/sweep.cpp "$build/nanobench.o" -o sweep     # $build/base.h as run.sh makes it
-taskset -c 2 ./sweep 27 12 300000 > doc/lookup_vs_size.csv   # max 2^27, 12 points per octave
-scripts/ab/plot.py doc/lookup_vs_size.csv doc/lookup_vs_size.svg
+# max 2^20 entries, 12 points per octave, 20000 operations per batch, workload, target interval
+taskset -c 2 ./sweep 20 12 20000 0 0.02 > doc/find_vs_size.csv
+scripts/ab/plot.py doc/find_vs_size.csv doc/find_vs_size.svg \
+    "Cost of a random find against table size" "nanoseconds per lookup, 50% of them hits"
+scripts/ab/plot.py doc/find_vs_size.csv doc/find_ratio_vs_size.svg \
+    "How much faster than robin hood" "times faster than the index this replaces, paired" ratio
 ```
+
+Pin it to a core (`taskset`) and leave the machine alone: a sweep is 40 minutes and every other
+thing the machine does lands somewhere in it.
 
 It exists because the scored benchmark stops at 200000 entries, whose index is about a megabyte
 and lives in cache on any machine that runs it, and the one structural cost of a dense map -- the
@@ -50,32 +57,64 @@ The rounds are chosen by asking for a precision -- `targetIntervalWidth(0.02)` -
 naming a count, because the count a precision needs depends on the machine. Each row carries
 `relative`, `rel_low` and `rel_high`, rendered straight out of the `CompareResult`.
 
-**Absolute times come from the fastest of the paired rounds, not the median of them.** A machine
-that drifts slower can only push a measurement up, never below what the work actually costs, so the
-floor is both the steadier estimator and the honest answer to "how long does this take". Over two
-runs of the whole sweep, agreement between them:
+**Every point carries a confidence interval, and the absolute one and the ratio's are not the same
+quantity.** The ratio's interval is about a number from which machine drift cancels, because
+whatever the machine did during a round it did to all three alternatives. The absolute interval is
+about the median epoch of one alternative on its own, so drift does not cancel: it says how tightly
+this run pinned its own median, not how well that median would come back on a different afternoon.
+Both are nanobench's distribution-free sign test on the paired rounds -- the absolute one is
+`detail::medianInterval` applied to the per-epoch times, since a `CompareResult` only renders the
+ratio's.
 
-| | median | p90 | worst |
-|---|---|---|---|
-| absolute, fastest round | **0.68%** | 5.1% | 8.1% |
-| absolute, median round | 1.77% | 6.7% | 18.1% |
-| the paired ratio | 0.94% | 5.4% | 21.7% |
+Which absolute estimator to plot is decided by that. The *fastest* round is the steadier number
+between runs -- a machine that drifts slower can only push a measurement up, never below what the
+work costs -- but there is no distribution-free interval for a minimum, so a band drawn around it
+would belong to a different statistic than the line. The charts therefore plot the median with its
+band, and the CSV keeps `ns_min` for anyone who wants the floor. Over two runs of the whole sweep on
+a quiet machine, how far apart the same point came out, against the width of the band one of those
+runs reports for it:
 
-So the absolute numbers are worth reading directly, which is what `doc/find_vs_size.svg` plots. The
-ratio is in `doc/find_ratio_vs_size.svg` with its confidence band, and is the better view when the
-question is which map wins rather than what it costs; both come out of the same run, since the CSV
-carries `ns`, `ns_min`, `relative`, `rel_low` and `rel_high` per row.
+| | median | p90 | worst | interval width |
+|---|---|---|---|---|
+| absolute, fastest round | **0.49%** | 1.9% | 6.9% | -- |
+| absolute, median round | 0.78% | 2.6% | 9.3% | 1.5% |
+| the paired ratio | 0.92% | 2.9% | 6.0% | 3.3% |
 
-Read off the fastest round, nanoseconds per find with a 50% hit rate:
+Read the table before reading a band. Typically the band is the *more* conservative of the two: 1.5%
+of the median where the median itself moved 0.78% between runs, and 3.3% on the ratio where the ratio
+moved 0.92%. What neither band bounds is the tail -- a point that came out 9.3% apart is nowhere near
+a 1.5% interval -- because a within-run interval measures the epochs of one run and says nothing
+about what differs between two. That is the whole content of the caption on the chart: it is
+precision, not reproducibility, and the two are unrelated at the point where it matters. Both charts
+come out of one run: the CSV carries `ns`, `ns_min`, `ns_low`, `ns_high`, `relative`, `rel_low` and
+`rel_high` per row.
+
+**The first sample point of the process is measured twice and the first answer thrown away.** It
+read high otherwise, and not by a little: at 16 entries boost came out 19% above its own value at 17
+entries, in a run whose intervals are 1.5% wide. Cold caches, a cold allocator and a clock still
+ramping are all paid by whoever goes first, and pairing cannot cancel it, because what is cold is the
+*point* rather than one of the alternatives.
+
+**Pairing does not make a single run trustworthy point by point, and one run showed it.** In five
+runs of the find sweep, one had this map alone reading 15-54% high at four adjacent sizes -- 4.59 ns
+at 64 entries against 2.86 to 3.03 in the other four -- with intervals 0.5% wide saying nothing was wrong, and
+main and boost at their normal values throughout. Two runs later it was gone. A disturbance that
+lands on one alternative for a stretch of rounds is exactly what pairing cannot cancel; whether this
+one came from outside the process or from an unlucky pair of addresses (those four points share one
+allocation of the value vector, and the size it reallocates at is where the anomaly stops) was not
+established. The practical rule is the one the numbers give: read a chart for its shape, and check
+any surprising *point* against a second run before believing it.
+
+Nanoseconds per find with a 50% hit rate, the median epoch of the committed run:
 
 | entries | robin hood | this map | boost |
 |---|---|---|---|
-| 16 | 3.02 | 2.63 | 2.12 |
-| 256 | 3.02 | 2.63 | 2.11 |
-| 4K | 3.78 | 3.20 | 2.53 |
-| 64K | 7.12 | 5.87 | 4.20 |
-| 256K | 8.06 | 6.95 | 5.39 |
-| 1M | 10.17 | 8.64 | 6.38 |
+| 16 | 3.31 | 2.93 | 2.43 |
+| 256 | 3.29 | 3.00 | 2.41 |
+| 4K | 4.02 | 3.51 | 2.79 |
+| 64K | 7.41 | 6.34 | 4.62 |
+| 256K | 8.51 | 7.71 | 5.89 |
+| 1M | 10.88 | 9.59 | 7.09 |
 
 The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
 pairing, because the result depends on page placement of a multi-gigabyte working set that varies

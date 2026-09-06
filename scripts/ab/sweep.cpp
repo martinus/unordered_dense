@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <sstream>
 #include <string>
 #include <cstdint>
@@ -128,8 +129,8 @@ auto insert_erase_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& 
 // complexityN, which is the config field meant for exactly that, so every row says which table it
 // came from.
 template <typename FMain, typename FThis, typename FBoost>
-void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, FMain&& fm, FThis&& ft,
-                   FBoost&& fb) {
+void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, bool emit, FMain&& fm,
+                   FThis&& ft, FBoost&& fb) {
     auto bench = ankerl::nanobench::Bench();
     bench.batch(static_cast<double>(batch))
         .complexityN(static_cast<double>(n))
@@ -146,6 +147,29 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
     // One row per alternative. `relative` inside the section is the ratio against the baseline, and
     // the two bounds are what say whether to believe it; `buckets` is not nanobench's to know, so it
     // is printed around the render rather than through it.
+    // A confidence interval for the absolute time as well as for the ratio. It is a different
+    // quantity and it is worth being clear which: nanobench's `relative` interval is about the
+    // *ratio*, where whatever the machine did to one alternative it did to the other, so drift
+    // cancels. This one is about the median epoch of a single alternative, so drift does not cancel
+    // -- it is how well this run pinned its own median, not how well the number would reproduce on
+    // a different afternoon. Same distribution-free sign test underneath, on the per-epoch times.
+    // `detail::` because a CompareResult renders the ratio's interval and not this one; the epochs
+    // themselves are public, through `size()` and `get()`.
+    auto intervals = std::map<std::string, std::pair<double, double>>();
+    for (std::size_t a = 0; a < res.size(); ++a) { // a CompareResult indexes; it is not a range
+        auto const& r = res[a].result;
+        auto times = std::vector<double>();
+        times.reserve(r.size());
+        for (std::size_t i = 0; i < r.size(); ++i) {
+            times.push_back(r.get(i, ankerl::nanobench::Result::Measure::elapsed) * 1e9 / static_cast<double>(batch));
+        }
+        intervals[r.config().mBenchmarkName] = ankerl::nanobench::detail::medianInterval(std::move(times), 0.95);
+    }
+
+    if (!emit) {
+        return; // the warm-up point: run for the machine's sake, report nothing
+    }
+
     auto row = std::ostringstream();
     // Both estimators, because they answer different questions. The median is what the ratio is
     // built from; the minimum is the least-disturbed epoch, which is the honest answer to "how fast
@@ -168,17 +192,23 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
         while (std::getline(cells, field, ',')) {
             fields.push_back(field);
         }
-        if (fields.size() != 8U) {
+        // Keyed by the alternative's name rather than by position, so nothing here depends on
+        // render walking the alternatives in the order compare() was given them.
+        auto const found = fields.size() == 8U ? intervals.find(fields[1]) : intervals.end();
+        if (found == intervals.end()) {
             continue;
         }
         auto const toNs = [batch](std::string const& seconds) {
             return std::strtod(seconds.c_str(), nullptr) * 1e9 / static_cast<double>(batch);
         };
-        std::printf("%s,%s,%.4f,%.4f,%s,%s,%s,%s,%zu\n",
+        auto const& ci = found->second;
+        std::printf("%s,%s,%.4f,%.4f,%.4f,%.4f,%s,%s,%s,%s,%zu\n",
                     fields[0].c_str(),
                     fields[1].c_str(),
                     toNs(fields[2]),
                     toNs(fields[3]),
+                    ci.first,
+                    ci.second,
                     fields[4].c_str(),
                     fields[5].c_str(),
                     fields[6].c_str(),
@@ -220,8 +250,10 @@ auto main(int argc, char** argv) -> int {
     auto n1 = n0;
     auto n2 = n0;
 
-    std::printf("entries,map,ns,ns_min,relative,rel_low,rel_high,rounds,buckets\n");
-    for (auto n : sample_sizes(max_shift, per_octave)) {
+    std::printf("entries,map,ns,ns_min,ns_low,ns_high,relative,rel_low,rel_high,rounds,buckets\n");
+    auto const points = sample_sizes(max_shift, per_octave);
+    auto const first = points.front();
+    for (auto n : points) {
         auto grow = [n](auto& map, auto& keys) {
             auto r = ankerl::nanobench::Rng(1);
             while (keys.size() < n) {
@@ -243,14 +275,24 @@ auto main(int argc, char** argv) -> int {
                 ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, keys, asking::half, batch));
             }
         };
-        measure_point(
-            n,
-            m1.bucket_count(),
-            batch,
-            targetWidth,
-            [&] { run(m0, k0, n0); },
-            [&] { run(m1, k1, n1); },
-            [&] { run(m2, k2, n2); });
+        // The first sample point of the process reads high and not by a little: measured at 16
+        // entries, boost came out 19% above its own value at 17 entries, in a run whose intervals
+        // are 1.5% wide, and the two runs before this one disagreed about which map it inflated.
+        // Cold caches, a cold allocator and a clock still ramping are all paid by whoever goes
+        // first, and pairing cannot cancel that because it is the *point* that is cold rather than
+        // one alternative. So the first point is measured twice and the first answer thrown away.
+        auto const passes = n == first ? 2 : 1;
+        for (auto pass = 0; pass < passes; ++pass) {
+            measure_point(
+                n,
+                m1.bucket_count(),
+                batch,
+                targetWidth,
+                pass + 1 == passes,
+                [&] { run(m0, k0, n0); },
+                [&] { run(m1, k1, n1); },
+                [&] { run(m2, k2, n2); });
+        }
     }
     return 0;
 }
