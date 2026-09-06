@@ -1229,7 +1229,7 @@ public:
 
 private:
     using index_allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>;
-    static constexpr std::size_t slots = std::tuple_size<decltype(Group::m_fingerprints)>::value;
+    static constexpr std::size_t slots = std::tuple_size_v<decltype(Group::m_fingerprints)>;
 
     std::vector<Group, allocator_type> m_groups{};
     std::vector<value_idx_type, index_allocator_type> m_index{}; // slots * m_groups.size()
@@ -1317,8 +1317,8 @@ private:
     using bucket_container_type = detail::group_storage<Bucket, typename value_container_type::allocator_type>;
 
     // Slots per group, from the group. bucket_count() counts slots, m_group_mask counts groups.
-    static constexpr std::size_t slots_per_group = std::tuple_size<decltype(Bucket::m_fingerprints)>::value;
-    static_assert(slots_per_group == 16 && std::tuple_size<decltype(Bucket::m_overflows)>::value == 8,
+    static constexpr std::size_t slots_per_group = std::tuple_size_v<decltype(Bucket::m_fingerprints)>;
+    static_assert(slots_per_group == 16 && std::tuple_size_v<decltype(Bucket::m_overflows)> == 8,
                   "a group is sixteen fingerprints, matched as one vector or two words, and eight counters, picked by "
                   "the low three bits of the fingerprint");
 
