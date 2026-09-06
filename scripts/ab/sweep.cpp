@@ -249,6 +249,7 @@ auto main(int argc, char** argv) -> int {
     auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
     auto const batch = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 20000UL;
     // 0 a random find with a 50% hit rate, 1 churn at a fixed size, 2 insert and erase
+    // 0 find (50% hits), 1 churn, 2 insert-and-erase, 3 find all hits, 4 find all misses
     auto const mode = argc > 4 ? std::atoi(argv[4]) : 0;
     // the interval width to aim for, in log space: 0.02 pins a ratio to about +-1%
     auto const targetWidth = argc > 5 ? std::strtod(argv[5], nullptr) : 0.02;
@@ -308,11 +309,21 @@ auto main(int argc, char** argv) -> int {
 #ifdef UDM_AB_HAVE_JAN
         grow(m3, s3);
 #endif
+        // Modes 3 and 4 exist because the 50% mix is *not* the average of its parts and can order
+        // the maps differently from both: measured paired at 33000 entries, this map is fastest on
+        // hits (1.25x main) and on misses (1.25x), and 4.8.1 -- last on hits by a wide margin --
+        // wins the mix by 1.6%. An unpredictable outcome costs a clean probe a fresh half
+        // misprediction per lookup and costs a probe that already mispredicts 0.6 times per hit
+        // almost nothing. So a chart of the mix alone cannot be read as "which lookup is faster".
         auto run = [mode, batch](auto& map, state& st) {
             if (mode == 1) {
                 ankerl::nanobench::doNotOptimizeAway(churn_ns(map, st, batch));
             } else if (mode == 2) {
                 ankerl::nanobench::doNotOptimizeAway(insert_erase_ns(map, st, batch));
+            } else if (mode == 3) {
+                ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::hits, batch));
+            } else if (mode == 4) {
+                ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::misses, batch));
             } else {
                 ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::half, batch));
             }

@@ -244,9 +244,19 @@ all-hits lookups each, ns per `find()`: at load 0.50 (33000 entries in 65536 buc
 262144) 4.8.1 reads 7.21 and 8.52 against main's 6.28 and 8.47 and this map's **4.94 and 7.01**; at
 load 0.79 (52000 and 208064) it reads 14.26 and 16.98 against main's 8.79 and 10.50 and this map's
 **5.95 and 7.62**. So 4.8.1 is level with main at the empty end and 1.6x behind at the full end, and
-1.2-2.4x behind this map throughout. A 50% hit rate compresses that, because a miss in a half-empty
-robin hood table ends at the first bucket it looks at: on the mixed workload 4.8.1 comes out a few
-percent *ahead* of this map at load 0.50 and 20-30% behind at 0.79. It is ahead nowhere on hits.
+1.2-2.4x behind this map throughout. **A 50% hit rate is not the average of its parts and can order the maps differently from both.**
+Paired, one binary, 101 epochs, ms per 200000 lookups at 33000 entries (load 0.50): all hits main
+1.367, this **1.089**, 4.8.1 1.552; all misses main 0.811, this **0.649**, 4.8.1 0.650; 50% hits main
+2.037, this 1.753, 4.8.1 **1.725**. This map is fastest on each pure case and loses the mix by 1.6%,
+because an unpredictable outcome costs a clean probe a fresh half misprediction per lookup (0.026 to
+0.545) and costs a probe that already mispredicts 0.6 times on every hit almost nothing (0.599 to
+0.605). Making the harness's own hit-or-miss select branchless moves none of it, so the branch is the
+map's own "did I find it". So the mix says nothing about which lookup is faster, and `find_vs_size`
+plots the mix -- which is why `find_hits_vs_size` exists beside it. On that one **4.8.1 is the
+slowest of the four maps at 164 of 193 sample points**, behind this map at every size below 440000,
+2.86x behind it at 3251 entries and load 0.79, and swinging 2.05-2.35x across an octave against this
+map's 1.07-1.28x. The eleven points where it leads are all above 440000 entries, where everything is
+waiting on memory.
 
 `doc/find_vs_size.svg` carries 4.8.1 as a fourth line and is the picture of that. Over one octave
 4.8.1 swings **1.26-1.59x** between its cheapest and dearest point, against 1.11-1.28x for main,
