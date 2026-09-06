@@ -47,16 +47,26 @@ independent tail lane for inputs over 48 bytes, and the two 8-byte reads for 8 t
 when every string key in the benchmark was exactly 200 bytes, which is a thing this file's own
 history says was wrong with the keys and was fixed in September. Not confirmed.
 
-**The lookup gain is nearly all at high load, which is why it needs the size sweep to see.** Against
-today's `main` rather than the branch, one binary, all-hits `find()`: at 50000 entries in 65536
-buckets (load 0.76) 4.8.1 is **1.7x slower**, and at 131072 in 262144 buckets (load 0.5) the two are
-level. The sweep's own workload -- half of the lookups missing, where a miss ends sooner -- puts the
-same contrast at 1.19x against 0.84x, so how much of it you see depends on the hit rate as well as
-the load; the sign does not. At a few thousand entries and load 0.5, 4.8.1 is *ahead* of main on
-both, because the four-bucket SSE2 probe trades instructions for mispredictions and a short probe in
-L1 has few of those to save. The scored workloads sit near the top of the load range, which is where
-a table that grew naturally spends most of its life -- but a chart sampled only at powers of two
-would show almost none of this, since a power of two is where every table has just doubled.
+**The lookup gain is mostly at high load, which is why it needs the size sweep to see.** One map per
+binary so that nothing shares a translation unit, 20M unreplayed lookups each, nanoseconds per
+all-hits `find()`:
+
+| entries | load | 4.8.1 | robin hood (main) | this map |
+|---|---|---|---|---|
+| 33000 | 0.50 | 7.21 | 6.28 | **4.94** |
+| 52000 | 0.79 | 14.26 | 8.79 | **5.95** |
+| 132000 | 0.50 | 8.52 | 8.47 | **7.01** |
+| 208000 | 0.79 | 16.98 | 10.50 | **7.62** |
+
+At the emptiest a table gets, 4.8.1 is level with main and 1.2-1.5x behind this map; at the fullest
+it is 1.6x behind main and 2.2-2.4x behind this map. The scored workloads sit near the top of that
+range, which is where a table that grew naturally spends most of its life, and a chart sampled only
+at powers of two would show the mild half of it.
+
+A 50% hit rate compresses all of that, because a miss in a half-empty robin hood table ends at the
+first bucket it looks at: the same four rows read 8.14 / 9.71 / **8.41**, **9.44** / 12.16 / 12.27,
+9.69 / 11.62 / **10.15**, and **11.01** / 13.74 / 14.35. So on the mixed workload 4.8.1 is a few
+percent *ahead* of this map at load 0.50 and 20-30% behind at 0.79. It is ahead nowhere on hits.
 
 ## Lookup cost against table size
 
@@ -150,6 +160,24 @@ entries, in a run whose intervals are 1.5% wide. Cold caches, a cold allocator a
 ramping are all paid by whoever goes first, and pairing cannot cancel it, because what is cold is the
 *point* rather than one of the alternatives.
 
+**The sweep replayed its key sequence, and that made a branchy probe look 2.7x better than it is.**
+Found 2026-09-06 when the 4.8.1 line came out *ahead* of this map and nobody believed it. Each
+workload seeded its `Rng` inside the timed function, so all 400 epochs looked up the identical 20000
+keys in the identical order -- and made the identical hit-or-miss decisions -- which a TAGE-style
+predictor learns. Measured in one binary, replayed against a sequence that carries on across epochs,
+per 20000 all-hits lookups at 33000 entries: main 118.6 against 120.8 us, this map 104.6 against
+96.1, **4.8.1 79.8 against 154.1**. The benefit is almost entirely the branchy scalar probe's,
+because that is the only one of the three with branches to mispredict -- 0.575 per lookup against
+0.02 for main and 0.024 for this map, counted with `perf` on one-map binaries.
+
+It is the mistake this project's own notes record having fixed once already in the scored find
+workload, reintroduced in this tool. What makes the scored workloads safe and the sweep not is the
+batch size: `find_all` does 10M lookups per epoch, far past what a predictor can hold, while the
+sweep does 20000. The rngs now live in a `state` beside each map and carry on across epochs and
+across sample points. Cross-checked afterwards against one-map-per-binary runs of the same
+workload, the fixed sweep agrees to 3-8% and orders the four maps identically at every point; the
+replayed one did not.
+
 **Pairing does not make a single run trustworthy point by point, and it took two sightings to work
 out why.** First one of five find runs had this map alone reading 15-54% high at four adjacent sizes
 -- 4.59 ns at 64 entries against 2.86 to 3.03 in the other four -- with intervals 0.5% wide saying
@@ -169,31 +197,30 @@ surprising *point* against a second run before believing it.
 
 Nanoseconds per find with a 50% hit rate, the median epoch of the committed run. **Two tables,
 because one would lie.** A power of two is the *emptiest* a table ever is -- it has just doubled, so
-the load factor is about 0.5 -- and quoting only those rows is what makes 4.8.1 look like the fastest
-map here:
+the load factor is about 0.5:
 
 | entries | load | 4.8.1 | robin hood (main) | this map | boost |
 |---|---|---|---|---|---|
-| 256 | 0.50 | **2.50** | 3.52 | 3.14 | 2.56 |
-| 4K | 0.50 | **3.30** | 4.48 | 3.99 | 3.14 |
-| 64K | 0.50 | 6.12 | 7.85 | 6.72 | **4.93** |
-| 1M | 0.50 | 11.25 | 13.87 | 12.24 | **9.35** |
+| 4K | 0.50 | **7.22** | 8.56 | 7.92 | 7.80 |
+| 64K | 0.50 | 9.36 | 11.14 | 9.92 | **9.18** |
+| 1M | 0.50 | 42.45 | 50.41 | 40.33 | **32.64** |
 
 And the last sample point before each doubling, which is the *fullest* the same table gets, and where
 it spends most of its life:
 
 | entries | load | 4.8.1 | robin hood (main) | this map | boost |
 |---|---|---|---|---|---|
-| 3251 | 0.79 | 5.08 | 4.83 | 4.07 | **3.52** |
-| 26008 | 0.79 | 6.73 | 6.23 | 5.17 | **4.22** |
-| 104032 | 0.79 | 11.64 | 9.72 | 7.91 | **6.36** |
-| 832255 | 0.79 | 15.26 | 13.10 | 11.00 | **9.03** |
+| 3251 | 0.79 | 9.79 | 9.90 | **8.16** | 8.76 |
+| 26008 | 0.79 | 11.60 | 11.50 | **9.34** | 9.78 |
+| 104032 | 0.79 | 14.25 | 13.38 | 10.94 | **10.91** |
+| 832255 | 0.79 | 45.50 | 48.43 | 36.09 | **32.27** |
 
-That is the whole year in one contrast. Across a single octave 4.8.1 swings **1.42-2.23x** between
-its cheapest and dearest point, where main swings 1.08-1.39x, this map 1.09-1.33x and boost
-1.11-1.45x. Measured against this map point by point, 4.8.1 ranges from **0.81x** (19% *faster*, just
-after a doubling) to **1.47x** just before one. The lookup work of the past year did not make the
-best case faster; it removed the worst case.
+Across a single octave 4.8.1 swings **1.26-1.59x** between its cheapest and dearest point, where main
+swings 1.11-1.28x, this map **1.04-1.14x** and boost 1.10-1.22x. Point for point 4.8.1 runs from
+0.91x of this map just after a doubling to 1.30x just before one. The lookup work of the past year
+did not make the best case much faster; it removed the worst case. And the flatness is what puts this
+map ahead of boost at load 0.79 up to about 100000 entries -- 0.93 and 0.95 there -- on the workload
+boost otherwise wins.
 
 The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
 pairing, because the result depends on page placement of a multi-gigabyte working set that varies
@@ -216,25 +243,25 @@ each fully sampled octave from 1K to 64K, cheapest point to dearest:
 
 | workload | 4.8.1 | robin hood (main) | this map | boost |
 |---|---|---|---|---|
-| find | 1.42-2.23x | 1.08-1.39x | **1.09-1.33x** | 1.11-1.45x |
-| churn | 2.45-3.83x | 1.50-1.98x | **1.10-1.31x** | 1.70-4.31x |
-| insert and erase | 2.32-3.32x | 1.38-1.71x | **1.12-1.25x** | 1.78-3.33x |
+| find | 1.26-1.59x | 1.11-1.28x | **1.04-1.14x** | 1.10-1.22x |
+| churn | 2.53-3.29x | 1.39-1.98x | **1.06-1.36x** | 2.97-4.79x |
+| insert and erase | 2.42-3.17x | 1.25-1.65x | **1.12-1.26x** | 2.27-3.37x |
 
-This map is the flattest line on all three, and 4.8.1 is the steepest -- a churn costing 3.8x more
-just before a doubling than just after it. Robin hood's probe lengthens with the load and boost's
-overflow bits only ever get set, so both are relieved only by growing; the group index's counters
-come back down on every erase, which is the property the whole design exists for and this is the
-picture of it.
+This map is the flattest line on all three, and on the two that mutate it is not close: boost swings
+by up to 4.8x across one octave of churn and this map by 1.36x. Robin hood's probe lengthens with the
+load and boost's overflow bits only ever get set, so both are relieved only by growing; the group
+index's counters come back down on every erase, which is the property the whole design exists for and
+this is the picture of it.
 
 That flatness decides who wins, and the answer changes sign along the way. this/boost at a power of
 two (load ~0.5) against the last point before the next doubling (load 0.79), above 1.00 meaning boost
-is ahead: find 1.27 and 1.15 at ~4K, churn **1.41 and 0.46**, insert-and-erase **1.65 and 0.61**. So
-at the emptiest a table gets, boost leads everything -- a dense erase must close the hole it leaves
-in the value vector and find the moved element's slot with a second probe, where boost probes once
-and marks the slot free. At the fullest, and below about 100000 entries, the two mutating workloads
-invert: this map is **2.2x ahead of boost on churn** and 1.6x on insert-and-erase. Above 100000 the
-memory chain dominates and boost leads again at both ends. The scored `churn` workload agrees with
-the full-table end, since it reserves and its round is erase, insert *and two finds*.
+is ahead: at ~4K, find 1.02 and 0.93, churn **1.72 and 0.45**, insert-and-erase **1.47 and 0.57**. So
+at the emptiest a table gets boost leads everything -- a dense erase must close the hole it leaves in
+the value vector and find the moved element's slot with a second probe, where boost probes once and
+marks the slot free. At the fullest, and up to about 100000 entries, this map is **1.9-2.2x ahead of
+boost on churn** and 1.5-1.8x on insert-and-erase. Past that the memory chain dominates and boost leads at both
+ends. The scored `churn` workload agrees with the full-table end, since it reserves and its round is
+erase, insert *and two finds*.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 

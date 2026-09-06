@@ -188,46 +188,45 @@ round, so drift cancels out of the ratio. The sweep now does the same, and repor
 interval alongside it. Even paired it needs **101 epochs** for intervals around 5% of the ratio;
 at nanobench's default 11 they were 25% wide, which is the real reason the early numbers moved.
 
-With that fixed, and only out to 1M where two runs on a quiet machine agree to 0.8% median. **Where
-in the sawtooth a ratio is read decides its sign, so both ends are given.** A power of two is where
-a table has just doubled and is at its emptiest, load about 0.5; the last sample point before the
-next doubling is load 0.79, which is where a table that grew spends most of its life. this/boost,
-so above 1.00 means boost is ahead:
+With that fixed, and only out to 1M. **Where in the sawtooth a ratio is read decides its sign, so
+both ends are given.** A power of two is where a table has just doubled and is at its emptiest, load
+about 0.5; the last sample point before the next doubling is load 0.79, which is where a table that
+grew spends most of its life. this/boost, so above 1.00 means boost is ahead:
 
 | entries | load | find | churn | insert-erase |
 |---|---|---|---|---|
-| 4K | 0.50 | 1.27 | 1.41 | 1.65 |
-| 64K | 0.50 | 1.36 | 1.90 | 1.73 |
-| 1M | 0.50 | 1.31 | 1.25 | 1.47 |
-| 3251 | 0.79 | 1.15 | **0.46** | **0.61** |
-| 26008 | 0.79 | 1.23 | **0.51** | **0.71** |
-| 104032 | 0.79 | 1.24 | 1.27 | 1.13 |
-| 832255 | 0.79 | 1.22 | 1.50 | 1.42 |
+| 4K | 0.50 | 1.02 | 1.72 | 1.47 |
+| 64K | 0.50 | 1.08 | 2.02 | 1.63 |
+| 1M | 0.50 | 1.24 | 1.79 | 1.57 |
+| 3251 | 0.79 | **0.93** | **0.45** | **0.57** |
+| 26008 | 0.79 | **0.95** | **0.53** | **0.69** |
+| 104032 | 0.79 | 1.00 | **0.48** | **0.59** |
+| 832255 | 0.79 | 1.12 | 1.71 | 1.51 |
 
-Read at powers of two, boost is ahead on all three and by more on the two that mutate; the cause is
+Read at powers of two, boost is ahead on all three and by a lot on the two that mutate; the cause is
 structural and was worth finding, since a dense erase has to close the hole it makes in the value
 vector and locating the moved element's slot is a second probe (`slot_of_value`) on top of the one
-that found the key, where boost probes once and marks the slot free. **But at load 0.79 and below
-about 100000 entries the two mutating workloads invert: this map is 2.2x ahead of boost on churn and
-1.6x on insert-erase.** Boost's overflow bits only ever get set, so a boost table near its maximum
-load has had every group marked and every miss walks on; this map's counters come back down on every
-erase. Which is exactly the property the design exists for, and the reason the scored `churn64` --
-which reserves, and whose round is erase, insert *and two finds* -- has this map ahead rather than
-behind.
+that found the key, where boost probes once and marks the slot free. **But at load 0.79 and up to
+about 100000 entries all three invert: this map is 1.9-2.2x ahead of boost on churn, 1.4-1.8x on
+insert-erase, and up to 7% ahead even on find.** Boost's overflow bits only ever get set, so a boost
+table near its maximum load has had every group marked and every miss walks on; this map's counters
+come back down on every erase. Which is exactly the property the design exists for, and the reason
+the scored `churn64` -- which reserves, and whose round is erase, insert *and two finds* -- has this
+map ahead rather than behind.
 
 **The same thing said as flatness, which is the shape of it.** Over each fully sampled octave from
 1K to 64K entries, cheapest point to dearest:
 
 | workload | 4.8.1 | robin hood (main) | this map | boost |
 |---|---|---|---|---|
-| find | 1.42-2.23x | 1.08-1.39x | **1.09-1.33x** | 1.11-1.45x |
-| churn | 2.45-3.83x | 1.50-1.98x | **1.10-1.31x** | 1.70-4.31x |
-| insert-erase | 2.32-3.32x | 1.38-1.71x | **1.12-1.25x** | 1.78-3.33x |
+| find | 1.26-1.59x | 1.11-1.28x | **1.04-1.14x** | 1.10-1.22x |
+| churn | 2.53-3.29x | 1.39-1.98x | **1.06-1.36x** | 2.97-4.79x |
+| insert-erase | 2.42-3.17x | 1.25-1.65x | **1.12-1.26x** | 2.27-3.37x |
 
 Robin hood's probe lengthens with the load and boost's overflow bits only ever get set, so both cost
 more as a table fills and are relieved only by growing. This map is the flattest line on all three
-workloads, and 4.8.1 is the steepest -- a churn that costs 3.8x more just before a doubling than
-just after it.
+workloads, and on the two that mutate it is not close -- boost swings by up to 4.8x across one octave
+of churn where this map swings 1.36x.
 
 **Where a year of this got to, measured against 4.8.1** (2026-09-06, `scripts/ab/run.sh -r 3234af2
 -b all 12`, the revision `main` stood at on 1 January 2026: scalar robin hood, no vector probe
@@ -240,19 +239,36 @@ their evidence. The **string hash is 4-7% slower than 4.8.1's** -- `hashstr` 0.9
 with the gcc interval excluding parity, and boost's row moving with the candidate, which is the
 control that says it is the hash rather than the map; the suspicion is that July's wyhash work was
 tuned while every benchmark string was 200 bytes long, and is not confirmed. And **the lookup gain
-is nearly all at high load**: against today's `main` on an all-hits `find()`, 4.8.1 is 1.7x slower at
-50000 entries in 65536 buckets (load 0.76) and level at 131072 in 262144 (load 0.5); on the sweep's
-half-missing lookup the same two points read 1.19x and 0.84x, since a miss ends sooner and dilutes
-it. At a few thousand entries and load 0.5 4.8.1 is *ahead*, where a short probe in L1 has few
-mispredictions for a vector probe to save and only its extra instructions show. A power of two is where every table has just doubled, so a benchmark that samples
-only powers of two sees almost none of the year's work.
+is mostly at high load**. One map per binary so nothing shares a translation unit, 20M unreplayed
+all-hits lookups each, ns per `find()`: at load 0.50 (33000 entries in 65536 buckets, and 132000 in
+262144) 4.8.1 reads 7.21 and 8.52 against main's 6.28 and 8.47 and this map's **4.94 and 7.01**; at
+load 0.79 (52000 and 208064) it reads 14.26 and 16.98 against main's 8.79 and 10.50 and this map's
+**5.95 and 7.62**. So 4.8.1 is level with main at the empty end and 1.6x behind at the full end, and
+1.2-2.4x behind this map throughout. A 50% hit rate compresses that, because a miss in a half-empty
+robin hood table ends at the first bucket it looks at: on the mixed workload 4.8.1 comes out a few
+percent *ahead* of this map at load 0.50 and 20-30% behind at 0.79. It is ahead nowhere on hits.
 
-`doc/find_vs_size.svg` now carries 4.8.1 as a fourth line and is the picture of that. Over one
-octave 4.8.1 swings **1.42-2.23x** between its cheapest and dearest point, against 1.08-1.39x for
-main, 1.09-1.33x for this map and 1.11-1.45x for boost; point by point 4.8.1 runs from 0.81x of this
-map just after a doubling to 1.47x just before one. The year did not make the best case faster, it
-removed the worst case -- and at load 0.79 the order is boost, this map, main, 4.8.1 at every size
-from 3251 entries up.
+`doc/find_vs_size.svg` carries 4.8.1 as a fourth line and is the picture of that. Over one octave
+4.8.1 swings **1.26-1.59x** between its cheapest and dearest point, against 1.11-1.28x for main,
+1.04-1.14x for this map and 1.10-1.22x for boost; point by point 4.8.1 runs from 0.91x of this map
+just after a doubling to 1.30x just before one. The year did not make the best case much faster, it
+removed the worst case.
+
+**The sweep replayed its key sequence, which flattered the branchiest probe by 2.7x** (2026-09-06,
+found because the 4.8.1 line came out ahead of this map and that was not believable). Each workload
+seeded its `Rng` inside the timed function, so all 400 epochs looked up the same 20000 keys in the
+same order and made the same hit-or-miss decisions, which a TAGE-style predictor learns. One binary,
+replayed against carried-on, per 20000 all-hits lookups at 33000 entries: main 118.6 against 120.8
+us, this map 104.6 against 96.1, **4.8.1 79.8 against 154.1**. Nearly all of it lands on the scalar
+robin hood probe because it is the only one with branches to mispredict -- 0.575 per lookup against
+main's 0.021 and this map's 0.024, from `perf` on one-map binaries. It is the mistake the "Lookup
+benchmarks must not replay" entry above records fixing once already, reintroduced in a different
+tool; the scored workloads are safe from it only because `find_all` does 10M lookups per epoch where
+the sweep does 20000. Every chart in `doc/` predating the fix was wrong, and the sweep now keeps its
+rngs in a `state` that outlives the epochs. The rule this leaves: a benchmark whose per-epoch batch
+is small enough to memorise must advance its own randomness, and the check that catches it is
+one-map-per-binary with `perf` -- the fixed sweep agrees with that to 3-8% and orders the maps
+identically, the replayed one did not.
 
 **Two more things the sweep got wrong, found on 2026-09-06 while adding a confidence band to the
 absolute chart.** Neither is about the map.
