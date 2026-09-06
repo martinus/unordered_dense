@@ -147,6 +147,35 @@ auto churn_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
     return ns / static_cast<double>(ops);
 }
 
+// The scored churn's shape -- erase one, look up twice, insert one -- with the hit made through
+// operator[] rather than find. Mode 1 has no lookups at all and the scored churn looks up with
+// find, and neither can see move_home, which only runs inside a write: a hit found past its home
+// group moves home if there is room. The table is not rebuilt between epochs, so it drifts as the
+// epochs churn it -- fully at small sizes, where 20000 rounds is many turnovers, and hardly at all
+// at a million entries, which is what a table that size sees in the same number of operations.
+template <typename Map>
+auto churn_writing_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
+    auto& present = st.present;
+    auto& spare = st.spare;
+    auto const& absent = absent_keys<Map>(present.size());
+    auto& rng = st.rng;
+    auto acc = std::size_t{};
+    auto const t0 = std::chrono::steady_clock::now();
+    for (std::size_t i = 0; i < ops; ++i) {
+        auto const a = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
+        map[present[a]] += 1; // present: a writing hit
+        auto const slot = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
+        auto const j = i % spare.size();
+        map.erase(present[slot]);
+        acc += map.count(absent[a]);
+        map.try_emplace(spare[j], 1);
+        std::swap(present[slot], spare[j]);
+    }
+    auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+    ankerl::nanobench::doNotOptimizeAway(acc);
+    return ns / static_cast<double>(ops);
+}
+
 // The scored insert_erase's shape, with the size pinned rather than left to a random walk: half of
 // the operator[] find a key that is there and half insert one, half of the erases remove a key and
 // half find nothing. Doing all four every round means the size is invariant by construction --
@@ -366,6 +395,8 @@ void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode,
                 ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::hits, batch));
             } else if (mode == 4) {
                 ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::misses, batch));
+            } else if (mode == 5) {
+                ankerl::nanobench::doNotOptimizeAway(churn_writing_ns(map, st, batch));
             } else {
                 ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::half, batch));
             }
@@ -412,7 +443,8 @@ auto main(int argc, char** argv) -> int {
     auto const max_shift = argc > 1 ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 20U;
     auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
     auto const batch = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 20000UL;
-    // 0 find (50% hits), 1 churn, 2 insert-and-erase, 3 find all hits, 4 find all misses
+    // 0 find (50% hits), 1 churn, 2 insert-and-erase, 3 find all hits, 4 find all misses,
+    // 5 churn with the hit through operator[]
     auto const mode = argc > 4 ? std::atoi(argv[4]) : 0;
     // the interval width to aim for, in log space: 0.02 pins a ratio to about +-1%
     auto const targetWidth = argc > 5 ? std::strtod(argv[5], nullptr) : 0.02;
