@@ -527,6 +527,29 @@ amplitude of that sawtooth is itself a result: robin hood swings by about a fact
 an empty table and a full one, where the group index and boost barely swing, because a group is
 compared whole whatever its occupancy.
 
+**Pulling a displaced sibling home on erase, to take the churn drift back** (2026-09-06). The
+idea: when an erase frees a slot in group g and any of g's eight counters is nonzero, look one
+group along g's sequence for an entry whose class has a nonzero counter, hash its key to confirm
+its home is g, and if so move it into the freed slot and decrement the counter. The counter is what
+makes the check cheap when there is nothing to do -- one 8 byte load -- and it does work: after
+200 turnovers at load 0.76, groups per hit 1.137 to 1.086 against a fresh 1.032, per miss 1.252 to
+1.181 against 1.052, from 1.24M pull-backs in 10M erases. Half the drift, one step deep.
+
+What it costs is the other half of the sentence. At load 0.76 some counter of the freed group is
+nonzero on **46% of erases**, fresh or churned, because counters count everything that passed the
+group and not only g's own siblings, and the counter cannot tell the two apart. Each of those
+scans the next group and hashes two or three candidates' keys to find out, which is two or three
+value loads on the erase path. Paired, `uint64_t` keys, a churn round (erase, two lookups, insert)
+at 50000 entries **39.9 to 60.3 ns**, and at 2M entries 231 to 278; what it buys on the churned
+table is hits 6.20 to 5.81 ns and misses 4.19 to 3.58 in cache, and **nothing at all** out of it
+(42.2 against 42.1, 13.0 against 13.0), because a one-step displacement lands in the adjacent
+block, which the spatial prefetcher already brought in. So it pays 20 ns per erase to save 0.4-0.6
+ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
+Not kept. The version that could be cheap is the lazy one -- a hit found one step out moves itself
+home when a lookup finds room there, no candidates and no second hash, since its home was just
+computed -- but that makes `find()` write to the table, which a const lookup with concurrent
+readers cannot do, so it could only run inside mutating hits such as `operator[]`. Untried.
+
 **The rehash loop pipelined, and the partitioned rehash it was measured against** (2026-09-06,
 from asking what else the group structure is good for: placement is shift-free, so a rehash can
 place in any order, which is what a database-style radix partition needs). First the target,
