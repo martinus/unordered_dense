@@ -163,6 +163,27 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Not zeroing the value index** (2026-09-06, from a code review that put it at ~7% of a build).
+`std::vector::resize()` value-initialises, so growing the index writes 64 bytes of zeros per group
+that nothing reads: a slot's index is written when an entry is placed there and read only for a
+slot whose fingerprint already says it is occupied. An allocator adaptor whose no-argument
+`construct()` default-initialises removes the writes, and for the group array beside it the zeroing
+is load-bearing and stays, since a zero fingerprint is what empty means.
+
+Measured properly -- two binaries, alternated, four rounds -- it is worth **1.7%** of a two million
+element build, not 7%: 42.2 ms to 41.5, consistent in direction every round, and nothing at all on
+the score, whose builds are 200000 elements and zero about 2 MB instead of 32. The first
+measurement said 6.8% and was wrong, having compared runs made minutes apart, which is the mistake
+the benchmarking section of this file exists to prevent.
+
+Reverted for a reason that outranks the number: `assign()` copies the whole index array, so leaving
+entries default-initialised means the copy constructor reads indeterminate `std::uint32_t` values.
+That works everywhere and is undefined behaviour anyway, and a library header should not have it in
+a copy constructor to buy 1.7% of a large build. Copying only the occupied slots would avoid it and
+costs more than it saves. All 34 CI legs including valgrind passed with the adaptor in, which is
+worth knowing: valgrind tracks definedness through a copy without complaining, so it would not have
+caught this either.
+
 **What `segmented_map` gives up in 5.0.0, found in review.** `IsSegmented` used to segment the
 bucket array as well, through the `BucketContainer` parameter this branch removed; now it segments
 only the values and the index is two plain contiguous arrays for every table. So a segmented map
