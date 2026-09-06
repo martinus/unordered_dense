@@ -147,8 +147,12 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
     // the two bounds are what say whether to believe it; `buckets` is not nanobench's to know, so it
     // is printed around the render rather than through it.
     auto row = std::ostringstream();
-    ankerl::nanobench::render("{{#alternative}}{{complexityN}},{{name}},{{median(elapsed)}},{{relative}},{{relativeLow}},"
-                              "{{relativeHigh}},{{rounds}}\n{{/alternative}}",
+    // Both estimators, because they answer different questions. The median is what the ratio is
+    // built from; the minimum is the least-disturbed epoch, which is the honest answer to "how fast
+    // is this operation" and is far steadier run to run -- a machine that drifts slower can only
+    // push a measurement up, never down, so the floor moves much less than the middle.
+    ankerl::nanobench::render("{{#alternative}}{{complexityN}},{{name}},{{median(elapsed)}},{{minimum(elapsed)}},"
+                              "{{relative}},{{relativeLow}},{{relativeHigh}},{{rounds}}\n{{/alternative}}",
                               res,
                               row);
     // Split into fields rather than slicing by offsets: the elapsed time is rendered in seconds per
@@ -164,18 +168,21 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
         while (std::getline(cells, field, ',')) {
             fields.push_back(field);
         }
-        if (fields.size() != 7U) {
+        if (fields.size() != 8U) {
             continue;
         }
-        auto const nsPerOp = std::strtod(fields[2].c_str(), nullptr) * 1e9 / static_cast<double>(batch);
-        std::printf("%s,%s,%.4f,%s,%s,%s,%s,%zu\n",
+        auto const toNs = [batch](std::string const& seconds) {
+            return std::strtod(seconds.c_str(), nullptr) * 1e9 / static_cast<double>(batch);
+        };
+        std::printf("%s,%s,%.4f,%.4f,%s,%s,%s,%s,%zu\n",
                     fields[0].c_str(),
                     fields[1].c_str(),
-                    nsPerOp,
-                    fields[3].c_str(),
+                    toNs(fields[2]),
+                    toNs(fields[3]),
                     fields[4].c_str(),
                     fields[5].c_str(),
                     fields[6].c_str(),
+                    fields[7].c_str(),
                     buckets);
     }
     std::fflush(stdout);
@@ -213,7 +220,7 @@ auto main(int argc, char** argv) -> int {
     auto n1 = n0;
     auto n2 = n0;
 
-    std::printf("entries,map,ns,relative,rel_low,rel_high,rounds,buckets\n");
+    std::printf("entries,map,ns,ns_min,relative,rel_low,rel_high,rounds,buckets\n");
     for (auto n : sample_sizes(max_shift, per_octave)) {
         auto grow = [n](auto& map, auto& keys) {
             auto r = ankerl::nanobench::Rng(1);

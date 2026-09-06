@@ -50,17 +50,32 @@ The rounds are chosen by asking for a precision -- `targetIntervalWidth(0.02)` -
 naming a count, because the count a precision needs depends on the machine. Each row carries
 `relative`, `rel_low` and `rel_high`, rendered straight out of the `CompareResult`.
 
-How much the pairing is worth is visible in the data it produces. Over two runs of the whole sweep:
+**Absolute times come from the fastest of the paired rounds, not the median of them.** A machine
+that drifts slower can only push a measurement up, never below what the work actually costs, so the
+floor is both the steadier estimator and the honest answer to "how long does this take". Over two
+runs of the whole sweep, agreement between them:
 
 | | median | p90 | worst |
 |---|---|---|---|
-| paired ratio | 0.88% | 2.5% | 8.3% |
-| the same runs' absolute times | 1.4% | 6.3% | **54%** |
+| absolute, fastest round | **0.68%** | 5.1% | 8.1% |
+| absolute, median round | 1.77% | 6.7% | 18.1% |
+| the paired ratio | 0.94% | 5.4% | 21.7% |
 
-At 392772 entries the two runs read 7.97 ns and 12.29 ns -- the machine was simply slower during one
-of them -- while their ratios agreed to three digits, 1.155 against 1.156. That is the argument for
-`doc/find_ratio_vs_size.svg` being the chart to trust and `doc/find_vs_size.svg` being the one that
-shows the shape.
+So the absolute numbers are worth reading directly, which is what `doc/find_vs_size.svg` plots. The
+ratio is in `doc/find_ratio_vs_size.svg` with its confidence band, and is the better view when the
+question is which map wins rather than what it costs; both come out of the same run, since the CSV
+carries `ns`, `ns_min`, `relative`, `rel_low` and `rel_high` per row.
+
+Read off the fastest round, nanoseconds per find with a 50% hit rate:
+
+| entries | robin hood | this map | boost |
+|---|---|---|---|
+| 16 | 3.02 | 2.63 | 2.12 |
+| 256 | 3.02 | 2.63 | 2.11 |
+| 4K | 3.78 | 3.20 | 2.53 |
+| 64K | 7.12 | 5.87 | 4.20 |
+| 256K | 8.06 | 6.95 | 5.39 |
+| 1M | 10.17 | 8.64 | 6.38 |
 
 The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
 pairing, because the result depends on page placement of a multi-gigabyte working set that varies

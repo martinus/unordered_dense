@@ -48,7 +48,11 @@ def main():
     # curve but drift with the machine -- at 392K entries two runs read 7.97 and 12.29 ns while
     # their ratios agreed to three digits.
     mode = "ratio" if ("relative" in rows[0] and len(sys.argv) > 5 and sys.argv[5] == "ratio") else "ns"
-    col = "ns" if "ns" in rows[0] else ("half_ns" if "half_ns" in rows[0] else "hit_ns")
+    # The minimum epoch rather than the median: a machine that drifts slower can only push a
+    # measurement up, never below the work's actual cost, so the floor is the steadier estimator and
+    # the one that answers "how long does this take". Measured over two runs of this sweep, the
+    # minimum agrees to 0.68% median and 8.1% worst where the median epoch is 1.77% and 18.1%.
+    col = "ns_min" if "ns_min" in rows[0] else ("ns" if "ns" in rows[0] else "half_ns")
     title = sys.argv[3] if len(sys.argv) > 3 else "Cost of a random find against table size"
     subtitle = sys.argv[4] if len(sys.argv) > 4 else "nanoseconds per lookup, 50% of them hits"
     data = defaultdict(dict)
