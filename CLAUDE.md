@@ -527,6 +527,48 @@ amplitude of that sawtooth is itself a result: robin hood swings by about a fact
 an empty table and a full one, where the group index and boost barely swing, because a group is
 compared whole whatever its occupancy.
 
+**The rehash loop pipelined, and the partitioned rehash it was measured against** (2026-09-06,
+from asking what else the group structure is good for: placement is shift-free, so a rehash can
+place in any order, which is what a database-style radix partition needs). First the target,
+`rehash(0)` on a built map so the loop is isolated, ns per element:
+
+| entries | index | u64 before | pipelined | partitioned | string before | pipelined | partitioned |
+|---|---|---|---|---|---|---|---|
+| 200K | 1.4 MB | 2.05 | **1.63** | 3.22 | 8.7 | 8.4 | 8.5 |
+| 1M | 11 MB | 2.27 | **1.78** | 5.53 | 11.9 | 8.4 | 8.6 |
+| 2M | 22 MB | 6.71 | **3.52** | 5.31 | 24.8 | **9.4** | 10.0 |
+| 4M | 44 MB | 10.29 | 7.63 | **5.34** | 30.6 | 12.4 | 12.1 |
+| 16M | 176 MB | 12.58 | 12.46 | **8.65** | | | |
+
+*Pipelined* hashes sixteen elements ahead of the one it places and prefetches the group each will
+land in, with the group pointer, mask and shift held in locals (a fingerprint store may alias any
+of them through `this`, the same shape as the rehash fix above). Below cache it is 1.26x for the
+pipelining alone -- hash chain and random placement no longer wait on each other -- and CLAUDE.md's
+old note that prefetching ahead in the rehash was worthless was measured at 200000 entries, in
+cache, where it must be. Above cache it does everything for strings, whose hash has work to hide a
+miss behind (2.5x at 2M and 4M), and nothing for integers at 176 MB, because that loop is bound by
+the TLB rather than by latency: **1.15 dTLB misses per placement** on 4 KB pages, and a prefetch
+cannot hide a page walk. Partitioning by the top bits of the group -- one histogram pass, one
+scatter of an 8 byte packed entry per element, then placement partition by partition -- cuts that
+to 0.24 and halves the loop from 4M up.
+
+**Kept the pipelined loop, dropped the partition.** Paired, three variants in one binary, a build
+from empty: pipelined and partitioned are indistinguishable end to end (u64 8M 53.8 against 53.4
+ns per element, strings 4M 128.5 against 128.8), both 3-18% ahead of the plain loop. Timing every
+rehash inside a build says why the isolated 2x disappears: the scatter costs 3.6 ns there instead
+of 1.4, because the scratch is fresh memory every time and faulting it in costs about a microsecond
+a page -- the `tame_allocator()` lesson, paid by the map itself this time -- and a rehash is a
+minority of a large build anyway (15 of 64 ns per element at 16M; the inserts are the rest). So
+the partition is worth 0-7% of an integer build above 32 MB, for 8 bytes of scratch per element
+at the growth peak, an allocation inside `rehash()` that changes what an allocator sees and what
+an exception path has to undo, and a hundred lines. The pipelined loop is thirty lines, no memory,
+and the score is exactly neutral on it (1.002 clang, 1.003 gcc, `buildbig` 1.04 and 1.07), which
+is what a 200000-entry suite should say about a loop whose gains are above cache. Unit suite green.
+What did not matter: the partition size, 16 KB to 256 KB (place phase 3.4 ns throughout, so it was
+never L2 misses); the prefetch distance, 8 to 32 (16 best by a hair). What an integer rehash above
+cache would actually need is huge pages, which the note above already measured at 22% on lookups
+and which the map cannot ask for.
+
 **Not zeroing the value index** (2026-09-06, from a code review that put it at ~7% of a build).
 `std::vector::resize()` value-initialises, so growing the index writes 64 bytes of zeros per group
 that nothing reads: a slot's index is written when an entry is placed there and read only for a
