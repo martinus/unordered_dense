@@ -52,15 +52,29 @@ auto sample_sizes(unsigned max_shift, unsigned per_octave) -> std::vector<std::s
 // What a lookup asks for: only keys that are there, only keys that are not, or the realistic mix.
 enum class asking { hits, misses, half };
 
+// One of these per map, and it must outlive the epochs. Seeding an rng inside the workload replays
+// the same sequence of keys -- and of hit-versus-miss decisions -- on every epoch, which a
+// TAGE-style predictor learns: measured here, that made 4.8.1's scalar probe look **1.9x faster
+// than it is** at load 0.50 and 2.7x at 0.79, while barely moving a group probe, because the whole
+// benefit lands on branches only a branchy probe has. It is the mistake CLAUDE.md records having
+// fixed once already in the scored find workload, reintroduced in this tool.
+struct state {
+    std::vector<std::uint64_t> keys{};
+    std::uint64_t next = (std::uint64_t{1} << 40U) | 1U;
+    ankerl::nanobench::Rng rng{5};
+    ankerl::nanobench::Rng coin{99};
+};
+
 // Lookups drawn uniformly from the keys inserted so far. Every key is odd, so key ^ 1 is never
 // present, which is how a miss is made without changing where in the table it lands. `half` decides
 // each lookup with a second rng rather than alternating, for the reason the scored find workload
 // does: a predictable sequence of hits and misses is learned by the branch predictor and stops
 // measuring the branchy part of a probe.
 template <typename Map>
-auto lookup_ns(Map const& map, std::vector<std::uint64_t> const& keys, asking what, std::size_t lookups) -> double {
-    auto rng = ankerl::nanobench::Rng(5);
-    auto coin = ankerl::nanobench::Rng(99);
+auto lookup_ns(Map const& map, state& st, asking what, std::size_t lookups) -> double {
+    auto const& keys = st.keys;
+    auto& rng = st.rng;
+    auto& coin = st.coin;
     auto acc = std::size_t{};
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < lookups; ++i) {
@@ -77,8 +91,10 @@ auto lookup_ns(Map const& map, std::vector<std::uint64_t> const& keys, asking wh
 // never changes, so the table neither grows nor shrinks and what is measured is the steady state.
 // Returns nanoseconds per erase-and-insert pair.
 template <typename Map>
-auto churn_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& next, std::size_t ops) -> double {
-    auto rng = ankerl::nanobench::Rng(7);
+auto churn_ns(Map& map, state& st, std::size_t ops) -> double {
+    auto& keys = st.keys;
+    auto& next = st.next;
+    auto& rng = st.rng;
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < ops; ++i) {
         auto const slot = static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U);
@@ -98,8 +114,10 @@ auto churn_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& next, s
 // rather than a measurement. Returns nanoseconds per operator[]-and-erase pair, of which there are
 // two per round.
 template <typename Map>
-auto insert_erase_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& next, std::size_t ops) -> double {
-    auto rng = ankerl::nanobench::Rng(11);
+auto insert_erase_ns(Map& map, state& st, std::size_t ops) -> double {
+    auto& keys = st.keys;
+    auto& next = st.next;
+    auto& rng = st.rng;
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < ops; ++i) {
         auto const a = static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U);
@@ -254,51 +272,49 @@ auto main(int argc, char** argv) -> int {
     // does not have, instead of a smooth and plausible stretch of a curve.
     auto m0 = main_map();
     auto m1 = this_map();
-    auto k0 = std::vector<std::uint64_t>();
-    auto k1 = std::vector<std::uint64_t>();
-    auto n0 = (std::uint64_t{1} << 40U) | 1U;
-    auto n1 = n0;
+    auto s0 = state();
+    auto s1 = state();
 #ifdef UDM_AB_HAVE_BOOST
     auto m2 = boost_map();
-    auto k2 = std::vector<std::uint64_t>();
-    auto n2 = n0;
+    auto s2 = state();
 #endif
 #ifdef UDM_AB_HAVE_JAN
     auto m3 = jan_map();
-    auto k3 = std::vector<std::uint64_t>();
-    auto n3 = n0;
+    auto s3 = state();
 #endif
 
     std::printf("entries,map,ns,ns_min,ns_low,ns_high,relative,rel_low,rel_high,rounds,buckets\n");
     auto const points = sample_sizes(max_shift, per_octave);
     auto const first = points.front();
     for (auto n : points) {
-        auto grow = [n](auto& map, auto& keys) {
+        // The keys are rebuilt, the rngs are not: `st.rng` and `st.coin` carry on across points and
+        // across epochs, which is what stops the epoch replaying its own key sequence.
+        auto grow = [n](auto& map, state& st) {
             map = {};
-            keys.clear();
+            st.keys.clear();
             auto r = ankerl::nanobench::Rng(1);
-            while (keys.size() < n) {
+            while (st.keys.size() < n) {
                 auto const key = (r() >> 1U) | 1U;
                 if (map.try_emplace(key, 1).second) {
-                    keys.push_back(key);
+                    st.keys.push_back(key);
                 }
             }
         };
-        grow(m0, k0);
-        grow(m1, k1);
+        grow(m0, s0);
+        grow(m1, s1);
 #ifdef UDM_AB_HAVE_BOOST
-        grow(m2, k2);
+        grow(m2, s2);
 #endif
 #ifdef UDM_AB_HAVE_JAN
-        grow(m3, k3);
+        grow(m3, s3);
 #endif
-        auto run = [mode, batch](auto& map, auto& keys, std::uint64_t& next) {
+        auto run = [mode, batch](auto& map, state& st) {
             if (mode == 1) {
-                ankerl::nanobench::doNotOptimizeAway(churn_ns(map, keys, next, batch));
+                ankerl::nanobench::doNotOptimizeAway(churn_ns(map, st, batch));
             } else if (mode == 2) {
-                ankerl::nanobench::doNotOptimizeAway(insert_erase_ns(map, keys, next, batch));
+                ankerl::nanobench::doNotOptimizeAway(insert_erase_ns(map, st, batch));
             } else {
-                ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, keys, asking::half, batch));
+                ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, st, asking::half, batch));
             }
         };
         // The first sample point of the process reads high and not by a little: measured at 16
@@ -315,18 +331,18 @@ auto main(int argc, char** argv) -> int {
                           targetWidth,
                           pass + 1 == passes,
                           "main",
-                          [&] { run(m0, k0, n0); },
+                          [&] { run(m0, s0); },
                           "this",
-                          [&] { run(m1, k1, n1); }
+                          [&] { run(m1, s1); }
 #ifdef UDM_AB_HAVE_JAN
                           ,
                           "jan",
-                          [&] { run(m3, k3, n3); }
+                          [&] { run(m3, s3); }
 #endif
 #ifdef UDM_AB_HAVE_BOOST
                           ,
                           "boost",
-                          [&] { run(m2, k2, n2); }
+                          [&] { run(m2, s2); }
 #endif
             );
         }
