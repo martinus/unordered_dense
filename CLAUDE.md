@@ -200,13 +200,15 @@ before workloads were added for them. What makes it awkward to add as a *scored*
 score entry -- `scripts/ab/sweep.cpp` walks every power of two from 16 to 8M for the working tree,
 a baseline revision and boost, and `scripts/ab/plot.py` draws the CSV as an SVG with nothing but
 the standard library. `doc/lookup_vs_size.svg` is the result, committed beside its CSV, and
-`scripts/ab/README.md` says how to regenerate it. Three flat, close lines to about 128K entries,
-then all three turn upward together and the gap to boost opens as they do -- and, because nothing
-is reserved and the sampling is twelve points per octave, a sawtooth all the way along as each
-table's load factor climbs to the maximum and falls back at the doubling. The amplitude of that
-sawtooth is itself a result: robin hood swings by about a factor of two between an empty table and
-a full one, where the group index and boost barely swing, because a group is compared whole
-whatever its occupancy.
+`scripts/ab/README.md` says how to regenerate it. It measures the scored find workload's case, a
+random lookup with a 50% hit rate decided by its own rng, and draws two linear panels: sizes to
+64K, which is every table most programs build, and the whole range. Three flat, close lines to
+about 128K entries, then all three turn upward together and the gap to boost opens as they do --
+and, because nothing is reserved and the sampling is twelve points per octave, a sawtooth all the
+way along as each table's load factor climbs to the maximum and falls back at the doubling. The
+amplitude of that sawtooth is itself a result: robin hood swings by about a factor of two between
+an empty table and a full one, where the group index and boost barely swing, because a group is
+compared whole whatever its occupancy.
 
 **Not zeroing the value index** (2026-09-06, from a code review that put it at ~7% of a build).
 `std::vector::resize()` value-initialises, so growing the index writes 64 bytes of zeros per group

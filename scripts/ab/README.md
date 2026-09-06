@@ -31,23 +31,28 @@ and lives in cache on any machine that runs it, and the one structural cost of a
 value index is a dependent load a flat map does not pay -- is invisible there and large once the
 index leaves cache.
 
+The measurement is the scored find workload's: a random lookup with a **50% hit rate**, decided by
+an rng of its own rather than alternating, because a predictable sequence of hits and misses is
+learned by the branch predictor and stops measuring the branchy part of a probe. It costs about
+8 ns where a pure hit costs 3.7 and a pure miss 3.0, and that gap is the misprediction.
+
 Three decisions make the picture say something rather than being a smooth line. **Nothing is
 reserved**, so each table grows on its own and its load factor sweeps from about a half up to the
-maximum and falls back at every doubling; that is the sawtooth. **Twelve points per octave**, not
-one, because a sawtooth sampled once per octave is a straight line. And the **y axis is
-logarithmic**, because the range is a factor of thirty and on a linear axis everything below 10 ns
--- which is every table most programs ever build -- is squeezed into a few pixels. The map is grown
-*through* the sample points rather than rebuilt at each, so the sweep costs one build, not one per
-point.
+maximum and falls back at every doubling; that is the sawtooth, and the dotted verticals are where
+this map doubles. **Twelve points per octave**, not one, because a sawtooth sampled once per octave
+is a straight line. And there are **two panels**: sizes to 64K, which is every table most programs
+build and where the full range would squeeze everything into a few pixels, and the whole range.
+They carry their own y scales, which is what a detail view is for. The map is grown *through* the
+sample points rather than rebuilt at each, so the sweep costs one build per map, not one per point.
 
-What to read off it. All three are flat and close to about 128K entries, then every line turns
-upward as the index outgrows the caches and the gap to boost opens. The sawtooth amplitude is the
-other half: robin hood swings by a factor of two between an empty table and a full one, because its
-probe length grows with the load, while the group index and boost swing much less -- a group is
-compared whole whatever its occupancy. Committed with its CSV, which is also the table view of the
-chart.
+What to read off it. On the left the sawtooth: cost climbing with the load factor and dropping at
+each doubling, with robin hood swinging about twice as far as the other two because its probe
+length grows with the load, where a group is compared whole whatever its occupancy. On the right
+the cliff: all three flat to about 128K entries, then every line turning upward as the index
+outgrows the caches, and the gap to boost opening as it does. Committed with its CSV, which is also
+the table view of the chart.
 
-![lookup cost against table size](../../doc/lookup_vs_size.svg)
+![cost of a random find against table size](../../doc/lookup_vs_size.svg)
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 

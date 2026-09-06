@@ -42,15 +42,23 @@ auto sample_sizes(unsigned max_shift, unsigned per_octave) -> std::vector<std::s
     return out;
 }
 
-// Lookups drawn uniformly from the keys inserted so far; `hit` asks for keys that are there,
-// otherwise for keys that are not. Every key is odd, so key ^ 1 is never present.
+// What a lookup asks for: only keys that are there, only keys that are not, or the realistic mix.
+enum class asking { hits, misses, half };
+
+// Lookups drawn uniformly from the keys inserted so far. Every key is odd, so key ^ 1 is never
+// present, which is how a miss is made without changing where in the table it lands. `half` decides
+// each lookup with a second rng rather than alternating, for the reason the scored find workload
+// does: a predictable sequence of hits and misses is learned by the branch predictor and stops
+// measuring the branchy part of a probe.
 template <typename Map>
-auto lookup_ns(Map const& map, std::vector<std::uint64_t> const& keys, bool hit, std::size_t lookups) -> double {
+auto lookup_ns(Map const& map, std::vector<std::uint64_t> const& keys, asking what, std::size_t lookups) -> double {
     auto rng = ankerl::nanobench::Rng(5);
+    auto coin = ankerl::nanobench::Rng(99);
     auto acc = std::size_t{};
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < lookups; ++i) {
         auto const k = keys[static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U)];
+        auto const hit = what == asking::hits || (what == asking::half && (coin() & 1U) != 0);
         acc += map.count(hit ? k : (k ^ 1U));
     }
     auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
@@ -71,11 +79,12 @@ void sweep(char const* who, std::vector<std::size_t> const& sizes, std::size_t l
                 keys.push_back(k);
             }
         }
-        std::printf("%zu,%s,%.3f,%.3f,%zu\n",
+        std::printf("%zu,%s,%.3f,%.3f,%.3f,%zu\n",
                     n,
                     who,
-                    lookup_ns(map, keys, true, lookups),
-                    lookup_ns(map, keys, false, lookups),
+                    lookup_ns(map, keys, asking::hits, lookups),
+                    lookup_ns(map, keys, asking::misses, lookups),
+                    lookup_ns(map, keys, asking::half, lookups),
                     map.bucket_count());
         std::fflush(stdout);
     }
@@ -89,7 +98,7 @@ auto main(int argc, char** argv) -> int {
     auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
     auto const lookups = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 300000UL;
     auto const sizes = sample_sizes(max_shift, per_octave);
-    std::printf("entries,map,hit_ns,miss_ns,buckets\n");
+    std::printf("entries,map,hit_ns,miss_ns,half_ns,buckets\n");
     sweep<udmbase::unordered_dense::map<std::uint64_t, std::size_t>>("main", sizes, lookups);
     sweep<ankerl::unordered_dense::map<std::uint64_t, std::size_t>>("this", sizes, lookups);
 #ifdef UDM_AB_HAVE_BOOST
