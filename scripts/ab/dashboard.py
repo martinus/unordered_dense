@@ -150,7 +150,7 @@ def main():
               why="<b>The workload that separates designs rather than constant factors.</b> A table "
                   "that has churned for a long time is not the table you built: a design that frees a "
                   "slot without undoing what probed past it only degrades, and is relieved only by "
-                  "growing. That is why boost swings 4.2-6.0x across a single octave here where "
+                  "growing. That is why boost swings 4.2-6.1x across a single octave here where "
                   "this map swings 1.2-1.5x — its overflow bits only ever get set, where the group "
                   "index's counters come back down on every erase. Nothing else on this page can "
                   "tell a long-lived table from a freshly built one. " + sawtooth),
@@ -204,8 +204,8 @@ def main():
               why="<b>The one place the dense layout wins outright, and by the largest margin on this "
                    "page.</b> A dense map iterates a contiguous vector; a flat map walks its whole "
                    "slot array and skips the empty ones, which at load 0.5 is half of what it "
-                   "touches. That is 9.4x at an 8 byte integer-keyed value, narrowing to 2.2x at 64 as the "
-                   "payload starts to dominate, and 3.7x with string keys, where the key bodies cost every map alike. If you iterate at all often, this chart is the argument."),
+                   "touches. That is 10.9x at an 8 byte integer-keyed value, narrowing to 2.3x at 64 as the "
+                   "payload starts to dominate, and 3.6x with string keys, where the key bodies cost every map alike. If you iterate at all often, this chart is the argument."),
         chart("Memory, against mapped-value size", "megabytes held for 1000000 entries, uint64_t keys",
               [panel_of(r["memory_vs_value_size.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_value_size.csv"], "peak", "peak during growth")],
