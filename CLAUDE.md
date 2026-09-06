@@ -398,7 +398,7 @@ missing** (2026-09-06). Three things came back, in descending order of worth:
 - **boost tunes the prefetch per architecture** and says so in a comment: "ARM architectures get a
   higher speedup when around the first half of the element slots in a group are prefetched, whereas
   for Intel just the first cache line is best." This map issues the same two or three prefetches
-  everywhere. Now that `ab-arm.yml` exists that is a measurable question rather than a guess, and
+  everywhere. Now that `bench.yml` exists that is a measurable question rather than a guess, and
   it has not been asked.
 - **boost has an opt-in statistics facility** (`BOOST_UNORDERED_ENABLE_STATS`,
   `cumulative_stats.hpp`) that keeps running mean and variance of probe lengths and comparisons per
@@ -606,7 +606,7 @@ the mask reads the comparison as one word, and 32 bit ARM has no horizontal ops 
 is correct everywhere, behind both.
 
 **Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way** (2026-09-05,
-`.github/workflows/ab-arm.yml`: the paired harness on a GitHub `ubuntu-24.04-arm` runner, Neoverse
+`.github/workflows/bench.yml`: the paired harness on a GitHub `ubuntu-24.04-arm` runner, Neoverse
 N2, 4 cores, clang 18, 12 interleaved epochs, `origin/main` against the branch, so main's scalar
 robin hood probe against the branch's SWAR fingerprint compare -- neither has a vector path there).
 Geomean of the scored fifteen **1.112**, without iteration 1.14. Builds are far ahead (`build64`
