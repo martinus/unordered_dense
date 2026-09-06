@@ -587,6 +587,36 @@ both compilers: integer misses 1.05-1.06x, `findbig` 1.03x clang and **1.14x gcc
 1.02x gcc, `ie64` 1.03x gcc, strings 1.00-1.01. Kept. The rest of the string gap under gcc turned out to be the probe not being inlined at all
 in that binary -- the entry above this one -- and is closed.
 
+**The whole matrix, run on CI rather than on the desktop** (2026-09-06, `bench.yml`, nine jobs,
+12 paired epochs, against `origin/main` and against boost where boost is installable). Geomean of
+the fifteen scored workloads:
+
+| machine | vs main | without iteration | vs boost |
+|---|---|---|---|
+| linux clang SSE2 | 1.22 | 1.29 | 1.48 |
+| linux clang no SSE2 | 1.14 | 1.17 | 1.29 |
+| linux gcc SSE2 | 1.14 | 1.20 | 1.33 |
+| linux gcc no SSE2 | 1.19 | 1.24 | 1.18 |
+| arm clang NEON | 1.24 | 1.31 | 1.49 |
+| arm clang no NEON | 1.14 | 1.18 | 1.33 |
+| arm gcc NEON | 1.22 | 1.28 | 1.48 |
+| arm gcc no NEON | 1.04 | 1.05 | 1.26 |
+| windows clang SSE2 | 1.12 | 1.15 | not installed |
+
+Ahead of main on every machine and ahead of boost on every machine that has boost, which is the
+first time either has been said about anything but one desktop. The desktop's own numbers
+(1.21 clang, 1.25 gcc) sit inside this spread, so it was not flattering itself, but the spread is
+wider than the run-to-run noise on a quiet machine and these runners are neither quiet nor
+identical -- read a column as "which side wins and roughly by how much", not to three digits.
+
+Two things only the matrix shows. **The vector compare is worth 8-18 points of geomean** and the
+gap is widest where it replaces the most: arm gcc drops from 1.22 to 1.04 without NEON, the largest
+fall anywhere, and its lookups go with it (`rhit64` 1.53 to 1.02, `rmiss64` 1.68 to 1.06). **Windows
+had never been measured at all**, and it is the mildest machine of the nine: ahead of main
+everywhere except `find64` at 0.98, but with builds at 1.25 where linux clang reads 2.13, which is
+what a different allocator does to a workload that grows -- `tame_allocator()` is a glibc trick and
+a no-op there.
+
 **NEON closed the ARM lookup gap, and it was the whole gap** (2026-09-05). The SWAR row below is
 what prompted it: on a Neoverse N2 the branch was 1.11x main overall but *behind* on every lookup,
 because the word-at-a-time compare replaces a robin hood probe that was never vectorised on ARM and
