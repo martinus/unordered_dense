@@ -188,45 +188,31 @@ round, so drift cancels out of the ratio. The sweep now does the same, and repor
 interval alongside it. Even paired it needs **101 epochs** for intervals around 5% of the ratio;
 at nanobench's default 11 they were 25% wide, which is the real reason the early numbers moved.
 
-With that fixed, and only out to 1M. **Where in the sawtooth a ratio is read decides its sign, so
-both ends are given.** A power of two is where a table has just doubled and is at its emptiest, load
-about 0.5; the last sample point before the next doubling is load 0.79, which is where a table that
-grew spends most of its life. this/boost, so above 1.00 means boost is ahead:
+With that fixed, and only out to 1M. **Summarise across an octave, never at a chosen load.** The
+earlier version of this section quoted ratios at "load 0.79", meaning the last sample point before
+*this map* doubles -- and that is a biased subsample, because boost sizes differently (max load
+0.875, and 1966079 buckets at a million entries, not a power of two) and swings 4-6x across its own
+octave. Reading this map at its fullest against boost at wherever its own cycle put it produced
+"this map is 2.2x ahead of boost on churn below 100000 entries", which the geometric mean over the
+same octave does not support. Retracted; the honest statistic averages over both sawtooths.
 
-| entries | load | find | churn | insert-erase |
+Octave geomean, this/boost and this/main, above 1.00 meaning the other map is ahead:
+
+| workload | 1K | 32K | 208K | 524K |
 |---|---|---|---|---|
-| 4K | 0.50 | 1.02 | 1.72 | 1.47 |
-| 64K | 0.50 | 1.08 | 2.02 | 1.63 |
-| 1M | 0.50 | 1.24 | 1.79 | 1.57 |
-| 3251 | 0.79 | **0.93** | **0.45** | **0.57** |
-| 26008 | 0.79 | **0.95** | **0.53** | **0.69** |
-| 104032 | 0.79 | 1.00 | **0.48** | **0.59** |
-| 832255 | 0.79 | 1.12 | 1.71 | 1.51 |
+| find, all hits | 1.24 / 0.80 | 1.40 / 0.80 | 1.24 / 0.80 | 1.44 / 0.80 |
+| churn | 1.14 / 0.70 | 1.22 / 0.65 | 1.55 / 0.81 | 2.10 / 0.92 |
+| insert and erase | 1.04 / 0.80 | 1.24 / 0.75 | 1.34 / 0.81 | 1.66 / 0.80 |
 
-Read at powers of two, boost is ahead on all three and by a lot on the two that mutate; the cause is
-structural and was worth finding, since a dense erase has to close the hole it makes in the value
-vector and locating the moved element's slot is a second probe (`slot_of_value`) on top of the one
-that found the key, where boost probes once and marks the slot free. **But at load 0.79 and up to
-about 100000 entries all three invert: this map is 1.9-2.2x ahead of boost on churn, 1.4-1.8x on
-insert-erase, and up to 7% ahead even on find.** Boost's overflow bits only ever get set, so a boost
-table near its maximum load has had every group marked and every miss walks on; this map's counters
-come back down on every erase. Which is exactly the property the design exists for, and the reason
-the scored `churn64` -- which reserves, and whose round is erase, insert *and two finds* -- has this
-map ahead rather than behind.
+So boost is ahead of this map on all three at every size, by 1.04-1.24x at a thousand entries and by
+1.4-2.1x at half a million, and this map is ahead of robin hood everywhere by 1.1-1.5x. The dense
+map's answer to that is the two charts boost is not on: 9.4x on iteration and a build that is faster
+at every value size. What is *not* true, and was asserted here for a day, is that the counters buy a
+win over boost on churn at small sizes.
 
-**The same thing said as flatness, which is the shape of it.** Over each fully sampled octave from
-1K to 64K entries, cheapest point to dearest:
-
-| workload | 4.8.1 | robin hood (main) | this map | boost |
-|---|---|---|---|---|
-| find | 1.26-1.59x | 1.11-1.28x | **1.04-1.14x** | 1.10-1.22x |
-| churn | 2.53-3.29x | 1.39-1.98x | **1.06-1.36x** | 2.97-4.79x |
-| insert-erase | 2.42-3.17x | 1.25-1.65x | **1.12-1.26x** | 2.27-3.37x |
-
-Robin hood's probe lengthens with the load and boost's overflow bits only ever get set, so both cost
-more as a table fills and are relieved only by growing. This map is the flattest line on all three
-workloads, and on the two that mutate it is not close -- boost swings by up to 4.8x across one octave
-of churn where this map swings 1.36x.
+The flatness claim survives, because it is about one map's own curve rather than a comparison: over
+a fully sampled octave from 1K to 64K, cheapest point to dearest, this map swings 1.2-1.5x on churn
+where boost swings 4.2-6.0x and 4.8.1 swings 2.1-2.4x.
 
 **Where a year of this got to, measured against 4.8.1** (2026-09-06, `scripts/ab/run.sh -r 3234af2
 -b all 12`, the revision `main` stood at on 1 January 2026: scalar robin hood, no vector probe
@@ -302,6 +288,33 @@ light and dark from the same validated palette `plot.py` uses. Self-contained, s
 network. It does not replace the SVGs, because GitHub strips scripts out of an SVG and will not run
 any of it -- the SVGs are what the READMEs embed and the page is what you open when a line looks
 wrong.
+
+**Two optimizations the charts point at, one measured and one not yet** (2026-09-06, from asking
+what the size sweeps imply rather than what they say).
+
+**Huge pages are worth 22% of a large lookup and nothing asks for them.** The charts' worst regime
+for this map is the one past L3, and counting there says why: at 800000 entries and all hits, this
+map takes **1.48 dTLB misses and 7.03 L1 misses per lookup against boost's 0.89 and 5.15**, while
+executing only 14% more instructions (95.3 against 83.2) for 33% more cycles. It is memory-side, and
+a third of it is address translation -- this map touches three regions per lookup (group metadata,
+value index, values) where a flat map touches one. `/sys/kernel/mm/transparent_hugepage/enabled` is
+`madvise` on this machine, which is a common default, and neither the map nor the benchmark ever
+madvises, so all of it runs on 4 KB pages. Handing both maps an allocator that `mmap`s 2 MB-aligned
+and `madvise(MADV_HUGEPAGE)`s, ns per hit: at 800000 entries **this map 17.10 to 13.32 and boost 9.75
+to 7.58**, both about 22%; at 200000, 7.18 to 7.10 and 5.47 to 5.29, which is nothing. So it is free
+speed in exactly the regime the score cannot see -- 200000 entries is the largest thing the score
+builds -- and it does not change the ranking, since it helps both equally. Worth doing as an opt-in
+allocator and worth documenting; not worth pretending it closes the gap to boost.
+
+**Merging the group metadata with its own value indices has never been tried.** The layout sweep in
+`martinus/ai#3` and the entry below both varied how the 24 byte group is split, and the aligned-index
+experiment moved the index array as a whole -- but the index array being a *separate allocation from
+the group array* has been a constant. One 88 byte block per group (16 fingerprints, 8 counters, 16
+indices) would take a lookup from three regions to two, which is the dTLB number above. Against it:
+`prefetch_index` already issues the index load off the group address before the fingerprints resolve,
+so the latency may already be hidden, and the aligned-index attempt lost 4-5% on the mutating
+workloads to what looked like conflict misses. Untested, and the one structural idea left that
+addresses the measured cost rather than a guess about it.
 
 **The four charts worth keeping, and the two axes that had none** (2026-09-06). Asked which four
 graphs decide a map, the answer needed two new tools, because two of the four axes were unmeasured:
