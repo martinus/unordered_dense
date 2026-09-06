@@ -182,6 +182,32 @@ entries, in a run whose intervals are 1.5% wide. Cold caches, a cold allocator a
 ramping are all paid by whoever goes first, and pairing cannot cancel it, because what is cold is the
 *point* rather than one of the alternatives.
 
+**A 50% hit rate is the maximum-entropy point of the hit-rate curve, so it is the least
+discriminating of the three, and it can inverse-rank two maps.** Cost against hit rate, paired in one
+binary, us per 200000 lookups at 33000 entries (load 0.50):
+
+| hits | main | this map | 4.8.1 |
+|---|---|---|---|
+| 0% | 855 | **666** | 782 |
+| 10% | 1130 | **975** | 995 |
+| 25% | 1500 | 1314 | **1275** |
+| 50% | 2063 | 1736 | **1729** |
+| 75% | 1737 | **1437** | 2013 |
+| 100% | 1360 | **1125** | 1769 |
+
+Every map peaks at 50%, because that is where the outcome branch is least predictable, and the
+roughly half a misprediction per lookup it adds is paid by all of them. That is what compresses the
+comparison: at 100% hits this map leads 4.8.1 by 1.57x and at 50% by 1.00x. 4.8.1's window is
+25-50% hits *and* a load factor near 0.5, and inside it the margin is 0.4-3%; at load 0.79 this map
+wins at every hit rate by 1.3-2.1x.
+
+None of that makes the mixed workload wrong to measure -- a program doing membership tests it cannot
+predict really does pay the misprediction, and a benchmark with a *predictable* hit sequence would be
+worse, since it lets the predictor learn the probe, which is the replay bug below wearing a different
+hat. It makes it wrong to read *alone*. The scored suite already has all three points -- `find64` at
+50%, `rhit64` at 100%, `rmiss64` at 0% -- which is why the score never showed this inversion, and it
+is why `find_hits_vs_size.svg` now sits beside `find_vs_size.svg` on the size axis.
+
 **The sweep replayed its key sequence, and that made a branchy probe look 2.7x better than it is.**
 Found 2026-09-06 when the 4.8.1 line came out *ahead* of this map and nobody believed it. Each
 workload seeded its `Rng` inside the timed function, so all 400 epochs looked up the identical 20000
