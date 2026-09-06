@@ -290,6 +290,33 @@ network. It does not replace the SVGs, because GitHub strips scripts out of an S
 any of it -- the SVGs are what the READMEs embed and the page is what you open when a line looks
 wrong.
 
+**Why a dense erase is not slow, and where it is** (2026-09-06, asked as "don't we have to hash more
+because of the moved element?"). We do: `finish_erase` moves `m_values.back()` into the hole, then
+re-hashes that element's key and runs a second probe, `slot_of_value`, to find the slot pointing at
+it. Two hashes and two probes per successful erase. Measured at a million entries, erase of a random
+key plus an insert against a sequence with the same two cold probes but no move at all (a find, an
+insert, and an erase of the element already last):
+
+| | with the move | without |
+|---|---|---|
+| `uint64_t` keys | 57.0 ns | 56.2 ns |
+| `std::string` keys | 410.4 ns | 377.7 ns |
+
+**For an integer key it is free**, and three things make it so: the moved element is always the back
+of the value vector, which in a churn loop is the same handful of cache lines and stays hot; the
+first thing `do_erase` does is prefetch `m_values.back()`, so that load runs under the counter walk
+that follows; and an integer hash is one multiply, so the group access it produces issues early
+enough to overlap the erase's own probe and the insert's placement rather than queue behind them.
+Netting out the extra operation the no-move sequence needs, the second hash and probe come to about
+7 ns at a million entries.
+
+**For a string key it costs about 50 ns**, because the hash is wyhash over 8 to 135 bytes behind a
+heap pointer -- a dependent load, then a long chain -- and none of that overlaps. That is the same
+thing the rejected back-pointer measured from the other side: `churnstr` 1.045 and `iestr` 1.024 for
+it, against `build64` 0.953. Worth remembering that the rejection was scored on a suite whose string
+tables are 200000 entries and cache-resident; the charts now cover the regime where the cost is
+largest, so it is a candidate for the same re-test the merged block just had.
+
 **Two optimizations the charts point at, one measured and one not yet** (2026-09-06, from asking
 what the size sweeps imply rather than what they say).
 
