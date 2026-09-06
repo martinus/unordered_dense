@@ -59,21 +59,24 @@ draw() { # csv out title subtitle [extra flags...]
 draw_all() {
     echo "drawing:"
     for k in "" _str; do
-        case $k in "") kt="uint64_t keys" ;; *) kt="std::string keys" ;; esac
+        case $k in
+            "") kt="uint64_t keys"; of="--of=map&lt;uint64_t, size_t&gt;" ;;
+            *) kt="std::string keys"; of="--of=map&lt;std::string, size_t&gt;" ;;
+        esac
         draw "find_hits_vs_size$k.csv" "find_hits_vs_size$k.svg" \
-            "Find, every lookup hitting" "nanoseconds per lookup, $kt"
+            "Find, every lookup hitting" "nanoseconds per lookup, $kt" "$of"
         draw "find_vs_size$k.csv" "find_vs_size$k.svg" \
-            "Find, half the lookups hitting (do not decide on this one)" "nanoseconds per lookup, $kt"
+            "Find, half the lookups hitting (do not decide on this one)" "nanoseconds per lookup, $kt" "$of"
         draw "churn_vs_size$k.csv" "churn_vs_size$k.svg" \
-            "Churn at a fixed size" "nanoseconds per erase-and-insert pair, $kt"
+            "Churn at a fixed size" "nanoseconds per erase-and-insert pair, $kt" "$of"
         draw "insert_erase_vs_size$k.csv" "insert_erase_vs_size$k.svg" \
-            "Insert and erase" "nanoseconds per operator[] and erase pair, $kt"
+            "Insert and erase" "nanoseconds per operator[] and erase pair, $kt" "$of"
         draw "memory_vs_value_size$k.csv" "memory_vs_value_size$k.svg" \
             "Memory against mapped-value size" "megabytes held, $kt" \
             "--panels=steady:steady state|peak:peak during growth" "--unit=MB" \
-            "--x=sizeof(mapped_type), bytes" "--of=map&lt;K, T&gt;" --bars
+            "--x=sizeof(mapped_type), bytes" "${of/, size_t/, T}" --bars
         draw "memory_vs_size$k.csv" "memory_vs_size$k.svg" \
-            "Memory against table size" "megabytes held, $kt" \
+            "Memory against table size" "megabytes held, $kt" "$of" \
             "--panels=steady:steady state|peak:peak during growth" "--unit=MB" --logy
     done
     draw find_vs_size.csv find_ratio_vs_size.svg \
