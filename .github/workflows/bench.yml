@@ -1,0 +1,111 @@
+# The paired A/B harness, on every machine in CI that can run it. Everything measured during
+# development was one x86-64 desktop with clang; this is what says whether a conclusion drawn there
+# holds on another compiler, another architecture, or without the vector compare.
+#
+# Benchmarking on a shared runner sounds hopeless and is not, because of how the harness works: the
+# baseline header is compiled into the same binary under a second namespace and nanobench runs the
+# alternatives interleaved, round by round, in one process. A noisy neighbour slows both sides of a
+# round equally, so it cancels out of the ratio, which is the only number reported. Absolute times
+# from these runs are worth nothing and are not summarised.
+name: bench
+
+on:
+  # workflow_dispatch only exists once this file is on the default branch. A push to the branch
+  # named below runs the file as pushed, so any branch can be measured with
+  # `git push -f origin HEAD:bench` before that.
+  push:
+    branches: [bench]
+  workflow_dispatch:
+    inputs:
+      rev:
+        description: baseline revision to measure against
+        default: origin/main
+      epochs:
+        description: paired rounds per workload
+        default: "12"
+
+jobs:
+  bench:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # One slow or broken machine should not hide the others.
+    fail-fast: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux gcc SSE2
+            os: ubuntu-latest
+            cxx: g++
+          - name: linux gcc no SSE2
+            os: ubuntu-latest
+            cxx: g++
+            no_simd: SSE2
+          - name: linux clang SSE2
+            os: ubuntu-latest
+            cxx: clang++
+          - name: linux clang no SSE2
+            os: ubuntu-latest
+            cxx: clang++
+            no_simd: SSE2
+          - name: arm gcc NEON
+            os: ubuntu-24.04-arm
+            cxx: g++
+          - name: arm gcc no NEON
+            os: ubuntu-24.04-arm
+            cxx: g++
+            no_simd: NEON
+          - name: arm clang NEON
+            os: ubuntu-24.04-arm
+            cxx: clang++
+            apt_extra: clang
+          - name: arm clang no NEON
+            os: ubuntu-24.04-arm
+            cxx: clang++
+            apt_extra: clang
+            no_simd: NEON
+          # The one machine here whose libc, allocator and scheduler are not Linux's, and the only
+          # place the map has ever been measured at all on Windows. clang rather than cl because
+          # the harness is a shell script built around gcc-style flags; boost is skipped rather
+          # than installed, so this leg compares against main alone.
+          - name: windows clang SSE2
+            os: windows-latest
+            cxx: clang++
+            no_boost: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the baseline is `git show REV:include/...`, so REV has to exist in this clone
+          fetch-depth: 0
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libboost-dev ${{ matrix.apt_extra }}
+      - name: machine
+        shell: bash
+        run: |
+          uname -s -m
+          ${{ matrix.cxx }} --version | head -1
+          nproc || true
+          grep -m1 'model name' /proc/cpuinfo || grep -m1 'CPU part' /proc/cpuinfo || true
+      - name: measure
+        shell: bash
+        env:
+          # Both prefixes, so the switch is off for the baseline and the candidate alike.
+          AB_EXTRA_FLAGS: >-
+            ${{ matrix.no_simd && format('-DANKERL_UNORDERED_DENSE_HAS_{0}=0 -DUDMBASE_UNORDERED_DENSE_HAS_{0}=0', matrix.no_simd) || '' }}
+        run: |
+          scripts/ab/run.sh -r "${{ inputs.rev || 'origin/main' }}" ${{ matrix.no_boost && ' ' || '-b' }} \
+            -c ${{ matrix.cxx }} all "${{ inputs.epochs || '12' }}" 2>&1 | tee bench.txt
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ matrix.name }}"
+            echo
+            python3 scripts/ab/summarize.py bench.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.name }}
+          path: bench.txt
