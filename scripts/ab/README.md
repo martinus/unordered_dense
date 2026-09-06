@@ -63,10 +63,30 @@ it is 1.6x behind main and 2.2-2.4x behind this map. The scored workloads sit ne
 range, which is where a table that grew naturally spends most of its life, and a chart sampled only
 at powers of two would show the mild half of it.
 
-A 50% hit rate compresses all of that, because a miss in a half-empty robin hood table ends at the
-first bucket it looks at: the same four rows read 8.14 / 9.71 / **8.41**, **9.44** / 12.16 / 12.27,
-9.69 / 11.62 / **10.15**, and **11.01** / 13.74 / 14.35. So on the mixed workload 4.8.1 is a few
-percent *ahead* of this map at load 0.50 and 20-30% behind at 0.79. It is ahead nowhere on hits.
+**A 50% hit rate is not the average of its parts, and it can order the maps differently from both.**
+Paired in one binary, 101 epochs, ms per 200000 lookups at 33000 entries (load 0.50):
+
+| | main | this map | 4.8.1 |
+|---|---|---|---|
+| all hits | 1.367 | **1.089** | 1.552 |
+| all misses | 0.811 | **0.649** | 0.650 |
+| 50% hits | 2.037 | 1.753 | **1.725** |
+
+This map is fastest on hits and fastest on misses, and *loses the mix* by 1.6%. The counters say why:
+an unpredictable outcome costs a clean probe a fresh half misprediction per lookup -- this map goes
+from 0.026 per lookup on hits to 0.545 on the mix -- and costs a probe that already mispredicts 0.6
+times on every hit almost nothing, 0.599 to 0.605. It is not that 4.8.1 looks up faster; it is that
+it was already paying the bill. Making the benchmark's own hit-or-miss select branchless does not
+move any of it, so this is the map's own "did I find it" branch and not the harness's.
+
+The consequence for reading `doc/find_vs_size.svg`: it plots the mix, so at powers of two -- where
+the load is 0.5 and this effect is at its largest -- the 4.8.1 line sits lowest, and that must not be
+read as "4.8.1 looks up faster". `doc/find_hits_vs_size.svg` is the same sweep with every lookup
+hitting, and it settles the question: **4.8.1 is the slowest of the four maps at 164 of the 193
+sample points**, is behind this map at every size below 440000, and swings 2.05-2.35x across an
+octave where this map swings 1.07-1.28x. At 3251 entries and load 0.79 it costs 10.82 ns against this
+map's 3.78. The eleven points where it does come out ahead are all above 440000 entries, where every
+map is waiting on memory and the probe hardly matters.
 
 ## Lookup cost against table size
 
@@ -79,7 +99,7 @@ SVG with no dependency beyond the standard library.
 clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -I"$build" -Iinclude -Itest \
     scripts/ab/sweep.cpp "$build/nanobench.o" -o sweep     # $build/base.h as run.sh makes it
 # max 2^20 entries, 12 points per octave, 20000 operations per batch, workload, target interval
-taskset -c 2 ./sweep 20 12 20000 0 0.02 > doc/find_vs_size.csv
+taskset -c 2 ./sweep 20 12 20000 0 0.02 > doc/find_vs_size.csv        # 3 = all hits, 4 = all misses
 scripts/ab/plot.py doc/find_vs_size.csv doc/find_vs_size.svg \
     "Cost of a random find against table size" "nanoseconds per lookup, 50% of them hits"
 scripts/ab/plot.py doc/find_vs_size.csv doc/find_ratio_vs_size.svg \
@@ -107,7 +127,9 @@ The measurement is the scored find workload's: a random lookup with a **50% hit 
 an rng of its own rather than alternating, because a predictable sequence of hits and misses is
 learned by the branch predictor and stops measuring the branchy part of a probe. The fourth argument
 picks the workload: `0` find, `1` churn (an erase and an insert at a fixed size), `2` insert-and-erase
-(an `operator[]` and an `erase`, half of each finding nothing). Both mutating modes erase before they
+(an `operator[]` and an `erase`, half of each finding nothing), `3` and `4` the same find with every
+lookup hitting or every lookup missing, which is what says whether a difference in `0` is about the
+lookup or about the unpredictability of its outcome. Both mutating modes erase before they
 insert, because the other order crosses the growth threshold and one operation ends up paying for
 rehashing the whole table.
 
@@ -234,6 +256,7 @@ straight line. And **two panels**, one to 64K and one over the whole range, with
 which is what a detail view is for.
 
 ![cost of a random find against table size](../../doc/find_vs_size.svg)
+![cost of a find that hits, against table size](../../doc/find_hits_vs_size.svg)
 ![how much faster than robin hood](../../doc/find_ratio_vs_size.svg)
 ![cost of churn against table size](../../doc/churn_vs_size.svg)
 ![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
