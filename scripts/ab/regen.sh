@@ -1,7 +1,7 @@
 #!/bin/bash
 # Regenerate everything in doc/: the CSVs, the SVGs and the interactive page.
 #
-#   scripts/ab/regen.sh              # measure everything, then draw    (~4 hours)
+#   scripts/ab/regen.sh              # measure everything, then draw    (~8 hours)
 #   scripts/ab/regen.sh --redraw     # draw from the CSVs already there (~2 seconds)
 #   scripts/ab/regen.sh --quick      # measure coarsely, for checking the pipeline (~10 minutes)
 #
@@ -176,13 +176,15 @@ echo "built sweep, valuesize, memory"
 
 # Strings are sampled less finely and stop an octave earlier: a string operation costs about four
 # times an integer one, and four sweeps at the integer settings would be most of a day. The shape is
-# what these charts are for, and eight points per octave still shows the sawtooth.
+# what these charts are for, and sixteen points per octave shows the sawtooth in full.
 if [ $quick = 1 ]; then
     shift_max=14 per_octave=3 width=0.08 entries=50000
     s_shift=13 s_octave=3 s_width=0.10 s_entries=20000
 else
-    shift_max=20 per_octave=12 width=0.03 entries=200000
-    s_shift=19 s_octave=8 s_width=0.04 s_entries=200000
+    # Twenty-four points per octave, sixteen for strings, since 2026-09-06 -- twice what the first
+    # charts had, which puts a sample every 3% of the way through the load-factor sawtooth.
+    shift_max=20 per_octave=24 width=0.03 entries=200000
+    s_shift=19 s_octave=16 s_width=0.04 s_entries=200000
 fi
 run() { echo "  $1 ..." >&2; taskset -c "$core" "$build/${@:2}"; }
 
@@ -191,7 +193,7 @@ run find_hits    sweep "$shift_max" "$per_octave" 20000 3 "$width" 0 > "$doc/fin
 run find         sweep "$shift_max" "$per_octave" 20000 0 "$width" 0 > "$doc/find_vs_size.csv"
 run churn        sweep "$shift_max" "$per_octave" 20000 1 "$width" 0 > "$doc/churn_vs_size.csv"
 run insert_erase sweep "$shift_max" "$per_octave" 20000 2 "$width" 0 > "$doc/insert_erase_vs_size.csv"
-run memory_size  memory "$shift_max" 6 0 0 0                         > "$doc/memory_vs_size.csv"
+run memory_size  memory "$shift_max" 12 0 0 0                        > "$doc/memory_vs_size.csv"
 run value_size   valuesize "$entries" "$width" 0                     > "$doc/value_size.csv"
 run memory_value memory 0 0 1 1000000 0                              > "$doc/memory_vs_value_size.csv"
 
@@ -200,7 +202,7 @@ run find_hits_str    sweep "$s_shift" "$s_octave" 20000 3 "$s_width" 1 > "$doc/f
 run find_str         sweep "$s_shift" "$s_octave" 20000 0 "$s_width" 1 > "$doc/find_vs_size_str.csv"
 run churn_str        sweep "$s_shift" "$s_octave" 20000 1 "$s_width" 1 > "$doc/churn_vs_size_str.csv"
 run insert_erase_str sweep "$s_shift" "$s_octave" 20000 2 "$s_width" 1 > "$doc/insert_erase_vs_size_str.csv"
-run memory_size_str  memory "$s_shift" 6 0 0 1                         > "$doc/memory_vs_size_str.csv"
+run memory_size_str  memory "$s_shift" 12 0 0 1                        > "$doc/memory_vs_size_str.csv"
 run value_size_str   valuesize "$s_entries" "$s_width" 1               > "$doc/value_size_str.csv"
 run memory_value_str memory 0 0 1 200000 1                             > "$doc/memory_vs_value_size_str.csv"
 
