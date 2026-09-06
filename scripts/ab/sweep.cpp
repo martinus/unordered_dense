@@ -293,6 +293,11 @@ void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode,
     using this_map = ankerl::unordered_dense::map<Key, std::size_t>;
 #ifdef UDM_AB_HAVE_BOOST
     using boost_map = boost::unordered_flat_map<Key, std::size_t, ankerl::unordered_dense::hash<Key>>;
+    // The same map with the hash it ships with, because that is what a caller gets by writing
+    // boost::unordered_flat_map and not passing a third argument. Every other alternative here is
+    // given this map's hash so that the comparison is of indexes; this one is the control that says
+    // what the hash choice is worth on its own.
+    using boostdef_map = boost::unordered_flat_map<Key, std::size_t>;
 #endif
 
     // The maps are rebuilt from scratch at every sample point rather than grown on from the last
@@ -310,6 +315,8 @@ void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode,
 #ifdef UDM_AB_HAVE_BOOST
     auto m2 = boost_map();
     auto s2 = state<boost_map>();
+    auto m4 = boostdef_map();
+    auto s4 = state<boostdef_map>();
 #endif
 #ifdef UDM_AB_HAVE_JAN
     auto m3 = jan_map();
@@ -339,6 +346,7 @@ void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode,
         grow(m1, s1);
 #ifdef UDM_AB_HAVE_BOOST
         grow(m2, s2);
+        grow(m4, s4);
 #endif
 #ifdef UDM_AB_HAVE_JAN
         grow(m3, s3);
@@ -387,7 +395,9 @@ void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode,
 #ifdef UDM_AB_HAVE_BOOST
                           ,
                           "boost",
-                          [&] { run(m2, s2); }
+                          [&] { run(m2, s2); },
+                          "boostdef",
+                          [&] { run(m4, s4); }
 #endif
             );
         }

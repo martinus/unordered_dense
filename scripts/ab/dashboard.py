@@ -248,8 +248,9 @@ def main():
     ]
     charts = [c for c in charts if c]
 
-    colors = {k: {"light": light, "dark": dark, "label": label} for k, label, light, dark in SERIES}
-    order = [k for k, _, _, _ in SERIES]
+    colors = {k: {"light": light, "dark": dark, "label": label, "dash": dash}
+              for k, label, light, dark, dash in SERIES}
+    order = [k for k, _, _, _, _ in SERIES]
     out = os.path.join(DOC, "charts.html")
     with open(out, "w") as f:
         css = ("  :root {" + "".join(f" --c-{k}: {v['light']};" for k, v in colors.items()) + " }\n"
@@ -368,6 +369,13 @@ __SERIESCSS__
   ramp or a noisy neighbour hits all of them and cancels out of the comparison. Nothing is reserved,
   and the tables are sampled twelve times per octave, so the load-factor sawtooth between doublings
   is visible rather than aliased away. Ryzen&nbsp;9&nbsp;7950X, clang&nbsp;22.</p>
+  <p class="lede" style="margin-top:8px">Four of the five are given <em>this</em> map's hash, so that
+  what differs between them is the index and not the hash. The dashed line is the fifth: the same
+  <span style="white-space:nowrap">boost::unordered_flat_map</span> with the hash it ships with,
+  which is what you get by not passing a third template argument &mdash; it shares boost's colour
+  because it is boost, and the gap between the two green lines is what the hash choice alone is
+  worth. <b>4.11.0</b> is the released robin hood index this one replaces; <b>4.8.1</b> is where the
+  library stood on 1 January 2026.</p>
 </header>
 
 <div class="filters"><div class="row" id="filters"><span class="hint">Click to show or hide, everywhere:</span></div></div>
@@ -446,6 +454,14 @@ function drawPanel(host, chart, panel, xDomain) {
 
   const g = [];
   g.push(`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">`);
+  // A hatch carries on a bar the distinction a dash carries on a line: same map, different hash.
+  const hatched = maps.filter(m => DATA.colors[m].dash);
+  if (hatched.length) {
+    g.push("<defs>" + hatched.map(m =>
+      `<pattern id="h_${m}" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">` +
+      `<rect width="7" height="7" fill="var(--c-${m})"/><rect width="3" height="7" fill="var(--surface)" fill-opacity="0.8"/></pattern>`
+    ).join("") + "</defs>");
+  }
   for (const t of ticks) {
     const y = py(logy ? Math.pow(10, t) : t);
     g.push(`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}" stroke="var(--grid)" stroke-width="1"/>`);
@@ -481,16 +497,18 @@ function drawPanel(host, chart, panel, xDomain) {
         const p = panel.series[m].find(q => q[0] === c);
         if (!p) return;
         const y = py(p[1]), h = (H - B) - y, w = Math.max(bw - 2, 1), r = Math.min(3, w / 2, h);
+        const bf = DATA.colors[m].dash ? `url(#h_${m})` : `var(--c-${m})`;
         g.push(`<path d="M${(x0 + i * bw + 1).toFixed(1)},${(H - B).toFixed(1)} L${(x0 + i * bw + 1).toFixed(1)},${(y + r).toFixed(1)} ` +
                `Q${(x0 + i * bw + 1).toFixed(1)},${y.toFixed(1)} ${(x0 + i * bw + 1 + r).toFixed(1)},${y.toFixed(1)} ` +
                `L${(x0 + i * bw + 1 + w - r).toFixed(1)},${y.toFixed(1)} Q${(x0 + i * bw + 1 + w).toFixed(1)},${y.toFixed(1)} ${(x0 + i * bw + 1 + w).toFixed(1)},${(y + r).toFixed(1)} ` +
-               `L${(x0 + i * bw + 1 + w).toFixed(1)},${(H - B).toFixed(1)} Z" fill="var(--c-${m})"/>`);
+               `L${(x0 + i * bw + 1 + w).toFixed(1)},${(H - B).toFixed(1)} Z" fill="${bf}"/>`);
       });
     });
   } else {
     for (const m of maps) {
       const d = pts(m).map(p => `${px(p[0]).toFixed(1)},${py(p[1]).toFixed(1)}`).join(" ");
-      g.push(`<polyline points="${d}" fill="none" stroke="var(--c-${m})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="ln" data-map="${m}"/>`);
+      const dash = DATA.colors[m].dash ? ` stroke-dasharray="${DATA.colors[m].dash}"` : "";
+      g.push(`<polyline points="${d}" fill="none" stroke="var(--c-${m})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${dash} class="ln" data-map="${m}"/>`);
     }
   }
   g.push(`<line id="cross" x1="0" y1="${T}" x2="0" y2="${H - B}" stroke="var(--ink3)" stroke-width="1" opacity="0"/>`);
@@ -574,7 +592,9 @@ function buildFilters() {
   for (const m of DATA.order) {
     const b = document.createElement("button");
     b.className = "chip";
-    b.innerHTML = `<span class="dot" style="background:var(--c-${m})"></span>${DATA.colors[m].label}`;
+    b.innerHTML = `<span class="dot" style="${DATA.colors[m].dash
+      ? `background:repeating-linear-gradient(45deg,var(--c-${m}) 0 2px,transparent 2px 4px);border:1px solid var(--c-${m})`
+      : `background:var(--c-${m})`}"></span>${DATA.colors[m].label}`;
     b.setAttribute("aria-pressed", hidden.has(m) ? "false" : "true");
     b.onclick = () => {
       hidden.has(m) ? hidden.delete(m) : hidden.add(m);

@@ -93,6 +93,18 @@ constant factors, and the one this project had no measurement of until 2026-09-0
 while counters come back down on every erase. Without it you cannot tell a long-lived table from a
 freshly built one, and most tables are long-lived.
 
+**Five series, and one of them is a control.** `this map`, `4.11.0` (the released robin hood index
+this one replaces), `4.8.1 (January)` and `boost::unordered_flat_map` are all given *this* map's
+hash, so that what differs between them is the index. The fifth, drawn dashed in boost's own colour
+because it is the same map, is boost with the hash it ships with -- what a caller gets by writing
+`boost::unordered_flat_map<K, V>` and passing no third argument. The gap between the two green lines
+is what the hash choice alone is worth, separated from everything else.
+
+It is dashed rather than a fifth hue because no fifth hue clears the colourblind-separation floor
+against the other four -- the best candidate is 2.7 apart from the blue under deuteranopia, where 8
+is the floor -- and because colour for the map and line style for the hash is the truer encoding
+anyway. On the bar charts the same distinction is a diagonal hatch.
+
 Every workload is measured twice, once with `uint64_t` keys and once with `std::string` keys of 8 to
 135 bytes skewed towards short, and the charts come in pairs. The string half is not a formality: a
 string lookup spends 33-38% of itself hashing and compares behind a pointer the map has to chase, so
