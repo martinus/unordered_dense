@@ -28,9 +28,8 @@ jobs:
   bench:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # One slow or broken machine should not hide the others.
-    fail-fast: false
     strategy:
+      # One slow or broken machine should not hide the others.
       fail-fast: false
       matrix:
         include:
