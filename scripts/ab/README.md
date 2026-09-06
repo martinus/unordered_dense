@@ -12,6 +12,29 @@ five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates 
 flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
+## Lookup cost against table size
+
+`scripts/ab/sweep.cpp` walks the size axis instead of the workload axis: it builds
+`map<uint64_t, size_t>` at every power of two from 16 to 8 million and times lookups that hit and
+lookups that miss, for the working tree, a baseline revision and boost. `scripts/ab/plot.py` draws
+the CSV as an SVG with no dependency beyond the standard library.
+
+```sh
+clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -I"$build" -Iinclude -Itest \
+    scripts/ab/sweep.cpp "$build/nanobench.o" -o sweep     # $build/base.h as run.sh makes it
+taskset -c 2 ./sweep 23 > doc/lookup_vs_size.csv
+scripts/ab/plot.py doc/lookup_vs_size.csv doc/lookup_vs_size.svg
+```
+
+It exists because the scored benchmark stops at 200000 entries, whose index is about a megabyte
+and lives in cache on any machine that runs it, and the one structural cost of a dense map -- the
+value index is a dependent load a flat map does not pay -- is invisible there and large once the
+index leaves cache. The picture: all three maps are flat and close together to about 128K entries,
+then every line turns upward, and the gap to boost widens as it does. Committed with its CSV, which
+is also the table view of the chart.
+
+![lookup cost against table size](../../doc/lookup_vs_size.svg)
+
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 
 A cost model that predicted every experiment of the SSE2-probe work within a cycle or two:
