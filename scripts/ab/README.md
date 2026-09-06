@@ -100,6 +100,13 @@ because it is the same map, is boost with the hash it ships with -- what a calle
 `boost::unordered_flat_map<K, V>` and passing no third argument. The gap between the two green lines
 is what the hash choice alone is worth, separated from everything else.
 
+**It has already changed an answer.** For `uint64_t` keys boost's own hash is 1-7% faster than this
+wyhash -- `boost::hash<uint64_t>` is near the identity, foa mixes internally, and the multiply is
+pure cost -- and for `std::string` keys it is 8-31% slower. That reverses the string lookup ranking:
+this map is 1.07-1.17x *behind* boost given this wyhash and 0.82-0.96x *ahead* of boost with the hash
+it ships with. Every "boost wins string lookups" in these files was a statement about boost holding
+this project's hash, and now the charts say both.
+
 It is dashed rather than a fifth hue because no fifth hue clears the colourblind-separation floor
 against the other four -- the best candidate is 2.7 apart from the blue under deuteranopia, where 8
 is the floor -- and because colour for the map and line style for the hash is the truer encoding
