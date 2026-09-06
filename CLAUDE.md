@@ -188,14 +188,17 @@ round, so drift cancels out of the ratio. The sweep now does the same, and repor
 interval alongside it. Even paired it needs **101 epochs** for intervals around 5% of the ratio;
 at nanobench's default 11 they were 25% wide, which is the real reason the early numbers moved.
 
-With that fixed, and only out to 1M where the result reproduces to about 1% median:
+With that fixed, and only out to 1M where two runs on a quiet machine agree to 0.8% median. Read at
+exact powers of two, which is where each table has just doubled and so sits at the *bottom* of its
+sawtooth -- churn and insert-erase swing by a factor of two or three across an octave, so a ratio
+quoted for one of them means nothing without saying where in the sawtooth it was taken:
 
 | entries | find, this/boost | churn, this/boost | insert-erase, this/boost |
 |---|---|---|---|
-| 256 | 1.25 | 1.63 | 1.52 |
-| 4K | 1.27 | 1.70 | 1.70 |
-| 64K | 1.38 | 1.78 | 1.76 |
-| 1M | 1.37 | 1.32 | 1.29 |
+| 256 | 1.24 | 1.46 | 1.50 |
+| 4K | 1.26 | 1.46 | 1.65 |
+| 64K | 1.37 | 1.94 | 1.78 |
+| 1M | 1.35 | 1.31 | 1.37 |
 
 Boost is ahead on all three, and by more on the two that mutate. The cause is structural and was
 worth finding: a dense erase has to close the hole it makes in the value vector, and locating the
@@ -205,11 +208,32 @@ map 1.16-1.21x *ahead*, because the scored round is erase, insert **and two find
 -- the finds are what carry it.
 
 **The other half of the churn picture is this map's own, and it is the design working.** Below 64K
-its line is nearly flat where the other two saw-tooth: over one octave this map swings 1.12-1.22x,
-robin hood 1.67-1.74x, and boost 3.06-3.37x, consistent across repeated runs. Robin hood's probe
+its line is nearly flat where the other two saw-tooth: measured on `doc/churn_vs_size.csv` over each
+fully sampled octave from 1K to 64K entries, this map swings 1.09-1.32x between its cheapest and
+dearest point, robin hood 1.38-1.93x, and boost 2.51-4.14x. Robin hood's probe
 lengthens with the load and boost's overflow bits only ever get set, so both cost more as a table
 fills and are relieved only by growing; the group index's counters come back down on every erase.
 That is the property the whole design exists for, and it is the first picture of it.
+
+**Two more things the sweep got wrong, found on 2026-09-06 while adding a confidence band to the
+absolute chart.** Neither is about the map.
+
+*The first sample point of a process reads high*, because cold caches, a cold allocator and a
+ramping clock are all paid by whoever goes first -- and pairing cannot cancel it, since what is cold
+is the *point* rather than one alternative. At 16 entries boost came out 19% above its own value at
+17, on intervals 1.5% wide. The sweep now measures the first point twice and throws the first answer
+away.
+
+*And a single paired run is still not trustworthy point by point.* One of five find runs had this
+map alone reading 15-54% high at four adjacent sizes -- 4.59 ns at 64 entries against 2.86 to 3.03
+in the other four -- with 0.5% intervals saying nothing was wrong and the other two maps normal
+throughout. A disturbance that lands on one alternative for a stretch of rounds is exactly what
+pairing does not cancel. It was caught only by comparing against another run, which is now the rule:
+read a chart for its shape, and check a surprising *point* against a second run. On a quiet machine
+two runs agree to 0.78% median on the absolute median epoch, 0.49% on the fastest epoch and 0.92% on
+the ratio -- and 9.3%, 6.9% and 6.0% at their worst points, which is what the confidence bands
+drawn on the charts do *not* bound, since a within-run interval says nothing about what differs
+between two runs.
 
 **Retracted, because the data behind them does not reproduce**: that boost's find lead "peaks around
 2M and narrows again", that main overtakes this map on churn above 8M, and every other number this

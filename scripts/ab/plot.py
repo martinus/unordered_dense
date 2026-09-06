@@ -44,15 +44,20 @@ def main():
     rows = list(csv.DictReader(open(sys.argv[1])))
     out = sys.argv[2] if len(sys.argv) > 2 else "lookup_vs_size.svg"
     # "ratio" draws the paired ratio and its confidence band, which is the quantity a paired
-    # comparison actually measures; "ns" draws the absolute times, which show the shape of the
-    # curve but drift with the machine -- at 392K entries two runs read 7.97 and 12.29 ns while
-    # their ratios agreed to three digits.
+    # comparison actually measures; "ns" draws the absolute times, which are what a reader can
+    # reason about. On a quiet machine both hold up -- two runs agreed to 0.78% and 0.92% -- but the
+    # absolute one is the first to go when the machine is not quiet: an early pair of runs, made
+    # while other work was going on, read 7.97 and 12.29 ns at 392K entries with their ratios still
+    # agreeing to three digits.
     mode = "ratio" if ("relative" in rows[0] and len(sys.argv) > 5 and sys.argv[5] == "ratio") else "ns"
-    # The minimum epoch rather than the median: a machine that drifts slower can only push a
-    # measurement up, never below the work's actual cost, so the floor is the steadier estimator and
-    # the one that answers "how long does this take". Measured over two runs of this sweep, the
-    # minimum agrees to 0.68% median and 8.1% worst where the median epoch is 1.77% and 18.1%.
-    col = "ns_min" if "ns_min" in rows[0] else ("ns" if "ns" in rows[0] else "half_ns")
+    # Which absolute estimator to draw depends on whether the run recorded an interval for it.
+    # Without one, the minimum epoch: a machine that drifts slower can only push a measurement up,
+    # never below the work's actual cost, so the floor is the steadier estimator -- measured over
+    # two runs of this sweep it agrees to 0.49% median and 6.9% worst where the median epoch is
+    # 0.78% and 9.3%. With one, the median, because the interval is *about* the median and a band
+    # drawn around a different statistic than the one plotted would be a lie about the line.
+    has_abs_band = "ns_low" in rows[0] and "ns" in rows[0]
+    col = "ns" if has_abs_band else ("ns_min" if "ns_min" in rows[0] else ("ns" if "ns" in rows[0] else "half_ns"))
     title = sys.argv[3] if len(sys.argv) > 3 else "Cost of a random find against table size"
     subtitle = sys.argv[4] if len(sys.argv) > 4 else "nanoseconds per lookup, 50% of them hits"
     data = defaultdict(dict)
@@ -63,6 +68,8 @@ def main():
         data[r["map"]][n] = float(r["relative"]) if mode == "ratio" else float(r[col])
         if mode == "ratio" and "rel_low" in r:
             band[r["map"]][n] = (float(r["rel_low"]), float(r["rel_high"]))
+        elif mode == "ns" and has_abs_band:
+            band[r["map"]][n] = (float(r["ns_low"]), float(r["ns_high"]))
         if r["map"] == "this" and "buckets" in r:
             buckets[n] = int(r["buckets"])
     present = [s for s in SERIES if s[0] in data]
@@ -93,13 +100,25 @@ def main():
     s.append(f'<text x="{PAD_L}" y="44" class="t2" fill="#52514e" font-size="12">'
              f'{subtitle}, map&lt;uint64_t, size_t&gt;, '
              f'{"above 1 is faster than the baseline" if mode == "ratio" else "lower is better"}</text>')
+    # What the band means differs by mode, and saying so on the chart matters: the ratio's interval
+    # is about a quantity from which machine drift cancels, the absolute one is not -- it says how
+    # tightly this run pinned its own median, not how well the number reproduces on another day.
+    # The qualifier on the absolute one is not pedantry. Typically the interval is the conservative
+    # number -- 1.5% of the median against the 0.78% that median moves between two runs -- but the
+    # tail is not bounded by it at all: two runs put one point 9.3% apart. A within-run interval
+    # measures the epochs of one run and says nothing about what differs between two.
+    band_note = ("shaded: 95% interval on the ratio" if mode == "ratio" else
+                 "shaded: 95% interval on this run's median, which is within-run precision only") if band else ""
+    # One line, and it has to fit: at 11px in a 980px canvas there is room for about 165 characters
+    # before it runs off the right edge, which the first version of this did.
     s.append(f'<text x="{PAD_L}" y="61" class="t2" fill="#52514e" font-size="11">'
-             f'dotted lines are where this map doubles its index: nothing is reserved, so between them the '
-             f'load factor climbs to the maximum and the cost climbs with it</text>')
+             f'dotted: the index doubles there, so the load factor and the cost climb between them'
+             f'{"; " + band_note if band_note else ""}</text>')
 
     for panel, (title, sizes) in enumerate(panels):
         lo, hi = sizes[0], sizes[-1]
-        vmax = max(data[k][n] for k, _, _, _ in present for n in sizes)
+        vmax = max(max(data[k][n], band[k][n][1] if k in band else 0.0)
+                   for k, _, _, _ in present for n in sizes)
         if mode == "ratio":
             # 1.0 is where "no difference" sits, so that is the floor worth showing; zero would put
             # every line in the top half and say nothing.
@@ -147,11 +166,21 @@ def main():
                 s.append(f'<line x1="{px(b):.1f}" y1="{PAD_T:.1f}" x2="{px(b):.1f}" y2="{PAD_T + panel_h:.1f}" '
                          f'class="g" stroke="#e6e5e1" stroke-width="1" stroke-dasharray="2 3"/>')
         for i, (key, label, light, _) in enumerate(present):
-            if mode == "ratio" and key in band:
-                # the confidence band, drawn under the line: down one edge and back along the other
-                up = " ".join(f"{px(n):.1f},{py(band[key][n][1]):.1f}" for n in sizes)
-                down = " ".join(f"{px(n):.1f},{py(band[key][n][0]):.1f}" for n in reversed(sizes))
-                s.append(f'<polygon points="{up} {down}" fill="{light}" fill-opacity="0.18" stroke="none"/>')
+            if key in band:
+                # the confidence band, drawn under the line: down one edge and back along the other.
+                # Clamped to the panel, because the y range is chosen from the lines -- in ratio mode
+                # it is floored at 1.0 -- and a band edge outside it would otherwise be drawn over
+                # the axis labels.
+                def pyc(v, py=py):
+                    return min(max(py(v), PAD_T), PAD_T + panel_h)
+
+                up = " ".join(f"{px(n):.1f},{pyc(band[key][n][1]):.1f}" for n in sizes)
+                down = " ".join(f"{px(n):.1f},{pyc(band[key][n][0]):.1f}" for n in reversed(sizes))
+                # 0.3 rather than something lighter because the absolute interval is about 1.5% of
+                # the value, which is thinner than the 2px line it surrounds; at a lower opacity it
+                # would not be there at all. The ratio's band is three times wider and reads fine
+                # either way.
+                s.append(f'<polygon points="{up} {down}" fill="{light}" fill-opacity="0.3" stroke="none"/>')
             pts = " ".join(f"{px(n):.1f},{py(data[key][n]):.1f}" for n in sizes)
             s.append(f'<polyline points="{pts}" class="ln{i}" fill="none" stroke="{light}" stroke-width="2" '
                      f'stroke-linejoin="round" stroke-linecap="round"/>')
