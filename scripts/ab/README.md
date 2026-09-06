@@ -22,16 +22,30 @@ the CSV as an SVG with no dependency beyond the standard library.
 ```sh
 clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -I"$build" -Iinclude -Itest \
     scripts/ab/sweep.cpp "$build/nanobench.o" -o sweep     # $build/base.h as run.sh makes it
-taskset -c 2 ./sweep 23 > doc/lookup_vs_size.csv
+taskset -c 2 ./sweep 23 12 300000 > doc/lookup_vs_size.csv   # max 2^23, 12 points per octave
 scripts/ab/plot.py doc/lookup_vs_size.csv doc/lookup_vs_size.svg
 ```
 
 It exists because the scored benchmark stops at 200000 entries, whose index is about a megabyte
 and lives in cache on any machine that runs it, and the one structural cost of a dense map -- the
 value index is a dependent load a flat map does not pay -- is invisible there and large once the
-index leaves cache. The picture: all three maps are flat and close together to about 128K entries,
-then every line turns upward, and the gap to boost widens as it does. Committed with its CSV, which
-is also the table view of the chart.
+index leaves cache.
+
+Three decisions make the picture say something rather than being a smooth line. **Nothing is
+reserved**, so each table grows on its own and its load factor sweeps from about a half up to the
+maximum and falls back at every doubling; that is the sawtooth. **Twelve points per octave**, not
+one, because a sawtooth sampled once per octave is a straight line. And the **y axis is
+logarithmic**, because the range is a factor of thirty and on a linear axis everything below 10 ns
+-- which is every table most programs ever build -- is squeezed into a few pixels. The map is grown
+*through* the sample points rather than rebuilt at each, so the sweep costs one build, not one per
+point.
+
+What to read off it. All three are flat and close to about 128K entries, then every line turns
+upward as the index outgrows the caches and the gap to boost opens. The sawtooth amplitude is the
+other half: robin hood swings by a factor of two between an empty table and a full one, because its
+probe length grows with the load, while the group index and boost swing much less -- a group is
+compared whole whatever its occupancy. Committed with its CSV, which is also the table view of the
+chart.
 
 ![lookup cost against table size](../../doc/lookup_vs_size.svg)
 
