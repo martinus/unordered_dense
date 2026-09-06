@@ -39,14 +39,28 @@ picks the workload: `0` find, `1` churn (an erase and an insert at a fixed size)
 insert, because the other order crosses the growth threshold and one operation ends up paying for
 rehashing the whole table.
 
-**The measurements are paired, and that is not optional.** Each sample point hands its three batches
-to nanobench's `compare()`, which runs them interleaved round after round in one process, so a clock
-ramp or a noisy neighbour hits all three equally and cancels out of the ratio. The first two versions
-of this file measured main to completion, then this map, then boost, and their numbers were not
-reproducible: two runs of identical work disagreed by up to 140%, and one contaminated run put a whole
-octave 70% high while looking perfectly smooth. Pairing is also why the default is **101 epochs** --
-at nanobench's default 11 the interval on a ratio is about 25% wide, at 101 it is about 5% -- and each
-row carries `relative`, `rel_low` and `rel_high` so a reader can see which points are resolved.
+**The measurements are paired, and that is not optional.** Each sample point hands its three
+batches to nanobench's `compare()`, which runs them interleaved round after round in one process, so
+a clock ramp or a noisy neighbour hits all three equally and cancels out of the ratio. The first two
+versions of this file measured main to completion, then this map, then boost, and their numbers were
+not reproducible: two runs of identical work disagreed by up to 140%, and one contaminated run put a
+whole octave 70% high while looking perfectly smooth.
+
+The rounds are chosen by asking for a precision -- `targetIntervalWidth(0.02)` -- rather than by
+naming a count, because the count a precision needs depends on the machine. Each row carries
+`relative`, `rel_low` and `rel_high`, rendered straight out of the `CompareResult`.
+
+How much the pairing is worth is visible in the data it produces. Over two runs of the whole sweep:
+
+| | median | p90 | worst |
+|---|---|---|---|
+| paired ratio | 0.88% | 2.5% | 8.3% |
+| the same runs' absolute times | 1.4% | 6.3% | **54%** |
+
+At 392772 entries the two runs read 7.97 ns and 12.29 ns -- the machine was simply slower during one
+of them -- while their ratios agreed to three digits, 1.155 against 1.156. That is the argument for
+`doc/find_ratio_vs_size.svg` being the chart to trust and `doc/find_vs_size.svg` being the one that
+shows the shape.
 
 The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
 pairing, because the result depends on page placement of a multi-gigabyte working set that varies
@@ -60,6 +74,7 @@ straight line. And **two panels**, one to 64K and one over the whole range, with
 which is what a detail view is for.
 
 ![cost of a random find against table size](../../doc/find_vs_size.svg)
+![how much faster than robin hood](../../doc/find_ratio_vs_size.svg)
 ![cost of churn against table size](../../doc/churn_vs_size.svg)
 ![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
 

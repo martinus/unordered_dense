@@ -23,6 +23,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <sstream>
+#include <string>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -118,31 +120,63 @@ auto insert_erase_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& 
 // were not reproducible -- two runs of identical work disagreed by up to 140% at large sizes and by
 // tens of percent at small ones, because anything that drifts between the phases (a clock ramp, a
 // noisy neighbour, page placement) lands entirely on whichever map was running at the time. A paired
-// comparison cancels all of that, and what comes back is an uncertainty about the ratio, which is
-// the number the chart is made of.
+// comparison cancels all of that, and what comes back is an uncertainty about the ratio.
+//
+// The rounds are chosen by asking for a precision rather than by naming a count, because the count
+// a precision needs depends on the machine: at nanobench's default eleven the interval on a ratio
+// is about a quarter of it, which cannot tell a 10% difference from none. `entries` rides along in
+// complexityN, which is the config field meant for exactly that, so every row says which table it
+// came from.
 template <typename FMain, typename FThis, typename FBoost>
-void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, unsigned epochs, FMain&& fm, FThis&& ft,
+void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, FMain&& fm, FThis&& ft,
                    FBoost&& fb) {
     auto bench = ankerl::nanobench::Bench();
-    bench.epochs(epochs).batch(static_cast<double>(batch)).performanceCounters(false).output(nullptr);
+    bench.batch(static_cast<double>(batch))
+        .complexityN(static_cast<double>(n))
+        .performanceCounters(false)
+        .output(nullptr)
+        .targetIntervalWidth(targetWidth)
+        .maxEpochs(400);
 #ifdef UDM_AB_HAVE_BOOST
     auto const res = bench.compare("main", fm, "this", ft, "boost", fb);
 #else
     static_cast<void>(fb);
     auto const res = bench.compare("main", fm, "this", ft);
 #endif
-    for (std::size_t i = 0; i < res.size(); ++i) {
-        auto const& e = res[i];
-        // `relative` is the baseline's time over this one's, so above 1 is faster than main, and
-        // the interval is what says whether to believe it.
-        std::printf("%zu,%s,%.4f,%zu,%.4f,%.4f,%.4f\n",
-                    n,
-                    e.name.c_str(),
-                    e.result.median(ankerl::nanobench::Result::Measure::elapsed) * 1e9 / static_cast<double>(batch),
-                    buckets,
-                    e.relative,
-                    e.relativeLow,
-                    e.relativeHigh);
+    // One row per alternative. `relative` inside the section is the ratio against the baseline, and
+    // the two bounds are what say whether to believe it; `buckets` is not nanobench's to know, so it
+    // is printed around the render rather than through it.
+    auto row = std::ostringstream();
+    ankerl::nanobench::render("{{#alternative}}{{complexityN}},{{name}},{{median(elapsed)}},{{relative}},{{relativeLow}},"
+                              "{{relativeHigh}},{{rounds}}\n{{/alternative}}",
+                              res,
+                              row);
+    // Split into fields rather than slicing by offsets: the elapsed time is rendered in seconds per
+    // batch and wants converting, and the bucket count is not nanobench's to know, so both are done
+    // here. Reassembling from a vector is what a first attempt at this by string offsets got wrong,
+    // silently, by one comma.
+    auto line = std::string();
+    auto lines = std::istringstream(row.str());
+    while (std::getline(lines, line)) {
+        auto fields = std::vector<std::string>();
+        auto field = std::string();
+        auto cells = std::istringstream(line);
+        while (std::getline(cells, field, ',')) {
+            fields.push_back(field);
+        }
+        if (fields.size() != 7U) {
+            continue;
+        }
+        auto const nsPerOp = std::strtod(fields[2].c_str(), nullptr) * 1e9 / static_cast<double>(batch);
+        std::printf("%s,%s,%.4f,%s,%s,%s,%s,%zu\n",
+                    fields[0].c_str(),
+                    fields[1].c_str(),
+                    nsPerOp,
+                    fields[3].c_str(),
+                    fields[4].c_str(),
+                    fields[5].c_str(),
+                    fields[6].c_str(),
+                    buckets);
     }
     std::fflush(stdout);
 }
@@ -156,7 +190,8 @@ auto main(int argc, char** argv) -> int {
     auto const batch = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 20000UL;
     // 0 a random find with a 50% hit rate, 1 churn at a fixed size, 2 insert and erase
     auto const mode = argc > 4 ? std::atoi(argv[4]) : 0;
-    auto const epochs = argc > 5 ? static_cast<unsigned>(std::strtoul(argv[5], nullptr, 10)) : 11U;
+    // the interval width to aim for, in log space: 0.02 pins a ratio to about +-1%
+    auto const targetWidth = argc > 5 ? std::strtod(argv[5], nullptr) : 0.02;
 
     using main_map = udmbase::unordered_dense::map<std::uint64_t, std::size_t>;
     using this_map = ankerl::unordered_dense::map<std::uint64_t, std::size_t>;
@@ -178,7 +213,7 @@ auto main(int argc, char** argv) -> int {
     auto n1 = n0;
     auto n2 = n0;
 
-    std::printf("entries,map,ns,buckets,relative,rel_low,rel_high\n");
+    std::printf("entries,map,ns,relative,rel_low,rel_high,rounds,buckets\n");
     for (auto n : sample_sizes(max_shift, per_octave)) {
         auto grow = [n](auto& map, auto& keys) {
             auto r = ankerl::nanobench::Rng(1);
@@ -205,7 +240,7 @@ auto main(int argc, char** argv) -> int {
             n,
             m1.bucket_count(),
             batch,
-            epochs,
+            targetWidth,
             [&] { run(m0, k0, n0); },
             [&] { run(m1, k1, n1); },
             [&] { run(m2, k2, n2); });

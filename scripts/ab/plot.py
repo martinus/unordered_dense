@@ -43,16 +43,27 @@ def nice_ticks(vmax):
 def main():
     rows = list(csv.DictReader(open(sys.argv[1])))
     out = sys.argv[2] if len(sys.argv) > 2 else "lookup_vs_size.svg"
+    # "ratio" draws the paired ratio and its confidence band, which is the quantity a paired
+    # comparison actually measures; "ns" draws the absolute times, which show the shape of the
+    # curve but drift with the machine -- at 392K entries two runs read 7.97 and 12.29 ns while
+    # their ratios agreed to three digits.
+    mode = "ratio" if ("relative" in rows[0] and len(sys.argv) > 5 and sys.argv[5] == "ratio") else "ns"
     col = "ns" if "ns" in rows[0] else ("half_ns" if "half_ns" in rows[0] else "hit_ns")
     title = sys.argv[3] if len(sys.argv) > 3 else "Cost of a random find against table size"
     subtitle = sys.argv[4] if len(sys.argv) > 4 else "nanoseconds per lookup, 50% of them hits"
     data = defaultdict(dict)
     buckets = {}
+    band = defaultdict(dict)
     for r in rows:
-        data[r["map"]][int(r["entries"])] = float(r[col])
+        n = int(float(r["entries"]))
+        data[r["map"]][n] = float(r["relative"]) if mode == "ratio" else float(r[col])
+        if mode == "ratio" and "rel_low" in r:
+            band[r["map"]][n] = (float(r["rel_low"]), float(r["rel_high"]))
         if r["map"] == "this" and "buckets" in r:
-            buckets[int(r["entries"])] = int(r["buckets"])
+            buckets[n] = int(r["buckets"])
     present = [s for s in SERIES if s[0] in data]
+    if mode == "ratio":
+        present = [s for s in present if s[0] != "main"]
     all_sizes = sorted(next(iter(data.values())))
 
     panels = [("up to 64K entries", [n for n in all_sizes if n <= DETAIL_MAX]),
@@ -76,32 +87,44 @@ def main():
     s.append(f'<text x="{PAD_L}" y="26" class="t" fill="#0b0b0b" font-size="16" font-weight="600">'
              f'{title}</text>')
     s.append(f'<text x="{PAD_L}" y="44" class="t2" fill="#52514e" font-size="12">'
-             f'{subtitle}, map&lt;uint64_t, size_t&gt;, lower is better</text>')
+             f'{subtitle}, map&lt;uint64_t, size_t&gt;, '
+             f'{"above 1 is faster than the baseline" if mode == "ratio" else "lower is better"}</text>')
     s.append(f'<text x="{PAD_L}" y="61" class="t2" fill="#52514e" font-size="11">'
              f'dotted lines are where this map doubles its index: nothing is reserved, so between them the '
              f'load factor climbs to the maximum and the cost climbs with it</text>')
 
     for panel, (title, sizes) in enumerate(panels):
         lo, hi = sizes[0], sizes[-1]
-        yticks = nice_ticks(max(data[k][n] for k, _, _, _ in present for n in sizes))
-        ytop = yticks[-1]
+        vmax = max(data[k][n] for k, _, _, _ in present for n in sizes)
+        if mode == "ratio":
+            # 1.0 is where "no difference" sits, so that is the floor worth showing; zero would put
+            # every line in the top half and say nothing.
+            vmin = min(1.0, min(data[k][n] for k, _, _, _ in present for n in sizes))
+            ybot = math.floor(vmin * 10) / 10
+            ytop = math.ceil(vmax * 10) / 10
+            step = 0.1 if ytop - ybot <= 0.8 else 0.2
+            yticks = [ybot + i * step for i in range(int(round((ytop - ybot) / step)) + 1)]
+        else:
+            yticks = nice_ticks(vmax)
+            ybot = 0.0
+            ytop = yticks[-1]
         left = PAD_L + panel * (panel_w + PANEL_GAP)
 
         def px(n, left=left, lo=lo, hi=hi):
             return left + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * panel_w
 
-        def py(v, ytop=ytop):
-            return PAD_T + panel_h * (1 - v / ytop)
+        def py(v, ybot=ybot, ytop=ytop):
+            return PAD_T + panel_h * (1 - (v - ybot) / (ytop - ybot))
 
         s.append(f'<text x="{left:.1f}" y="{PAD_T - 14}" class="t2" fill="#52514e" font-size="12" '
                  f'font-weight="600">{title}</text>')
         s.append(f'<text x="{left - 10:.1f}" y="{PAD_T - 14}" class="t2" fill="#52514e" font-size="11" '
-                 f'text-anchor="end">ns</text>')
+                 f'text-anchor="end">{"x" if mode == "ratio" else "ns"}</text>')
         for v in yticks:
             y = py(v)
             s.append(f'<line x1="{left:.1f}" y1="{y:.1f}" x2="{left + panel_w:.1f}" y2="{y:.1f}" class="g" '
                      f'stroke="#e6e5e1" stroke-width="1"/>')
-            label = f"{v:g}"
+            label = f"{v:.4g}"
             s.append(f'<text x="{left - 10:.1f}" y="{y + 4:.1f}" class="t2" fill="#52514e" font-size="11" '
                      f'text-anchor="end">{label}</text>')
         # a handful of round sizes; dense sampling must not become a smear of labels
@@ -120,6 +143,11 @@ def main():
                 s.append(f'<line x1="{px(b):.1f}" y1="{PAD_T:.1f}" x2="{px(b):.1f}" y2="{PAD_T + panel_h:.1f}" '
                          f'class="g" stroke="#e6e5e1" stroke-width="1" stroke-dasharray="2 3"/>')
         for i, (key, label, light, _) in enumerate(present):
+            if mode == "ratio" and key in band:
+                # the confidence band, drawn under the line: down one edge and back along the other
+                up = " ".join(f"{px(n):.1f},{py(band[key][n][1]):.1f}" for n in sizes)
+                down = " ".join(f"{px(n):.1f},{py(band[key][n][0]):.1f}" for n in reversed(sizes))
+                s.append(f'<polygon points="{up} {down}" fill="{light}" fill-opacity="0.18" stroke="none"/>')
             pts = " ".join(f"{px(n):.1f},{py(data[key][n]):.1f}" for n in sizes)
             s.append(f'<polyline points="{pts}" class="ln{i}" fill="none" stroke="{light}" stroke-width="2" '
                      f'stroke-linejoin="round" stroke-linecap="round"/>')
