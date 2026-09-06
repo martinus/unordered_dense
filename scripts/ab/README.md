@@ -363,8 +363,8 @@ binary, us per 200000 lookups at 33000 entries (load 0.50):
 Every map peaks at 50%, because that is where the outcome branch is least predictable, and the
 roughly half a misprediction per lookup it adds is paid by all of them. That is what compresses the
 comparison: at 100% hits this map leads 4.8.1 by 1.57x and at 50% by 1.00x. 4.8.1's window is
-25-50% hits *and* a load factor near 0.5, and inside it the margin is 0.4-3%; at load 0.79 this map
-wins at every hit rate by 1.3-2.1x.
+25-50% hits *and* a load factor near 0.5, and inside it the margin is 0.4-3%; at the fullest a table
+gets, this map wins at every hit rate by 1.3-2.1x.
 
 None of that makes the mixed workload wrong to measure -- a program doing membership tests it cannot
 predict really does pay the misprediction, and a benchmark with a *predictable* hit sequence would be
@@ -431,9 +431,8 @@ it spends most of its life:
 Across a single octave 4.8.1 swings **1.26-1.59x** between its cheapest and dearest point, where main
 swings 1.11-1.28x, this map **1.04-1.14x** and boost 1.10-1.22x. Point for point 4.8.1 runs from
 0.91x of this map just after a doubling to 1.30x just before one. The lookup work of the past year
-did not make the best case much faster; it removed the worst case. And the flatness is what puts this
-map ahead of boost at load 0.79 up to about 100000 entries -- 0.93 and 0.95 there -- on the workload
-boost otherwise wins.
+did not make the best case much faster; it removed the worst case. The flatness is a statement about one map's own
+curve, not a comparison, and it survives as such.
 
 The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
 pairing, because the result depends on page placement of a multi-gigabyte working set that varies
@@ -470,15 +469,24 @@ load and boost's overflow bits only ever get set, so both are relieved only by g
 index's counters come back down on every erase, which is the property the whole design exists for and
 this is the picture of it.
 
-That flatness decides who wins, and the answer changes sign along the way. this/boost at a power of
-two (load ~0.5) against the last point before the next doubling (load 0.79), above 1.00 meaning boost
-is ahead: at ~4K, find 1.02 and 0.93, churn **1.72 and 0.45**, insert-and-erase **1.47 and 0.57**. So
-at the emptiest a table gets boost leads everything -- a dense erase must close the hole it leaves in
-the value vector and find the moved element's slot with a second probe, where boost probes once and
-marks the slot free. At the fullest, and up to about 100000 entries, this map is **1.9-2.2x ahead of
-boost on churn** and 1.5-1.8x on insert-and-erase. Past that the memory chain dominates and boost leads at both
-ends. The scored `churn` workload agrees with the full-table end, since it reserves and its round is
-erase, insert *and two finds*.
+**Summarise across an octave, and never at a load factor you chose.** Quoting a ratio at "load 0.79"
+-- the last point before *this map* doubles -- is a biased subsample: boost sizes differently, and it
+swings 4.2-6.0x across its own octave, so reading this map at its fullest against boost at wherever
+its cycle happened to be produced "this map is 2.2x ahead of boost on churn", which the geometric
+mean over the same octave does not support. That claim stood here for a day and is retracted. The
+geomean, this/boost and this/main, above 1.00 meaning the other map is ahead:
+
+| workload | 1K | 32K | 208K | 524K |
+|---|---|---|---|---|
+| find, all hits | 1.24 / 0.80 | 1.40 / 0.80 | 1.24 / 0.80 | 1.44 / 0.80 |
+| churn | 1.14 / 0.70 | 1.22 / 0.65 | 1.55 / 0.81 | 2.10 / 0.92 |
+| insert and erase | 1.04 / 0.80 | 1.24 / 0.75 | 1.34 / 0.81 | 1.66 / 0.80 |
+
+Boost is ahead on all three at every size, by 1.04-1.24x at a thousand entries and 1.4-2.1x at half a
+million -- a dense erase must close the hole it leaves in the value vector and find the moved
+element's slot with a second probe, where boost probes once and marks the slot free. This map is
+ahead of robin hood everywhere, by 1.1-1.5x. The dense answer to boost is the two charts boost is not
+on: 9.4x on iteration, and a build that wins at every value size.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 
