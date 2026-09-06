@@ -48,25 +48,28 @@ struct payload<8> {
     std::uint64_t first{};
 };
 
-// The keys, made once and shared by every map and every value size, so that what differs between
-// points is the value and nothing else.
-auto keys_for(std::size_t n) -> std::vector<std::uint64_t> const& {
-    static auto cache = std::map<std::size_t, std::vector<std::uint64_t>>();
+// The keys, made once per key type and shared by every map and every value size, so that what
+// differs between points is the value and nothing else. `key_for` is the scored benchmark's own key
+// source: a bijection on 64 bits for an integer, and for a string a length from 8 to 135 bytes
+// skewed towards short, returned by reference into a buffer it rewrites, hence the copy.
+template <typename Map>
+auto keys_for(std::size_t n) -> std::vector<typename Map::key_type> const& {
+    static auto cache = std::map<std::size_t, std::vector<typename Map::key_type>>();
     auto found = cache.find(n);
     if (found != cache.end()) {
         return found->second;
     }
-    auto keys = std::vector<std::uint64_t>();
+    auto keys = std::vector<typename Map::key_type>();
     auto r = ankerl::nanobench::Rng(1);
     keys.reserve(n);
     while (keys.size() < n) {
-        keys.push_back((r() >> 1U) | 1U);
+        keys.emplace_back(workloads::key_for<Map>(r() >> 2U));
     }
     return cache.emplace(n, std::move(keys)).first->second;
 }
 
-template <typename Map>
-auto build_map(std::vector<std::uint64_t> const& keys) -> Map {
+template <typename Map, typename Keys>
+auto build_map(Keys const& keys) -> Map {
     auto m = Map();
     for (auto k : keys) {
         m.try_emplace(k);
@@ -99,18 +102,18 @@ void emit(std::size_t bytes, char const* what, double batch, double targetWidth,
     }
 }
 
-template <std::size_t Bytes>
+template <typename Key, std::size_t Bytes>
 void one_size(std::size_t n, double targetWidth) {
     using V = payload<Bytes>;
-    using main_map = udmbase::unordered_dense::map<std::uint64_t, V>;
-    using this_map = ankerl::unordered_dense::map<std::uint64_t, V>;
+    using main_map = udmbase::unordered_dense::map<Key, V>;
+    using this_map = ankerl::unordered_dense::map<Key, V>;
 #ifdef UDM_AB_HAVE_JAN
-    using jan_map = udmjan::unordered_dense::map<std::uint64_t, V>;
+    using jan_map = udmjan::unordered_dense::map<Key, V>;
 #endif
 #ifdef UDM_AB_HAVE_BOOST
-    using boost_map = boost::unordered_flat_map<std::uint64_t, V, ankerl::unordered_dense::hash<std::uint64_t>>;
+    using boost_map = boost::unordered_flat_map<Key, V, ankerl::unordered_dense::hash<Key>>;
 #endif
-    auto const& keys = keys_for(n);
+    auto const& keys = keys_for<this_map>(n);
     auto const per = static_cast<double>(n);
 
     emit(Bytes,
@@ -171,6 +174,8 @@ auto main(int argc, char** argv) -> int {
     auto const n = argc > 1 ? std::strtoul(argv[1], nullptr, 10) : 200000UL;
     auto const targetWidth = argc > 2 ? std::strtod(argv[2], nullptr) : 0.02;
 
+    // 0 uint64_t keys, 1 std::string keys
+    auto const key = argc > 3 ? std::atoi(argv[3]) : 0;
     std::printf("entries,map,what,ns\n");
     // `entries` is the x axis the plotter reads, and here it carries the value size instead.
     //
@@ -181,11 +186,20 @@ auto main(int argc, char** argv) -> int {
     // 1.34, 1.46, 2.06 across 8 to 64 bytes and then 0.96 and 1.09 at 128 and 256, which is the
     // cache cliff talking and not the layout. The out-of-cache regime is what the size-axis charts
     // are for; this one holds the working set still and moves only the value.
-    one_size<8>(n, targetWidth);
-    one_size<16>(n, targetWidth);
-    one_size<24>(n, targetWidth);
-    one_size<32>(n, targetWidth);
-    one_size<48>(n, targetWidth);
-    one_size<64>(n, targetWidth);
+    if (key == 1) {
+        one_size<std::string, 8>(n, targetWidth);
+        one_size<std::string, 16>(n, targetWidth);
+        one_size<std::string, 24>(n, targetWidth);
+        one_size<std::string, 32>(n, targetWidth);
+        one_size<std::string, 48>(n, targetWidth);
+        one_size<std::string, 64>(n, targetWidth);
+    } else {
+        one_size<std::uint64_t, 8>(n, targetWidth);
+        one_size<std::uint64_t, 16>(n, targetWidth);
+        one_size<std::uint64_t, 24>(n, targetWidth);
+        one_size<std::uint64_t, 32>(n, targetWidth);
+        one_size<std::uint64_t, 48>(n, targetWidth);
+        one_size<std::uint64_t, 64>(n, targetWidth);
+    }
     return 0;
 }

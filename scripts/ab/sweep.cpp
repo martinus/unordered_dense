@@ -26,9 +26,11 @@
 
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 #include <map>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <cstdint>
 #include <cstdio>
@@ -58,50 +60,88 @@ enum class asking { hits, misses, half };
 // than it is** at load 0.50 and 2.7x at 0.79, while barely moving a group probe, because the whole
 // benefit lands on branches only a branchy probe has. It is the mistake CLAUDE.md records having
 // fixed once already in the scored find workload, reintroduced in this tool.
+template <typename Map>
 struct state {
-    std::vector<std::uint64_t> keys{};
-    std::uint64_t next = (std::uint64_t{1} << 40U) | 1U;
+    using key_type = typename Map::key_type;
+    std::vector<key_type> present{}; // in the map
+    std::vector<key_type> spare{};   // not in the map: an insert takes one and gives back what it erased
     ankerl::nanobench::Rng rng{5};
     ankerl::nanobench::Rng coin{99};
 };
 
-// Lookups drawn uniformly from the keys inserted so far. Every key is odd, so key ^ 1 is never
-// present, which is how a miss is made without changing where in the table it lands. `half` decides
+// The three key pools come from disjoint ranges of a 64 bit value, so "absent" means absent by
+// construction rather than by luck. `key_for` is the scored benchmark's own key source, which
+// scrambles an integer through a bijection -- a small sequential integer hashes to a lattice and
+// nothing ever collides -- and for `std::string` draws a length from 8 to 135 bytes skewed towards
+// short, since one fixed length makes the hash's length dispatch perfectly predictable. It returns a
+// reference into a buffer it rewrites on the next call, so these are copies and have to be.
+constexpr auto present_range = std::uint64_t{0};
+constexpr auto absent_range = std::uint64_t{1} << 63U;
+constexpr auto spare_range = std::uint64_t{1} << 62U;
+
+template <typename Map>
+auto make_keys(std::uint64_t range, std::size_t n) -> std::vector<typename Map::key_type> {
+    auto out = std::vector<typename Map::key_type>();
+    out.reserve(n);
+    auto r = ankerl::nanobench::Rng(1);
+    for (std::size_t i = 0; i < n; ++i) {
+        out.emplace_back(workloads::key_for<Map>((r() >> 2U) | range));
+    }
+    return out;
+}
+
+// The misses, shared by every map because nothing writes to them, and identical for all of them
+// because a comparison of maps should differ in the map. Built once per size and kept.
+template <typename Map>
+auto absent_keys(std::size_t n) -> std::vector<typename Map::key_type> const& {
+    static auto cache = std::vector<typename Map::key_type>();
+    static auto cached_n = std::size_t{0};
+    if (cached_n != n) {
+        cache = make_keys<Map>(absent_range, n);
+        cached_n = n;
+    }
+    return cache;
+}
+
+// Lookups drawn uniformly from the keys in the map, or from a pool that is not in it. `half` decides
 // each lookup with a second rng rather than alternating, for the reason the scored find workload
 // does: a predictable sequence of hits and misses is learned by the branch predictor and stops
 // measuring the branchy part of a probe.
 template <typename Map>
-auto lookup_ns(Map const& map, state& st, asking what, std::size_t lookups) -> double {
-    auto const& keys = st.keys;
+auto lookup_ns(Map const& map, state<Map>& st, asking what, std::size_t lookups) -> double {
+    auto const& present = st.present;
+    auto const& absent = absent_keys<Map>(present.size());
     auto& rng = st.rng;
     auto& coin = st.coin;
     auto acc = std::size_t{};
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < lookups; ++i) {
-        auto const k = keys[static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U)];
+        auto const at = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
         auto const hit = what == asking::hits || (what == asking::half && (coin() & 1U) != 0);
-        acc += map.count(hit ? k : (k ^ 1U));
+        acc += map.count(hit ? present[at] : absent[at]);
     }
     auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
     ankerl::nanobench::doNotOptimizeAway(acc);
     return ns / static_cast<double>(lookups);
 }
 
-// Erase a live key and insert a fresh one, which is the scored churn workload's core: the size
-// never changes, so the table neither grows nor shrinks and what is measured is the steady state.
-// Returns nanoseconds per erase-and-insert pair.
+// Erase a live key and insert one that is not there, which is the scored churn workload's core: the
+// size never changes, so the table neither grows nor shrinks and what is measured is the steady
+// state. The erased key goes back into the spare pool and the inserted one takes its place in
+// `present`, so both pools stay truthful without building a key inside the timed region -- which for
+// a string would measure the allocator.
 template <typename Map>
-auto churn_ns(Map& map, state& st, std::size_t ops) -> double {
-    auto& keys = st.keys;
-    auto& next = st.next;
+auto churn_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
+    auto& present = st.present;
+    auto& spare = st.spare;
     auto& rng = st.rng;
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < ops; ++i) {
-        auto const slot = static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U);
-        map.erase(keys[slot]);
-        auto const fresh = (next += 2); // odd throughout, so key ^ 1 is still never present
-        map.try_emplace(fresh, 1);
-        keys[slot] = fresh;
+        auto const slot = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
+        auto const j = i % spare.size();
+        map.erase(present[slot]);
+        map.try_emplace(spare[j], 1);
+        std::swap(present[slot], spare[j]);
     }
     auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
     return ns / static_cast<double>(ops);
@@ -114,24 +154,25 @@ auto churn_ns(Map& map, state& st, std::size_t ops) -> double {
 // rather than a measurement. Returns nanoseconds per operator[]-and-erase pair, of which there are
 // two per round.
 template <typename Map>
-auto insert_erase_ns(Map& map, state& st, std::size_t ops) -> double {
-    auto& keys = st.keys;
-    auto& next = st.next;
+auto insert_erase_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
+    auto& present = st.present;
+    auto& spare = st.spare;
+    auto const& absent = absent_keys<Map>(present.size());
     auto& rng = st.rng;
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < ops; ++i) {
-        auto const a = static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U);
-        map[keys[a]] = 1;             // present: operator[] that finds
-        map.erase(keys[a] ^ 1U);      // absent: erase that finds nothing
+        auto const a = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
+        map[present[a]] = 1; // present: operator[] that finds
+        map.erase(absent[a]); // absent: erase that finds nothing
         // Erase before inserting, so the size never rises above n. The other order crosses the
         // growth threshold and one operation pays for rehashing the whole table -- real, but it
         // is the build workload's cost, and amortised over a measurement it swamps everything
         // else: 1219 ns per operation at 64M entries against the 20 the steady state costs.
-        auto const b = static_cast<std::size_t>(((rng() >> 32U) * keys.size()) >> 32U);
-        map.erase(keys[b]);           // erase that removes
-        auto const fresh = (next += 2);
-        map[fresh] = 1;               // operator[] that inserts
-        keys[b] = fresh;              // and the fresh one takes its place, so the size never moves
+        auto const b = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
+        auto const j = i % spare.size();
+        map.erase(present[b]);  // erase that removes
+        map[spare[j]] = 1;      // operator[] that inserts
+        std::swap(present[b], spare[j]);
     }
     auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
     return ns / static_cast<double>(2 * ops);
@@ -240,27 +281,18 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
 
 } // namespace
 
-auto main(int argc, char** argv) -> int {
-    // It matters more since every point rebuilds: the sweep now asks for and returns megabytes 193
-    // times over, and kept in the arena those pages are faulted once for the process rather than
-    // once per point. glibc only, a no-op elsewhere.
-    workloads::tame_allocator();
-    auto const max_shift = argc > 1 ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 20U;
-    auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
-    auto const batch = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 20000UL;
-    // 0 a random find with a 50% hit rate, 1 churn at a fixed size, 2 insert and erase
-    // 0 find (50% hits), 1 churn, 2 insert-and-erase, 3 find all hits, 4 find all misses
-    auto const mode = argc > 4 ? std::atoi(argv[4]) : 0;
-    // the interval width to aim for, in log space: 0.02 pins a ratio to about +-1%
-    auto const targetWidth = argc > 5 ? std::strtod(argv[5], nullptr) : 0.02;
-
-    using main_map = udmbase::unordered_dense::map<std::uint64_t, std::size_t>;
+// The whole sweep for one key type. `std::string` keys are the same workloads on keys of 8 to 135
+// bytes: the hash stops being one multiply and becomes most of a lookup, and the comparison stops
+// being one instruction and becomes a memcmp against a pointer the map has to chase.
+template <typename Key>
+void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode, double targetWidth) {
+    using main_map = udmbase::unordered_dense::map<Key, std::size_t>;
 #ifdef UDM_AB_HAVE_JAN
-    using jan_map = udmjan::unordered_dense::map<std::uint64_t, std::size_t>;
+    using jan_map = udmjan::unordered_dense::map<Key, std::size_t>;
 #endif
-    using this_map = ankerl::unordered_dense::map<std::uint64_t, std::size_t>;
+    using this_map = ankerl::unordered_dense::map<Key, std::size_t>;
 #ifdef UDM_AB_HAVE_BOOST
-    using boost_map = boost::unordered_flat_map<std::uint64_t, std::size_t, ankerl::unordered_dense::hash<std::uint64_t>>;
+    using boost_map = boost::unordered_flat_map<Key, std::size_t, ankerl::unordered_dense::hash<Key>>;
 #endif
 
     // The maps are rebuilt from scratch at every sample point rather than grown on from the last
@@ -273,32 +305,34 @@ auto main(int argc, char** argv) -> int {
     // does not have, instead of a smooth and plausible stretch of a curve.
     auto m0 = main_map();
     auto m1 = this_map();
-    auto s0 = state();
-    auto s1 = state();
+    auto s0 = state<main_map>();
+    auto s1 = state<this_map>();
 #ifdef UDM_AB_HAVE_BOOST
     auto m2 = boost_map();
-    auto s2 = state();
+    auto s2 = state<boost_map>();
 #endif
 #ifdef UDM_AB_HAVE_JAN
     auto m3 = jan_map();
-    auto s3 = state();
+    auto s3 = state<jan_map>();
 #endif
 
-    std::printf("entries,map,ns,ns_min,ns_low,ns_high,relative,rel_low,rel_high,rounds,buckets\n");
     auto const points = sample_sizes(max_shift, per_octave);
     auto const first = points.front();
     for (auto n : points) {
         // The keys are rebuilt, the rngs are not: `st.rng` and `st.coin` carry on across points and
         // across epochs, which is what stops the epoch replaying its own key sequence.
-        auto grow = [n](auto& map, state& st) {
+        // The pools are rebuilt with the map, the rngs are not: `st.rng` and `st.coin` carry on
+        // across points and across epochs, which is what stops an epoch replaying its own sequence.
+        auto grow = [n](auto& map, auto& st) {
+            using map_type = std::decay_t<decltype(map)>;
             map = {};
-            st.keys.clear();
-            auto r = ankerl::nanobench::Rng(1);
-            while (st.keys.size() < n) {
-                auto const key = (r() >> 1U) | 1U;
-                if (map.try_emplace(key, 1).second) {
-                    st.keys.push_back(key);
-                }
+            st.present = make_keys<map_type>(present_range, n);
+            // Enough spares that churn is not re-inserting the same handful of home groups, and few
+            // enough that the pools do not dwarf the map they are about.
+            st.spare = make_keys<map_type>(spare_range, std::min<std::size_t>(n, 1U << 14U));
+            static_cast<void>(absent_keys<map_type>(n));
+            for (auto const& k : st.present) {
+                map.try_emplace(k, 1);
             }
         };
         grow(m0, s0);
@@ -315,7 +349,7 @@ auto main(int argc, char** argv) -> int {
         // wins the mix by 1.6%. An unpredictable outcome costs a clean probe a fresh half
         // misprediction per lookup and costs a probe that already mispredicts 0.6 times per hit
         // almost nothing. So a chart of the mix alone cannot be read as "which lookup is faster".
-        auto run = [mode, batch](auto& map, state& st) {
+        auto run = [mode, batch](auto& map, auto& st) {
             if (mode == 1) {
                 ankerl::nanobench::doNotOptimizeAway(churn_ns(map, st, batch));
             } else if (mode == 2) {
@@ -357,6 +391,29 @@ auto main(int argc, char** argv) -> int {
 #endif
             );
         }
+    }
+}
+
+auto main(int argc, char** argv) -> int {
+    // It matters more since every point rebuilds: the sweep asks for and returns megabytes 193 times
+    // over, and kept in the arena those pages are faulted once for the process rather than once per
+    // point. glibc only, a no-op elsewhere.
+    workloads::tame_allocator();
+    auto const max_shift = argc > 1 ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 20U;
+    auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
+    auto const batch = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 20000UL;
+    // 0 find (50% hits), 1 churn, 2 insert-and-erase, 3 find all hits, 4 find all misses
+    auto const mode = argc > 4 ? std::atoi(argv[4]) : 0;
+    // the interval width to aim for, in log space: 0.02 pins a ratio to about +-1%
+    auto const targetWidth = argc > 5 ? std::strtod(argv[5], nullptr) : 0.02;
+    // 0 uint64_t keys, 1 std::string keys
+    auto const key = argc > 6 ? std::atoi(argv[6]) : 0;
+
+    std::printf("entries,map,ns,ns_min,ns_low,ns_high,relative,rel_low,rel_high,rounds,buckets\n");
+    if (key == 1) {
+        sweep<std::string>(max_shift, per_octave, batch, mode, targetWidth);
+    } else {
+        sweep<std::uint64_t>(max_shift, per_octave, batch, mode, targetWidth);
     }
     return 0;
 }

@@ -277,9 +277,22 @@ start against a nanobench without `targetIntervalWidth()` and says to point `NAN
 checkout of martinus/nanobench#189: the sweep asks for a precision instead of naming a round count,
 and the vendored 4.6.0 cannot do that. Nothing else in the repository depends on the branch.
 
-The two value-size charts are **bars**, the four size-axis ones lines: six value sizes are
-categories, and a line between 32 and 48 bytes interpolates something nobody measured. `--bars` in
-both `plot.py` and the dashboard, grouped, anchored at zero, 2px of surface between neighbours.
+The two value-size charts are **bars**, the size-axis ones lines: six value sizes are categories, and
+a line between 32 and 48 bytes interpolates something nobody measured. `--bars` in both `plot.py` and
+the dashboard, grouped, anchored at zero, 2px of surface between neighbours. Build and iteration are
+separate charts rather than panels of one, since they differ by two orders of magnitude.
+
+**Every workload is measured for both key types** (2026-09-06): `sweep.cpp`, `valuesize.cpp` and
+`memory.cpp` all take a key argument, and the string half uses the scored benchmark's own
+`key_for` -- 8 to 135 bytes skewed towards short, because one fixed length makes the hash's length
+dispatch perfectly predictable. Two things changed in the tools to make that possible and are
+improvements in their own right: the miss keys now come from a disjoint pool built up front rather
+than from `key ^ 1`, so a miss is absent by construction and is not a neighbour of a key that is
+present; and churn takes its insert from a spare pool and gives back what it erased, so no key is
+constructed inside the timed region -- which for a string would have measured the allocator.
+`memory.cpp` counts by replacing global `operator new` rather than through a container allocator,
+because a string's body is allocated by `std::allocator<char>` inside the string and a container
+allocator never sees it; for integer keys the two methods agree to the byte.
 
 **The charts are also a page you can interrogate** (2026-09-06). `scripts/ab/dashboard.py` writes
 `doc/charts.html` from the CSVs in `doc/`: every chart, a legend that shows and hides a map across
