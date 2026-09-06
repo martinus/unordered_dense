@@ -171,38 +171,51 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
-**The size sweep, run for churn and for insert-erase as well as find** (2026-09-06,
-`doc/*_vs_size.svg`). Three charts, same method: one map grown through 265 sample points, twelve
-per octave, nothing reserved, to 67M entries. The find chart was the point of the exercise; the
-other two are where it got interesting, because they decompose a result the score reports as a win.
+**The size sweep, and the measurement mistake it took three tries to get right** (2026-09-06,
+`doc/*_vs_size.svg`, `scripts/ab/sweep.cpp`). Three charts -- find with a 50% hit rate, churn, and
+insert-erase -- of one map grown through 193 sample points, twelve per octave, nothing reserved, to
+1M entries.
+
+**The mistake is the part worth keeping.** The first two versions measured main to completion, then
+this map, then boost. Sequential phases: anything that drifts between them -- a clock ramp, a noisy
+neighbour, page placement -- lands entirely on whichever map was running, and none of it cancels.
+Two runs of *identical* work then disagreed by up to 140% above 1M entries and by tens of percent
+below it, and one contaminated run put a whole octave 70% high while looking perfectly smooth. That
+run is what produced the "insert-erase is anomalously slow at 256 buckets" feature; there was never
+anything wrong with the map. nanobench's own documentation says this plainly, and the A/B harness
+next door has done it correctly all along: `compare()` runs the alternatives interleaved round by
+round, so drift cancels out of the ratio. The sweep now does the same, and reports each point's
+interval alongside it. Even paired it needs **101 epochs** for intervals around 5% of the ratio;
+at nanobench's default 11 they were 25% wide, which is the real reason the early numbers moved.
+
+With that fixed, and only out to 1M where the result reproduces to about 1% median:
 
 | entries | find, this/boost | churn, this/boost | insert-erase, this/boost |
 |---|---|---|---|
-| 4K | 1.12 | 1.38 | 1.64 |
-| 64K | 1.21 | 1.64 | 1.74 |
-| 1M | 1.32 | 2.02 | 1.66 |
-| 16M | 1.24 | 2.05 | 1.78 |
-| 67M | 1.18 | 1.86 | 1.68 |
+| 256 | 1.25 | 1.63 | 1.52 |
+| 4K | 1.27 | 1.70 | 1.70 |
+| 64K | 1.38 | 1.78 | 1.76 |
+| 1M | 1.37 | 1.32 | 1.29 |
 
-**Boost is 1.7-2x faster at both mutating workloads, at every size.** That is not a contradiction of
-the scored `churn64`, which has this map 1.16-1.21x *ahead*: the scored round is erase, insert and
-**two finds**, and it reserves. The finds are what carry it. Isolate the mutation pair and the sign
-flips, which is worth knowing because it says exactly where the cost is. A dense erase has to close
-the hole it makes in the value vector, and finding the moved element's slot is a second probe --
-`slot_of_value` -- on top of the one that found the key. Boost's erase probes once and marks the
-slot free. In cache that second probe is a few cycles; out of cache it is a second random access,
-and the ratio holds at about 2x from 1M entries up.
+Boost is ahead on all three, and by more on the two that mutate. The cause is structural and was
+worth finding: a dense erase has to close the hole it makes in the value vector, and locating the
+moved element's slot is a second probe (`slot_of_value`) on top of the one that found the key. Boost
+probes once and marks the slot free. This does not contradict the scored `churn64`, which has this
+map 1.16-1.21x *ahead*, because the scored round is erase, insert **and two finds**, and it reserves
+-- the finds are what carry it.
 
-What the small end shows is the opposite and is the design working as intended: below about 64K
-this map's line is nearly **flat** where both others saw-tooth by a factor of two or three. Robin
-hood's probe lengthens with the load, and boost's overflow bits only ever get set, so both pay more
-as a table fills and are relieved only by growing. The group index's counters come back down on
-every erase, so churn at a fixed size costs what it costs. That is the property the whole design
-exists for, and this is the first picture of it.
+**The other half of the churn picture is this map's own, and it is the design working.** Below 64K
+its line is nearly flat where the other two saw-tooth: over one octave this map swings 1.12-1.22x,
+robin hood 1.67-1.74x, and boost 3.06-3.37x, consistent across repeated runs. Robin hood's probe
+lengthens with the load and boost's overflow bits only ever get set, so both cost more as a table
+fills and are relieved only by growing; the group index's counters come back down on every erase.
+That is the property the whole design exists for, and it is the first picture of it.
 
-`main/this` on churn crosses 1.00 at about 8M and ends at 0.91, i.e. the robin hood index is
-*faster* at churning a table far larger than cache. Same cause: its erase shifts elements back but
-never has to hunt for a second slot.
+**Retracted, because the data behind them does not reproduce**: that boost's find lead "peaks around
+2M and narrows again", that main overtakes this map on churn above 8M, and every other number this
+file previously carried for tables above 1M. The sweep is capped at 1M for that reason. Measuring
+the regime above it needs a fresh process per size, not one incremental pass, because at multi-GB
+sizes the result depends on page placement that varies from run to run.
 
 **Two regimes the score does not cover, measured 2026-09-06 when asking what a more realistic
 benchmark would be.**
@@ -230,13 +243,12 @@ ever sees the small end of that. Against main this map is still ahead at both si
 suite systematically understates, in the same way it once understated growth, churn and big values
 before workloads were added for them.
 
-**Two points were not enough to name the trend, though**, and the sweep below going to 134M entries
-says what it really is. The lead does not keep growing: on a 50% find it is 1.05x while everything
-is in cache, rises to a peak of **1.63x around 2M entries**, and then *narrows* again to 1.2-1.3x
-from 32M up. The peak is the transition, where boost's table still fits something this map's values
-have already outgrown; past it both are bound by DRAM latency and TLB misses, the extra dependent
-load is a smaller share of a bigger number, and the prefetch of the index line covers part of it.
-Any claim about this ratio has to say at what size, and "it grows with the table" is wrong. What makes it awkward to add as a *scored* workload is the price: 8M entries is
+**Both of those points come from one unpaired measurement each and should be read as indicative.**
+A later attempt to turn them into a trend, by sweeping the size axis to 134M, produced a shape --
+lead peaking near 2M and narrowing again -- that did not survive re-measurement and has been
+retracted; see the sweep entry above for what went wrong and what the paired version says. What is
+safe to say is that the lead exists at both of these sizes and that any claim about it has to name
+the size it was taken at. What makes it awkward to add as a *scored* workload is the price: 8M entries is
 ~170 MB and about a second to build, so it would dominate the suite. So it is a tool rather than a
 score entry -- `scripts/ab/sweep.cpp` walks every power of two from 16 to 8M for the working tree,
 a baseline revision and boost, and `scripts/ab/plot.py` draws the CSV as an SVG with nothing but
