@@ -264,6 +264,39 @@ start against a nanobench without `targetIntervalWidth()` and says to point `NAN
 checkout of martinus/nanobench#189: the sweep asks for a precision instead of naming a round count,
 and the vendored 4.6.0 cannot do that. Nothing else in the repository depends on the branch.
 
+**The same-hash convention was flattering boost on every string chart, and the control found it**
+(2026-09-06). Handing every alternative this map's hash is the right way to compare *indexes*, and it
+is what this project has always done -- but it is not what a caller gets, and on string keys the
+difference reverses the answer. Boost with the hash it ships with, against boost given this wyhash,
+geomean per octave (above 1.00 means its own hash is slower):
+
+| workload | uint64_t, 1K to 512K | std::string, 1K to 256K |
+|---|---|---|
+| find, all hits | 0.93 to 0.99 | **1.30 to 1.22** |
+| find, 50% hits | 0.98 to 0.99 | 1.31 to 1.27 |
+| churn | 1.00 flat | 1.17 to 1.09 |
+| insert and erase | 0.99 to 1.00 | 1.26 to 1.19 |
+
+For an integer key boost's default is **1-7% faster** than this wyhash: `boost::hash<uint64_t>` is
+close to the identity, foa mixes internally anyway, and the multiply is pure cost -- and once the
+table leaves cache it buys nothing, which is why the column walks back to 1.00. For a string it is
+**8-31% slower**, its default string hash not being wyhash.
+
+**That flips the string ranking.** This map against boost, geomean per octave, above 1.00 meaning
+boost is ahead:
+
+| string workload | vs boost + this wyhash | vs boost's own hash |
+|---|---|---|
+| find, all hits | 1.07 to 1.17 | **0.82 to 0.96** |
+| insert and erase | 1.10 to 1.12 | **0.87 to 0.97** |
+| churn | 1.09 to 1.33 | 0.93 at 1K, boost ahead above |
+
+So "boost is ahead on string lookups", said repeatedly in this file and its README, is a statement
+about boost *with this project's hash*. Out of the box, `boost::unordered_flat_map<std::string, V>`
+is 4-18% slower than this map on string lookups. The integer picture is unchanged -- boost leads
+there with either hash. Both are worth having, which is why both are on the charts, but only one of
+them is what a reader gets by typing the type name.
+
 **A fifth series, and it is a control** (2026-09-06): the same `boost::unordered_flat_map` with the
 hash it ships with, beside the one given this map's hash. Every other alternative on the charts is
 handed this map's hash so that what differs between them is the index; that one says what the hash

@@ -115,9 +115,14 @@ def main():
                    "what a string lookup costs.",
               why="<b>The realistic case for most maps, and the one where the index matters least.</b> "
                   "Hashing is 33-38% of a string lookup and the comparison is a memcmp behind a "
-                  "pointer the map has to chase, so the four maps converge: whatever the index does "
-                  "well is diluted by work none of them can avoid. Worth having precisely because it "
-                  "sets the ceiling on what a better index can buy a string map."),
+                  "pointer the map has to chase, so the maps converge: whatever the index does well "
+                  "is diluted by work none of them can avoid. It also sets the ceiling on what a "
+                  "better index can buy a string map. <b>Watch the two green lines here:</b> solid is "
+                  "boost holding this map's wyhash, dashed is boost with the hash it ships with, and "
+                  "the dashed one is 18-31% slower &mdash; enough that this map is ahead of an "
+                  "out-of-the-box boost on string lookups and behind the same map given this hash. "
+                  "Which of those two is the honest comparison depends on whether you are choosing an "
+                  "index or choosing a map."),
         chart("Find, half the lookups hitting", "nanoseconds per lookup, uint64_t keys",
               sized("find_vs_size.csv"), "entries", "ns", resize_rows=r["find_vs_size.csv"],
               what="The same lookups, but each one decides by a coin flip whether to ask for a key "
