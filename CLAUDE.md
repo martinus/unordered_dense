@@ -171,6 +171,34 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Two regimes the score does not cover, measured 2026-09-06 when asking what a more realistic
+benchmark would be.**
+
+*Small, short-lived maps* -- build, use and destroy, 2000 times, `map<uint64_t, size_t>`. Expected
+to be a weakness, because the index is now two allocations rather than one and a lookup touches
+three cache lines rather than two. It is the opposite: against main 1.90x at 8 entries, 2.55x at
+32, 1.64x at 128 and 1.52x at 1024, and ahead of boost at every size except 8 (where boost is
+1.97x main against this map's 1.90x). The reason is in the counters: branch mispredictions run
+0.0-0.8% here against main's 0.8-3.4%, which is the robin hood shift being a coin flip and the
+group probe not being one. Nothing to fix; worth a workload only to keep it that way.
+
+*Tables far larger than cache* -- this is the real gap. The score's largest is 200000 entries,
+whose index is about 1 MB and sits in L2 or L3 on any machine that runs it, and the value index is
+one dependent load that a flat map does not pay. Half-hit lookups, same hash, this desktop:
+
+| entries | main | this map | boost |
+|---|---|---|---|
+| 200000 | 9.8 ns | 7.1 ns | 5.9 ns |
+| 8000000 | 54.4 ns | 42.8 ns | 30.4 ns |
+
+So boost's lookup lead grows from **1.20x to 1.41x** as the index leaves cache, and the score only
+ever sees the small end of that. Against main this map is still ahead at both sizes (1.38x and
+1.27x), so it is a design cost rather than a regression -- but it is the one cost this benchmark
+suite systematically understates, in the same way it once understated growth, churn and big values
+before workloads were added for them. What makes it awkward to add is the price: 8M entries is
+~170 MB and about a second to build, so a workload has to amortise the build over far more lookups
+than the existing ones do.
+
 **Not zeroing the value index** (2026-09-06, from a code review that put it at ~7% of a build).
 `std::vector::resize()` value-initialises, so growing the index writes 64 bytes of zeros per group
 that nothing reads: a slot's index is written when an entry is placed there and read only for a
