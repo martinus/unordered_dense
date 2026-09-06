@@ -38,7 +38,7 @@ def si(n):
 
 def nice_ticks(vmax):
     """Round y ticks from 0 to at least vmax, five or six of them."""
-    for step in (0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100):
+    for step in (0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000):
         if vmax / step <= 6:
             return [i * step for i in range(int(vmax / step) + 2)]
     return [0, vmax]

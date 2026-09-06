@@ -281,11 +281,14 @@ older note above, which had boost *ahead* at 16 bytes and behind at 64 -- the cr
 chart entirely when the rehash store-to-load fix made building 1.80x faster, so this map now leads at
 every value size measured. The axis stops at 64 bytes because 200000 entries of a 64 byte value is
 14 MB and still in L3 where 128 is 27 MB and is not, and past that every line bends upward together.
-**Memory**: the chart is megabytes held on a log axis, since that is what a caller must find room for
-and a total against size spans five decades; the ranking is in the per-entry columns of the CSV
-beside it, because a 16% difference is 1% of such an axis. At a power of two this map holds 27 bytes
-per entry against 32 for main, 4.8.1 and boost, and its growth peak is 32.5 against boost's 48 and
-main's 40. 4.8.1's peak is 32, *lower* than main's
+**Memory**: the axis that matters is the mapped-value size, not the table size. Per entry, memory
+barely moves with the entry count -- the size chart is sixteen identical octaves -- but the ratio to
+a flat map is a function of the value: at a million entries this map against boost is **1.19x** at an
+8 byte value, 1.65x at 64 and 1.81x at 256 steady, and 1.48x, 1.81x and 1.86x at the growth peak,
+because a flat map pays for its empty slots at the full width of the value where a dense one pays
+four bytes of index. Charting the 8 byte case alone, which the first version did, shows the dense
+design at its least impressive. Absolute, at a power of two: 27 bytes per entry against 32 for main,
+4.8.1 and boost, peak 32.5 against boost's 48 and main's 40. 4.8.1's peak is 32, *lower* than main's
 40, which is the price of `8d0e17e` -- building the new bucket array before releasing the old one is
 what makes growth exception-safe, and it costs a taller transient.
 
@@ -681,8 +684,12 @@ worth stating plainly: boost is **10-13% faster on a hit** (`rhit64` 0.80, `find
 map is faster on a miss (`rmiss64` 1.12 under clang). That is the value-index indirection, one more
 dependent load than a flat map needs, and it is the price of the dense value vector -- which is the
 same property that pays 3.9-5.8x on iteration and 2.1x on a 64 byte build. Memory for a million
-entries, steady state: 39.5 MB against boost's 67.9 with an 8 byte value, 144.5 against 209.0 peak
-with a 64 byte one.
+entries, re-measured 2026-09-06 with a counting allocator and again with a replaced global
+`operator new`, the two agreeing exactly: **27.0 MB against boost's 32.0** steady with an 8 byte
+value, and 113.5 against 205.5 peak with a 64 byte one. The figures this line used to carry -- 39.5
+against 67.9, and 144.5 against 209.0 -- do not reproduce under either method, and the boost steady
+one cannot be right by arithmetic: a million entries in 1966079 slots of a 16 byte `value_type` is
+31.5 MB, which is what both methods return.
 
 **A miss had no bound, and eight chosen keys made it loop forever** (found 2026-09-05, in the
 review before release). The probe stopped only at a group whose counter for the key's class was
