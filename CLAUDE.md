@@ -56,6 +56,14 @@ The last line of output is the score, e.g.:
 
 **Lower is better.** This single number is what to optimize.
 
+`.github/workflows/bench.yml` runs the same harness on every machine in CI that can take it: linux
+and arm, gcc and clang, with and without the vector compare, plus one Windows leg with clang, nine
+jobs against `origin/main` and against boost where boost is installable. It works on a shared
+runner for the reason the harness exists -- baseline and candidate are interleaved round by round
+in one process, so a noisy neighbour cancels out of the ratio -- and for the same reason the
+absolute times from those runs mean nothing and are not summarised.
+`scripts/ab/summarize.py` turns a run into the markdown table that lands in the job summary.
+
 Benchmarking practices:
 
 - Always benchmark a `--buildtype release` build (never debug).
@@ -607,8 +615,8 @@ Geomean of the scored fifteen **1.112**, without iteration 1.14. Builds are far 
 `find64` 1.03. That is the SWAR match, about 36 instructions for two words where SSE2 does sixteen
 bytes in three, paid on every probe, against a robin hood probe that on ARM was never vectorised
 either and so lost nothing. It is the number a NEON match is for: `vceqq_u8` plus a narrowing
-shift is a handful of instructions, and indivi has the port. Push any branch to `ab-arm` to
-re-measure; a `workflow_dispatch` would need the file on main first.
+shift is a handful of instructions, and indivi has the port. Push any branch to `bench` to re-measure this and every other machine in CI; a
+`workflow_dispatch` would need the file on main first.
 
 **`ie64` ties boost while executing 58% more instructions, and the counts say why** (2026-09-05,
 the workload run on each map alone under `perf stat`, net of its own rng and key scrambling,
