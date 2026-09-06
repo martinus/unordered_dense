@@ -191,18 +191,28 @@ one dependent load that a flat map does not pay. Half-hit lookups, same hash, th
 | 200000 | 9.8 ns | 7.1 ns | 5.9 ns |
 | 8000000 | 54.4 ns | 42.8 ns | 30.4 ns |
 
-So boost's lookup lead grows from **1.20x to 1.41x** as the index leaves cache, and the score only
+So between those two sizes boost's lookup lead grows from **1.20x to 1.41x**, and the score only
 ever sees the small end of that. Against main this map is still ahead at both sizes (1.38x and
 1.27x), so it is a design cost rather than a regression -- but it is the one cost this benchmark
 suite systematically understates, in the same way it once understated growth, churn and big values
-before workloads were added for them. What makes it awkward to add as a *scored* workload is the price: 8M entries is
+before workloads were added for them.
+
+**Two points were not enough to name the trend, though**, and the sweep below going to 134M entries
+says what it really is. The lead does not keep growing: on a 50% find it is 1.05x while everything
+is in cache, rises to a peak of **1.63x around 2M entries**, and then *narrows* again to 1.2-1.3x
+from 32M up. The peak is the transition, where boost's table still fits something this map's values
+have already outgrown; past it both are bound by DRAM latency and TLB misses, the extra dependent
+load is a smaller share of a bigger number, and the prefetch of the index line covers part of it.
+Any claim about this ratio has to say at what size, and "it grows with the table" is wrong. What makes it awkward to add as a *scored* workload is the price: 8M entries is
 ~170 MB and about a second to build, so it would dominate the suite. So it is a tool rather than a
 score entry -- `scripts/ab/sweep.cpp` walks every power of two from 16 to 8M for the working tree,
 a baseline revision and boost, and `scripts/ab/plot.py` draws the CSV as an SVG with nothing but
 the standard library. `doc/lookup_vs_size.svg` is the result, committed beside its CSV, and
 `scripts/ab/README.md` says how to regenerate it. It measures the scored find workload's case, a
 random lookup with a 50% hit rate decided by its own rng, and draws two linear panels: sizes to
-64K, which is every table most programs build, and the whole range. Three flat, close lines to
+64K, which is every table most programs build, and the whole range, which now runs to 134M entries
+-- about 5 GB of map, and far enough past the caches that the curve flattens into the
+memory-latency-bound plateau where the ratios stop moving. Three flat, close lines to
 about 128K entries, then all three turn upward together and the gap to boost opens as they do --
 and, because nothing is reserved and the sampling is twelve points per octave, a sawtooth all the
 way along as each table's load factor climbs to the maximum and falls back at the doubling. The

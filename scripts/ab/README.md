@@ -22,7 +22,7 @@ the CSV as an SVG with no dependency beyond the standard library.
 ```sh
 clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -I"$build" -Iinclude -Itest \
     scripts/ab/sweep.cpp "$build/nanobench.o" -o sweep     # $build/base.h as run.sh makes it
-taskset -c 2 ./sweep 23 12 300000 > doc/lookup_vs_size.csv   # max 2^23, 12 points per octave
+taskset -c 2 ./sweep 27 12 300000 > doc/lookup_vs_size.csv   # max 2^27, 12 points per octave
 scripts/ab/plot.py doc/lookup_vs_size.csv doc/lookup_vs_size.svg
 ```
 
@@ -49,7 +49,13 @@ What to read off it. On the left the sawtooth: cost climbing with the load facto
 each doubling, with robin hood swinging about twice as far as the other two because its probe
 length grows with the load, where a group is compared whole whatever its occupancy. On the right
 the cliff: all three flat to about 128K entries, then every line turning upward as the index
-outgrows the caches, and the gap to boost opening as it does. Committed with its CSV, which is also
+outgrows the caches, and a plateau above about 8M where everything is bound by memory latency.
+The gap to boost is not monotonic and it is worth knowing that before quoting it -- 1.05x while
+everything is in cache, a peak of 1.63x around 2M entries, and 1.2-1.3x from 32M up. Going to 134M
+is what showed that; two points had suggested a trend that is not there.
+
+The largest sizes are about 5 GB of map, so the sweep wants a machine with room and takes a couple
+of minutes; `./sweep 23` stops at 8M and is enough for the shape. Committed with its CSV, which is also
 the table view of the chart.
 
 ![cost of a random find against table size](../../doc/lookup_vs_size.svg)
