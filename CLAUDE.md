@@ -163,6 +163,17 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**What `segmented_map` gives up in 5.0.0, found in review.** `IsSegmented` used to segment the
+bucket array as well, through the `BucketContainer` parameter this branch removed; now it segments
+only the values and the index is two plain contiguous arrays for every table. So a segmented map
+keeps stable references and smooth *value* growth, and loses the promise that nothing spikes: the
+index still doubles beside itself. At 5.5 bytes per slot the transient is ~16.5 bytes per slot,
+which for a 100M entry `map<uint64_t, uint64_t>` is a 1.1 GB spike against 1.6 GB of values. Kept
+rather than reverted, because segmenting the index means an indirection per group access in the
+probe -- the one path everything else here is spent making short -- and `reserve()` removes the
+doubling for a caller who cares. The README says so plainly now; it previously called the spike
+"small next to the values", which is only true when the value is large.
+
 
 **Fingerprints and counters in two arrays instead of one 24 byte group** (2026-09-05). The layout
 sweep in `martinus/ai#3` kept the two together in every one of its eleven layouts, so the split was

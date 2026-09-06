@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset.
-// Version 4.11.0
+// Version 5.0.0
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -30,9 +30,9 @@
 #define ANKERL_UNORDERED_DENSE_H
 
 // see https://semver.org/spec/v2.0.0.html
-#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 4  // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
-#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 11 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0  // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 5 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
+#define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
 
@@ -1212,6 +1212,48 @@ public:
 
 namespace detail {
 
+// std::vector::resize() value-initialises what it adds. For the group array that is exactly what
+// is wanted, since a zero fingerprint means an empty slot, but for the value index beside it that
+// is 64 bytes of zeros per group which nothing ever reads: a slot's index is written when an entry
+// is placed into it, and read only for a slot whose fingerprint already says it is occupied. This
+// adaptor turns the no-argument construction that resize() uses into a default-initialisation,
+// which for a trivial type is no work at all. Measured on a two million element build, which
+// zeroes 32 MB of index across its growths: about 7% of the whole build.
+//
+// Everything else is forwarded to the wrapped allocator, so propagation, equality and any
+// allocation counting a caller does are unchanged.
+template <typename T, typename A>
+class default_init_alloc : public A {
+public:
+    using value_type = T;
+
+    template <typename U>
+    struct rebind {
+        using other = default_init_alloc<U, typename std::allocator_traits<A>::template rebind_alloc<U>>;
+    };
+
+    using A::A;
+    default_init_alloc() = default;
+    // Both conversions are implicit on purpose: a std::vector rebinds and converts its allocator
+    // behind the scenes, and an explicit one would not be found.
+    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
+    default_init_alloc(A const& alloc) noexcept
+        : A(alloc) {}
+    template <typename U, typename B>
+    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
+    default_init_alloc(default_init_alloc<U, B> const& other) noexcept
+        : A(static_cast<B const&>(other)) {}
+
+    template <typename U>
+    void construct(U* ptr) noexcept(std::is_nothrow_default_constructible_v<U>) {
+        ::new (static_cast<void*>(ptr)) U; // default-init: no parentheses, so trivial types stay untouched
+    }
+    template <typename U, typename... Args>
+    void construct(U* ptr, Args&&... args) {
+        std::allocator_traits<A>::construct(static_cast<A&>(*this), ptr, std::forward<Args>(args)...);
+    }
+};
+
 // What holds the index: the groups, and beside them the value index of every slot. Two arrays
 // rather than one struct because the groups are what a probe reads -- a miss touches nothing else,
 // and a rehash writes them at random -- and 24 bytes per sixteen slots keeps far more of them in
@@ -1228,7 +1270,8 @@ public:
     static constexpr std::size_t array_count = 2;
 
 private:
-    using index_allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>;
+    using index_allocator_type =
+        default_init_alloc<value_idx_type, typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>>;
     static constexpr std::size_t slots = std::tuple_size<decltype(Group::m_fingerprints)>::value;
 
     std::vector<Group, allocator_type> m_groups{};
@@ -1416,8 +1459,9 @@ private:
     // table that has churned probes a little further than one built from the same contents: at
     // load 0.76, measured, 1.14 groups per hit against 1.03 and 1.27 per miss against 1.05. It
     // plateaus after about a dozen turnovers rather than growing, which is the difference from a
-    // design that leaves tombstones behind, and rehash() rebuilds it if a caller wants the
-    // difference back.
+    // design that leaves tombstones behind. `rehash(size())` rebuilds the index and takes the
+    // difference back; nothing else does, since an erase cannot know where the element it frees
+    // would have gone had the table been built from what is left.
     //
     // A miss usually stops within a group or two, at the first counter that is zero: the counters
     // are exact, so zero means no live entry of this class ever overflowed past that group.
@@ -2960,12 +3004,23 @@ public:
 
     void rehash(std::size_t count) {
         count = (std::min)(count, max_size());
-        auto shifts = calc_shifts_for_size((std::max)(count, size()));
+        auto const shifts = calc_shifts_for_size((std::max)(count, size()));
         if (shifts != m_shifts) {
             allocate_buckets_from_shift(shifts);
-            m_values.shrink_to_fit();
-            fill_buckets_from_values();
+        } else if (m_buckets.empty()) {
+            // Nothing allocated and nothing to index: stay in the state a default constructed
+            // table is in, so that rehash() on an empty map still allocates nothing.
+            return;
+        } else {
+            // The array is already the right size, and rehash() still has to rehash. It used to
+            // return here, which made it a no-op in exactly the case a caller reaches for it: a
+            // table whose probe sequences have drifted under churn is the same size as a fresh
+            // one, so the only thing that repairs the drift did nothing. It is also what the
+            // standard asks for -- rehash(n) sets the bucket count and *then* rehashes.
+            clear_buckets();
         }
+        m_values.shrink_to_fit();
+        fill_buckets_from_values();
     }
 
     void reserve(std::size_t capa) {
