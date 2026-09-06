@@ -93,6 +93,11 @@ constant factors, and the one this project had no measurement of until 2026-09-0
 while counters come back down on every erase. Without it you cannot tell a long-lived table from a
 freshly built one, and most tables are long-lived.
 
+The two charts on the value-size axis are **bar charts**, and the two on the table-size axis are
+lines, because six value sizes are categories rather than a continuum: a line from 32 to 48 bytes
+draws an interpolation nobody measured, and reading four maps against each other at one size is what
+that chart is for. `plot.py --bars` and the same in the dashboard.
+
 **3. Build and iteration, against mapped-value size.** The axis that decides dense against flat, and
 it moves fast: boost against this map on a build goes 1.37x at an 8 byte value to 2.10x at 64, and on
 iteration 10.5x down to 2.3x, because a flat map writes the whole `value_type` into a scattered slot

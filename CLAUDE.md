@@ -277,6 +277,10 @@ start against a nanobench without `targetIntervalWidth()` and says to point `NAN
 checkout of martinus/nanobench#189: the sweep asks for a precision instead of naming a round count,
 and the vendored 4.6.0 cannot do that. Nothing else in the repository depends on the branch.
 
+The two value-size charts are **bars**, the four size-axis ones lines: six value sizes are
+categories, and a line between 32 and 48 bytes interpolates something nobody measured. `--bars` in
+both `plot.py` and the dashboard, grouped, anchored at zero, 2px of surface between neighbours.
+
 **The charts are also a page you can interrogate** (2026-09-06). `scripts/ab/dashboard.py` writes
 `doc/charts.html` from the CSVs in `doc/`: every chart, a legend that shows and hides a map across
 all of them at once, a y axis that rescales to whatever is left, a crosshair that reads exact values

@@ -36,6 +36,14 @@ def si(n):
     return str(n)
 
 
+def bar_path(x, y, w, h, r=3.0):
+    """A bar rounded at the two ends away from the baseline, which `rect rx` cannot do on its own."""
+    r = min(r, w / 2, h if h > 0 else 0)
+    return (f"M{x:.1f},{y + h:.1f} L{x:.1f},{y + r:.1f} Q{x:.1f},{y:.1f} {x + r:.1f},{y:.1f} "
+            f"L{x + w - r:.1f},{y:.1f} Q{x + w:.1f},{y:.1f} {x + w:.1f},{y + r:.1f} "
+            f"L{x + w:.1f},{y + h:.1f} Z")
+
+
 def nice_ticks(vmax):
     """Round y ticks from 0 to at least vmax, five or six of them."""
     for step in (0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000):
@@ -172,7 +180,11 @@ def main():
             ytop = yticks[-1]
         left = PAD_L + panel * (panel_w + PANEL_GAP)
 
-        def px(n, left=left, lo=lo, hi=hi):
+        bars = "bars" in flags
+
+        def px(n, left=left, lo=lo, hi=hi, sizes=sizes):
+            if bars:  # band scale: the categories are evenly spaced whatever their values
+                return left + (sizes.index(n) + 0.5) / len(sizes) * panel_w
             return left + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * panel_w
 
         def py(v, ybot=ybot, ytop=ytop, logy="logy" in flags):
@@ -192,7 +204,7 @@ def main():
                      f'text-anchor="end">{label}</text>')
         # a handful of round sizes; dense sampling must not become a smear of labels. With few
         # points -- a value-size axis has six -- every one of them is a label instead.
-        if len(sizes) <= 8:
+        if bars or len(sizes) <= 8:
             ticks = list(sizes)
         else:
             ticks, target = [], lo
@@ -209,7 +221,21 @@ def main():
             if buckets.get(a) and buckets.get(b) and buckets[b] != buckets[a]:
                 s.append(f'<line x1="{px(b):.1f}" y1="{PAD_T:.1f}" x2="{px(b):.1f}" y2="{PAD_T + panel_h:.1f}" '
                          f'class="g" stroke="#e6e5e1" stroke-width="1" stroke-dasharray="2 3"/>')
+        if bars:
+            # Grouped bars, 2px of surface between neighbours so two of them never read as one, and
+            # anchored on zero because a bar whose baseline is not zero is a lie about its length.
+            group = panel_w / len(sizes)
+            bw = (group * 0.78) / len(present)
+            for gi, n in enumerate(sizes):
+                x0 = left + (gi + 0.5) * group - (bw * len(present)) / 2
+                for i, (key, _, light, _dark) in enumerate(present):
+                    v = data[key][n]
+                    y = py(v)
+                    s.append(f'<path d="{bar_path(x0 + i * bw + 1, y, max(bw - 2, 1), PAD_T + panel_h - y)}" '
+                             f'class="ln{i}" fill="{light}"/>')
         for i, (key, label, light, _) in enumerate(present):
+            if bars:
+                break
             if key in band:
                 # the confidence band, drawn under the line: down one edge and back along the other.
                 # Clamped to the panel, because the y range is chosen from the lines -- in ratio mode
@@ -237,13 +263,16 @@ def main():
                 if placed and y - placed[-1][0] < 15:
                     y = placed[-1][0] + 15
                 placed.append((y, i, lab, light))
+            # A line ends at its last x, so its label belongs there; a bar group is centred in a
+            # band and its label would sit on top of the bars, so that one hangs off the panel edge.
+            anchor = left + panel_w + 4 if bars else px(hi)
             for y, i, lab, light in placed:
                 y0 = py(data[present[i][0]][hi])
-                s.append(f'<circle cx="{px(hi) + 12:.1f}" cy="{y0:.1f}" r="4" class="dot{i}" fill="{light}"/>')
+                s.append(f'<circle cx="{anchor + 12:.1f}" cy="{y0:.1f}" r="4" class="dot{i}" fill="{light}"/>')
                 if abs(y - y0) > 1:  # a short leader, so a nudged label still points at its line
-                    s.append(f'<line x1="{px(hi) + 16:.1f}" y1="{y0:.1f}" x2="{px(hi) + 21:.1f}" y2="{y:.1f}" '
+                    s.append(f'<line x1="{anchor + 16:.1f}" y1="{y0:.1f}" x2="{anchor + 21:.1f}" y2="{y:.1f}" '
                              f'class="ln{i}" stroke="{light}" stroke-width="1"/>')
-                s.append(f'<text x="{px(hi) + 24:.1f}" y="{y + 4:.1f}" class="t" fill="#0b0b0b" '
+                s.append(f'<text x="{anchor + 24:.1f}" y="{y + 4:.1f}" class="t" fill="#0b0b0b" '
                          f'font-size="11">{lab}</text>')
     s.append("</svg>")
     open(out, "w").write("\n".join(s) + "\n")
