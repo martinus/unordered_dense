@@ -609,13 +609,27 @@ first time either has been said about anything but one desktop. The desktop's ow
 wider than the run-to-run noise on a quiet machine and these runners are neither quiet nor
 identical -- read a column as "which side wins and roughly by how much", not to three digits.
 
-Two things only the matrix shows. **The vector compare is worth 8-18 points of geomean** and the
-gap is widest where it replaces the most: arm gcc drops from 1.22 to 1.04 without NEON, the largest
-fall anywhere, and its lookups go with it (`rhit64` 1.53 to 1.02, `rmiss64` 1.68 to 1.06). **Windows
-had never been measured at all**, and it is the mildest machine of the nine: ahead of main
-everywhere except `find64` at 0.98, but with builds at 1.25 where linux clang reads 2.13, which is
-what a different allocator does to a workload that grows -- `tame_allocator()` is a glibc trick and
-a no-op there.
+**Only the ARM pair measures what the vector compare is worth**, and reading the x86 pair that way
+is a mistake worth naming, because main is in the comparison too. On ARM main has no vector path at
+all, so it is the same scalar code in both rows and the difference is entirely this map's: arm gcc
+falls from 1.22 to 1.04 without NEON and its lookups go with it (`rhit64` 1.53 to 1.02, `rmiss64`
+1.68 to 1.06). On x86 `ANKERL_UNORDERED_DENSE_HAS_SSE2=0` also takes away main's four-bucket SSE2
+probe and its vector shifts, so both sides are handicapped and the ratio can move either way --
+which is why linux gcc reads *higher* without SSE2 (1.19) than with it (1.14). That number says
+main lost more than this map did, not that turning SSE2 off is good.
+
+**Windows had never been measured at all**, and it is the mildest machine of the nine: ahead of
+main everywhere except `find64` at 0.98, but with builds at 1.25 where linux clang reads 2.13,
+which is what a different allocator does to a workload that grows -- `tame_allocator()` is a glibc
+trick and a no-op there.
+
+**One number in the matrix is not understood**: linux gcc SSE2 iterates at **0.77** of main, the
+only figure anywhere below 0.9, and it is not noise -- err% 0.0 and a 76.9-78.6 interval. It does
+not reproduce on this desktop with gcc 13.4 in a container, with or without boost compiled in
+(1.01 and 1.02), so it is the runner's gcc 13.3 build or its microarchitecture rather than the
+compiler major version. `it64` spends nearly all of its time iterating the value vector, which is
+byte for byte the same code in both maps, so the suspicion is code layout on that machine -- the
+same effect this file warns about at +-3%, at a size that would be remarkable. Unresolved.
 
 **NEON closed the ARM lookup gap, and it was the whole gap** (2026-09-05). The SWAR row below is
 what prompted it: on a Neoverse N2 the branch was 1.11x main overall but *behind* on every lookup,
