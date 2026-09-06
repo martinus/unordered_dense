@@ -171,6 +171,39 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**The size sweep, run for churn and for insert-erase as well as find** (2026-09-06,
+`doc/*_vs_size.svg`). Three charts, same method: one map grown through 265 sample points, twelve
+per octave, nothing reserved, to 67M entries. The find chart was the point of the exercise; the
+other two are where it got interesting, because they decompose a result the score reports as a win.
+
+| entries | find, this/boost | churn, this/boost | insert-erase, this/boost |
+|---|---|---|---|
+| 4K | 1.12 | 1.38 | 1.64 |
+| 64K | 1.21 | 1.64 | 1.74 |
+| 1M | 1.32 | 2.02 | 1.66 |
+| 16M | 1.24 | 2.05 | 1.78 |
+| 67M | 1.18 | 1.86 | 1.68 |
+
+**Boost is 1.7-2x faster at both mutating workloads, at every size.** That is not a contradiction of
+the scored `churn64`, which has this map 1.16-1.21x *ahead*: the scored round is erase, insert and
+**two finds**, and it reserves. The finds are what carry it. Isolate the mutation pair and the sign
+flips, which is worth knowing because it says exactly where the cost is. A dense erase has to close
+the hole it makes in the value vector, and finding the moved element's slot is a second probe --
+`slot_of_value` -- on top of the one that found the key. Boost's erase probes once and marks the
+slot free. In cache that second probe is a few cycles; out of cache it is a second random access,
+and the ratio holds at about 2x from 1M entries up.
+
+What the small end shows is the opposite and is the design working as intended: below about 64K
+this map's line is nearly **flat** where both others saw-tooth by a factor of two or three. Robin
+hood's probe lengthens with the load, and boost's overflow bits only ever get set, so both pay more
+as a table fills and are relieved only by growing. The group index's counters come back down on
+every erase, so churn at a fixed size costs what it costs. That is the property the whole design
+exists for, and this is the first picture of it.
+
+`main/this` on churn crosses 1.00 at about 8M and ends at 0.91, i.e. the robin hood index is
+*faster* at churning a table far larger than cache. Same cause: its erase shifts elements back but
+never has to hunt for a second slot.
+
 **Two regimes the score does not cover, measured 2026-09-06 when asking what a more realistic
 benchmark would be.**
 

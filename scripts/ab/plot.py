@@ -43,7 +43,9 @@ def nice_ticks(vmax):
 def main():
     rows = list(csv.DictReader(open(sys.argv[1])))
     out = sys.argv[2] if len(sys.argv) > 2 else "lookup_vs_size.svg"
-    col = "half_ns" if "half_ns" in rows[0] else "hit_ns"
+    col = "ns" if "ns" in rows[0] else ("half_ns" if "half_ns" in rows[0] else "hit_ns")
+    title = sys.argv[3] if len(sys.argv) > 3 else "Cost of a random find against table size"
+    subtitle = sys.argv[4] if len(sys.argv) > 4 else "nanoseconds per lookup, 50% of them hits"
     data = defaultdict(dict)
     buckets = {}
     for r in rows:
@@ -60,7 +62,7 @@ def main():
 
     s = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
          f'font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" role="img" '
-         f'aria-label="Cost of a random find against table size, for three hash maps">']
+         f'aria-label="{title}, for three hash maps">']
     # Light values are ordinary attributes so any renderer shows the chart; the stylesheet only
     # overrides them for dark mode. var() in the attributes renders as a black rectangle wherever
     # custom properties are unsupported.
@@ -72,9 +74,9 @@ def main():
     s.append("<style>" + "".join(dark) + "</style>")
     s.append(f'<rect class="surface" width="{W}" height="{H}" fill="#fcfcfb"/>')
     s.append(f'<text x="{PAD_L}" y="26" class="t" fill="#0b0b0b" font-size="16" font-weight="600">'
-             f'Cost of a random find against table size</text>')
+             f'{title}</text>')
     s.append(f'<text x="{PAD_L}" y="44" class="t2" fill="#52514e" font-size="12">'
-             f'nanoseconds per lookup, 50% of them hits, map&lt;uint64_t, size_t&gt;, lower is better</text>')
+             f'{subtitle}, map&lt;uint64_t, size_t&gt;, lower is better</text>')
     s.append(f'<text x="{PAD_L}" y="61" class="t2" fill="#52514e" font-size="11">'
              f'dotted lines are where this map doubles its index: nothing is reserved, so between them the '
              f'load factor climbs to the maximum and the cost climbs with it</text>')
@@ -121,11 +123,23 @@ def main():
             pts = " ".join(f"{px(n):.1f},{py(data[key][n]):.1f}" for n in sizes)
             s.append(f'<polyline points="{pts}" class="ln{i}" fill="none" stroke="{light}" stroke-width="2" '
                      f'stroke-linejoin="round" stroke-linecap="round"/>')
-            if panel == len(panels) - 1:  # direct labels, also the relief the contrast check asks for
-                y = py(data[key][hi])
-                s.append(f'<circle cx="{px(hi) + 12:.1f}" cy="{y:.1f}" r="4" class="dot{i}" fill="{light}"/>')
-                s.append(f'<text x="{px(hi) + 21:.1f}" y="{y + 4:.1f}" class="t" fill="#0b0b0b" '
-                         f'font-size="11">{label}</text>')
+        if panel == len(panels) - 1:  # direct labels, also the relief the contrast check asks for
+            # Two lines that end close together would otherwise print their labels on top of each
+            # other, which happened the first time this drew insert and erase.
+            ends = sorted(((py(data[k][hi]), i, lab, c) for i, (k, lab, c, _) in enumerate(present)))
+            placed = []
+            for y, i, lab, light in ends:
+                if placed and y - placed[-1][0] < 15:
+                    y = placed[-1][0] + 15
+                placed.append((y, i, lab, light))
+            for y, i, lab, light in placed:
+                y0 = py(data[present[i][0]][hi])
+                s.append(f'<circle cx="{px(hi) + 12:.1f}" cy="{y0:.1f}" r="4" class="dot{i}" fill="{light}"/>')
+                if abs(y - y0) > 1:  # a short leader, so a nudged label still points at its line
+                    s.append(f'<line x1="{px(hi) + 16:.1f}" y1="{y0:.1f}" x2="{px(hi) + 21:.1f}" y2="{y:.1f}" '
+                             f'class="ln{i}" stroke="{light}" stroke-width="1"/>')
+                s.append(f'<text x="{px(hi) + 24:.1f}" y="{y + 4:.1f}" class="t" fill="#0b0b0b" '
+                         f'font-size="11">{lab}</text>')
     s.append("</svg>")
     open(out, "w").write("\n".join(s) + "\n")
     print(f"wrote {out}: {len(all_sizes)} sizes, {len(present)} maps, column {col}")
