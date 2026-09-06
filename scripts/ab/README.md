@@ -58,7 +58,22 @@ The largest sizes are about 5 GB of map, so the sweep wants a machine with room 
 of minutes; `./sweep 23` stops at 8M and is enough for the shape. Committed with its CSV, which is also
 the table view of the chart.
 
-![cost of a random find against table size](../../doc/lookup_vs_size.svg)
+The same sweep runs two more workloads, chosen with the fourth argument: `1` is churn, an erase and
+an insert at a fixed size, and `2` is insert-and-erase, an `operator[]` and an `erase` of which half
+of each find nothing. Both keep the size where it is -- and both erase before they insert, because
+the other order crosses the growth threshold and one operation ends up paying for rehashing the
+whole table, which at 64M entries is 1219 ns against the 20 the steady state costs.
+
+![cost of a random find against table size](../../doc/find_vs_size.svg)
+![cost of churn against table size](../../doc/churn_vs_size.svg)
+![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
+
+The two mutating charts are the ones that repay study. Below 64K this map's line is nearly flat
+where both others saw-tooth by a factor of two or three, which is the erasable counters doing what
+they exist for. Above 1M boost is about twice as fast, because a dense erase must close the hole it
+leaves in the value vector and find the moved element's slot with a second probe, and out of cache
+that is a second random access. The scored `churn` workload reports the opposite sign because its
+round is erase, insert *and two finds*: the finds carry it.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 
