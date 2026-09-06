@@ -33,47 +33,42 @@ index leaves cache.
 
 The measurement is the scored find workload's: a random lookup with a **50% hit rate**, decided by
 an rng of its own rather than alternating, because a predictable sequence of hits and misses is
-learned by the branch predictor and stops measuring the branchy part of a probe. It costs about
-8 ns where a pure hit costs 3.7 and a pure miss 3.0, and that gap is the misprediction.
+learned by the branch predictor and stops measuring the branchy part of a probe. The fourth argument
+picks the workload: `0` find, `1` churn (an erase and an insert at a fixed size), `2` insert-and-erase
+(an `operator[]` and an `erase`, half of each finding nothing). Both mutating modes erase before they
+insert, because the other order crosses the growth threshold and one operation ends up paying for
+rehashing the whole table.
 
-Three decisions make the picture say something rather than being a smooth line. **Nothing is
-reserved**, so each table grows on its own and its load factor sweeps from about a half up to the
+**The measurements are paired, and that is not optional.** Each sample point hands its three batches
+to nanobench's `compare()`, which runs them interleaved round after round in one process, so a clock
+ramp or a noisy neighbour hits all three equally and cancels out of the ratio. The first two versions
+of this file measured main to completion, then this map, then boost, and their numbers were not
+reproducible: two runs of identical work disagreed by up to 140%, and one contaminated run put a whole
+octave 70% high while looking perfectly smooth. Pairing is also why the default is **101 epochs** --
+at nanobench's default 11 the interval on a ratio is about 25% wide, at 101 it is about 5% -- and each
+row carries `relative`, `rel_low` and `rel_high` so a reader can see which points are resolved.
+
+The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
+pairing, because the result depends on page placement of a multi-gigabyte working set that varies
+between runs; measuring that regime needs a fresh process per size.
+
+Three more decisions make the picture say something rather than being a smooth line. **Nothing is
+reserved**, so each table grows on its own and its load factor sweeps from about a half to the
 maximum and falls back at every doubling; that is the sawtooth, and the dotted verticals are where
-this map doubles. **Twelve points per octave**, not one, because a sawtooth sampled once per octave
-is a straight line. And there are **two panels**: sizes to 64K, which is every table most programs
-build and where the full range would squeeze everything into a few pixels, and the whole range.
-They carry their own y scales, which is what a detail view is for. The map is grown *through* the
-sample points rather than rebuilt at each, so the sweep costs one build per map, not one per point.
-
-What to read off it. On the left the sawtooth: cost climbing with the load factor and dropping at
-each doubling, with robin hood swinging about twice as far as the other two because its probe
-length grows with the load, where a group is compared whole whatever its occupancy. On the right
-the cliff: all three flat to about 128K entries, then every line turning upward as the index
-outgrows the caches, and a plateau above about 8M where everything is bound by memory latency.
-The gap to boost is not monotonic and it is worth knowing that before quoting it -- 1.05x while
-everything is in cache, a peak of 1.63x around 2M entries, and 1.2-1.3x from 32M up. Going to 134M
-is what showed that; two points had suggested a trend that is not there.
-
-The largest sizes are about 5 GB of map, so the sweep wants a machine with room and takes a couple
-of minutes; `./sweep 23` stops at 8M and is enough for the shape. Committed with its CSV, which is also
-the table view of the chart.
-
-The same sweep runs two more workloads, chosen with the fourth argument: `1` is churn, an erase and
-an insert at a fixed size, and `2` is insert-and-erase, an `operator[]` and an `erase` of which half
-of each find nothing. Both keep the size where it is -- and both erase before they insert, because
-the other order crosses the growth threshold and one operation ends up paying for rehashing the
-whole table, which at 64M entries is 1219 ns against the 20 the steady state costs.
+this map doubles. **Twelve points per octave**, because a sawtooth sampled once per octave is a
+straight line. And **two panels**, one to 64K and one over the whole range, with their own y scales,
+which is what a detail view is for.
 
 ![cost of a random find against table size](../../doc/find_vs_size.svg)
 ![cost of churn against table size](../../doc/churn_vs_size.svg)
 ![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
 
-The two mutating charts are the ones that repay study. Below 64K this map's line is nearly flat
-where both others saw-tooth by a factor of two or three, which is the erasable counters doing what
-they exist for. Above 1M boost is about twice as fast, because a dense erase must close the hole it
-leaves in the value vector and find the moved element's slot with a second probe, and out of cache
-that is a second random access. The scored `churn` workload reports the opposite sign because its
-round is erase, insert *and two finds*: the finds carry it.
+What to read off them. Below 64K this map's churn line is nearly flat where both others saw-tooth by
+a factor of two or three, which is the erasable counters doing what they exist for. Boost is ahead on
+all three workloads and by more on the two that mutate, because a dense erase must close the hole it
+leaves in the value vector and find the moved element's slot with a second probe. The scored `churn`
+workload reports the opposite sign because its round is erase, insert *and two finds*: the finds carry
+it.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 

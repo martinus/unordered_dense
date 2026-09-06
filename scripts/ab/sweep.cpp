@@ -112,49 +112,103 @@ auto insert_erase_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& 
     return ns / static_cast<double>(2 * ops);
 }
 
-// Grow one map through every sample point, measuring at each. Nothing is reserved on purpose.
-template <typename Map>
-void sweep(char const* who, std::vector<std::size_t> const& sizes, std::size_t ops, int mode) {
-    auto map = Map();
-    auto keys = std::vector<std::uint64_t>();
-    auto rng = ankerl::nanobench::Rng(1);
-    auto next = std::uint64_t{1} << 40U; // fresh keys, disjoint from the built ones
-    for (auto n : sizes) {
-        while (keys.size() < n) {
-            auto const k = (rng() >> 1U) | 1U;
-            if (map.try_emplace(k, 1).second) {
-                keys.push_back(k);
-            }
-        }
-        auto value = 0.0;
-        if (mode == 1) {
-            value = churn_ns(map, keys, next, ops);
-        } else if (mode == 2) {
-            value = insert_erase_ns(map, keys, next, ops);
-        } else {
-            value = lookup_ns(map, keys, asking::half, ops);
-        }
-        std::printf("%zu,%s,%.3f,%zu\n", n, who, value, map.bucket_count());
-        std::fflush(stdout);
+// One sample point: the maps are all at size n, and nanobench's compare() runs their batches
+// interleaved, round after round, in one process. That is the whole point of doing it this way. The
+// first version of this file measured main to completion, then this map, then boost, and its ratios
+// were not reproducible -- two runs of identical work disagreed by up to 140% at large sizes and by
+// tens of percent at small ones, because anything that drifts between the phases (a clock ramp, a
+// noisy neighbour, page placement) lands entirely on whichever map was running at the time. A paired
+// comparison cancels all of that, and what comes back is an uncertainty about the ratio, which is
+// the number the chart is made of.
+template <typename FMain, typename FThis, typename FBoost>
+void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, unsigned epochs, FMain&& fm, FThis&& ft,
+                   FBoost&& fb) {
+    auto bench = ankerl::nanobench::Bench();
+    bench.epochs(epochs).batch(static_cast<double>(batch)).performanceCounters(false).output(nullptr);
+#ifdef UDM_AB_HAVE_BOOST
+    auto const res = bench.compare("main", fm, "this", ft, "boost", fb);
+#else
+    static_cast<void>(fb);
+    auto const res = bench.compare("main", fm, "this", ft);
+#endif
+    for (std::size_t i = 0; i < res.size(); ++i) {
+        auto const& e = res[i];
+        // `relative` is the baseline's time over this one's, so above 1 is faster than main, and
+        // the interval is what says whether to believe it.
+        std::printf("%zu,%s,%.4f,%zu,%.4f,%.4f,%.4f\n",
+                    n,
+                    e.name.c_str(),
+                    e.result.median(ankerl::nanobench::Result::Measure::elapsed) * 1e9 / static_cast<double>(batch),
+                    buckets,
+                    e.relative,
+                    e.relativeLow,
+                    e.relativeHigh);
     }
+    std::fflush(stdout);
 }
 
 } // namespace
 
 auto main(int argc, char** argv) -> int {
     workloads::tame_allocator();
-    auto const max_shift = argc > 1 ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 23U;
+    auto const max_shift = argc > 1 ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 20U;
     auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
-    auto const ops = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 300000UL;
+    auto const batch = argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 20000UL;
     // 0 a random find with a 50% hit rate, 1 churn at a fixed size, 2 insert and erase
     auto const mode = argc > 4 ? std::atoi(argv[4]) : 0;
-    auto const sizes = sample_sizes(max_shift, per_octave);
-    std::printf("entries,map,ns,buckets\n");
-    sweep<udmbase::unordered_dense::map<std::uint64_t, std::size_t>>("main", sizes, ops, mode);
-    sweep<ankerl::unordered_dense::map<std::uint64_t, std::size_t>>("this", sizes, ops, mode);
+    auto const epochs = argc > 5 ? static_cast<unsigned>(std::strtoul(argv[5], nullptr, 10)) : 11U;
+
+    using main_map = udmbase::unordered_dense::map<std::uint64_t, std::size_t>;
+    using this_map = ankerl::unordered_dense::map<std::uint64_t, std::size_t>;
 #ifdef UDM_AB_HAVE_BOOST
-    sweep<boost::unordered_flat_map<std::uint64_t, std::size_t, ankerl::unordered_dense::hash<std::uint64_t>>>(
-        "boost", sizes, ops, mode);
+    using boost_map = boost::unordered_flat_map<std::uint64_t, std::size_t, ankerl::unordered_dense::hash<std::uint64_t>>;
+#else
+    using boost_map = this_map;
 #endif
+
+    // The maps are carried together and grown together, so that at every sample point each holds n
+    // keys and the comparison is of the maps rather than of what else was happening.
+    auto m0 = main_map();
+    auto m1 = this_map();
+    auto m2 = boost_map();
+    auto k0 = std::vector<std::uint64_t>();
+    auto k1 = std::vector<std::uint64_t>();
+    auto k2 = std::vector<std::uint64_t>();
+    auto n0 = (std::uint64_t{1} << 40U) | 1U;
+    auto n1 = n0;
+    auto n2 = n0;
+
+    std::printf("entries,map,ns,buckets,relative,rel_low,rel_high\n");
+    for (auto n : sample_sizes(max_shift, per_octave)) {
+        auto grow = [n](auto& map, auto& keys) {
+            auto r = ankerl::nanobench::Rng(1);
+            while (keys.size() < n) {
+                auto const key = (r() >> 1U) | 1U;
+                if (map.try_emplace(key, 1).second) {
+                    keys.push_back(key);
+                }
+            }
+        };
+        grow(m0, k0);
+        grow(m1, k1);
+        grow(m2, k2);
+        auto run = [mode, batch](auto& map, auto& keys, std::uint64_t& next) {
+            if (mode == 1) {
+                ankerl::nanobench::doNotOptimizeAway(churn_ns(map, keys, next, batch));
+            } else if (mode == 2) {
+                ankerl::nanobench::doNotOptimizeAway(insert_erase_ns(map, keys, next, batch));
+            } else {
+                ankerl::nanobench::doNotOptimizeAway(lookup_ns(map, keys, asking::half, batch));
+            }
+        };
+        measure_point(
+            n,
+            m1.bucket_count(),
+            batch,
+            epochs,
+            [&] { run(m0, k0, n0); },
+            [&] { run(m1, k1, n1); },
+            [&] { run(m2, k2, n2); });
+    }
     return 0;
 }
