@@ -45,8 +45,16 @@ def nice_ticks(vmax):
 
 
 def main():
-    rows = list(csv.DictReader(open(sys.argv[1])))
-    out = sys.argv[2] if len(sys.argv) > 2 else "lookup_vs_size.svg"
+    # Optional flags, after the positional arguments, so every existing call still works:
+    #   --panels=colA:Title A|colB:Title B   two panels of different columns over the whole x range,
+    #                                        instead of the default two size ranges of one column
+    #   --x=Label                            what the x axis counts, if not entries
+    #   --unit=ns                            what the y axis counts
+    argv = [a for a in sys.argv if not a.startswith("--")]
+    flags = dict(a[2:].split("=", 1) for a in sys.argv if a.startswith("--"))
+    rows = list(csv.DictReader(open(argv[1])))
+    out = argv[2] if len(argv) > 2 else "lookup_vs_size.svg"
+    sys.argv = argv
     # "ratio" draws the paired ratio and its confidence band, which is the quantity a paired
     # comparison actually measures; "ns" draws the absolute times, which are what a reader can
     # reason about. On a quiet machine both hold up -- two runs agreed to 0.78% and 0.92% -- but the
@@ -61,7 +69,7 @@ def main():
     # 0.78% and 9.3%. With one, the median, because the interval is *about* the median and a band
     # drawn around a different statistic than the one plotted would be a lie about the line.
     has_abs_band = "ns_low" in rows[0] and "ns" in rows[0]
-    col = "ns" if has_abs_band else ("ns_min" if "ns_min" in rows[0] else ("ns" if "ns" in rows[0] else "half_ns"))
+    col = "ns" if has_abs_band else ("ns_min" if "ns_min" in rows[0] else "ns")
     title = sys.argv[3] if len(sys.argv) > 3 else "Cost of a random find against table size"
     subtitle = sys.argv[4] if len(sys.argv) > 4 else "nanoseconds per lookup, 50% of them hits"
     data = defaultdict(dict)
@@ -69,6 +77,10 @@ def main():
     band = defaultdict(dict)
     for r in rows:
         n = int(float(r["entries"]))
+        if "panels" in flags:
+            # the columns come from --panels; this pass only needs to learn the x values and the maps
+            data[r["map"]][n] = 0.0
+            continue
         data[r["map"]][n] = float(r["relative"]) if mode == "ratio" else float(r[col])
         if mode == "ratio" and "rel_low" in r:
             band[r["map"]][n] = (float(r["rel_low"]), float(r["rel_high"]))
@@ -81,8 +93,21 @@ def main():
         present = [s for s in present if s[0] != "main"]
     all_sizes = sorted(next(iter(data.values())))
 
-    panels = [("up to 64K entries", [n for n in all_sizes if n <= DETAIL_MAX]),
-              (f"all sizes, to {si(all_sizes[-1])}", all_sizes)]
+    if "panels" in flags:
+        # Two workloads sharing one x axis. Each panel gets its own column and its own y scale,
+        # which is the point: a build and an iteration are not comparable in magnitude.
+        by_col = {}
+        for spec in flags["panels"].split("|"):
+            colname, ptitle = spec.split(":", 1)
+            per_map = defaultdict(dict)
+            for r in rows:
+                per_map[r["map"]][int(float(r["entries"]))] = float(r[colname])
+            by_col[ptitle] = per_map
+        panels = [(t, all_sizes, d) for t, d in by_col.items()]
+        band = defaultdict(dict)
+    else:
+        panels = [("up to 64K entries", [n for n in all_sizes if n <= DETAIL_MAX], data),
+                  (f"all sizes, to {si(all_sizes[-1])}", all_sizes, data)]
     panel_w = (W - PAD_L - PAD_R - PANEL_GAP) / 2
     panel_h = H - PAD_T - PAD_B
 
@@ -102,7 +127,7 @@ def main():
     s.append(f'<text x="{PAD_L}" y="26" class="t" fill="#0b0b0b" font-size="16" font-weight="600">'
              f'{title}</text>')
     s.append(f'<text x="{PAD_L}" y="44" class="t2" fill="#52514e" font-size="12">'
-             f'{subtitle}, map&lt;uint64_t, size_t&gt;, '
+             f'{subtitle}, {flags.get("of", "map&lt;uint64_t, size_t&gt;")}, '
              f'{"above 1 is faster than the baseline" if mode == "ratio" else "lower is better"}</text>')
     # What the band means differs by mode, and saying so on the chart matters: the ratio's interval
     # is about a quantity from which machine drift cancels, the absolute one is not -- it says how
@@ -111,15 +136,16 @@ def main():
     # number -- 1.5% of the median against the 0.78% that median moves between two runs -- but the
     # tail is not bounded by it at all: two runs put one point 9.3% apart. A within-run interval
     # measures the epochs of one run and says nothing about what differs between two.
+    dotted_note = "dotted: the index doubles there, so the load factor and the cost climb between them"
     band_note = ("shaded: 95% interval on the ratio" if mode == "ratio" else
                  "shaded: 95% interval on this run's median, which is within-run precision only") if band else ""
     # One line, and it has to fit: at 11px in a 980px canvas there is room for about 165 characters
     # before it runs off the right edge, which the first version of this did.
     s.append(f'<text x="{PAD_L}" y="61" class="t2" fill="#52514e" font-size="11">'
-             f'dotted: the index doubles there, so the load factor and the cost climb between them'
-             f'{"; " + band_note if band_note else ""}</text>')
+             f'{dotted_note if buckets else ""}'
+             f'{("; " if buckets else "") + band_note if band_note else ""}</text>')
 
-    for panel, (title, sizes) in enumerate(panels):
+    for panel, (title, sizes, data) in enumerate(panels):
         lo, hi = sizes[0], sizes[-1]
         vmax = max(max(data[k][n], band[k][n][1] if k in band else 0.0)
                    for k, _, _, _ in present for n in sizes)
@@ -146,7 +172,7 @@ def main():
         s.append(f'<text x="{left:.1f}" y="{PAD_T - 14}" class="t2" fill="#52514e" font-size="12" '
                  f'font-weight="600">{title}</text>')
         s.append(f'<text x="{left - 10:.1f}" y="{PAD_T - 14}" class="t2" fill="#52514e" font-size="11" '
-                 f'text-anchor="end">{"x" if mode == "ratio" else "ns"}</text>')
+                 f'text-anchor="end">{flags.get("unit", "x" if mode == "ratio" else "ns")}</text>')
         for v in yticks:
             y = py(v)
             s.append(f'<line x1="{left:.1f}" y1="{y:.1f}" x2="{left + panel_w:.1f}" y2="{y:.1f}" class="g" '
@@ -154,16 +180,20 @@ def main():
             label = f"{v:.4g}"
             s.append(f'<text x="{left - 10:.1f}" y="{y + 4:.1f}" class="t2" fill="#52514e" font-size="11" '
                      f'text-anchor="end">{label}</text>')
-        # a handful of round sizes; dense sampling must not become a smear of labels
-        ticks, target = [], lo
-        while target <= hi:
-            ticks.append(min(sizes, key=lambda n, t=target: abs(n - t)))
-            target *= 8
+        # a handful of round sizes; dense sampling must not become a smear of labels. With few
+        # points -- a value-size axis has six -- every one of them is a label instead.
+        if len(sizes) <= 8:
+            ticks = list(sizes)
+        else:
+            ticks, target = [], lo
+            while target <= hi:
+                ticks.append(min(sizes, key=lambda n, t=target: abs(n - t)))
+                target *= 8
         for n in sorted(set(ticks)):
             s.append(f'<text x="{px(n):.1f}" y="{PAD_T + panel_h + 18:.1f}" class="t2" fill="#52514e" '
                      f'font-size="11" text-anchor="middle">{si(n)}</text>')
         s.append(f'<text x="{left + panel_w / 2:.1f}" y="{H - 14}" class="t2" fill="#52514e" font-size="11" '
-                 f'text-anchor="middle">entries</text>')
+                 f'text-anchor="middle">{flags.get("x", "entries")}</text>')
         # where this map doubled its index
         for a, b in zip(sizes, sizes[1:]):
             if buckets.get(a) and buckets.get(b) and buckets[b] != buckets[a]:
