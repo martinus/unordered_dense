@@ -251,7 +251,11 @@ Paired, one binary, 101 epochs, ms per 200000 lookups at 33000 entries (load 0.5
 because an unpredictable outcome costs a clean probe a fresh half misprediction per lookup (0.026 to
 0.545) and costs a probe that already mispredicts 0.6 times on every hit almost nothing (0.599 to
 0.605). Making the harness's own hit-or-miss select branchless moves none of it, so the branch is the
-map's own "did I find it". So the mix says nothing about which lookup is faster, and `find_vs_size`
+map's own "did I find it". The whole curve says how narrow the window is -- at 33000 entries, us per
+200000 lookups, this map against 4.8.1: 666/782 at 0% hits, 975/995 at 10%, 1314/**1275** at 25%,
+1736/**1729** at 50%, 1437/2013 at 75%, 1125/1769 at 100%. Every map peaks at 50%, which is where
+the outcome is least predictable, so that point is the least discriminating of the three: this map
+leads by 1.57x at 100% hits and by 1.00x at 50%. At load 0.79 it wins at every hit rate by 1.3-2.1x. So the mix says nothing about which lookup is faster, and `find_vs_size`
 plots the mix -- which is why `find_hits_vs_size` exists beside it. On that one **4.8.1 is the
 slowest of the four maps at 164 of 193 sample points**, behind this map at every size below 440000,
 2.86x behind it at 3251 entries and load 0.79, and swinging 2.05-2.35x across an octave against this
