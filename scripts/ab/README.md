@@ -51,11 +51,26 @@ bytes is 27 MB and is not, and past the cliff every line bends upward together a
 being about the value.
 
 **4. Memory against table size, steady and peak.** Speed alone picks the wrong map often enough to
-deserve a chart: at a power of two this map holds 27 bytes per entry against 32 for the other three.
-The peak is a separate panel because growth allocates the new array beside the old and only then
-frees it -- 32.5 bytes per entry here against boost's 48 -- and a chart of steady state alone hides
-the transient a caller actually has to have room for. It needs no pinning and no pairing, because an
+deserve a chart. Megabytes held, because that is the number a caller has to find room for, on a log
+axis because a total against size spans five decades where every other chart here spans one. The
+peak is a separate panel: growth allocates the new array beside the old and only then frees it, so a
+chart of steady state alone hides the transient. It needs no pinning and no pairing, because an
 allocator that counts is exact.
+
+Read the size off the chart and the *ranking* off these numbers, because a 16% difference is about
+1% of a five-decade axis and no plot of totals will show it. At a power of two, bytes per entry:
+
+| | steady | peak |
+|---|---|---|
+| this map | **27.0** | 32.5 |
+| robin hood (main) | 32.0 | 40.0 |
+| 4.8.1 (January) | 32.0 | **32.0** |
+| boost | 32.0 | 48.0 |
+
+The CSV carries `steady_per_entry` and `peak_per_entry` beside the totals for anyone who wants that
+as the chart instead. One row there is worth a second look: 4.8.1 peaks *lower* than today's main,
+32 against 40, because `8d0e17e` builds the new bucket array before releasing the old one. That is
+what makes growth exception-safe, and a taller transient is its price.
 
 What is deliberately **not** here: pure-miss lookups (they rank as hits do and are cheaper), insert-
 and-erase (largely subsumed by churn), and the 50/50 find (keep it in the scored suite as the
