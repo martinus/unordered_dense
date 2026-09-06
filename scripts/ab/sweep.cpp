@@ -15,6 +15,9 @@
 // Emits CSV on stdout; scripts/ab/plot.py draws it.
 #include <ankerl/unordered_dense.h>
 #include <base.h>
+#ifdef UDM_AB_HAVE_JAN
+#    include <base_jan.h> // a second baseline, in its own namespace; see scripts/ab/README.md
+#endif
 #ifdef UDM_AB_HAVE_BOOST
 #    include <boost/unordered/unordered_flat_map.hpp>
 #endif
@@ -26,6 +29,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -128,9 +132,9 @@ auto insert_erase_ns(Map& map, std::vector<std::uint64_t>& keys, std::uint64_t& 
 // is about a quarter of it, which cannot tell a 10% difference from none. `entries` rides along in
 // complexityN, which is the config field meant for exactly that, so every row says which table it
 // came from.
-template <typename FMain, typename FThis, typename FBoost>
-void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, bool emit, FMain&& fm,
-                   FThis&& ft, FBoost&& fb) {
+template <typename... Alternatives>
+void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, bool emit,
+                   Alternatives&&... alternatives) {
     auto bench = ankerl::nanobench::Bench();
     bench.batch(static_cast<double>(batch))
         .complexityN(static_cast<double>(n))
@@ -138,12 +142,10 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
         .output(nullptr)
         .targetIntervalWidth(targetWidth)
         .maxEpochs(400);
-#ifdef UDM_AB_HAVE_BOOST
-    auto const res = bench.compare("main", fm, "this", ft, "boost", fb);
-#else
-    static_cast<void>(fb);
-    auto const res = bench.compare("main", fm, "this", ft);
-#endif
+    // Variadic, so that which maps are in the comparison is decided at the call site by the same
+    // #ifdefs that decide whether their headers are there at all. compare() takes the alternatives
+    // as name/callable pairs and uses the first as the baseline of every ratio.
+    auto const res = bench.compare(std::forward<Alternatives>(alternatives)...);
     // One row per alternative. `relative` inside the section is the ratio against the baseline, and
     // the two bounds are what say whether to believe it; `buckets` is not nanobench's to know, so it
     // is printed around the render rather than through it.
@@ -221,6 +223,9 @@ void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double
 } // namespace
 
 auto main(int argc, char** argv) -> int {
+    // It matters more since every point rebuilds: the sweep now asks for and returns megabytes 193
+    // times over, and kept in the arena those pages are faulted once for the process rather than
+    // once per point. glibc only, a no-op elsewhere.
     workloads::tame_allocator();
     auto const max_shift = argc > 1 ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 20U;
     auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
@@ -231,30 +236,46 @@ auto main(int argc, char** argv) -> int {
     auto const targetWidth = argc > 5 ? std::strtod(argv[5], nullptr) : 0.02;
 
     using main_map = udmbase::unordered_dense::map<std::uint64_t, std::size_t>;
+#ifdef UDM_AB_HAVE_JAN
+    using jan_map = udmjan::unordered_dense::map<std::uint64_t, std::size_t>;
+#endif
     using this_map = ankerl::unordered_dense::map<std::uint64_t, std::size_t>;
 #ifdef UDM_AB_HAVE_BOOST
     using boost_map = boost::unordered_flat_map<std::uint64_t, std::size_t, ankerl::unordered_dense::hash<std::uint64_t>>;
-#else
-    using boost_map = this_map;
 #endif
 
-    // The maps are carried together and grown together, so that at every sample point each holds n
-    // keys and the comparison is of the maps rather than of what else was happening.
+    // The maps are rebuilt from scratch at every sample point rather than grown on from the last
+    // one. Carrying them made each map's addresses depend on the whole history of the others'
+    // allocations, and an unlucky layout then sat there for a stretch of points: in one run boost
+    // measured 4.72 ns at 128 entries where every other run of the same work says 2.4-2.6, and it
+    // stayed wrong from 128 up to about 8192. Rebuilding costs about a second across the whole
+    // sweep -- the sum of every point's n is ~17M inserts, against ~55 minutes of measuring -- and
+    // it buys independence: a bad layout now spoils one point, which reads as a spike a second run
+    // does not have, instead of a smooth and plausible stretch of a curve.
     auto m0 = main_map();
     auto m1 = this_map();
-    auto m2 = boost_map();
     auto k0 = std::vector<std::uint64_t>();
     auto k1 = std::vector<std::uint64_t>();
-    auto k2 = std::vector<std::uint64_t>();
     auto n0 = (std::uint64_t{1} << 40U) | 1U;
     auto n1 = n0;
+#ifdef UDM_AB_HAVE_BOOST
+    auto m2 = boost_map();
+    auto k2 = std::vector<std::uint64_t>();
     auto n2 = n0;
+#endif
+#ifdef UDM_AB_HAVE_JAN
+    auto m3 = jan_map();
+    auto k3 = std::vector<std::uint64_t>();
+    auto n3 = n0;
+#endif
 
     std::printf("entries,map,ns,ns_min,ns_low,ns_high,relative,rel_low,rel_high,rounds,buckets\n");
     auto const points = sample_sizes(max_shift, per_octave);
     auto const first = points.front();
     for (auto n : points) {
         auto grow = [n](auto& map, auto& keys) {
+            map = {};
+            keys.clear();
             auto r = ankerl::nanobench::Rng(1);
             while (keys.size() < n) {
                 auto const key = (r() >> 1U) | 1U;
@@ -265,7 +286,12 @@ auto main(int argc, char** argv) -> int {
         };
         grow(m0, k0);
         grow(m1, k1);
+#ifdef UDM_AB_HAVE_BOOST
         grow(m2, k2);
+#endif
+#ifdef UDM_AB_HAVE_JAN
+        grow(m3, k3);
+#endif
         auto run = [mode, batch](auto& map, auto& keys, std::uint64_t& next) {
             if (mode == 1) {
                 ankerl::nanobench::doNotOptimizeAway(churn_ns(map, keys, next, batch));
@@ -283,15 +309,26 @@ auto main(int argc, char** argv) -> int {
         // one alternative. So the first point is measured twice and the first answer thrown away.
         auto const passes = n == first ? 2 : 1;
         for (auto pass = 0; pass < passes; ++pass) {
-            measure_point(
-                n,
-                m1.bucket_count(),
-                batch,
-                targetWidth,
-                pass + 1 == passes,
-                [&] { run(m0, k0, n0); },
-                [&] { run(m1, k1, n1); },
-                [&] { run(m2, k2, n2); });
+            measure_point(n,
+                          m1.bucket_count(),
+                          batch,
+                          targetWidth,
+                          pass + 1 == passes,
+                          "main",
+                          [&] { run(m0, k0, n0); },
+                          "this",
+                          [&] { run(m1, k1, n1); }
+#ifdef UDM_AB_HAVE_JAN
+                          ,
+                          "jan",
+                          [&] { run(m3, k3, n3); }
+#endif
+#ifdef UDM_AB_HAVE_BOOST
+                          ,
+                          "boost",
+                          [&] { run(m2, k2, n2); }
+#endif
+            );
         }
     }
     return 0;

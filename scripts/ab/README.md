@@ -12,6 +12,52 @@ five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates 
 flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
+## A year of it: 4.8.1 against today (2026-09-06)
+
+`-r` takes any revision, so the harness answers "how far has this come" as easily as "did this
+commit help". `3234af2` is where `main` stood on 1 January 2026 -- version **4.8.1**, scalar robin
+hood, no vector probe anywhere in it -- against this branch, 12 paired epochs, `-b` for boost:
+
+```sh
+scripts/ab/run.sh -r 3234af2 -b all 12 | tee /tmp/year.txt
+scripts/ab/summarize.py /tmp/year.txt
+```
+
+| geomean over | clang 22 | gcc 16 |
+|---|---|---|
+| the score, 15 workloads | **1.467** | **1.434** |
+| without the three iteration workloads | 1.603 | 1.570 |
+| build | 1.883 | 1.612 |
+| churn at a fixed size | 1.772 | 1.746 |
+| find | 1.476 | 1.551 |
+| insert and erase | 1.340 | 1.392 |
+
+Per workload, clang then gcc: `build64` 2.60 and 2.06, `churn64` 2.16 and 2.09, `rhit64` 2.16 and
+2.14, `churnbig` 1.99 and 1.93, `rmiss64` 1.98 and 1.76, `buildbig` 1.89 and 1.54, `find64` 1.67 and
+1.83, `findbig` 1.64 and 1.78, down through the string workloads at 1.14-1.38 to iteration at
+1.00-1.08, which nothing this year touched -- 4.8.1 already iterated a dense vector.
+
+Two things in that run are worth more than the geomean.
+
+**The string hash got slower, and the same table proves it is the hash.** `hashstr` reads 0.96 under
+clang and **0.93 under gcc**, where the interval [1.05, 1.09] excludes parity. The control is in the
+row below it: boost is handed today's `ankerl::unordered_dense::hash` explicitly, and boost moves
+with the candidate (0.92), so this is not the map. The suspicion is that July's wyhash work -- the
+independent tail lane for inputs over 48 bytes, and the two 8-byte reads for 8 to 16 -- was tuned
+when every string key in the benchmark was exactly 200 bytes, which is a thing this file's own
+history says was wrong with the keys and was fixed in September. Not confirmed.
+
+**The lookup gain is nearly all at high load, which is why it needs the size sweep to see.** Against
+today's `main` rather than the branch, one binary, all-hits `find()`: at 50000 entries in 65536
+buckets (load 0.76) 4.8.1 is **1.7x slower**, and at 131072 in 262144 buckets (load 0.5) the two are
+level. The sweep's own workload -- half of the lookups missing, where a miss ends sooner -- puts the
+same contrast at 1.19x against 0.84x, so how much of it you see depends on the hit rate as well as
+the load; the sign does not. At a few thousand entries and load 0.5, 4.8.1 is *ahead* of main on
+both, because the four-bucket SSE2 probe trades instructions for mispredictions and a short probe in
+L1 has few of those to save. The scored workloads sit near the top of the load range, which is where
+a table that grew naturally spends most of its life -- but a chart sampled only at powers of two
+would show almost none of this, since a power of two is where every table has just doubled.
+
 ## Lookup cost against table size
 
 `scripts/ab/sweep.cpp` walks the size axis instead of the workload axis: it grows
@@ -32,6 +78,15 @@ scripts/ab/plot.py doc/find_vs_size.csv doc/find_ratio_vs_size.svg \
 
 Pin it to a core (`taskset`) and leave the machine alone: a sweep is 40 minutes and every other
 thing the machine does lands somewhere in it.
+
+Add `-DUDM_AB_HAVE_JAN` and a second renamed baseline to put a fourth map on the chart; the
+namespace is `udmjan` and the sed is `run.sh`'s with `UDMBASE` swapped for `UDMJAN`:
+
+```sh
+git show 3234af2:include/ankerl/unordered_dense.h \
+    | sed 's/ankerl::unordered_dense/udmjan::unordered_dense/g; s/ANKERL_UNORDERED_DENSE/UDMJAN_UNORDERED_DENSE/g;
+           s/namespace ankerl/namespace udmjan/g' > "$build/base_jan.h"
+```
 
 It exists because the scored benchmark stops at 200000 entries, whose index is about a megabyte
 and lives in cache on any machine that runs it, and the one structural cost of a dense map -- the
@@ -95,26 +150,50 @@ entries, in a run whose intervals are 1.5% wide. Cold caches, a cold allocator a
 ramping are all paid by whoever goes first, and pairing cannot cancel it, because what is cold is the
 *point* rather than one of the alternatives.
 
-**Pairing does not make a single run trustworthy point by point, and one run showed it.** In five
-runs of the find sweep, one had this map alone reading 15-54% high at four adjacent sizes -- 4.59 ns
-at 64 entries against 2.86 to 3.03 in the other four -- with intervals 0.5% wide saying nothing was wrong, and
-main and boost at their normal values throughout. Two runs later it was gone. A disturbance that
-lands on one alternative for a stretch of rounds is exactly what pairing cannot cancel; whether this
-one came from outside the process or from an unlucky pair of addresses (those four points share one
-allocation of the value vector, and the size it reallocates at is where the anomaly stops) was not
-established. The practical rule is the one the numbers give: read a chart for its shape, and check
-any surprising *point* against a second run before believing it.
+**Pairing does not make a single run trustworthy point by point, and it took two sightings to work
+out why.** First one of five find runs had this map alone reading 15-54% high at four adjacent sizes
+-- 4.59 ns at 64 entries against 2.86 to 3.03 in the other four -- with intervals 0.5% wide saying
+nothing was wrong and the other maps at their normal values. Then, when a fourth map was added,
+boost read **4.72 ns at 128 entries against the 2.4-2.6 every other run of the same work gives**,
+and stayed wrong from 128 up to about 8192. Same signature both times: one alternative, a stretch of
+adjacent points, intervals that notice nothing, gone on re-measurement.
 
-Nanoseconds per find with a 50% hit rate, the median epoch of the committed run:
+The cause is the sweep's own doing. It used to *grow* the maps through the sample points rather than
+rebuild them, so each map's addresses depended on the whole interleaved history of the others'
+allocations -- and an unlucky layout, once arrived at, sat there until the next reallocation moved
+it. Rebuilding each map from scratch at each point costs about a second across the whole sweep and
+makes the points independent: a bad layout now spoils one of them, which reads as a spike that a
+second run does not have, rather than as a smooth and plausible stretch of curve. The rule survives
+the fix, because nothing makes one run right on its own: read a chart for its shape, and check a
+surprising *point* against a second run before believing it.
 
-| entries | robin hood | this map | boost |
-|---|---|---|---|
-| 16 | 3.31 | 2.93 | 2.43 |
-| 256 | 3.29 | 3.00 | 2.41 |
-| 4K | 4.02 | 3.51 | 2.79 |
-| 64K | 7.41 | 6.34 | 4.62 |
-| 256K | 8.51 | 7.71 | 5.89 |
-| 1M | 10.88 | 9.59 | 7.09 |
+Nanoseconds per find with a 50% hit rate, the median epoch of the committed run. **Two tables,
+because one would lie.** A power of two is the *emptiest* a table ever is -- it has just doubled, so
+the load factor is about 0.5 -- and quoting only those rows is what makes 4.8.1 look like the fastest
+map here:
+
+| entries | load | 4.8.1 | robin hood (main) | this map | boost |
+|---|---|---|---|---|---|
+| 256 | 0.50 | **2.50** | 3.52 | 3.14 | 2.56 |
+| 4K | 0.50 | **3.30** | 4.48 | 3.99 | 3.14 |
+| 64K | 0.50 | 6.12 | 7.85 | 6.72 | **4.93** |
+| 1M | 0.50 | 11.25 | 13.87 | 12.24 | **9.35** |
+
+And the last sample point before each doubling, which is the *fullest* the same table gets, and where
+it spends most of its life:
+
+| entries | load | 4.8.1 | robin hood (main) | this map | boost |
+|---|---|---|---|---|---|
+| 3251 | 0.79 | 5.08 | 4.83 | 4.07 | **3.52** |
+| 26008 | 0.79 | 6.73 | 6.23 | 5.17 | **4.22** |
+| 104032 | 0.79 | 11.64 | 9.72 | 7.91 | **6.36** |
+| 832255 | 0.79 | 15.26 | 13.10 | 11.00 | **9.03** |
+
+That is the whole year in one contrast. Across a single octave 4.8.1 swings **1.42-2.23x** between
+its cheapest and dearest point, where main swings 1.08-1.39x, this map 1.09-1.33x and boost
+1.11-1.45x. Measured against this map point by point, 4.8.1 ranges from **0.81x** (19% *faster*, just
+after a doubling) to **1.47x** just before one. The lookup work of the past year did not make the
+best case faster; it removed the worst case.
 
 The sweep stops at 1M entries. Above that a single incremental pass is not reproducible whatever the
 pairing, because the result depends on page placement of a multi-gigabyte working set that varies
@@ -132,12 +211,30 @@ which is what a detail view is for.
 ![cost of churn against table size](../../doc/churn_vs_size.svg)
 ![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
 
-What to read off them. Below 64K this map's churn line is nearly flat where both others saw-tooth by
-a factor of two or three, which is the erasable counters doing what they exist for. Boost is ahead on
-all three workloads and by more on the two that mutate, because a dense erase must close the hole it
-leaves in the value vector and find the moved element's slot with a second probe. The scored `churn`
-workload reports the opposite sign because its round is erase, insert *and two finds*: the finds carry
-it.
+What to read off them, and the first thing is **which end of the sawtooth you are looking at**. Over
+each fully sampled octave from 1K to 64K, cheapest point to dearest:
+
+| workload | 4.8.1 | robin hood (main) | this map | boost |
+|---|---|---|---|---|
+| find | 1.42-2.23x | 1.08-1.39x | **1.09-1.33x** | 1.11-1.45x |
+| churn | 2.45-3.83x | 1.50-1.98x | **1.10-1.31x** | 1.70-4.31x |
+| insert and erase | 2.32-3.32x | 1.38-1.71x | **1.12-1.25x** | 1.78-3.33x |
+
+This map is the flattest line on all three, and 4.8.1 is the steepest -- a churn costing 3.8x more
+just before a doubling than just after it. Robin hood's probe lengthens with the load and boost's
+overflow bits only ever get set, so both are relieved only by growing; the group index's counters
+come back down on every erase, which is the property the whole design exists for and this is the
+picture of it.
+
+That flatness decides who wins, and the answer changes sign along the way. this/boost at a power of
+two (load ~0.5) against the last point before the next doubling (load 0.79), above 1.00 meaning boost
+is ahead: find 1.27 and 1.15 at ~4K, churn **1.41 and 0.46**, insert-and-erase **1.65 and 0.61**. So
+at the emptiest a table gets, boost leads everything -- a dense erase must close the hole it leaves
+in the value vector and find the moved element's slot with a second probe, where boost probes once
+and marks the slot free. At the fullest, and below about 100000 entries, the two mutating workloads
+invert: this map is **2.2x ahead of boost on churn** and 1.6x on insert-and-erase. Above 100000 the
+memory chain dominates and boost leads again at both ends. The scored `churn` workload agrees with
+the full-table end, since it reserves and its round is erase, insert *and two finds*.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 
