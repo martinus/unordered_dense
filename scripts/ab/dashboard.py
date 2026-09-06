@@ -151,6 +151,10 @@ PAGE = r"""<!DOCTYPE html>
   :root {
     --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --ink3: #86847d;
     --grid: #e6e5e1; --rule: #dedcd6; --chip: #f1f0ec;
+    /* Fill the monitor rather than a 1180px column, but stop before a panel gets so wide that its
+       own height (the viewBox is 2.2:1) pushes the next chart off the screen. */
+    --page: min(100%, 2600px);
+    --bar: 52px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -161,18 +165,20 @@ PAGE = r"""<!DOCTYPE html>
 __SERIESCSS__
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 0 24px 72px; background: var(--surface); color: var(--ink);
+    margin: 0; padding: var(--bar) 24px 72px; background: var(--surface); color: var(--ink);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-feature-settings: "tnum" 1;
   }
-  header { max-width: 1180px; margin: 0 auto; padding: 40px 0 20px; }
+  header { max-width: var(--page); margin: 0 auto; padding: 24px 0 20px; }
   h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 6px; }
   .lede { color: var(--ink2); font-size: 13px; line-height: 1.6; max-width: 76ch; margin: 0; }
   .filters {
-    position: sticky; top: 0; z-index: 5; background: var(--surface);
-    border-bottom: 1px solid var(--rule); padding: 12px 0 12px; margin-bottom: 8px;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule); padding: 9px 24px;
   }
-  .filters .row { max-width: 1180px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .filters .row { max-width: var(--page); margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .filters .hint { color: var(--ink3); font-size: 12px; margin-right: 4px; }
   button.chip {
     display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
@@ -183,11 +189,11 @@ __SERIESCSS__
   button.chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
   button.chip[aria-pressed="false"] { color: var(--ink3); }
   button.chip[aria-pressed="false"] .dot { background: none !important; box-shadow: inset 0 0 0 1.5px currentColor; }
-  figure { max-width: 1180px; margin: 30px auto 0; padding: 0; }
+  figure { max-width: var(--page); margin: 34px auto 0; padding: 0; }
   figcaption { color: var(--ink2); font-size: 12.5px; line-height: 1.6; max-width: 88ch; }
   .ctitle { font-size: 15.5px; font-weight: 650; margin: 0 0 2px; letter-spacing: -0.005em; }
   .csub { color: var(--ink2); font-size: 12.5px; margin: 0 0 10px; }
-  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; }
   @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
   .panel { position: relative; }
   .ptitle { font-size: 12.5px; font-weight: 600; color: var(--ink2); margin: 0 0 4px 44px; }
@@ -203,7 +209,7 @@ __SERIESCSS__
   .tip td.n { text-align: right; padding-left: 12px; font-variant-numeric: tabular-nums; }
   .tip .sw { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
   .empty { color: var(--ink3); font-size: 13px; padding: 30px 0 0 44px; }
-  footer { max-width: 1180px; margin: 56px auto 0; color: var(--ink3); font-size: 12px; line-height: 1.7; }
+  footer { max-width: var(--page); margin: 56px auto 0; color: var(--ink3); font-size: 12px; line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -262,7 +268,7 @@ function niceTicks(max, min) {
 
 // One panel: axes, grid, the visible lines, and a crosshair that reads values off them.
 function drawPanel(host, chart, panel, xDomain) {
-  const W = 560, H = 326, L = 46, R = 12, T = 18, B = 34;
+  const W = 900, H = 418, L = 54, R = 14, T = 32, B = 40;
   const maps = DATA.order.filter(m => panel.series[m] && !hidden.has(m));
   host.innerHTML = "";
   if (!maps.length) { host.innerHTML = '<div class="empty">every series hidden</div>'; return; }
@@ -289,7 +295,7 @@ function drawPanel(host, chart, panel, xDomain) {
   for (const t of ticks) {
     const y = py(logy ? Math.pow(10, t) : t);
     g.push(`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}" stroke="var(--grid)" stroke-width="1"/>`);
-    g.push(`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="10.5" fill="var(--ink3)">${logy ? tick(Math.pow(10, t)) : tick(t)}</text>`);
+    g.push(`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="13" fill="var(--ink3)">${logy ? tick(Math.pow(10, t)) : tick(t)}</text>`);
   }
   for (const rx of chart.resizes) {
     if (rx < xDomain[0] || rx > xDomain[1]) continue;
@@ -306,9 +312,10 @@ function drawPanel(host, chart, panel, xDomain) {
     for (let v = Math.pow(2, Math.ceil(Math.log2(xDomain[0]))); v <= xDomain[1]; v *= 8) xticks.push(v);
   }
   for (const v of xticks)
-    g.push(`<text x="${px(v).toFixed(1)}" y="${H - B + 15}" text-anchor="middle" font-size="10.5" fill="var(--ink3)">${chart.xlabel === "entries" ? si(v) : v}</text>`);
-  g.push(`<text x="${(L + (W - R - L) / 2).toFixed(1)}" y="${H - 4}" text-anchor="middle" font-size="10.5" fill="var(--ink3)">${chart.xlabel}</text>`);
-  g.push(`<text x="${L - 8}" y="${T - 6}" text-anchor="end" font-size="10.5" fill="var(--ink3)">${chart.unit}</text>`);
+    g.push(`<text x="${px(v).toFixed(1)}" y="${H - B + 18}" text-anchor="middle" font-size="13" fill="var(--ink3)">${chart.xlabel === "entries" ? si(v) : v}</text>`);
+  g.push(`<text x="${(L + (W - R - L) / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="13" fill="var(--ink3)">${chart.xlabel}</text>`);
+  // Above the plot area rather than beside it: at T - 6 it landed on the topmost y tick.
+  g.push(`<text x="${L - 8}" y="${T - 16}" text-anchor="end" font-size="13" fill="var(--ink3)">${chart.unit}</text>`);
 
   for (const m of maps) {
     const d = pts(m).map(p => `${px(p[0]).toFixed(1)},${py(p[1]).toFixed(1)}`).join(" ");
