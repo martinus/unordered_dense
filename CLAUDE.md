@@ -264,6 +264,15 @@ start against a nanobench without `targetIntervalWidth()` and says to point `NAN
 checkout of martinus/nanobench#189: the sweep asks for a precision instead of naming a round count,
 and the vendored 4.6.0 cannot do that. Nothing else in the repository depends on the branch.
 
+**A fifth series, and it is a control** (2026-09-06): the same `boost::unordered_flat_map` with the
+hash it ships with, beside the one given this map's hash. Every other alternative on the charts is
+handed this map's hash so that what differs between them is the index; that one says what the hash
+choice is worth on its own, and is what a caller actually gets by passing no third template argument.
+It is drawn dashed in boost's own colour, and hatched on the bar charts, because no fifth hue clears
+the colourblind floor against the other four -- the best candidate is 2.7 apart from the blue under
+deuteranopia against a floor of 8 -- and because colour for the map and style for the hash is the
+truer encoding anyway. `robin hood (main)` is relabelled **4.11.0**, which is what it is.
+
 The two value-size charts are **bars**, the size-axis ones lines: six value sizes are categories, and
 a line between 32 and 48 bytes interpolates something nobody measured. `--bars` in both `plot.py` and
 the dashboard, grouped, anchored at zero, 2px of surface between neighbours. Build and iteration are

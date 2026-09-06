@@ -112,6 +112,7 @@ void one_size(std::size_t n, double targetWidth) {
 #endif
 #ifdef UDM_AB_HAVE_BOOST
     using boost_map = boost::unordered_flat_map<Key, V, ankerl::unordered_dense::hash<Key>>;
+    using boostdef_map = boost::unordered_flat_map<Key, V>; // the hash boost ships with
 #endif
     auto const& keys = keys_for<this_map>(n);
     auto const per = static_cast<double>(n);
@@ -132,7 +133,9 @@ void one_size(std::size_t n, double targetWidth) {
 #ifdef UDM_AB_HAVE_BOOST
          ,
          "boost",
-         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<boost_map>(keys).size()); }
+         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<boost_map>(keys).size()); },
+         "boostdef",
+         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<boostdef_map>(keys).size()); }
 #endif
     );
 
@@ -145,6 +148,7 @@ void one_size(std::size_t n, double targetWidth) {
 #endif
 #ifdef UDM_AB_HAVE_BOOST
     auto m2 = build_map<boost_map>(keys);
+    auto m4 = build_map<boostdef_map>(keys);
 #endif
     emit(Bytes,
          "iterate",
@@ -162,7 +166,9 @@ void one_size(std::size_t n, double targetWidth) {
 #ifdef UDM_AB_HAVE_BOOST
          ,
          "boost",
-         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m2)); }
+         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m2)); },
+         "boostdef",
+         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m4)); }
 #endif
     );
 }

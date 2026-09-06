@@ -105,6 +105,7 @@ void one_point(std::size_t n, std::size_t x) {
 #endif
 #ifdef UDM_AB_HAVE_BOOST
     measure<boost::unordered_flat_map<Key, V, ankerl::unordered_dense::hash<Key>>>("boost", n, x);
+    measure<boost::unordered_flat_map<Key, V>>("boostdef", n, x); // the hash boost ships with
 #endif
 }
 

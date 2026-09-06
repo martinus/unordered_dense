@@ -18,10 +18,16 @@ from collections import defaultdict
 # Four slots, validated as a categorical set against both surfaces (dataviz/validate_palette.js,
 # --pairs all): the magenta had to be a magenta, because a purple beside this blue is 13.6 apart to
 # normal vision and 4.8 under deuteranopia, which is not a distinction anyone can make.
-SERIES = [("this", "this map", "#2a78d6", "#3987e5"),
-          ("main", "robin hood (main)", "#eb6834", "#d95926"),
-          ("jan", "4.8.1 (January)", "#b5399e", "#c74ab0"),
-          ("boost", "boost::unordered_flat_map", "#1baf7a", "#199e70")]
+# Four hues, validated as a categorical set against both surfaces. The fifth series is not a fifth
+# hue: it is the same boost map with its own hash instead of this one's, so it shares boost's green
+# and is told apart by being dashed. That is the honest encoding -- colour for the map, style for the
+# hash -- and it is also the only one available, since no fifth hue clears the CVD floor against
+# these four (the best candidate is 2.7 apart from the blue under deuteranopia).
+SERIES = [("this", "this map", "#2a78d6", "#3987e5", ""),
+          ("main", "4.11.0", "#eb6834", "#d95926", ""),
+          ("jan", "4.8.1 (January)", "#b5399e", "#c74ab0", ""),
+          ("boost", "boost::unordered_flat_map", "#1baf7a", "#199e70", ""),
+          ("boostdef", "boost, its own hash", "#1baf7a", "#199e70", "7 4")]
 
 W, H = 980, 450
 PAD_L, PAD_R, PAD_T, PAD_B = 52, 190, 96, 52
@@ -128,10 +134,19 @@ def main():
     # custom properties are unsupported.
     dark = ["@media (prefers-color-scheme: dark){",
             ".surface{fill:#1a1a19}.t{fill:#ffffff}.t2{fill:#c3c2b7}.g{stroke:#343431}.ring{stroke:#1a1a19}"]
-    for i, (_, _, _, d) in enumerate(present):
+    for i, (_, _, _, d, _dash) in enumerate(present):
         dark.append(f".ln{i}{{stroke:{d}}}.dot{i}{{fill:{d}}}")
     dark.append("}")
     s.append("<style>" + "".join(dark) + "</style>")
+    # A diagonal hatch per dashed series, so a bar can carry the same distinction its line does.
+    defs = []
+    for i, (_k, _lab, light, _d, dash) in enumerate(present):
+        if dash:
+            defs.append(f'<pattern id="hatch{i}" width="6" height="6" patternUnits="userSpaceOnUse" '
+                        f'patternTransform="rotate(45)"><rect width="6" height="6" fill="{light}"/>'
+                        f'<rect width="2.4" height="6" fill="#fcfcfb" fill-opacity="0.85"/></pattern>')
+    if defs:
+        s.append("<defs>" + "".join(defs) + "</defs>")
     s.append(f'<rect class="surface" width="{W}" height="{H}" fill="#fcfcfb"/>')
     s.append(f'<text x="{PAD_L}" y="26" class="t" fill="#0b0b0b" font-size="16" font-weight="600">'
              f'{title}</text>')
@@ -157,11 +172,11 @@ def main():
     for panel, (title, sizes, data) in enumerate(panels):
         lo, hi = sizes[0], sizes[-1]
         vmax = max(max(data[k][n], band[k][n][1] if k in band else 0.0)
-                   for k, _, _, _ in present for n in sizes)
+                   for k, _, _, _, _ in present for n in sizes)
         if mode == "ratio":
             # 1.0 is where "no difference" sits, so that is the floor worth showing; zero would put
             # every line in the top half and say nothing.
-            vmin = min(1.0, min(data[k][n] for k, _, _, _ in present for n in sizes))
+            vmin = min(1.0, min(data[k][n] for k, _, _, _, _ in present for n in sizes))
             ybot = math.floor(vmin * 10) / 10
             ytop = math.ceil(vmax * 10) / 10
             step = 0.1 if ytop - ybot <= 0.8 else 0.2
@@ -170,7 +185,7 @@ def main():
             # A total against size spans five decades, where every other chart here spans one; a
             # linear axis would put four of those decades on the baseline. Powers of ten, and the
             # bottom is the smallest value rather than zero, which a log axis cannot show.
-            vmin = min(data[k][n] for k, _, _, _ in present for n in sizes)
+            vmin = min(data[k][n] for k, _, _, _, _ in present for n in sizes)
             ybot = math.floor(math.log10(vmin))
             ytop = math.ceil(math.log10(vmax))
             yticks = [ybot + i for i in range(int(ytop - ybot) + 1)]
@@ -228,12 +243,13 @@ def main():
             bw = (group * 0.78) / len(present)
             for gi, n in enumerate(sizes):
                 x0 = left + (gi + 0.5) * group - (bw * len(present)) / 2
-                for i, (key, _, light, _dark) in enumerate(present):
+                for i, (key, _, light, _dark, dash) in enumerate(present):
                     v = data[key][n]
                     y = py(v)
+                    fill = f"url(#hatch{i})" if dash else light
                     s.append(f'<path d="{bar_path(x0 + i * bw + 1, y, max(bw - 2, 1), PAD_T + panel_h - y)}" '
-                             f'class="ln{i}" fill="{light}"/>')
-        for i, (key, label, light, _) in enumerate(present):
+                             f'class="ln{i}" fill="{fill}"/>')
+        for i, (key, label, light, _, dash) in enumerate(present):
             if bars:
                 break
             if key in band:
@@ -253,11 +269,12 @@ def main():
                 s.append(f'<polygon points="{up} {down}" fill="{light}" fill-opacity="0.3" stroke="none"/>')
             pts = " ".join(f"{px(n):.1f},{py(data[key][n]):.1f}" for n in sizes)
             s.append(f'<polyline points="{pts}" class="ln{i}" fill="none" stroke="{light}" stroke-width="2" '
-                     f'stroke-linejoin="round" stroke-linecap="round"/>')
+                     f'stroke-linejoin="round" stroke-linecap="round"'
+                     f'{f" stroke-dasharray=" + chr(34) + dash + chr(34) if dash else ""}/>')
         if panel == len(panels) - 1:  # direct labels, also the relief the contrast check asks for
             # Two lines that end close together would otherwise print their labels on top of each
             # other, which happened the first time this drew insert and erase.
-            ends = sorted(((py(data[k][hi]), i, lab, c) for i, (k, lab, c, _) in enumerate(present)))
+            ends = sorted(((py(data[k][hi]), i, lab, c) for i, (k, lab, c, _, _d) in enumerate(present)))
             placed = []
             for y, i, lab, light in ends:
                 if placed and y - placed[-1][0] < 15:
