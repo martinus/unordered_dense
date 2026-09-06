@@ -127,8 +127,8 @@ def main():
               warn="<b>Do not decide anything on this chart.</b> A 50% hit rate is the maximum-entropy "
                    "point of the hit-rate curve: it adds about half a branch misprediction per lookup "
                    "to every map, which is a flat tax that compresses exactly the differences the "
-                   "chart exists to show — the four maps separate by 1.57x at 100% hits and by 1.00x "
-                   "here. Worse, it can <i>invert</i> their order: measured, this map is fastest on "
+                   "chart exists to show: at 26000 entries the four maps span 3.08x on the all-hits chart "
+                   "and 2.11x here. Worse, it can <i>invert</i> their order: measured, this map is fastest on "
                    "hits (1.25x) and fastest on misses (1.25x) and still loses the 50% mix by 1.6% to "
                    "a map that is slower at both, because that map's probe already mispredicted 0.6 "
                    "times per lookup and an unpredictable outcome costs it nothing more. A number "
@@ -150,8 +150,8 @@ def main():
               why="<b>The workload that separates designs rather than constant factors.</b> A table "
                   "that has churned for a long time is not the table you built: a design that frees a "
                   "slot without undoing what probed past it only degrades, and is relieved only by "
-                  "growing. That is why boost swings up to 4.8x across a single octave here where "
-                  "this map swings 1.3x — its overflow bits only ever get set, where the group "
+                  "growing. That is why boost swings 4.2-6.0x across a single octave here where "
+                  "this map swings 1.2-1.5x — its overflow bits only ever get set, where the group "
                   "index's counters come back down on every erase. Nothing else on this page can "
                   "tell a long-lived table from a freshly built one. " + sawtooth),
         chart("Churn at a fixed size", "nanoseconds per erase-and-insert pair, std::string keys",
@@ -187,7 +187,7 @@ def main():
                   "value_type into a hash-scattered slot and moves it again on every rehash, so all "
                   "of its costs scale with the value; a dense map writes eight bytes there and "
                   "appends the value to a vector in order. Boost's line crosses above robin hood's "
-                  "around 48 bytes. A suite that fixes the mapped type at size_t — as this one did "
+                  "between 48 and 64 bytes. A suite that fixes the mapped type at size_t — as this one did "
                   "until September — ranks the two families wrongly for map&lt;Key, SomeStruct&gt;, "
                   "which is at least as common as map&lt;Key, size_t&gt;. It stops at 64 bytes "
                   "because 200000 entries of a 64 byte value is 14 MB and still in L3, where 128 is "
@@ -204,8 +204,8 @@ def main():
               why="<b>The one place the dense layout wins outright, and by the largest margin on this "
                    "page.</b> A dense map iterates a contiguous vector; a flat map walks its whole "
                    "slot array and skips the empty ones, which at load 0.5 is half of what it "
-                   "touches. That is 10.5x at an 8 byte value, narrowing to 2.3x at 64 as the payload "
-                   "starts to dominate. If you iterate at all often, this chart is the argument."),
+                   "touches. That is 9.4x at an 8 byte integer-keyed value, narrowing to 2.2x at 64 as the "
+                   "payload starts to dominate, and 3.7x with string keys, where the key bodies cost every map alike. If you iterate at all often, this chart is the argument."),
         chart("Memory, against mapped-value size", "megabytes held for 1000000 entries, uint64_t keys",
               [panel_of(r["memory_vs_value_size.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_value_size.csv"], "peak", "peak during growth")],

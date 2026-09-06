@@ -108,8 +108,9 @@ for the two key types instead.
 
 **The 50% find charts carry a warning, and it is not decoration.** A 50% hit rate is the
 maximum-entropy point of the hit-rate curve. It adds about half a branch misprediction per lookup to
-every map -- a flat tax that compresses exactly the differences the chart exists to show, from 1.57x
-at all hits to 1.00x -- and it can *invert* the order: measured, this map is fastest on hits (1.25x)
+every map -- a flat tax that compresses exactly the differences the chart exists to show: at 26000
+entries the four maps span 3.08x on the all-hits chart and 2.11x on this one -- and it can *invert*
+the order: measured, this map is fastest on hits (1.25x)
 and fastest on misses (1.25x) and still loses the mix by 1.6% to a map slower at both, because that
 map's probe already mispredicted 0.6 times per lookup and an unpredictable outcome costs it nothing
 more. A number that ranks two maps the opposite way from both of its own components is not a summary
