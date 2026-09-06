@@ -1899,14 +1899,70 @@ private:
         // not move (2.15 to 2.48, noise); this is what made the same build 1.7x slower under clang
         // than under gcc, and it is now faster.
         //
+        // The same reasoning is why the group pointer, the mask and the shift are held in locals
+        // and the placement is written out here rather than calling place_group: every one of
+        // them is read through `this`, which the fingerprint store may alias too.
+        //
+        // The loop hashes sixteen elements ahead of the one it places and prefetches the group
+        // each will land in. Below cache that is worth 1.26x on the loop (2.05 to 1.63 ns per
+        // element at 200000 entries) for the pipelining alone: the hash, which is a chain, is
+        // decoupled from the placement, which is a random access, so neither waits for the other.
+        // Above cache the prefetch is what matters for a key whose hash has work to hide a miss
+        // behind -- a string rehash at four million entries goes 30.6 to 12.4 ns per element -- and
+        // does nothing for an integer key at 176 MB (12.6 to 12.5), because that loop is bound by
+        // the TLB rather than by latency: 1.15 dTLB misses per placement on 4 KB pages. Partitioning
+        // the elements by group first, database style, does cut that to 0.24 and halves the loop
+        // in isolation (10.3 to 5.4 at 44 MB), but inside a build it is worth 0-7% of an integer
+        // build above 32 MB and nothing below, because the rehash is a minority of a large build
+        // and the scratch it needs is faulted in fresh every time at about a microsecond a page. Not
+        // kept; the measurement is in CLAUDE.md.
+        //
         // The index is counted in value_idx_type and never in the container's size, for the reason
         // spelled out in replace(): max_size() is exactly what value_idx_type can hold, so a
         // container of precisely that many has a size that is not representable in it.
-        auto value_idx = value_idx_type{};
-        for (auto const& value : m_values) {
+        constexpr auto ahead = std::size_t{16};
+        auto* const groups = m_buckets.data();
+        auto const mask = m_group_mask;
+        auto const shifts = m_shifts;
+        std::uint64_t ring[ahead];
+        auto it = m_values.begin();
+        auto const end = m_values.end();
+        auto const fetch = [&](std::size_t i) {
+            auto const mh = mixed_hash(get_key(*it));
+            ++it;
+            ring[i] = mh;
+            auto const* p = reinterpret_cast<char const*>(groups + (mh >> shifts));
+            ANKERL_UNORDERED_DENSE_PREFETCH(p);
+            ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(typename bucket_container_type::block) - 1);
+        };
+        for (auto i = std::size_t{}; i < ahead && it != end; ++i) {
+            fetch(i);
+        }
+        auto const n = m_values.size();
+        for (auto value_idx = std::size_t{}; value_idx < n; ++value_idx) {
+            auto const mh = ring[value_idx % ahead];
+            if (it != end) {
+                fetch(value_idx % ahead);
+            }
             // we know for certain that key has not yet been inserted, so no need to check it.
-            place_group(mixed_hash(get_key(value)), value_idx);
-            ++value_idx;
+            auto const word = fingerprint_word(mh);
+            auto const counter = word & 7U;
+            auto group_idx = static_cast<value_idx_type>(mh >> shifts);
+            value_idx_type delta = 0;
+            while (true) {
+                auto& group = groups[group_idx];
+                auto const empties = match_empty(group);
+                if (empties != 0) {
+                    auto const lane = first_lane(empties);
+                    group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
+                    group.m_index[lane] = static_cast<value_idx_type>(value_idx);
+                    break;
+                }
+                if (group.m_overflows[counter] != 255) {
+                    ++group.m_overflows[counter];
+                }
+                group_idx = static_cast<value_idx_type>((group_idx + (++delta)) & mask);
+            }
         }
     }
 
