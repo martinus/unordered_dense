@@ -195,9 +195,14 @@ So boost's lookup lead grows from **1.20x to 1.41x** as the index leaves cache, 
 ever sees the small end of that. Against main this map is still ahead at both sizes (1.38x and
 1.27x), so it is a design cost rather than a regression -- but it is the one cost this benchmark
 suite systematically understates, in the same way it once understated growth, churn and big values
-before workloads were added for them. What makes it awkward to add is the price: 8M entries is
-~170 MB and about a second to build, so a workload has to amortise the build over far more lookups
-than the existing ones do.
+before workloads were added for them. What makes it awkward to add as a *scored* workload is the price: 8M entries is
+~170 MB and about a second to build, so it would dominate the suite. So it is a tool rather than a
+score entry -- `scripts/ab/sweep.cpp` walks every power of two from 16 to 8M for the working tree,
+a baseline revision and boost, and `scripts/ab/plot.py` draws the CSV as an SVG with nothing but
+the standard library. `doc/lookup_vs_size.svg` is the result, committed beside its CSV, and
+`scripts/ab/README.md` says how to regenerate it. The shape is worth knowing by heart: three flat,
+close lines to about 128K entries, then all three turn upward together and the gap to boost opens
+as they do.
 
 **Not zeroing the value index** (2026-09-06, from a code review that put it at ~7% of a build).
 `std::vector::resize()` value-initialises, so growing the index writes 64 bytes of zeros per group
