@@ -268,6 +268,24 @@ waiting on memory.
 just after a doubling to 1.30x just before one. The year did not make the best case much faster, it
 removed the worst case.
 
+**The four charts worth keeping, and the two axes that had none** (2026-09-06). Asked which four
+graphs decide a map, the answer needed two new tools, because two of the four axes were unmeasured:
+`scripts/ab/valuesize.cpp` (build and iteration against `sizeof(mapped_type)`) and
+`scripts/ab/memory.cpp` (bytes per entry, steady and peak, from a counting allocator). The set is
+find-that-hits against size, churn against size, build-and-iterate against value size, and memory
+against size -- see `scripts/ab/README.md` for why each and why not the alternatives.
+
+What the two new ones say. **Value size**: boost against this map is 1.37x on a build at an 8 byte
+value and 2.10x at 64, and 10.5x on iteration at 8 bytes falling to 2.3x at 64. That updates the
+older note above, which had boost *ahead* at 16 bytes and behind at 64 -- the crossover moved off the
+chart entirely when the rehash store-to-load fix made building 1.80x faster, so this map now leads at
+every value size measured. The axis stops at 64 bytes because 200000 entries of a 64 byte value is
+14 MB and still in L3 where 128 is 27 MB and is not, and past that every line bends upward together.
+**Memory**: at a power of two this map holds 27 bytes per entry against 32 for main, 4.8.1 and boost,
+and its growth peak is 32.5 against boost's 48 and main's 40. 4.8.1's peak is 32, *lower* than main's
+40, which is the price of `8d0e17e` -- building the new bucket array before releasing the old one is
+what makes growth exception-safe, and it costs a taller transient.
+
 **The sweep replayed its key sequence, which flattered the branchiest probe by 2.7x** (2026-09-06,
 found because the 4.8.1 line came out ahead of this map and that was not believable). Each workload
 seeded its `Rng` inside the timed function, so all 400 epochs looked up the same 20000 keys in the

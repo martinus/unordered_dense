@@ -12,6 +12,61 @@ five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates 
 flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
+## Four graphs, if you only get four
+
+Chosen so that each one can change the verdict and no two say the same thing. Every axis here is one
+that has flipped an answer in this file's own history.
+
+```sh
+build=$(mktemp -d)   # base.h, and base_jan.h if you want a fourth map; see below
+flags="-O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -DUDM_AB_HAVE_JAN -I$build -Iinclude -Itest"
+for t in sweep valuesize memory; do clang++ $flags scripts/ab/$t.cpp "$build/nanobench.o" -o $t; done
+
+taskset -c 2 ./sweep 20 12 20000 3 0.02 > doc/find_hits_vs_size.csv    # 1
+taskset -c 2 ./sweep 20 12 20000 1 0.02 > doc/churn_vs_size.csv        # 2
+taskset -c 2 ./valuesize 200000 0.02    > doc/value_size.csv           # 3
+./memory 20 6                           > doc/memory_vs_size.csv       # 4
+```
+
+**1. A find that hits, against table size.** All hits rather than a 50% mix: the mix is the
+maximum-entropy point of the hit-rate curve and separates these maps by 1.00x where all-hits
+separates them by 1.57x, and it can invert their order outright -- see the hit-rate section below.
+Twelve points per octave with nothing reserved, so the load-factor sawtooth is there; a map read only
+at powers of two is read at its emptiest. Log x to a million, so the cache cliff past ~128K is on the
+picture, which is the largest single effect in any of these charts.
+
+**2. Churn at a fixed size, against table size.** The workload that separates *designs* rather than
+constant factors, and the one this project had no measurement of until 2026-09-03. Boost swings up to
+4.79x across a single octave here and this map 1.06-1.36x, because overflow bits only ever get set
+while counters come back down on every erase. Without it you cannot tell a long-lived table from a
+freshly built one, and most tables are long-lived.
+
+**3. Build and iteration, against mapped-value size.** The axis that decides dense against flat, and
+it moves fast: boost against this map on a build goes 1.37x at an 8 byte value to 2.10x at 64, and on
+iteration 10.5x down to 2.3x, because a flat map writes the whole `value_type` into a scattered slot
+where a dense map appends it to a vector in order. A suite that fixes the mapped type at `size_t` --
+as this one did until 2026-09-03 -- ranks the two families wrongly for `map<Key, SomeStruct>`. It
+stops at 64 bytes on purpose: at 200000 entries that is 14 MB of values and still in L3, where 128
+bytes is 27 MB and is not, and past the cliff every line bends upward together and the chart stops
+being about the value.
+
+**4. Memory against table size, steady and peak.** Speed alone picks the wrong map often enough to
+deserve a chart: at a power of two this map holds 27 bytes per entry against 32 for the other three.
+The peak is a separate panel because growth allocates the new array beside the old and only then
+frees it -- 32.5 bytes per entry here against boost's 48 -- and a chart of steady state alone hides
+the transient a caller actually has to have room for. It needs no pinning and no pairing, because an
+allocator that counts is exact.
+
+What is deliberately **not** here: pure-miss lookups (they rank as hits do and are cheaper), insert-
+and-erase (largely subsumed by churn), and the 50/50 find (keep it in the scored suite as the
+adversarial case, but it is a poor thing to *show*).
+
+The rules matter more than the choice of four, and every one of them is here because breaking it
+produced a wrong answer: interleave the alternatives paired in one process; never re-seed the
+workload's rng inside the timed region; rebuild rather than grow the maps between points; sample
+twelve points per octave; and check anything surprising against a one-map-per-binary run under
+`perf`.
+
 ## A year of it: 4.8.1 against today (2026-09-06)
 
 `-r` takes any revision, so the harness answers "how far has this come" as easily as "did this
@@ -281,11 +336,13 @@ this map doubles. **Twelve points per octave**, because a sawtooth sampled once 
 straight line. And **two panels**, one to 64K and one over the whole range, with their own y scales,
 which is what a detail view is for.
 
-![cost of a random find against table size](../../doc/find_vs_size.svg)
 ![cost of a find that hits, against table size](../../doc/find_hits_vs_size.svg)
+![cost of a random find against table size](../../doc/find_vs_size.svg)
 ![how much faster than robin hood](../../doc/find_ratio_vs_size.svg)
 ![cost of churn against table size](../../doc/churn_vs_size.svg)
 ![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
+![build and iteration against mapped-value size](../../doc/value_size.svg)
+![memory against table size](../../doc/memory_vs_size.svg)
 
 What to read off them, and the first thing is **which end of the sawtooth you are looking at**. Over
 each fully sampled octave from 1K to 64K, cheapest point to dearest:
