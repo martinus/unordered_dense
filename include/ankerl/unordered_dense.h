@@ -1212,48 +1212,6 @@ public:
 
 namespace detail {
 
-// std::vector::resize() value-initialises what it adds. For the group array that is exactly what
-// is wanted, since a zero fingerprint means an empty slot, but for the value index beside it that
-// is 64 bytes of zeros per group which nothing ever reads: a slot's index is written when an entry
-// is placed into it, and read only for a slot whose fingerprint already says it is occupied. This
-// adaptor turns the no-argument construction that resize() uses into a default-initialisation,
-// which for a trivial type is no work at all. Measured on a two million element build, which
-// zeroes 32 MB of index across its growths: about 7% of the whole build.
-//
-// Everything else is forwarded to the wrapped allocator, so propagation, equality and any
-// allocation counting a caller does are unchanged.
-template <typename T, typename A>
-class default_init_alloc : public A {
-public:
-    using value_type = T;
-
-    template <typename U>
-    struct rebind {
-        using other = default_init_alloc<U, typename std::allocator_traits<A>::template rebind_alloc<U>>;
-    };
-
-    using A::A;
-    default_init_alloc() = default;
-    // Both conversions are implicit on purpose: a std::vector rebinds and converts its allocator
-    // behind the scenes, and an explicit one would not be found.
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    default_init_alloc(A const& alloc) noexcept
-        : A(alloc) {}
-    template <typename U, typename B>
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    default_init_alloc(default_init_alloc<U, B> const& other) noexcept
-        : A(static_cast<B const&>(other)) {}
-
-    template <typename U>
-    void construct(U* ptr) noexcept(std::is_nothrow_default_constructible_v<U>) {
-        ::new (static_cast<void*>(ptr)) U; // default-init: no parentheses, so trivial types stay untouched
-    }
-    template <typename U, typename... Args>
-    void construct(U* ptr, Args&&... args) {
-        std::allocator_traits<A>::construct(static_cast<A&>(*this), ptr, std::forward<Args>(args)...);
-    }
-};
-
 // What holds the index: the groups, and beside them the value index of every slot. Two arrays
 // rather than one struct because the groups are what a probe reads -- a miss touches nothing else,
 // and a rehash writes them at random -- and 24 bytes per sixteen slots keeps far more of them in
@@ -1270,8 +1228,7 @@ public:
     static constexpr std::size_t array_count = 2;
 
 private:
-    using index_allocator_type =
-        default_init_alloc<value_idx_type, typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>>;
+    using index_allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>;
     static constexpr std::size_t slots = std::tuple_size<decltype(Group::m_fingerprints)>::value;
 
     std::vector<Group, allocator_type> m_groups{};
