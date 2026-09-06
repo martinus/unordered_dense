@@ -471,22 +471,23 @@ this is the picture of it.
 
 **Summarise across an octave, and never at a load factor you chose.** Quoting a ratio at "load 0.79"
 -- the last point before *this map* doubles -- is a biased subsample: boost sizes differently, and it
-swings 4.2-6.0x across its own octave, so reading this map at its fullest against boost at wherever
+swings 4.2-6.1x across its own octave, so reading this map at its fullest against boost at wherever
 its cycle happened to be produced "this map is 2.2x ahead of boost on churn", which the geometric
 mean over the same octave does not support. That claim stood here for a day and is retracted. The
 geomean, this/boost and this/main, above 1.00 meaning the other map is ahead:
 
 | workload | 1K | 32K | 208K | 524K |
 |---|---|---|---|---|
-| find, all hits | 1.24 / 0.80 | 1.40 / 0.80 | 1.24 / 0.80 | 1.44 / 0.80 |
-| churn | 1.14 / 0.70 | 1.22 / 0.65 | 1.55 / 0.81 | 2.10 / 0.92 |
-| insert and erase | 1.04 / 0.80 | 1.24 / 0.75 | 1.34 / 0.81 | 1.66 / 0.80 |
+| find, all hits | 1.17 / 0.75 | 1.29 / 0.73 | 1.15 / 0.74 | 1.25 / 0.70 |
+| churn | 1.12 / 0.70 | 1.20 / 0.65 | 1.47 / 0.75 | 2.03 / 0.89 |
+| insert and erase | **0.94** / 0.73 | 1.19 / 0.72 | 1.27 / 0.77 | 1.51 / 0.72 |
 
-Boost is ahead on all three at every size, by 1.04-1.24x at a thousand entries and 1.4-2.1x at half a
+Boost is ahead on all three at every size except insert-and-erase at a thousand entries, where the
+merged block put this map 6% ahead -- by 1.12-1.17x at a thousand entries and 1.25-2.03x at half a
 million -- a dense erase must close the hole it leaves in the value vector and find the moved
 element's slot with a second probe, where boost probes once and marks the slot free. This map is
 ahead of robin hood everywhere, by 1.1-1.5x. The dense answer to boost is the two charts boost is not
-on: 9.4x on iteration, and a build that wins at every value size.
+on: 10.9x on iteration, and a build that wins at every value size.
 
 ## What the hot paths are bound by (Ryzen 9 7950X, clang 22, default `-march`, 2026-09)
 
