@@ -47,44 +47,62 @@ draw() { # csv out title subtitle [extra flags...]
 
 draw_all() {
     echo "drawing:"
-    draw find_hits_vs_size.csv find_hits_vs_size.svg \
-        "Cost of a find that hits, against table size" "nanoseconds per lookup, every one of them present"
-    draw find_vs_size.csv find_vs_size.svg \
-        "Cost of a random find against table size" "nanoseconds per lookup, 50% of them hits"
+    for k in "" _str; do
+        case $k in "") kt="uint64_t keys" ;; *) kt="std::string keys" ;; esac
+        draw "find_hits_vs_size$k.csv" "find_hits_vs_size$k.svg" \
+            "Find, every lookup hitting" "nanoseconds per lookup, $kt"
+        draw "find_vs_size$k.csv" "find_vs_size$k.svg" \
+            "Find, half the lookups hitting (do not decide on this one)" "nanoseconds per lookup, $kt"
+        draw "churn_vs_size$k.csv" "churn_vs_size$k.svg" \
+            "Churn at a fixed size" "nanoseconds per erase-and-insert pair, $kt"
+        draw "insert_erase_vs_size$k.csv" "insert_erase_vs_size$k.svg" \
+            "Insert and erase" "nanoseconds per operator[] and erase pair, $kt"
+        draw "memory_vs_value_size$k.csv" "memory_vs_value_size$k.svg" \
+            "Memory against mapped-value size" "megabytes held, $kt" \
+            "--panels=steady:steady state|peak:peak during growth" "--unit=MB" \
+            "--x=sizeof(mapped_type), bytes" "--of=map&lt;K, T&gt;" --bars
+        draw "memory_vs_size$k.csv" "memory_vs_size$k.svg" \
+            "Memory against table size" "megabytes held, $kt" \
+            "--panels=steady:steady state|peak:peak during growth" "--unit=MB" --logy
+    done
     draw find_vs_size.csv find_ratio_vs_size.svg \
         "How much faster than robin hood" "times faster than the index this replaces, paired" ratio
-    draw churn_vs_size.csv churn_vs_size.svg \
-        "Cost of churn against table size" "nanoseconds per erase-and-insert pair at a fixed size"
-    draw insert_erase_vs_size.csv insert_erase_vs_size.svg \
-        "Cost of insert and erase against table size" \
-        "nanoseconds per operator[] and erase pair, half of each finding nothing"
-    # value_size.csv is long-form; the panel plotter wants one column per workload
+
+    # The two value-size charts put a key type in each panel, so the long-form CSVs are joined into
+    # one wide table first: build and iterate are separate charts because they differ by two orders
+    # of magnitude and on one axis the iteration would be a flat line along the floor.
     if [ -f "$doc/value_size.csv" ]; then
-        python3 - "$doc/value_size.csv" "$doc/.value_size_wide.csv" <<'PY'
-import csv, sys
-rows = list(csv.DictReader(open(sys.argv[1])))
-wide = {}
-for r in rows:
-    wide.setdefault((int(r["entries"]), r["map"]), {})[r["what"]] = r["ns"]
-with open(sys.argv[2], "w") as f:
-    f.write("entries,map,build,iterate\n")
-    for (n, m), v in sorted(wide.items()):
-        f.write(f"{n},{m},{v['build']},{v['iterate']}\n")
+        python3 - "$doc" <<'PY'
+import csv, os, sys
+doc = sys.argv[1]
+def load(name):
+    path = os.path.join(doc, name)
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    for r in csv.DictReader(open(path)):
+        out.setdefault((int(r["entries"]), r["map"]), {})[r["what"]] = r["ns"]
+    return out
+u64, st = load("value_size.csv"), load("value_size_str.csv")
+with open(os.path.join(doc, ".value_size_wide.csv"), "w") as f:
+    f.write("entries,map,build_u64,build_str,iterate_u64,iterate_str\n")
+    for k in sorted(u64):
+        a, b = u64[k], st.get(k, {})
+        f.write(f"{k[0]},{k[1]},{a['build']},{b.get('build', a['build'])},"
+                f"{a['iterate']},{b.get('iterate', a['iterate'])}\n")
 PY
-        draw .value_size_wide.csv value_size.svg \
-            "Build and iteration against mapped-value size" \
+        draw .value_size_wide.csv build_vs_value_size.svg \
+            "Build from empty, against mapped-value size" \
             "nanoseconds per entry, 200000 entries, nothing reserved" \
-            "--panels=build:build from empty|iterate:one iteration pass" \
-            "--x=sizeof(mapped_type), bytes" "--of=map&lt;uint64_t, T&gt;" --bars
+            "--panels=build_u64:uint64_t keys|build_str:std::string keys" \
+            "--x=sizeof(mapped_type), bytes" "--of=map&lt;K, T&gt;" --bars
+        draw .value_size_wide.csv iterate_vs_value_size.svg \
+            "One iteration pass, against mapped-value size" \
+            "nanoseconds per entry, 200000 entries" \
+            "--panels=iterate_u64:uint64_t keys|iterate_str:std::string keys" \
+            "--x=sizeof(mapped_type), bytes" "--of=map&lt;K, T&gt;" --bars
         rm -f "$doc/.value_size_wide.csv"
     fi
-    draw memory_vs_value_size.csv memory_vs_value_size.svg \
-        "Memory against mapped-value size" "megabytes held for 1000000 entries, nothing reserved" \
-        "--panels=steady:steady state|peak:peak during growth" "--unit=MB" \
-        "--x=sizeof(mapped_type), bytes" "--of=map&lt;uint64_t, T&gt;" --bars
-    draw memory_vs_size.csv memory_vs_size.svg \
-        "Memory against table size" "megabytes held, nothing reserved" \
-        "--panels=steady:steady state|peak:peak during growth" "--unit=MB" --logy
     "$root/scripts/ab/dashboard.py"
 }
 
@@ -142,17 +160,34 @@ for t in sweep valuesize memory; do
 done
 echo "built sweep, valuesize, memory"
 
-if [ $quick = 1 ]; then shift_max=14 per_octave=3 width=0.08 entries=50000
-else shift_max=20 per_octave=12 width=0.02 entries=200000; fi
+# Strings are sampled less finely and stop an octave earlier: a string operation costs about four
+# times an integer one, and four sweeps at the integer settings would be most of a day. The shape is
+# what these charts are for, and eight points per octave still shows the sawtooth.
+if [ $quick = 1 ]; then
+    shift_max=14 per_octave=3 width=0.08 entries=50000
+    s_shift=13 s_octave=3 s_width=0.10 s_entries=20000
+else
+    shift_max=20 per_octave=12 width=0.03 entries=200000
+    s_shift=19 s_octave=8 s_width=0.04 s_entries=200000
+fi
 run() { echo "  $1 ..." >&2; taskset -c "$core" "$build/${@:2}"; }
 
 echo "measuring (pinned to core $core; leave the machine alone):"
-run find_hits    sweep "$shift_max" "$per_octave" 20000 3 "$width" > "$doc/find_hits_vs_size.csv"
-run find         sweep "$shift_max" "$per_octave" 20000 0 "$width" > "$doc/find_vs_size.csv"
-run churn        sweep "$shift_max" "$per_octave" 20000 1 "$width" > "$doc/churn_vs_size.csv"
-run insert_erase sweep "$shift_max" "$per_octave" 20000 2 "$width" > "$doc/insert_erase_vs_size.csv"
-run value_size   valuesize "$entries" "$width"                     > "$doc/value_size.csv"
-run memory_value memory "$shift_max" 6 1 1000000                   > "$doc/memory_vs_value_size.csv"
-run memory_size  memory "$shift_max" 6                             > "$doc/memory_vs_size.csv"
+run find_hits    sweep "$shift_max" "$per_octave" 20000 3 "$width" 0 > "$doc/find_hits_vs_size.csv"
+run find         sweep "$shift_max" "$per_octave" 20000 0 "$width" 0 > "$doc/find_vs_size.csv"
+run churn        sweep "$shift_max" "$per_octave" 20000 1 "$width" 0 > "$doc/churn_vs_size.csv"
+run insert_erase sweep "$shift_max" "$per_octave" 20000 2 "$width" 0 > "$doc/insert_erase_vs_size.csv"
+run memory_size  memory "$shift_max" 6 0 0 0                         > "$doc/memory_vs_size.csv"
+run value_size   valuesize "$entries" "$width" 0                     > "$doc/value_size.csv"
+run memory_value memory 0 0 1 1000000 0                              > "$doc/memory_vs_value_size.csv"
+
+echo "the same again with std::string keys:"
+run find_hits_str    sweep "$s_shift" "$s_octave" 20000 3 "$s_width" 1 > "$doc/find_hits_vs_size_str.csv"
+run find_str         sweep "$s_shift" "$s_octave" 20000 0 "$s_width" 1 > "$doc/find_vs_size_str.csv"
+run churn_str        sweep "$s_shift" "$s_octave" 20000 1 "$s_width" 1 > "$doc/churn_vs_size_str.csv"
+run insert_erase_str sweep "$s_shift" "$s_octave" 20000 2 "$s_width" 1 > "$doc/insert_erase_vs_size_str.csv"
+run memory_size_str  memory "$s_shift" 6 0 0 1                         > "$doc/memory_vs_size_str.csv"
+run value_size_str   valuesize "$s_entries" "$s_width" 1               > "$doc/value_size_str.csv"
+run memory_value_str memory 0 0 1 200000 1                             > "$doc/memory_vs_value_size_str.csv"
 
 draw_all

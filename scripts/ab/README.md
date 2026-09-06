@@ -93,10 +93,29 @@ constant factors, and the one this project had no measurement of until 2026-09-0
 while counters come back down on every erase. Without it you cannot tell a long-lived table from a
 freshly built one, and most tables are long-lived.
 
-The two charts on the value-size axis are **bar charts**, and the two on the table-size axis are
-lines, because six value sizes are categories rather than a continuum: a line from 32 to 48 bytes
-draws an interpolation nobody measured, and reading four maps against each other at one size is what
-that chart is for. `plot.py --bars` and the same in the dashboard.
+Every workload is measured twice, once with `uint64_t` keys and once with `std::string` keys of 8 to
+135 bytes skewed towards short, and the charts come in pairs. The string half is not a formality: a
+string lookup spends 33-38% of itself hashing and compares behind a pointer the map has to chase, so
+the four maps converge and whatever an index does well is diluted by work none of them can avoid.
+That is the ceiling on what a better index can buy a string map, and it is worth knowing.
+
+The value-size charts are **bar charts** and the table-size ones are lines, because six value sizes
+are categories rather than a continuum: a line from 32 to 48 bytes draws an interpolation nobody
+measured, and reading four maps against each other at one size is what that chart is for. Build and
+iteration are **separate charts** rather than two panels of one, because they differ by two orders of
+magnitude and on a shared axis the iteration is a flat line along the floor; each uses its two panels
+for the two key types instead.
+
+**The 50% find charts carry a warning, and it is not decoration.** A 50% hit rate is the
+maximum-entropy point of the hit-rate curve. It adds about half a branch misprediction per lookup to
+every map -- a flat tax that compresses exactly the differences the chart exists to show, from 1.57x
+at all hits to 1.00x -- and it can *invert* the order: measured, this map is fastest on hits (1.25x)
+and fastest on misses (1.25x) and still loses the mix by 1.6% to a map slower at both, because that
+map's probe already mispredicted 0.6 times per lookup and an unpredictable outcome costs it nothing
+more. A number that ranks two maps the opposite way from both of its own components is not a summary
+of them. It stays because the cost it measures is real for a program whose hit rate really is
+unpredictable, and because a benchmark with a *predictable* hit sequence is worse still -- that lets
+the predictor learn the probe. Read it to see what unpredictability costs, never to choose a map.
 
 **3. Build and iteration, against mapped-value size.** The axis that decides dense against flat, and
 it moves fast: boost against this map on a build goes 1.37x at an 8 byte value to 2.10x at 64, and on
@@ -142,9 +161,14 @@ twice over -- once through the container's allocator, once through a replaced gl
 with the maps on their default allocators -- and the two agree to the byte. `./memory 20 6` still
 writes the table-size view for anyone who wants the growth staircase.
 
-What is deliberately **not** here: pure-miss lookups (they rank as hits do and are cheaper), insert-
-and-erase (largely subsumed by churn), and the 50/50 find (keep it in the scored suite as the
-adversarial case, but it is a poor thing to *show*).
+What is deliberately **not** in the four: pure-miss lookups (they rank as hits do and are cheaper),
+insert-and-erase (largely subsumed by churn, though it is on the page because half its operations
+find nothing and `operator[]` is what most programs actually write), and the 50/50 find (on the page,
+with a warning, never in a summary).
+
+Every chart on `doc/charts.html` carries two paragraphs: what the workload actually does, and why it
+is interesting -- or, for two of them, why it is not. Those descriptions live in `dashboard.py` beside
+the chart they describe rather than being duplicated here, so they cannot drift from it.
 
 The rules matter more than the choice of four, and every one of them is here because breaking it
 produced a wrong answer: interleave the alternatives paired in one process; never re-seed the

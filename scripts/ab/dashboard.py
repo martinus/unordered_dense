@@ -56,69 +56,197 @@ def resizes(rows):
     return out
 
 
-def chart(rows, title, subtitle, panels, xlabel, unit, xlog=True, ylog=False, note="", bars=False):
-    if rows is None:
+def panel_of(rows, column, title):
+    """One panel: a column of one CSV. Panels of a chart may come from different CSVs, which is how
+    a chart shows the same workload for both key types side by side."""
+    return None if rows is None else {"title": title, "series": series_of(rows, column)}
+
+
+def chart(title, subtitle, panels, xlabel, unit, what, why, xlog=True, ylog=False, bars=False,
+          warn="", resize_rows=None):
+    panels = [p for p in panels if p]
+    if not panels:
         return None
     return {
-        "bars": bars,
-        "title": title,
-        "subtitle": subtitle,
-        "xlabel": xlabel,
-        "unit": unit,
-        "xlog": xlog,
-        "ylog": ylog,
-        "note": note,
-        "resizes": resizes(rows),
-        "panels": [{"title": t, "series": series_of(rows, c)} for c, t in panels],
+        "title": title, "subtitle": subtitle, "xlabel": xlabel, "unit": unit,
+        "xlog": xlog, "ylog": ylog, "bars": bars, "what": what, "why": why, "warn": warn,
+        "resizes": resizes(resize_rows) if resize_rows else [],
+        "panels": panels,
     }
 
 
 def main():
-    charts = []
+    r = {n: read(n) for n in (
+        "find_hits_vs_size.csv", "find_vs_size.csv", "churn_vs_size.csv", "insert_erase_vs_size.csv",
+        "memory_vs_size.csv", "memory_vs_value_size.csv",
+        "find_hits_vs_size_str.csv", "find_vs_size_str.csv", "churn_vs_size_str.csv",
+        "insert_erase_vs_size_str.csv", "memory_vs_size_str.csv", "memory_vs_value_size_str.csv")}
+    vs = wide_value_size("value_size.csv")
+    vs_str = wide_value_size("value_size_str.csv")
 
-    def add(*a, **k):
-        c = chart(*a, **k)
-        if c:
-            charts.append(c)
+    sawtooth = ("Nothing is reserved, so each table grows on its own and its load factor sweeps from "
+                "about 0.5 just after a doubling to its maximum just before the next one. That is the "
+                "sawtooth, and the dotted verticals are where this map doubles. A ratio read at a "
+                "power of two is read at the emptiest a table ever is; read it at both ends.")
 
-    sawtooth = ("Nothing is reserved, so between the dotted lines each table's load factor climbs "
-                "from about 0.5 to its maximum and the cost climbs with it. Read a ratio at both "
-                "ends: at a power of two every table has just doubled and is at its emptiest.")
+    def pair(csv, csv_str, column="ns"):
+        """Two panels of one workload, one per key type, when there is one CSV for each."""
+        return [panel_of(r[csv], column, "uint64_t keys"), panel_of(r[csv_str], column, "std::string keys")]
 
-    add(read("find_hits_vs_size.csv"), "A find that hits", "nanoseconds per lookup, every one present",
-        [("ns", "up to 64K entries"), ("ns", "all sizes")], "entries", "ns",
-        note="The discriminating lookup view. " + sawtooth)
-    add(read("find_vs_size.csv"), "A find, half of them hitting", "nanoseconds per lookup, 50% hit rate",
-        [("ns", "up to 64K entries"), ("ns", "all sizes")], "entries", "ns",
-        note="A 50% hit rate is the maximum-entropy point of the hit-rate curve: it adds about half a "
-             "branch misprediction per lookup to every map and so compresses the differences, and it "
-             "can order two maps the opposite way from both all-hits and all-misses. Read it with the "
-             "chart above, never alone.")
-    add(read("churn_vs_size.csv"), "Churn at a fixed size", "nanoseconds per erase-and-insert pair",
-        [("ns", "up to 64K entries"), ("ns", "all sizes")], "entries", "ns",
-        note="The workload that separates designs rather than constant factors. " + sawtooth)
-    add(read("insert_erase_vs_size.csv"), "Insert and erase",
-        "nanoseconds per operator[] and erase pair, half of each finding nothing",
-        [("ns", "up to 64K entries"), ("ns", "all sizes")], "entries", "ns", note=sawtooth)
-    add(read("value_size.csv") and wide_value_size(), "Build and iteration against mapped-value size",
-        "nanoseconds per entry, 200000 entries",
-        [("build", "build from empty"), ("iterate", "one iteration pass")],
-        "sizeof(mapped_type), bytes", "ns", bars=True,
-        note="The axis that decides dense against flat. It stops at 64 bytes because 200000 entries of "
-             "a 64 byte value is 14 MB and still in L3, where 128 bytes is 27 MB and is not; past that "
-             "cliff every line bends upward together and the chart stops being about the value.")
-    add(read("memory_vs_value_size.csv"), "Memory against mapped-value size",
-        "megabytes held for 1000000 entries",
-        [("steady", "steady state"), ("peak", "peak during growth")],
-        "sizeof(mapped_type), bytes", "MB", bars=True,
-        note="Measured with a counting allocator and checked against a replaced global operator new; "
-             "the two agree to the byte. The peak is separate because growth allocates the new array "
-             "beside the old and only then frees it.")
-    add(read("memory_vs_size.csv"), "Memory against table size", "megabytes held",
-        [("steady", "steady state"), ("peak", "peak during growth")], "entries", "MB", ylog=True,
-        note="Per entry this barely moves with the table size, which is why it is sixteen near-identical "
-             "octaves and why the value-size chart above is the one that discriminates. The staircase is "
-             "the doubling.")
+    def sized(csv, column="ns"):
+        """Two panels of one CSV: the sizes most programs build, and the whole range."""
+        return [panel_of(r[csv], column, "up to 64K entries"), panel_of(r[csv], column, "all sizes")]
+
+    charts = [
+        chart("Find, every lookup hitting", "nanoseconds per lookup, uint64_t keys",
+              sized("find_hits_vs_size.csv"), "entries", "ns", resize_rows=r["find_hits_vs_size.csv"],
+              what="A table of n entries, then random lookups of keys that are all present, drawn "
+                   "uniformly and with the rng carrying on across epochs so no sequence repeats. "
+                   "One lookup is a hash, a probe, and a comparison of the key that was found.",
+              why="<b>The most discriminating lookup chart, and the one to decide by.</b> Every map "
+                  "here has to do the same three things, so what differs is how many cache lines the "
+                  "probe touches and how predictably it branches — and with the outcome fixed, "
+                  "neither is masked by anything else. " + sawtooth),
+        chart("Find, every lookup hitting", "nanoseconds per lookup, std::string keys",
+              sized("find_hits_vs_size_str.csv"), "entries", "ns",
+              resize_rows=r["find_hits_vs_size_str.csv"],
+              what="The same, with keys of 8 to 135 bytes skewed towards short. One fixed length "
+                   "would make the hash's length dispatch perfectly predictable and hide a third of "
+                   "what a string lookup costs.",
+              why="<b>The realistic case for most maps, and the one where the index matters least.</b> "
+                  "Hashing is 33-38% of a string lookup and the comparison is a memcmp behind a "
+                  "pointer the map has to chase, so the four maps converge: whatever the index does "
+                  "well is diluted by work none of them can avoid. Worth having precisely because it "
+                  "sets the ceiling on what a better index can buy a string map."),
+        chart("Find, half the lookups hitting", "nanoseconds per lookup, uint64_t keys",
+              sized("find_vs_size.csv"), "entries", "ns", resize_rows=r["find_vs_size.csv"],
+              what="The same lookups, but each one decides by a coin flip whether to ask for a key "
+                   "that is present or one that is not, from a pool that never was.",
+              why="It is the shape of a real membership test, and the misprediction it adds is a real "
+                  "cost that a program with an unpredictable hit rate really pays.",
+              warn="<b>Do not decide anything on this chart.</b> A 50% hit rate is the maximum-entropy "
+                   "point of the hit-rate curve: it adds about half a branch misprediction per lookup "
+                   "to every map, which is a flat tax that compresses exactly the differences the "
+                   "chart exists to show — the four maps separate by 1.57x at 100% hits and by 1.00x "
+                   "here. Worse, it can <i>invert</i> their order: measured, this map is fastest on "
+                   "hits (1.25x) and fastest on misses (1.25x) and still loses the 50% mix by 1.6% to "
+                   "a map that is slower at both, because that map's probe already mispredicted 0.6 "
+                   "times per lookup and an unpredictable outcome costs it nothing more. A number "
+                   "that can rank two maps the opposite way from both of its own components is not a "
+                   "summary of them. Use the all-hits chart above, and this one only to see what "
+                   "outcome unpredictability costs."),
+        chart("Find, half the lookups hitting", "nanoseconds per lookup, std::string keys",
+              sized("find_vs_size_str.csv"), "entries", "ns", resize_rows=r["find_vs_size_str.csv"],
+              what="The 50% mix on 8 to 135 byte keys.",
+              why="Both effects at once, and they point the same way: the hash dilutes the index's "
+                  "contribution and the coin flip compresses what is left.",
+              warn="<b>The same caution as above, doubly.</b> Read the all-hits string chart instead."),
+        chart("Churn at a fixed size", "nanoseconds per erase-and-insert pair, uint64_t keys",
+              sized("churn_vs_size.csv"), "entries", "ns", resize_rows=r["churn_vs_size.csv"],
+              what="Grow to n once, then forever erase a key that is present and insert one that is "
+                   "not, so the size never changes and neither does the bucket count. The erased key "
+                   "goes back into the spare pool and the inserted one takes its place, so no key is "
+                   "built inside the timed region.",
+              why="<b>The workload that separates designs rather than constant factors.</b> A table "
+                  "that has churned for a long time is not the table you built: a design that frees a "
+                  "slot without undoing what probed past it only degrades, and is relieved only by "
+                  "growing. That is why boost swings up to 4.8x across a single octave here where "
+                  "this map swings 1.3x — its overflow bits only ever get set, where the group "
+                  "index's counters come back down on every erase. Nothing else on this page can "
+                  "tell a long-lived table from a freshly built one. " + sawtooth),
+        chart("Churn at a fixed size", "nanoseconds per erase-and-insert pair, std::string keys",
+              sized("churn_vs_size_str.csv"), "entries", "ns", resize_rows=r["churn_vs_size_str.csv"],
+              what="The same, on 8 to 135 byte keys.",
+              why="Same property, smaller signal, and one extra thing to know: with string keys what "
+                  "degrades under churn is partly the heap the key bodies live on rather than the "
+                  "table, so this chart is measuring the allocator as well as the map."),
+        chart("Insert and erase", "nanoseconds per operator[] and erase pair, uint64_t keys",
+              sized("insert_erase_vs_size.csv"), "entries", "ns",
+              resize_rows=r["insert_erase_vs_size.csv"],
+              what="Four operations a round with the size invariant by construction: an operator[] "
+                   "that finds, an erase that finds nothing, an erase that removes, and an "
+                   "operator[] that inserts.",
+              why="Largely the same story as churn, which is why the four-chart summary leaves it "
+                  "out. It is here because half of its operations find nothing, so unlike churn it "
+                  "pays for the miss path as well — and because operator[] is the call most programs "
+                  "actually write. " + sawtooth),
+        chart("Insert and erase", "nanoseconds per operator[] and erase pair, std::string keys",
+              sized("insert_erase_vs_size_str.csv"), "entries", "ns",
+              resize_rows=r["insert_erase_vs_size_str.csv"],
+              what="The same, on 8 to 135 byte keys.",
+              why="Mostly a check that nothing about a string key changes the ordering. If it ever "
+                  "does, that is the interesting result."),
+        chart("Build from empty, against mapped-value size",
+              "nanoseconds per entry, 200000 entries, nothing reserved",
+              [panel_of(vs, "build", "uint64_t keys"), panel_of(vs_str, "build", "std::string keys")],
+              "sizeof(mapped_type), bytes", "ns", bars=True,
+              what="Insert n entries into a default-constructed map, so the growth is included: about "
+                   "half of a build is rehashing, and a map that grows badly would otherwise score "
+                   "like one that grows well. Repeated across mapped values of 8 to 64 bytes.",
+              why="<b>The axis that decides dense against flat.</b> A flat map writes the whole "
+                  "value_type into a hash-scattered slot and moves it again on every rehash, so all "
+                  "of its costs scale with the value; a dense map writes eight bytes there and "
+                  "appends the value to a vector in order. Boost's line crosses above robin hood's "
+                  "around 48 bytes. A suite that fixes the mapped type at size_t — as this one did "
+                  "until September — ranks the two families wrongly for map&lt;Key, SomeStruct&gt;, "
+                  "which is at least as common as map&lt;Key, size_t&gt;. It stops at 64 bytes "
+                  "because 200000 entries of a 64 byte value is 14 MB and still in L3, where 128 is "
+                  "27 MB and is not; past that cliff every line bends upward together and the chart "
+                  "stops being about the value."),
+        chart("One iteration pass, against mapped-value size",
+              "nanoseconds per entry, 200000 entries",
+              [panel_of(vs, "iterate", "uint64_t keys"), panel_of(vs_str, "iterate", "std::string keys")],
+              "sizeof(mapped_type), bytes", "ns", bars=True,
+              what="Walk every entry once and read one field of each, on a map built and then left "
+                   "alone. Separate from the build chart because the two answer different questions "
+                   "and differ by two orders of magnitude — on one axis together, the iteration "
+                   "would be a flat line along the floor.",
+              why="<b>The one place the dense layout wins outright, and by the largest margin on this "
+                   "page.</b> A dense map iterates a contiguous vector; a flat map walks its whole "
+                   "slot array and skips the empty ones, which at load 0.5 is half of what it "
+                   "touches. That is 10.5x at an 8 byte value, narrowing to 2.3x at 64 as the payload "
+                   "starts to dominate. If you iterate at all often, this chart is the argument."),
+        chart("Memory, against mapped-value size", "megabytes held for 1000000 entries, uint64_t keys",
+              [panel_of(r["memory_vs_value_size.csv"], "steady", "steady state"),
+               panel_of(r["memory_vs_value_size.csv"], "peak", "peak during growth")],
+              "sizeof(mapped_type), bytes", "MB", bars=True,
+              what="Every allocation the process makes while building the map, counted by replacing "
+                   "global new and delete. Steady state is what it holds when built; the peak is the "
+                   "most it ever held, which is during a growth, when the new array is allocated "
+                   "before the old one is freed.",
+              why="<b>Speed alone picks the wrong map often enough to deserve a chart, and this is the "
+                  "axis memory differentiates on.</b> Per entry it barely moves with the table size, "
+                  "but against the value it moves a lot: a flat map pays for its empty slots at the "
+                  "full width of the value, a dense one pays four bytes of index for them. The peak "
+                  "is the number a caller has to have room for and is where the gap is widest."),
+        chart("Memory, against mapped-value size", "megabytes held for 200000 entries, std::string keys",
+              [panel_of(r["memory_vs_value_size_str.csv"], "steady", "steady state"),
+               panel_of(r["memory_vs_value_size_str.csv"], "peak", "peak during growth")],
+              "sizeof(mapped_type), bytes", "MB", bars=True,
+              what="The same count with string keys, which is why it counts global new rather than "
+                   "the container's allocator: the key bodies are allocated by std::allocator&lt;char&gt; "
+                   "inside each string, which a container allocator never sees.",
+              why="Worth having because it is the case where the dense layout's memory advantage "
+                  "mostly disappears. The key bodies are the same heap for every map, and the value "
+                  "vector's capacity overshoots by up to 2x where a slot array is exactly its bucket "
+                  "count, so the two effects nearly cancel. Reserve, and the overshoot goes away."),
+        chart("Memory, against table size", "megabytes held, uint64_t keys",
+              [panel_of(r["memory_vs_size.csv"], "steady", "steady state"),
+               panel_of(r["memory_vs_size.csv"], "peak", "peak during growth")],
+              "entries", "MB", ylog=True,
+              what="The same count, walked over table size at a fixed size_t value.",
+              why="Mostly a reference for reading a total off: per entry the picture is sixteen "
+                  "near-identical octaves, which is exactly why the value-size chart above is the one "
+                  "that discriminates. The staircase is the doubling."),
+        chart("Memory, against table size", "megabytes held, std::string keys",
+              [panel_of(r["memory_vs_size_str.csv"], "steady", "steady state"),
+               panel_of(r["memory_vs_size_str.csv"], "peak", "peak during growth")],
+              "entries", "MB", ylog=True,
+              what="The same with string keys, the key bodies included.",
+              why="Shows how much of a string map is the strings: most of it at small values, which "
+                  "is the reason the four maps sit almost on top of each other."),
+    ]
+    charts = [c for c in charts if c]
 
     colors = {k: {"light": light, "dark": dark, "label": label} for k, label, light, dark in SERIES}
     order = [k for k, _, _, _ in SERIES]
@@ -132,9 +260,11 @@ def main():
     print(f"wrote {out}: {len(charts)} charts")
 
 
-def wide_value_size():
-    """value_size.csv is long-form (a `what` column); the chart wants one column per workload."""
-    rows = read("value_size.csv")
+def wide_value_size(name):
+    """value_size*.csv is long-form (a `what` column); a chart wants one column per workload."""
+    rows = read(name)
+    if rows is None:
+        return None
     wide = {}
     for r in rows:
         wide.setdefault((r["entries"], r["map"]), {})[r["what"]] = r["ns"]
@@ -156,11 +286,15 @@ PAGE = r"""<!DOCTYPE html>
        own height (the viewBox is 2.2:1) pushes the next chart off the screen. */
     --page: min(100%, 2600px);
     --bar: 52px;
+    /* The one reserved status colour on the page, used for exactly one thing: a chart whose number
+       should not be used to decide. Kept away from the four series hues on purpose. */
+    --warn-ink: #a8442a; --warn-line: #e6c3b6; --warn-bg: #fdf3ef;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --ink3: #8b8a80;
       --grid: #343431; --rule: #2b2b29; --chip: #232322;
+      --warn-ink: #f0a58c; --warn-line: #5a3a2e; --warn-bg: #2a1e19;
     }
   }
 __SERIESCSS__
@@ -191,7 +325,21 @@ __SERIESCSS__
   button.chip[aria-pressed="false"] { color: var(--ink3); }
   button.chip[aria-pressed="false"] .dot { background: none !important; box-shadow: inset 0 0 0 1.5px currentColor; }
   figure { max-width: var(--page); margin: 34px auto 0; padding: 0; }
-  figcaption { color: var(--ink2); font-size: 12.5px; line-height: 1.6; max-width: 88ch; }
+  figcaption { margin-top: 14px; max-width: 96ch; }
+  figcaption p { color: var(--ink2); font-size: 13px; line-height: 1.65; margin: 0 0 8px; }
+  figcaption p.what { color: var(--ink3); }
+  figcaption b { color: var(--ink); font-weight: 600; }
+  .warn {
+    display: flex; gap: 10px; align-items: flex-start; margin: 0 0 12px;
+    border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 8px;
+    padding: 10px 12px; color: var(--ink2); font-size: 13px; line-height: 1.6;
+  }
+  .warnmark {
+    flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--warn-ink); border: 1px solid var(--warn-line); border-radius: 4px; padding: 2px 6px;
+    margin-top: 1px;
+  }
+  .warn b { color: var(--warn-ink); font-weight: 650; }
   .ctitle { font-size: 15.5px; font-weight: 650; margin: 0 0 2px; letter-spacing: -0.005em; }
   .csub { color: var(--ink2); font-size: 12.5px; margin: 0 0 10px; }
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; }
@@ -409,7 +557,10 @@ function render() {
                   chart.panels[0].title.includes("entries") && chart.panels[1].title.includes("sizes");
     fig.innerHTML = `<p class="ctitle">${chart.title}</p><p class="csub">${chart.subtitle}</p>` +
       `<div class="panels">${chart.panels.map((p, i) => `<div><p class="ptitle">${p.title}</p><div class="panel" id="p${ci}_${i}"></div></div>`).join("")}</div>` +
-      (chart.note ? `<figcaption style="margin-top:10px">${chart.note}</figcaption>` : "");
+      `<figcaption>` +
+      (chart.warn ? `<div class="warn"><span class="warnmark">avoid</span><div>${chart.warn}</div></div>` : "") +
+      (chart.what ? `<p class="what">${chart.what}</p>` : "") +
+      (chart.why ? `<p class="why">${chart.why}</p>` : "") + `</figcaption>`;
     main.appendChild(fig);
     chart.panels.forEach((p, i) => {
       const dom = split ? (i === 0 ? [full[0], Math.min(65536, full[1])] : full) : full;
