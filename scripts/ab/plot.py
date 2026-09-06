@@ -15,8 +15,12 @@ import sys
 from collections import defaultdict
 
 # categorical slots 1-3 of the reference palette, light and dark, validated for CVD separation
+# Four slots, validated as a categorical set against both surfaces (dataviz/validate_palette.js,
+# --pairs all): the magenta had to be a magenta, because a purple beside this blue is 13.6 apart to
+# normal vision and 4.8 under deuteranopia, which is not a distinction anyone can make.
 SERIES = [("this", "this map", "#2a78d6", "#3987e5"),
           ("main", "robin hood (main)", "#eb6834", "#d95926"),
+          ("jan", "4.8.1 (January)", "#b5399e", "#c74ab0"),
           ("boost", "boost::unordered_flat_map", "#1baf7a", "#199e70")]
 
 W, H = 980, 450

@@ -188,32 +188,71 @@ round, so drift cancels out of the ratio. The sweep now does the same, and repor
 interval alongside it. Even paired it needs **101 epochs** for intervals around 5% of the ratio;
 at nanobench's default 11 they were 25% wide, which is the real reason the early numbers moved.
 
-With that fixed, and only out to 1M where two runs on a quiet machine agree to 0.8% median. Read at
-exact powers of two, which is where each table has just doubled and so sits at the *bottom* of its
-sawtooth -- churn and insert-erase swing by a factor of two or three across an octave, so a ratio
-quoted for one of them means nothing without saying where in the sawtooth it was taken:
+With that fixed, and only out to 1M where two runs on a quiet machine agree to 0.8% median. **Where
+in the sawtooth a ratio is read decides its sign, so both ends are given.** A power of two is where
+a table has just doubled and is at its emptiest, load about 0.5; the last sample point before the
+next doubling is load 0.79, which is where a table that grew spends most of its life. this/boost,
+so above 1.00 means boost is ahead:
 
-| entries | find, this/boost | churn, this/boost | insert-erase, this/boost |
-|---|---|---|---|
-| 256 | 1.24 | 1.46 | 1.50 |
-| 4K | 1.26 | 1.46 | 1.65 |
-| 64K | 1.37 | 1.94 | 1.78 |
-| 1M | 1.35 | 1.31 | 1.37 |
+| entries | load | find | churn | insert-erase |
+|---|---|---|---|---|
+| 4K | 0.50 | 1.27 | 1.41 | 1.65 |
+| 64K | 0.50 | 1.36 | 1.90 | 1.73 |
+| 1M | 0.50 | 1.31 | 1.25 | 1.47 |
+| 3251 | 0.79 | 1.15 | **0.46** | **0.61** |
+| 26008 | 0.79 | 1.23 | **0.51** | **0.71** |
+| 104032 | 0.79 | 1.24 | 1.27 | 1.13 |
+| 832255 | 0.79 | 1.22 | 1.50 | 1.42 |
 
-Boost is ahead on all three, and by more on the two that mutate. The cause is structural and was
-worth finding: a dense erase has to close the hole it makes in the value vector, and locating the
-moved element's slot is a second probe (`slot_of_value`) on top of the one that found the key. Boost
-probes once and marks the slot free. This does not contradict the scored `churn64`, which has this
-map 1.16-1.21x *ahead*, because the scored round is erase, insert **and two finds**, and it reserves
--- the finds are what carry it.
+Read at powers of two, boost is ahead on all three and by more on the two that mutate; the cause is
+structural and was worth finding, since a dense erase has to close the hole it makes in the value
+vector and locating the moved element's slot is a second probe (`slot_of_value`) on top of the one
+that found the key, where boost probes once and marks the slot free. **But at load 0.79 and below
+about 100000 entries the two mutating workloads invert: this map is 2.2x ahead of boost on churn and
+1.6x on insert-erase.** Boost's overflow bits only ever get set, so a boost table near its maximum
+load has had every group marked and every miss walks on; this map's counters come back down on every
+erase. Which is exactly the property the design exists for, and the reason the scored `churn64` --
+which reserves, and whose round is erase, insert *and two finds* -- has this map ahead rather than
+behind.
 
-**The other half of the churn picture is this map's own, and it is the design working.** Below 64K
-its line is nearly flat where the other two saw-tooth: measured on `doc/churn_vs_size.csv` over each
-fully sampled octave from 1K to 64K entries, this map swings 1.09-1.32x between its cheapest and
-dearest point, robin hood 1.38-1.93x, and boost 2.51-4.14x. Robin hood's probe
-lengthens with the load and boost's overflow bits only ever get set, so both cost more as a table
-fills and are relieved only by growing; the group index's counters come back down on every erase.
-That is the property the whole design exists for, and it is the first picture of it.
+**The same thing said as flatness, which is the shape of it.** Over each fully sampled octave from
+1K to 64K entries, cheapest point to dearest:
+
+| workload | 4.8.1 | robin hood (main) | this map | boost |
+|---|---|---|---|---|
+| find | 1.42-2.23x | 1.08-1.39x | **1.09-1.33x** | 1.11-1.45x |
+| churn | 2.45-3.83x | 1.50-1.98x | **1.10-1.31x** | 1.70-4.31x |
+| insert-erase | 2.32-3.32x | 1.38-1.71x | **1.12-1.25x** | 1.78-3.33x |
+
+Robin hood's probe lengthens with the load and boost's overflow bits only ever get set, so both cost
+more as a table fills and are relieved only by growing. This map is the flattest line on all three
+workloads, and 4.8.1 is the steepest -- a churn that costs 3.8x more just before a doubling than
+just after it.
+
+**Where a year of this got to, measured against 4.8.1** (2026-09-06, `scripts/ab/run.sh -r 3234af2
+-b all 12`, the revision `main` stood at on 1 January 2026: scalar robin hood, no vector probe
+anywhere). Score geomean **1.467 under clang and 1.434 under gcc**, 1.60 and 1.57 without the three
+iteration workloads, with `build64` 2.60, `churn64` 2.16, `rhit64` 2.16, `churnbig` 1.99 and
+`rmiss64` 1.98 leading it and iteration at 1.00-1.08, which nothing this year touched.
+
+Two results in that run matter more than the geomean, and both are in `scripts/ab/README.md` with
+their evidence. The **string hash is 4-7% slower than 4.8.1's** -- `hashstr` 0.96 clang, 0.93 gcc
+with the gcc interval excluding parity, and boost's row moving with the candidate, which is the
+control that says it is the hash rather than the map; the suspicion is that July's wyhash work was
+tuned while every benchmark string was 200 bytes long, and is not confirmed. And **the lookup gain
+is nearly all at high load**: against today's `main` on an all-hits `find()`, 4.8.1 is 1.7x slower at
+50000 entries in 65536 buckets (load 0.76) and level at 131072 in 262144 (load 0.5); on the sweep's
+half-missing lookup the same two points read 1.19x and 0.84x, since a miss ends sooner and dilutes
+it. At a few thousand entries and load 0.5 4.8.1 is *ahead*, where a short probe in L1 has few
+mispredictions for a vector probe to save and only its extra instructions show. A power of two is where every table has just doubled, so a benchmark that samples
+only powers of two sees almost none of the year's work.
+
+`doc/find_vs_size.svg` now carries 4.8.1 as a fourth line and is the picture of that. Over one
+octave 4.8.1 swings **1.42-2.23x** between its cheapest and dearest point, against 1.08-1.39x for
+main, 1.09-1.33x for this map and 1.11-1.45x for boost; point by point 4.8.1 runs from 0.81x of this
+map just after a doubling to 1.47x just before one. The year did not make the best case faster, it
+removed the worst case -- and at load 0.79 the order is boost, this map, main, 4.8.1 at every size
+from 3251 entries up.
 
 **Two more things the sweep got wrong, found on 2026-09-06 while adding a confidence band to the
 absolute chart.** Neither is about the map.
@@ -227,9 +266,13 @@ away.
 *And a single paired run is still not trustworthy point by point.* One of five find runs had this
 map alone reading 15-54% high at four adjacent sizes -- 4.59 ns at 64 entries against 2.86 to 3.03
 in the other four -- with 0.5% intervals saying nothing was wrong and the other two maps normal
-throughout. A disturbance that lands on one alternative for a stretch of rounds is exactly what
-pairing does not cancel. It was caught only by comparing against another run, which is now the rule:
-read a chart for its shape, and check a surprising *point* against a second run. On a quiet machine
+throughout. The second sighting gave the cause: adding a fourth map put boost at 4.72 ns at 128
+entries where every other run says 2.4-2.6, wrong from 128 to about 8192. The sweep *grew* its maps
+through the sample points, so each map's addresses depended on the interleaved history of the
+others' allocations and an unlucky layout persisted until the next reallocation. It now rebuilds
+every map at every point, which costs about a second across the whole sweep and makes a bad layout
+spoil one point rather than a stretch. The rule stands anyway, since nothing makes one run right on
+its own: read a chart for its shape, and check a surprising *point* against a second run. On a quiet machine
 two runs agree to 0.78% median on the absolute median epoch, 0.49% on the fastest epoch and 0.92% on
 the ratio -- and 9.3%, 6.9% and 6.0% at their worst points, which is what the confidence bands
 drawn on the charts do *not* bound, since a within-run interval says nothing about what differs
