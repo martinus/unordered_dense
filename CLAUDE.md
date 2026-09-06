@@ -281,8 +281,11 @@ older note above, which had boost *ahead* at 16 bytes and behind at 64 -- the cr
 chart entirely when the rehash store-to-load fix made building 1.80x faster, so this map now leads at
 every value size measured. The axis stops at 64 bytes because 200000 entries of a 64 byte value is
 14 MB and still in L3 where 128 is 27 MB and is not, and past that every line bends upward together.
-**Memory**: at a power of two this map holds 27 bytes per entry against 32 for main, 4.8.1 and boost,
-and its growth peak is 32.5 against boost's 48 and main's 40. 4.8.1's peak is 32, *lower* than main's
+**Memory**: the chart is megabytes held on a log axis, since that is what a caller must find room for
+and a total against size spans five decades; the ranking is in the per-entry columns of the CSV
+beside it, because a 16% difference is 1% of such an axis. At a power of two this map holds 27 bytes
+per entry against 32 for main, 4.8.1 and boost, and its growth peak is 32.5 against boost's 48 and
+main's 40. 4.8.1's peak is 32, *lower* than main's
 40, which is the price of `8d0e17e` -- building the new bucket array before releasing the old one is
 what makes growth exception-safe, and it costs a taller transient.
 

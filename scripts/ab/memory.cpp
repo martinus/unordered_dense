@@ -6,9 +6,9 @@
 // -- whose values grow smoothly but whose index still doubles -- it is the whole of what segmenting
 // does not buy.
 //
-// Bytes per entry rather than bytes, because absolute bytes against size is a straight line on a log
-// axis and says nothing; per entry shows the sawtooth of the doubling and the differences between
-// the maps, which is the reason for the chart.
+// Total bytes, which is what a caller has to find room for. Bytes per entry is in the CSV beside it,
+// since it is the better view of the *sawtooth* -- it is flat in size where the total is exponential
+// -- but the question this chart answers is how much memory the map costs, and that is a total.
 //
 // No timing here, so it needs no pinning and no pairing: an allocator that counts is exact.
 //
@@ -98,7 +98,14 @@ void measure(char const* name, std::size_t n) {
             m.try_emplace((r() >> 1U) | 1U, std::size_t{1});
         }
         auto const per = static_cast<double>(n);
-        std::printf("%zu,%s,%.3f,%.3f\n", n, name, static_cast<double>(g_live) / per, static_cast<double>(g_peak) / per);
+        auto const mb = 1024.0 * 1024.0;
+        std::printf("%zu,%s,%.6f,%.6f,%.3f,%.3f\n",
+                    n,
+                    name,
+                    static_cast<double>(g_live) / mb,
+                    static_cast<double>(g_peak) / mb,
+                    static_cast<double>(g_live) / per,
+                    static_cast<double>(g_peak) / per);
     }
 }
 
@@ -109,7 +116,7 @@ auto main(int argc, char** argv) -> int {
     auto const per_octave = argc > 2 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 12U;
 
     using V = std::size_t;
-    std::printf("entries,map,steady,peak\n");
+    std::printf("entries,map,steady,peak,steady_per_entry,peak_per_entry\n");
     for (auto n : sample_sizes(max_shift, per_octave)) {
         measure<udmbase::unordered_dense::map<std::uint64_t,
                                               V,

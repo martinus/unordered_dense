@@ -51,7 +51,8 @@ def main():
     #   --x=Label                            what the x axis counts, if not entries
     #   --unit=ns                            what the y axis counts
     argv = [a for a in sys.argv if not a.startswith("--")]
-    flags = dict(a[2:].split("=", 1) for a in sys.argv if a.startswith("--"))
+    # `--logy` is a bare switch; the rest take a value
+    flags = dict((a[2:].split("=", 1) + [""])[:2] for a in sys.argv if a.startswith("--"))
     rows = list(csv.DictReader(open(argv[1])))
     out = argv[2] if len(argv) > 2 else "lookup_vs_size.svg"
     sys.argv = argv
@@ -157,6 +158,14 @@ def main():
             ytop = math.ceil(vmax * 10) / 10
             step = 0.1 if ytop - ybot <= 0.8 else 0.2
             yticks = [ybot + i * step for i in range(int(round((ytop - ybot) / step)) + 1)]
+        elif "logy" in flags:
+            # A total against size spans five decades, where every other chart here spans one; a
+            # linear axis would put four of those decades on the baseline. Powers of ten, and the
+            # bottom is the smallest value rather than zero, which a log axis cannot show.
+            vmin = min(data[k][n] for k, _, _, _ in present for n in sizes)
+            ybot = math.floor(math.log10(vmin))
+            ytop = math.ceil(math.log10(vmax))
+            yticks = [ybot + i for i in range(int(ytop - ybot) + 1)]
         else:
             yticks = nice_ticks(vmax)
             ybot = 0.0
@@ -166,18 +175,19 @@ def main():
         def px(n, left=left, lo=lo, hi=hi):
             return left + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * panel_w
 
-        def py(v, ybot=ybot, ytop=ytop):
-            return PAD_T + panel_h * (1 - (v - ybot) / (ytop - ybot))
+        def py(v, ybot=ybot, ytop=ytop, logy="logy" in flags):
+            u = math.log10(v) if logy and v > 0 else v
+            return PAD_T + panel_h * (1 - (u - ybot) / (ytop - ybot))
 
         s.append(f'<text x="{left:.1f}" y="{PAD_T - 14}" class="t2" fill="#52514e" font-size="12" '
                  f'font-weight="600">{title}</text>')
         s.append(f'<text x="{left - 10:.1f}" y="{PAD_T - 14}" class="t2" fill="#52514e" font-size="11" '
                  f'text-anchor="end">{flags.get("unit", "x" if mode == "ratio" else "ns")}</text>')
         for v in yticks:
-            y = py(v)
+            y = PAD_T + panel_h * (1 - (v - ybot) / (ytop - ybot)) if "logy" in flags else py(v)
             s.append(f'<line x1="{left:.1f}" y1="{y:.1f}" x2="{left + panel_w:.1f}" y2="{y:.1f}" class="g" '
                      f'stroke="#e6e5e1" stroke-width="1"/>')
-            label = f"{v:.4g}"
+            label = f"{10 ** v:.4g}" if "logy" in flags else f"{v:.4g}"
             s.append(f'<text x="{left - 10:.1f}" y="{y + 4:.1f}" class="t2" fill="#52514e" font-size="11" '
                      f'text-anchor="end">{label}</text>')
         # a handful of round sizes; dense sampling must not become a smear of labels. With few
