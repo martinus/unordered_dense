@@ -561,35 +561,61 @@ on a shared map is treated as read-only by callers, and this would make it a dat
 Drift, groups per lookup at 50000 entries and load 0.76 after 200 turnovers, fresh 1.032 per hit
 and 1.052 per miss, base churned 1.143 and 1.265: with one `operator[]` hit per erase **1.091 and
 1.162**, with four **1.054 and 1.093** -- nearly a fresh table, and it converges rather than
-plateaus because every displaced entry that is touched again goes home. Paired, `uint64_t` keys, a
-churn round of erase, `operator[]` hit, miss, insert:
+plateaus because every displaced entry that is touched again goes home.
+
+**What it is worth, and the measurement that had to be done three times to find out.** The first
+number, from a paired run of the two headers in one binary at 50000 entries, was misses 4.02 to
+2.70 ns -- 1.49x -- and it was wrong. One map per binary, `uint64_t` keys, a table churned forty
+times through with a writing hit per round, two runs each:
 
 | 50000 entries, churned | base | move-home |
 |---|---|---|
-| churn round | 40.1 ns | 39.3 (1.02x) |
-| `operator[]` hit | 7.68 | 7.16 (1.07x) |
-| find, hit | 6.22 | 5.53 (1.12x) |
-| find, miss | 4.02 | **2.70 (1.49x)** |
+| churn round (`operator[]` hit, erase, miss, insert) | 42.7 ns | 42.5 |
+| find, hit | 5.9 | 5.7 (1.04x) |
+| find, miss | 5.16 | **4.64 (1.11x)** |
+| branch misses, whole run | 7.59M | 6.26M |
 
-At 2M entries everything is within 1% either way, as with the pull-back: a one-step displacement
-is the adjacent block, which the prefetcher already has. The miss gain is far out of proportion to
-the groups saved (1.26 to 1.09), and that is the finding worth keeping: what the drift really
-cost was not the extra group but the *branch* -- with a quarter of misses continuing past home the
-stop-or-continue decision is a coin flip, with a tenth it predicts. On a fresh table the check is
-free (`operator[]` hits 7.42 to 7.20, which is layout). The score cannot see any of this and reads
-0.999 under clang and 1.004 under gcc, every interval within a percent of parity: its workloads
-either grow, and a rehash resets the drift for nothing, or churn with `find` between the erase and
-the insert, which does not move anything. Two tests in `move_home.cpp`: the churn with a mutating
-hit every cycle, checking every key and its value, and a steered one on the identity hash that
-fills a group, sends one key past it, makes room and provokes the move. Mutation sweep of
-`uncount` and `move_home`, 41 mutants: 14 caught by a test, 17 by the compiler, 3 hung, 7
-survived -- four of them the counter decrement, which is the same uncovered decrement the
-termination-bound entry above records (now shared between erase and the move), and the other two
-the "already at home" early return and its comparison, which mutated either move an entry to
-another lane of its own home group, which is legal, or silently skip the repair. Nothing that
-changes an answer survived. The design paragraph at the top of this file that said nothing moves
-after placement is now wrong by exactly this much: a hit inside a write may move one step, to its
-home, and nothing else moves.
+At 2M entries every figure is within 1-2% either way, as with the pull-back: a one-step
+displacement is the adjacent block, which the prefetcher already has. So: about a tenth off a miss
+and a few percent off a hit on an in-cache table that has churned with writes, nothing on the churn
+itself, nothing out of cache, +2% instructions per writing hit. Kept, because it is thirty lines
+with no cost anywhere measured and the mechanism is the drift's cost itself -- the branch misses
+say what that cost was: with a quarter of misses continuing past home the stop-or-continue branch
+mispredicts, with a tenth it does not.
+
+The score cannot see it and reads **1.000 under clang and 1.022 under gcc**, the gcc figure being
+`buildbig` at 1.40 in a workload that never calls `move_home` -- gcc's inlining in the harness
+translation unit moved, which is the `probe`-out-of-line story from the group index's first week
+and not this change. Its workloads either grow, and a rehash resets the drift for nothing, or churn
+with `find` between the erase and the insert, which moves nothing. `sweep.cpp` mode 5 is the
+scored churn's shape with the hit through `operator[]`, added for this, and the size sweeps it
+produced are the third measurement and the one to learn from:
+
+**The sweep cannot resolve a question this size, and the way to know is to run the same code on
+both sides.** Two builds of the same working tree, mode 1 (no lookups, so `move_home` never runs)
+against the same baseline: octave 128-255 read **0.876 in one and 1.158 in the other**, and 524K-1M
+read 0.997 and 1.067. Mode 5 read 0.860 at 1M in the build where mode 1 read 1.085, and the one-map
+binaries tie there to 0.1% with identical counters. A same-code control (the working tree renamed
+into both namespaces) reads 1.00-1.02 at every point above 128K, so it is not the harness; it is
+the code layout of a translation unit holding two headers, and it moves 3% at large sizes and 30%
+at L1-resident ones every time either header changes. The within-run intervals, which are what the
+charts draw, say nothing about it. The rule this leaves is the one the `hashstr` control has been
+saying all along: a paired two-header measurement decides a 10% question and not a 3% one, and
+anything smaller is decided one map per binary, with counters.
+
+Two tests in `move_home.cpp`: the churn with a mutating hit every cycle, checking every key and
+its value, and a steered one on the identity hash that fills a group, sends one key past it,
+makes room and provokes the move. Mutation sweep of `uncount` and `move_home`, 41 mutants: 14
+caught by a test, 17 by the compiler, 3 hung, 7 survived -- four of them the counter decrement,
+which is the same uncovered decrement the termination-bound entry above records (now shared
+between erase and the move), and the other two the "already at home" early return and its
+comparison, which mutated either move an entry to another lane of its own home group, which is
+legal, or silently skip the repair. Nothing that changes an answer survived. One codegen detail
+found by mode 1: `uncount` takes the group pointer, mask, home and counter as arguments loaded
+*before* the caller's fingerprint store, because a `std::uint8_t` store may alias any of them and
+a reload after it lands on the address chain of every step of the walk. The design paragraph at
+the top of this file that said nothing moves after placement is now wrong by exactly this much: a
+hit inside a write may move one step, to its home, and nothing else moves.
 
 **The rehash loop pipelined, and the partitioned rehash it was measured against** (2026-09-06,
 from asking what else the group structure is good for: placement is shift-free, so a rehash can

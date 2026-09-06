@@ -1623,46 +1623,53 @@ private:
     }
 
     // Takes an entry out of every counter it was counted in: the same walk from home that placed
-    // it, up to the group it landed in.
-    void uncount(std::uint64_t mh, value_idx_type found_in) {
-        auto* groups = m_buckets.data();
-        auto group_idx = group_idx_from_hash(mh);
-        if (group_idx != found_in) {
-            auto const counter = fingerprint_word(mh) & 7U;
-            value_idx_type delta = 0;
-            do {
-                if (groups[group_idx].m_overflows[counter] != 255) {
-                    --groups[group_idx].m_overflows[counter];
-                }
-                group_idx = next_group(group_idx, delta);
-            } while (group_idx != found_in);
+    // it, up to the group it landed in. Everything it reads through `this` comes in as an argument,
+    // loaded before the caller's fingerprint store: a std::uint8_t store may alias the group
+    // pointer and the mask, so reading them afterwards puts a reload on the address chain of every
+    // step of the walk. Measured as a 2% loss on a churn sweep when this was refactored the other
+    // way round.
+    template <typename Group>
+    static void uncount(Group* groups, value_idx_type mask, value_idx_type home_idx, unsigned counter, value_idx_type found_in) {
+        auto group_idx = home_idx;
+        value_idx_type delta = 0;
+        while (group_idx != found_in) {
+            if (groups[group_idx].m_overflows[counter] != 255) {
+                --groups[group_idx].m_overflows[counter];
+            }
+            group_idx = static_cast<value_idx_type>((group_idx + (++delta)) & mask);
         }
     }
 
     // Frees the slot and takes the entry out of the counters.
     void erase_group_slot(value_idx_type slot, std::uint64_t mh) {
+        auto* groups = m_buckets.data();
+        auto const mask = m_group_mask;
+        auto const home_idx = group_idx_from_hash(mh);
+        auto const counter = fingerprint_word(mh) & 7U;
         auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
-        m_buckets.data()[found_in].m_fingerprints[slot % slots_per_group] = 0;
-        uncount(mh, found_in);
+        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
+        uncount(groups, mask, home_idx, counter, found_in);
     }
 
     // A hit found past its home group moves home if there is room there now, and comes out of
     // the counters it was counted in on the way out. This is what takes back the drift of a
     // churned table: an entry placed while its home was full stays where it landed after the
     // home empties again, and nothing else ever moves it, so at load 0.76 after 200 turnovers a
-    // hit visits 1.14 groups against 1.03 fresh and a miss 1.26 against 1.05. Doing it on erase
-    // instead -- pulling a sibling back into the freed slot -- was measured and lost: the counter
-    // cannot tell a sibling from an entry that passed through, so it fires on 46% of erases and
-    // hashes two or three candidates each time, 1.5x the cost of a churn round. Here the entry
-    // is the one just found, its home was just computed, and the home group is a compare away
-    // from being known full or not, so a hit at home costs one compare and a hit away from home
-    // costs a load, two stores and the counter walk. Measured at 50000 entries, churned, with one
-    // mutating hit per erase: misses 4.02 to 2.70 ns, hits 6.22 to 5.53, the churn round itself
-    // 40.1 to 39.3; out of cache everything within 1%, since one step of displacement is the
-    // adjacent block and the prefetcher already has it. The miss gain is out of proportion to
-    // the groups saved, which says what the drift really cost: with a quarter of misses
-    // continuing past home the stop-or-continue branch is a coin flip, and with a tenth it is
-    // not.
+    // hit visits 1.14 groups against 1.03 fresh and a miss 1.26 against 1.05; with one writing
+    // hit per erase this brings that to 1.09 and 1.16, with four to 1.05 and 1.09. Doing it on
+    // erase instead -- pulling a sibling back into the freed slot -- was measured and lost: the
+    // counter cannot tell a sibling from an entry that passed through, so it fires on 46% of
+    // erases and hashes two or three candidates each time, 1.5x the cost of a churn round. Here
+    // the entry is the one just found, its home was just computed, and the home group is a
+    // compare away from being known full or not, so a hit at home costs one compare and a hit
+    // away from home costs a load, two stores and the counter walk.
+    //
+    // What it is worth, one map per binary so that nothing shares a translation unit, on a
+    // 50000 entry table churned forty times through with a writing hit per round: misses 5.16
+    // to 4.64 ns, hits 5.9 to 5.7, the churn round itself 42.7 against 42.5, branch misses down
+    // 18%; at 2M entries everything within 1-2%, since one step of displacement is the adjacent
+    // block and the prefetcher already has it. A paired run of the two headers in one binary had
+    // read 1.49x on the misses, which was code layout, not the map.
     //
     // Only from paths that already write. A const find cannot do this, and a non-const find()
     // is treated as read-only by callers who share a map between threads, so it does not either.
@@ -1679,12 +1686,14 @@ private:
             return;
         }
         auto const lane = first_lane(empties);
+        auto const mask = m_group_mask;
+        auto const counter = fingerprint_word(mh) & 7U;
         auto& from = groups[found_in];
         auto const from_lane = slot % slots_per_group;
         home.m_fingerprints[lane] = from.m_fingerprints[from_lane];
         home.m_index[lane] = from.m_index[from_lane];
         from.m_fingerprints[from_lane] = 0;
-        uncount(mh, found_in);
+        uncount(groups, mask, home_idx, counter, found_in);
     }
 
     // The slot that points at a value, searched from the value's home group. Every value has one,

@@ -313,7 +313,10 @@ learned by the branch predictor and stops measuring the branchy part of a probe.
 picks the workload: `0` find, `1` churn (an erase and an insert at a fixed size), `2` insert-and-erase
 (an `operator[]` and an `erase`, half of each finding nothing), `3` and `4` the same find with every
 lookup hitting or every lookup missing, which is what says whether a difference in `0` is about the
-lookup or about the unpredictability of its outcome. Both mutating modes erase before they
+lookup or about the unpredictability of its outcome, and `5` the scored churn's shape with the hit
+made through `operator[]` -- an erase, a writing hit, a miss and an insert -- which is the one
+workload here that runs `move_home`, since a hit found past its home group moves home only inside a
+write. All mutating modes erase before they
 insert, because the other order crosses the growth threshold and one operation ends up paying for
 rehashing the whole table.
 
