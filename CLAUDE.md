@@ -623,13 +623,21 @@ main everywhere except `find64` at 0.98, but with builds at 1.25 where linux cla
 which is what a different allocator does to a workload that grows -- `tame_allocator()` is a glibc
 trick and a no-op there.
 
-**One number in the matrix is not understood**: linux gcc SSE2 iterates at **0.77** of main, the
-only figure anywhere below 0.9, and it is not noise -- err% 0.0 and a 76.9-78.6 interval. It does
-not reproduce on this desktop with gcc 13.4 in a container, with or without boost compiled in
-(1.01 and 1.02), so it is the runner's gcc 13.3 build or its microarchitecture rather than the
-compiler major version. `it64` spends nearly all of its time iterating the value vector, which is
-byte for byte the same code in both maps, so the suspicion is code layout on that machine -- the
-same effect this file warns about at +-3%, at a size that would be remarkable. Unresolved.
+**The one outlier chased down, and it is the CPU rather than the code**: linux gcc SSE2 iterates at
+**0.77** of main, the only figure anywhere below 0.9. Not noise -- err% 0.0, a 76.9-78.6 interval,
+and 0.774 then 0.773 on two independent runs with fresh runners. Not the compiler either: built
+with the runner's exact package (`Ubuntu 13.3.0-6ubuntu2~24.04.1`) in a container on this desktop,
+the same binary reads **1.35**, and upstream gcc 13.4 reads 1.01. Same compiler, same flags, same
+source, so the same assembly; the machines are an EPYC 7763 on the runner against a Ryzen 7950X
+here, and the answer swings 1.75x between them.
+
+What makes `it64` able to do that is that it is the workload least about the index: 5000 inserts
+and 5000 erases against 25 million element visits, so it is almost entirely a vectorisable sum over
+the value vector, which is the same `std::vector<std::pair<K, V>>` in both maps. Whichever way the
+two loops happen to land, one of them wins by a lot on a given microarchitecture, and nothing about
+the group index is being measured. The lesson for reading the matrix is narrow and useful: `it64`
+is the column to distrust across machines, and a difference there is not evidence about the index.
+Every other workload agrees between the desktop and both runner architectures.
 
 **NEON closed the ARM lookup gap, and it was the whole gap** (2026-09-05). The SWAR row below is
 what prompted it: on a Neoverse N2 the branch was 1.11x main overall but *behind* on every lookup,
