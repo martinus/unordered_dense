@@ -25,7 +25,8 @@ for t in sweep valuesize memory; do clang++ $flags scripts/ab/$t.cpp "$build/nan
 taskset -c 2 ./sweep 20 12 20000 3 0.02 > doc/find_hits_vs_size.csv    # 1
 taskset -c 2 ./sweep 20 12 20000 1 0.02 > doc/churn_vs_size.csv        # 2
 taskset -c 2 ./valuesize 200000 0.02    > doc/value_size.csv           # 3
-./memory 20 6                           > doc/memory_vs_size.csv       # 4
+./memory 20 6 1 1000000                 > doc/memory_vs_value_size.csv # 4
+./memory 20 6                           > doc/memory_vs_size.csv       # (supplementary)
 ```
 
 **1. A find that hits, against table size.** All hits rather than a 50% mix: the mix is the
@@ -50,15 +51,24 @@ stops at 64 bytes on purpose: at 200000 entries that is 14 MB of values and stil
 bytes is 27 MB and is not, and past the cliff every line bends upward together and the chart stops
 being about the value.
 
-**4. Memory against table size, steady and peak.** Speed alone picks the wrong map often enough to
-deserve a chart. Megabytes held, because that is the number a caller has to find room for, on a log
-axis because a total against size spans five decades where every other chart here spans one. The
-peak is a separate panel: growth allocates the new array beside the old and only then frees it, so a
-chart of steady state alone hides the transient. It needs no pinning and no pairing, because an
-allocator that counts is exact.
+**4. Memory against mapped-value size, steady and peak.** Against the *value* size rather than the
+table size, because per entry memory barely moves with the entry count -- the size chart is sixteen
+identical octaves -- while the ratio to a flat map is almost entirely a function of the value. At a
+million entries, this map against boost:
 
-Read the size off the chart and the *ranking* off these numbers, because a 16% difference is about
-1% of a five-decade axis and no plot of totals will show it. At a power of two, bytes per entry:
+| mapped value | steady | peak |
+|---|---|---|
+| 8 B | 1.19x | 1.48x |
+| 32 B | 1.51x | 1.76x |
+| 64 B | **1.65x** | **1.81x** |
+| 256 B | **1.81x** | **1.86x** |
+
+A flat map pays for its empty slots at the full width of the value; a dense one pays four bytes of
+index for them. Charting the 8 byte case alone -- which the first version of this chart did -- shows
+the design at its least impressive and invites the reader to conclude the dense layout buys little.
+
+The peak is a separate panel because growth allocates the new array beside the old and only then
+frees it, and it is where the gap is widest. Absolute numbers at a power of two, bytes per entry:
 
 | | steady | peak |
 |---|---|---|
@@ -67,10 +77,14 @@ Read the size off the chart and the *ranking* off these numbers, because a 16% d
 | 4.8.1 (January) | 32.0 | **32.0** |
 | boost | 32.0 | 48.0 |
 
-The CSV carries `steady_per_entry` and `peak_per_entry` beside the totals for anyone who wants that
-as the chart instead. One row there is worth a second look: 4.8.1 peaks *lower* than today's main,
-32 against 40, because `8d0e17e` builds the new bucket array before releasing the old one. That is
-what makes growth exception-safe, and a taller transient is its price.
+One row there is worth a second look: 4.8.1 peaks *lower* than today's main, 32 against 40, because
+`8d0e17e` builds the new bucket array before releasing the old one. That is what makes growth
+exception-safe, and a taller transient is its price.
+
+None of this needs pinning or pairing, because an allocator that counts is exact. It was checked
+twice over -- once through the container's allocator, once through a replaced global `operator new`
+with the maps on their default allocators -- and the two agree to the byte. `./memory 20 6` still
+writes the table-size view for anyone who wants the growth staircase.
 
 What is deliberately **not** here: pure-miss lookups (they rank as hits do and are cheaper), insert-
 and-erase (largely subsumed by churn), and the 50/50 find (keep it in the scored suite as the
@@ -357,6 +371,7 @@ which is what a detail view is for.
 ![cost of churn against table size](../../doc/churn_vs_size.svg)
 ![cost of insert and erase against table size](../../doc/insert_erase_vs_size.svg)
 ![build and iteration against mapped-value size](../../doc/value_size.svg)
+![memory against mapped-value size](../../doc/memory_vs_value_size.svg)
 ![memory against table size](../../doc/memory_vs_size.svg)
 
 What to read off them, and the first thing is **which end of the sawtooth you are looking at**. Over
