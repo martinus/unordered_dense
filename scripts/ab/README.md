@@ -12,6 +12,37 @@ five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates 
 flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
+## Regenerating all of it
+
+`scripts/ab/regen.sh` is the whole pipeline: renamed baseline headers, three compiled tools, seven
+measurements, eight SVGs and the page.
+
+```sh
+scripts/ab/regen.sh                       # measure everything, then draw    (~4 hours)
+scripts/ab/regen.sh --redraw              # draw from the CSVs already there (~0.2 seconds)
+scripts/ab/regen.sh --quick               # measure coarsely, to check the pipeline (~10 minutes)
+scripts/ab/regen.sh -r origin/main -j 3234af2 -c g++ -o 3
+```
+
+**`--redraw` is the one to use after changing `plot.py` or `dashboard.py`**: nothing is measured, so
+nothing moves, and a change to how a chart looks can be reviewed against numbers that did not. It is
+deterministic -- redrawing from unchanged CSVs reproduces every SVG byte for byte.
+
+A full run has to have the machine to itself. It pins the measurements to one core (`-o`), which
+helps and does not make it safe to compile on the others meanwhile.
+
+It refuses to start if the nanobench it can see has no `targetIntervalWidth()`, and says what to do
+about it. The sweep picks its round count by asking for an interval width rather than naming a
+count, which needs martinus/nanobench#189; the vendored 4.6.0 predates it, so until that lands the
+tools build against a checkout of the branch:
+
+```sh
+NANOBENCH_INCLUDE=/path/to/nanobench/src scripts/ab/regen.sh
+```
+
+Nothing else in the repository depends on that -- the header, the tests and the scored benchmark all
+build against the vendored nanobench as they always did.
+
 ## The charts, interactively
 
 `scripts/ab/dashboard.py` builds **`doc/charts.html`** from whatever CSVs are in `doc/`: every chart

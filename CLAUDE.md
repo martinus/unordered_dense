@@ -268,6 +268,15 @@ waiting on memory.
 just after a doubling to 1.30x just before one. The year did not make the best case much faster, it
 removed the worst case.
 
+**`scripts/ab/regen.sh` rebuilds everything in `doc/`** -- baseline headers, the three tools, seven
+measurements, eight SVGs and the page -- and `--redraw` does the drawing half alone in a fifth of a
+second, which is what to use after touching `plot.py` or `dashboard.py`, since it reproduces every
+SVG byte for byte from unchanged CSVs. `--quick` runs the whole pipeline coarsely in ten minutes,
+which is how to find out that a tool no longer compiles without spending four hours. It refuses to
+start against a nanobench without `targetIntervalWidth()` and says to point `NANOBENCH_INCLUDE` at a
+checkout of martinus/nanobench#189: the sweep asks for a precision instead of naming a round count,
+and the vendored 4.6.0 cannot do that. Nothing else in the repository depends on the branch.
+
 **The charts are also a page you can interrogate** (2026-09-06). `scripts/ab/dashboard.py` writes
 `doc/charts.html` from the CSVs in `doc/`: every chart, a legend that shows and hides a map across
 all of them at once, a y axis that rescales to whatever is left, a crosshair that reads exact values
