@@ -56,10 +56,11 @@ def resizes(rows):
     return out
 
 
-def chart(rows, title, subtitle, panels, xlabel, unit, xlog=True, ylog=False, note=""):
+def chart(rows, title, subtitle, panels, xlabel, unit, xlog=True, ylog=False, note="", bars=False):
     if rows is None:
         return None
     return {
+        "bars": bars,
         "title": title,
         "subtitle": subtitle,
         "xlabel": xlabel,
@@ -102,14 +103,14 @@ def main():
     add(read("value_size.csv") and wide_value_size(), "Build and iteration against mapped-value size",
         "nanoseconds per entry, 200000 entries",
         [("build", "build from empty"), ("iterate", "one iteration pass")],
-        "sizeof(mapped_type), bytes", "ns",
+        "sizeof(mapped_type), bytes", "ns", bars=True,
         note="The axis that decides dense against flat. It stops at 64 bytes because 200000 entries of "
              "a 64 byte value is 14 MB and still in L3, where 128 bytes is 27 MB and is not; past that "
              "cliff every line bends upward together and the chart stops being about the value.")
     add(read("memory_vs_value_size.csv"), "Memory against mapped-value size",
         "megabytes held for 1000000 entries",
         [("steady", "steady state"), ("peak", "peak during growth")],
-        "sizeof(mapped_type), bytes", "MB",
+        "sizeof(mapped_type), bytes", "MB", bars=True,
         note="Measured with a counting allocator and checked against a replaced global operator new; "
              "the two agree to the byte. The peak is separate because growth allocates the new array "
              "beside the old and only then frees it.")
@@ -287,7 +288,12 @@ function drawPanel(host, chart, panel, xDomain) {
     ticks = niceTicks(hi, base); y0 = ticks[0]; y1 = ticks[ticks.length - 1];
   }
   const lx0 = Math.log2(xDomain[0]), lx1 = Math.log2(xDomain[1]);
-  const px = v => L + (chart.xlog ? (Math.log2(v) - lx0) / (lx1 - lx0) : (v - xDomain[0]) / (xDomain[1] - xDomain[0])) * (W - L - R);
+  // A handful of value sizes are categories, not a continuum, so they get a band scale and bars:
+  // a line between 32 and 48 bytes would draw an interpolation that was never measured.
+  const cats = chart.bars ? panel.series[maps[0]].map(p => p[0]) : [];
+  const px = v => chart.bars
+    ? L + (cats.indexOf(v) + 0.5) / cats.length * (W - L - R)
+    : L + (chart.xlog ? (Math.log2(v) - lx0) / (lx1 - lx0) : (v - xDomain[0]) / (xDomain[1] - xDomain[0])) * (W - L - R);
   const py = v => T + (H - T - B) * (1 - ((logy ? Math.log10(v) : v) - y0) / (y1 - y0));
 
   const g = [];
@@ -317,9 +323,27 @@ function drawPanel(host, chart, panel, xDomain) {
   // Above the plot area rather than beside it: at T - 6 it landed on the topmost y tick.
   g.push(`<text x="${L - 8}" y="${T - 16}" text-anchor="end" font-size="13" fill="var(--ink3)">${chart.unit}</text>`);
 
-  for (const m of maps) {
-    const d = pts(m).map(p => `${px(p[0]).toFixed(1)},${py(p[1]).toFixed(1)}`).join(" ");
-    g.push(`<polyline points="${d}" fill="none" stroke="var(--c-${m})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="ln" data-map="${m}"/>`);
+  if (chart.bars) {
+    // 2px of surface between neighbours so two bars never read as one, and rounded at the end away
+    // from the baseline. Anchored at zero: a bar that starts elsewhere misstates its own length.
+    const band = (W - L - R) / cats.length, bw = band * 0.78 / maps.length;
+    cats.forEach((c, gi) => {
+      const x0 = L + (gi + 0.5) * band - bw * maps.length / 2;
+      maps.forEach((m, i) => {
+        const p = panel.series[m].find(q => q[0] === c);
+        if (!p) return;
+        const y = py(p[1]), h = (H - B) - y, w = Math.max(bw - 2, 1), r = Math.min(3, w / 2, h);
+        g.push(`<path d="M${(x0 + i * bw + 1).toFixed(1)},${(H - B).toFixed(1)} L${(x0 + i * bw + 1).toFixed(1)},${(y + r).toFixed(1)} ` +
+               `Q${(x0 + i * bw + 1).toFixed(1)},${y.toFixed(1)} ${(x0 + i * bw + 1 + r).toFixed(1)},${y.toFixed(1)} ` +
+               `L${(x0 + i * bw + 1 + w - r).toFixed(1)},${y.toFixed(1)} Q${(x0 + i * bw + 1 + w).toFixed(1)},${y.toFixed(1)} ${(x0 + i * bw + 1 + w).toFixed(1)},${(y + r).toFixed(1)} ` +
+               `L${(x0 + i * bw + 1 + w).toFixed(1)},${(H - B).toFixed(1)} Z" fill="var(--c-${m})"/>`);
+      });
+    });
+  } else {
+    for (const m of maps) {
+      const d = pts(m).map(p => `${px(p[0]).toFixed(1)},${py(p[1]).toFixed(1)}`).join(" ");
+      g.push(`<polyline points="${d}" fill="none" stroke="var(--c-${m})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="ln" data-map="${m}"/>`);
+    }
   }
   g.push(`<line id="cross" x1="0" y1="${T}" x2="0" y2="${H - B}" stroke="var(--ink3)" stroke-width="1" opacity="0"/>`);
   g.push(`<g id="dots"></g>`);
@@ -337,16 +361,24 @@ function drawPanel(host, chart, panel, xDomain) {
     if (vx < L || vx > W - R) return;
     let best = null, bd = Infinity;
     for (const v of xs) { const d = Math.abs(px(v) - vx); if (d < bd) { bd = d; best = v; } }
-    cross.setAttribute("x1", px(best).toFixed(1)); cross.setAttribute("x2", px(best).toFixed(1));
-    cross.setAttribute("opacity", 0.45);
+    if (chart.bars) {
+      const band = (W - L - R) / cats.length;
+      cross.setAttribute("x1", px(best).toFixed(1)); cross.setAttribute("x2", px(best).toFixed(1));
+      cross.setAttribute("stroke-width", band * 0.92); cross.setAttribute("opacity", 0.07);
+    } else {
+      cross.setAttribute("x1", px(best).toFixed(1)); cross.setAttribute("x2", px(best).toFixed(1));
+      cross.setAttribute("stroke-width", 1); cross.setAttribute("opacity", 0.45);
+    }
     const rows = [];
     dots.innerHTML = "";
     for (const m of maps) {
       const p = panel.series[m].find(q => q[0] === best);
       if (!p) continue;
       rows.push([m, p[1]]);
-      dots.insertAdjacentHTML("beforeend",
-        `<circle cx="${px(best).toFixed(1)}" cy="${py(p[1]).toFixed(1)}" r="3.5" fill="var(--c-${m})" stroke="var(--surface)" stroke-width="1.5"/>`);
+      if (!chart.bars) {
+        dots.insertAdjacentHTML("beforeend",
+          `<circle cx="${px(best).toFixed(1)}" cy="${py(p[1]).toFixed(1)}" r="3.5" fill="var(--c-${m})" stroke="var(--surface)" stroke-width="1.5"/>`);
+      }
     }
     rows.sort((a, b) => a[1] - b[1]);
     const fastest = rows.length ? rows[0][1] : 1;

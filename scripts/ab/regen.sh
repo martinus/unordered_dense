@@ -75,13 +75,13 @@ PY
             "Build and iteration against mapped-value size" \
             "nanoseconds per entry, 200000 entries, nothing reserved" \
             "--panels=build:build from empty|iterate:one iteration pass" \
-            "--x=sizeof(mapped_type), bytes" "--of=map&lt;uint64_t, T&gt;"
+            "--x=sizeof(mapped_type), bytes" "--of=map&lt;uint64_t, T&gt;" --bars
         rm -f "$doc/.value_size_wide.csv"
     fi
     draw memory_vs_value_size.csv memory_vs_value_size.svg \
         "Memory against mapped-value size" "megabytes held for 1000000 entries, nothing reserved" \
         "--panels=steady:steady state|peak:peak during growth" "--unit=MB" \
-        "--x=sizeof(mapped_type), bytes" "--of=map&lt;uint64_t, T&gt;"
+        "--x=sizeof(mapped_type), bytes" "--of=map&lt;uint64_t, T&gt;" --bars
     draw memory_vs_size.csv memory_vs_size.svg \
         "Memory against table size" "megabytes held, nothing reserved" \
         "--panels=steady:steady state|peak:peak during growth" "--unit=MB" --logy
