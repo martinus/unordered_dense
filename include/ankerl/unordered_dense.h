@@ -1431,18 +1431,18 @@ private:
     // index of every slot, quadratic probing over groups, and eight overflow counters per group
     // that an insert increments in every full group it passes and an erase decrements again. A
     // probe stops at the first group whose counter for this hash is zero, since no entry with
-    // those bits ever went past it. Nothing moves after it is placed and there are no tombstones,
-    // so no rehash is ever needed to repair the index -- an erase undoes exactly what its insert
-    // did to the counters.
+    // those bits ever went past it. There are no tombstones, so no rehash is ever needed to
+    // repair the index -- an erase undoes exactly what its insert did to the counters.
     //
     // What an erase cannot undo is where the element went. One that arrived while its home group
     // was full sits in a later group and stays there even after the home group empties again, so a
     // table that has churned probes a little further than one built from the same contents: at
     // load 0.76, measured, 1.14 groups per hit against 1.03 and 1.27 per miss against 1.05. It
     // plateaus after about a dozen turnovers rather than growing, which is the difference from a
-    // design that leaves tombstones behind. `rehash(size())` rebuilds the index and takes the
-    // difference back; nothing else does, since an erase cannot know where the element it frees
-    // would have gone had the table been built from what is left.
+    // design that leaves tombstones behind. An erase cannot know where the element it frees would
+    // have gone had the table been built from what is left; what does take the drift back is the
+    // element itself, the next time a writing operation finds it: see move_home below.
+    // `rehash(size())` rebuilds the index and takes all of it back at once.
     //
     // A miss usually stops within a group or two, at the first counter that is zero: the counters
     // are exact, so zero means no live entry of this class ever overflowed past that group.
@@ -1622,12 +1622,10 @@ private:
         }
     }
 
-    // Frees the slot and takes the entry out of every counter it was counted in: the same walk
-    // from home that placed it, up to the group it landed in.
-    void erase_group_slot(value_idx_type slot, std::uint64_t mh) {
+    // Takes an entry out of every counter it was counted in: the same walk from home that placed
+    // it, up to the group it landed in.
+    void uncount(std::uint64_t mh, value_idx_type found_in) {
         auto* groups = m_buckets.data();
-        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
-        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
         auto group_idx = group_idx_from_hash(mh);
         if (group_idx != found_in) {
             auto const counter = fingerprint_word(mh) & 7U;
@@ -1639,6 +1637,54 @@ private:
                 group_idx = next_group(group_idx, delta);
             } while (group_idx != found_in);
         }
+    }
+
+    // Frees the slot and takes the entry out of the counters.
+    void erase_group_slot(value_idx_type slot, std::uint64_t mh) {
+        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
+        m_buckets.data()[found_in].m_fingerprints[slot % slots_per_group] = 0;
+        uncount(mh, found_in);
+    }
+
+    // A hit found past its home group moves home if there is room there now, and comes out of
+    // the counters it was counted in on the way out. This is what takes back the drift of a
+    // churned table: an entry placed while its home was full stays where it landed after the
+    // home empties again, and nothing else ever moves it, so at load 0.76 after 200 turnovers a
+    // hit visits 1.14 groups against 1.03 fresh and a miss 1.26 against 1.05. Doing it on erase
+    // instead -- pulling a sibling back into the freed slot -- was measured and lost: the counter
+    // cannot tell a sibling from an entry that passed through, so it fires on 46% of erases and
+    // hashes two or three candidates each time, 1.5x the cost of a churn round. Here the entry
+    // is the one just found, its home was just computed, and the home group is a compare away
+    // from being known full or not, so a hit at home costs one compare and a hit away from home
+    // costs a load, two stores and the counter walk. Measured at 50000 entries, churned, with one
+    // mutating hit per erase: misses 4.02 to 2.70 ns, hits 6.22 to 5.53, the churn round itself
+    // 40.1 to 39.3; out of cache everything within 1%, since one step of displacement is the
+    // adjacent block and the prefetcher already has it. The miss gain is out of proportion to
+    // the groups saved, which says what the drift really cost: with a quarter of misses
+    // continuing past home the stop-or-continue branch is a coin flip, and with a tenth it is
+    // not.
+    //
+    // Only from paths that already write. A const find cannot do this, and a non-const find()
+    // is treated as read-only by callers who share a map between threads, so it does not either.
+    void move_home(value_idx_type slot, std::uint64_t mh) {
+        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
+        auto const home_idx = group_idx_from_hash(mh);
+        if (ANKERL_UNORDERED_DENSE_LIKELY(found_in == home_idx)) {
+            return;
+        }
+        auto* groups = m_buckets.data();
+        auto& home = groups[home_idx];
+        auto const empties = match_empty(home);
+        if (empties == 0) {
+            return;
+        }
+        auto const lane = first_lane(empties);
+        auto& from = groups[found_in];
+        auto const from_lane = slot % slots_per_group;
+        home.m_fingerprints[lane] = from.m_fingerprints[from_lane];
+        home.m_index[lane] = from.m_index[from_lane];
+        from.m_fingerprints[from_lane] = 0;
+        uncount(mh, found_in);
     }
 
     // The slot that points at a value, searched from the value's home group. Every value has one,
@@ -2097,6 +2143,7 @@ private:
         auto const mh = mixed_hash(key);
         auto r = probe(key, mh);
         if (r.found) {
+            move_home(r.slot, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
         return do_place_element(mh,
@@ -2566,6 +2613,7 @@ public:
         auto r = probe(key, mh);
         if (r.found) {
             m_values.pop_back(); // value was already there, so get rid of it
+            move_home(r.slot, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
 

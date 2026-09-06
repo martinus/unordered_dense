@@ -6,14 +6,16 @@ Guidance for working on `unordered_dense` — a single-header C++17 dense open-a
 `bucket_type::group`: sixteen one-byte fingerprints per group compared with one SSE2 instruction
 (eight per word with SWAR where there is no SSE2), the value indices in a second array, quadratic
 probing over groups, and eight overflow counters per group that an insert increments in every full
-group it passes and an erase decrements again. Nothing moves after it is placed and there are no
-tombstones, so no rehash is ever needed. What an erase cannot undo is *where* an element went: one
-placed while its home group was full stays there, so a long-churned table probes further than one
-freshly built from the same contents -- measured at load 0.76, 1.14 groups per hit against 1.03 and
-1.27 per miss against 1.05, plateauing after about a dozen turnovers rather than growing. That is
-the difference from a tombstone design, not the absence of any drift at all; the claim that a
-churned table is *identical* to a fresh one belongs to backward shift deletion and was wrongly
-carried over here. `bucket_type::group_big` is the same with 64
+group it passes and an erase decrements again. There are no tombstones, so no rehash is ever
+needed, and nothing moves after it is placed except one thing: an element placed while its home
+group was full stays where it landed after the home empties again, so a long-churned table probes
+further than one freshly built from the same contents -- measured at load 0.76, 1.14 groups per
+hit against 1.03 and 1.27 per miss against 1.05, plateauing after about a dozen turnovers rather
+than growing -- and since 2026-09-06 a hit found inside a *writing* operation (`operator[]`,
+`try_emplace`, `insert`) moves itself home if there is room, which takes that drift back (see the
+`move_home` entry below). That drift is the difference from a tombstone design, not the absence
+of any drift at all; the claim that a churned table is *identical* to a fresh one belongs to
+backward shift deletion and was wrongly carried over here. `bucket_type::group_big` is the same with 64
 bit value indices. The robin hood index it replaced — the packed distance-and-fingerprint field,
 the four-bucket SSE2 probe, the vector shifts on insert and erase, the sentinel padding — is gone
 from the header; everything below that describes it is history, kept because the measurements and
@@ -545,10 +547,49 @@ table is hits 6.20 to 5.81 ns and misses 4.19 to 3.58 in cache, and **nothing at
 (42.2 against 42.1, 13.0 against 13.0), because a one-step displacement lands in the adjacent
 block, which the spatial prefetcher already brought in. So it pays 20 ns per erase to save 0.4-0.6
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
-Not kept. The version that could be cheap is the lazy one -- a hit found one step out moves itself
-home when a lookup finds room there, no candidates and no second hash, since its home was just
-computed -- but that makes `find()` write to the table, which a const lookup with concurrent
-readers cannot do, so it could only run inside mutating hits such as `operator[]`. Untried.
+Not kept. The lazy version is, and it is the entry below.
+
+**A mutating hit moves itself home, and that takes the churn drift back** (2026-09-06, the lazy
+version of the entry above). The entry a hit just found is the one candidate whose home is known
+without another hash -- the probe computed it -- and whether that home has room is one
+`match_empty` on a group the probe just visited. So `move_home` runs on every hit inside a path
+that already writes (`try_emplace`, `operator[]`, `insert`, `emplace`, `insert_or_assign`): a hit
+at home costs a compare, a hit one group out with room at home costs a load, two stores, one zero
+and the counter walk `erase` already does. It is not in `find()`, const or not: a non-const `find`
+on a shared map is treated as read-only by callers, and this would make it a data race.
+
+Drift, groups per lookup at 50000 entries and load 0.76 after 200 turnovers, fresh 1.032 per hit
+and 1.052 per miss, base churned 1.143 and 1.265: with one `operator[]` hit per erase **1.091 and
+1.162**, with four **1.054 and 1.093** -- nearly a fresh table, and it converges rather than
+plateaus because every displaced entry that is touched again goes home. Paired, `uint64_t` keys, a
+churn round of erase, `operator[]` hit, miss, insert:
+
+| 50000 entries, churned | base | move-home |
+|---|---|---|
+| churn round | 40.1 ns | 39.3 (1.02x) |
+| `operator[]` hit | 7.68 | 7.16 (1.07x) |
+| find, hit | 6.22 | 5.53 (1.12x) |
+| find, miss | 4.02 | **2.70 (1.49x)** |
+
+At 2M entries everything is within 1% either way, as with the pull-back: a one-step displacement
+is the adjacent block, which the prefetcher already has. The miss gain is far out of proportion to
+the groups saved (1.26 to 1.09), and that is the finding worth keeping: what the drift really
+cost was not the extra group but the *branch* -- with a quarter of misses continuing past home the
+stop-or-continue decision is a coin flip, with a tenth it predicts. On a fresh table the check is
+free (`operator[]` hits 7.42 to 7.20, which is layout). The score cannot see any of this and reads
+0.999 under clang and 1.004 under gcc, every interval within a percent of parity: its workloads
+either grow, and a rehash resets the drift for nothing, or churn with `find` between the erase and
+the insert, which does not move anything. Two tests in `move_home.cpp`: the churn with a mutating
+hit every cycle, checking every key and its value, and a steered one on the identity hash that
+fills a group, sends one key past it, makes room and provokes the move. Mutation sweep of
+`uncount` and `move_home`, 41 mutants: 14 caught by a test, 17 by the compiler, 3 hung, 7
+survived -- four of them the counter decrement, which is the same uncovered decrement the
+termination-bound entry above records (now shared between erase and the move), and the other two
+the "already at home" early return and its comparison, which mutated either move an entry to
+another lane of its own home group, which is legal, or silently skip the repair. Nothing that
+changes an answer survived. The design paragraph at the top of this file that said nothing moves
+after placement is now wrong by exactly this much: a hit inside a write may move one step, to its
+home, and nothing else moves.
 
 **The rehash loop pipelined, and the partitioned rehash it was measured against** (2026-09-06,
 from asking what else the group structure is good for: placement is shift-free, so a rehash can
