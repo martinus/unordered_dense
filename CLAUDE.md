@@ -378,6 +378,33 @@ forward_as_tuple(key), forward_as_tuple(args...))` -- for a map of trivially con
 that is a 16 byte store dressed as 225 units of inline cost. Under gcc the same code is already
 fully inlined, so this is a clang-only 7% on builds and churn waiting on codegen, not on design.
 
+**Read boost's `unordered_flat_map` again after it turned out to have the probe bound this map was
+missing** (2026-09-06). Three things came back, in descending order of worth:
+
+- **MSVC had no prefetch at all.** `ANKERL_UNORDERED_DENSE_PREFETCH` was `__builtin_prefetch` for
+  gcc and clang and `static_cast<void>` for everything else, so the index-line prefetch that is
+  measured at 3 cycles off every hit was silently absent on a whole compiler. boost spells it
+  `_mm_prefetch(p, _MM_HINT_T0)` on MSVC x86-64 and `__prefetch` on MSVC ARM64. Taken. Not
+  measurable here, since none of the benchmarking runs on MSVC; it is a gap closed by construction
+  rather than a win demonstrated.
+- **boost tunes the prefetch per architecture** and says so in a comment: "ARM architectures get a
+  higher speedup when around the first half of the element slots in a group are prefetched, whereas
+  for Intel just the first cache line is best." This map issues the same two or three prefetches
+  everywhere. Now that `ab-arm.yml` exists that is a measurable question rather than a guess, and
+  it has not been asked.
+- **boost has an opt-in statistics facility** (`BOOST_UNORDERED_ENABLE_STATS`,
+  `cumulative_stats.hpp`) that keeps running mean and variance of probe lengths and comparisons per
+  lookup with Welford's algorithm. Every probe-length number in this file was produced by hand
+  editing a copy of the header instead. A built-in equivalent would make the measurements this
+  project keeps needing repeatable, and is the one idea here that is a feature rather than a fix.
+
+Two details looked at and deliberately not taken. boost reserves *two* metadata values, 0 for empty
+and 1 for a sentinel that ends iteration, and remaps hashes 0 and 1 to 8 and 9; this map reserves
+only 0 and so has one more usable fingerprint, because it iterates the value vector and needs no
+sentinel. And boost's 16 byte group is 15 fingerprints plus the overflow byte, read with an
+*aligned* load and masked with `& 0x7FFF`; the 24 byte group here holds 16 fingerprints and eight
+counters and is read unaligned, which the layout sweep measured as free.
+
 Read and found to have nothing to transfer, with the reason in each case:
 
 - **folly F14** is the closest relative, and its `outboundOverflowCount_` is this map's overflow
