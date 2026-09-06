@@ -12,6 +12,26 @@ five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates 
 flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
 
+## The charts, interactively
+
+`scripts/ab/dashboard.py` builds **`doc/charts.html`** from whatever CSVs are in `doc/`: every chart
+on one page, with a legend you click to show or hide a map. Hiding is global -- a map hidden in one
+chart is hidden in all of them, because the question a reader has is about a map rather than about a
+panel -- and the y axis rescales to what is left, which is the point of hiding anything. Hide boost
+and the three lines that were squashed against the floor separate.
+
+```sh
+scripts/ab/dashboard.py && xdg-open doc/charts.html
+```
+
+A crosshair reads exact numbers off the lines: nearest sample, one dot per visible series, and a
+table sorted fastest first with each map's multiple of the fastest. Which series are hidden lives in
+the URL, so `doc/charts.html#hide=boost,jan` is a link to a particular view of the data. It follows
+the system light or dark scheme, and it is one self-contained file with no network access at runtime.
+
+The SVGs stay beside it and are what the READMEs embed, because GitHub strips scripts out of an SVG
+and will not run any of this in a page.
+
 ## Four graphs, if you only get four
 
 Chosen so that each one can change the verdict and no two say the same thing. Every axis here is one

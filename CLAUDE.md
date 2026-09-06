@@ -268,6 +268,15 @@ waiting on memory.
 just after a doubling to 1.30x just before one. The year did not make the best case much faster, it
 removed the worst case.
 
+**The charts are also a page you can interrogate** (2026-09-06). `scripts/ab/dashboard.py` writes
+`doc/charts.html` from the CSVs in `doc/`: every chart, a legend that shows and hides a map across
+all of them at once, a y axis that rescales to whatever is left, a crosshair that reads exact values
+and each map's multiple of the fastest, the hidden set carried in the URL so a view is a link, and
+light and dark from the same validated palette `plot.py` uses. Self-contained, stdlib only, no
+network. It does not replace the SVGs, because GitHub strips scripts out of an SVG and will not run
+any of it -- the SVGs are what the READMEs embed and the page is what you open when a line looks
+wrong.
+
 **The four charts worth keeping, and the two axes that had none** (2026-09-06). Asked which four
 graphs decide a map, the answer needed two new tools, because two of the four axes were unmeasured:
 `scripts/ab/valuesize.cpp` (build and iteration against `sizeof(mapped_type)`) and
