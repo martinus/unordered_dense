@@ -372,7 +372,7 @@ __SERIESCSS__
   <h1>ankerl::unordered_dense &mdash; measurements</h1>
   <p class="lede">Every alternative is timed interleaved with the others in one process, so a clock
   ramp or a noisy neighbour hits all of them and cancels out of the comparison. Nothing is reserved,
-  and the tables are sampled twelve times per octave, so the load-factor sawtooth between doublings
+  and the tables are sampled twenty-four times per octave (sixteen for strings), so the load-factor sawtooth between doublings
   is visible rather than aliased away. Ryzen&nbsp;9&nbsp;7950X, clang&nbsp;22.</p>
   <p class="lede" style="margin-top:8px">Four of the five are given <em>this</em> map's hash, so that
   what differs between them is the index and not the hash. The dashed line is the fifth: the same

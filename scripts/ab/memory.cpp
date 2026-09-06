@@ -113,9 +113,13 @@ template <typename Key>
 void value_size_axis(std::size_t n) {
     one_point<Key, payload<8>>(n, 8);
     one_point<Key, payload<16>>(n, 16);
+    one_point<Key, payload<24>>(n, 24);
     one_point<Key, payload<32>>(n, 32);
+    one_point<Key, payload<48>>(n, 48);
     one_point<Key, payload<64>>(n, 64);
+    one_point<Key, payload<96>>(n, 96);
     one_point<Key, payload<128>>(n, 128);
+    one_point<Key, payload<192>>(n, 192);
     one_point<Key, payload<256>>(n, 256);
 }
 

@@ -7,6 +7,8 @@
 // behind at 64 -- so a suite that fixes the mapped type at size_t, which this one did until
 // 2026-09-03, ranks dense and flat maps wrongly for map<Key, SomeStruct>.
 //
+// Value sizes in steps of eight, because a payload with a uint64_t in it is padded to eight anyway.
+//
 // Two measurements per point, because they are the two halves of the same property: building the
 // map from empty with nothing reserved, and one pass of iteration summing a byte of every value.
 //
@@ -197,14 +199,18 @@ auto main(int argc, char** argv) -> int {
         one_size<std::string, 16>(n, targetWidth);
         one_size<std::string, 24>(n, targetWidth);
         one_size<std::string, 32>(n, targetWidth);
+        one_size<std::string, 40>(n, targetWidth);
         one_size<std::string, 48>(n, targetWidth);
+        one_size<std::string, 56>(n, targetWidth);
         one_size<std::string, 64>(n, targetWidth);
     } else {
         one_size<std::uint64_t, 8>(n, targetWidth);
         one_size<std::uint64_t, 16>(n, targetWidth);
         one_size<std::uint64_t, 24>(n, targetWidth);
         one_size<std::uint64_t, 32>(n, targetWidth);
+        one_size<std::uint64_t, 40>(n, targetWidth);
         one_size<std::uint64_t, 48>(n, targetWidth);
+        one_size<std::uint64_t, 56>(n, targetWidth);
         one_size<std::uint64_t, 64>(n, targetWidth);
     }
     return 0;

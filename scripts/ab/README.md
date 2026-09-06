@@ -83,7 +83,7 @@ taskset -c 2 ./valuesize 200000 0.02    > doc/value_size.csv           # 3
 **1. A find that hits, against table size.** All hits rather than a 50% mix: the mix is the
 maximum-entropy point of the hit-rate curve and separates these maps by 1.00x where all-hits
 separates them by 1.57x, and it can invert their order outright -- see the hit-rate section below.
-Twelve points per octave with nothing reserved, so the load-factor sawtooth is there; a map read only
+Twenty-four points per octave (sixteen for strings) with nothing reserved, so the load-factor sawtooth is there; a map read only
 at powers of two is read at its emptiest. Log x to a million, so the cache cliff past ~128K is on the
 picture, which is the largest single effect in any of these charts.
 
@@ -193,7 +193,7 @@ the chart they describe rather than being duplicated here, so they cannot drift 
 The rules matter more than the choice of four, and every one of them is here because breaking it
 produced a wrong answer: interleave the alternatives paired in one process; never re-seed the
 workload's rng inside the timed region; rebuild rather than grow the maps between points; sample
-twelve points per octave; and check anything surprising against a one-map-per-binary run under
+twenty-four points per octave; and check anything surprising against a one-map-per-binary run under
 `perf`.
 
 ## A year of it: 4.8.1 against today (2026-09-06)
@@ -282,8 +282,8 @@ SVG with no dependency beyond the standard library.
 ```sh
 clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -I"$build" -Iinclude -Itest \
     scripts/ab/sweep.cpp "$build/nanobench.o" -o sweep     # $build/base.h as run.sh makes it
-# max 2^20 entries, 12 points per octave, 20000 operations per batch, workload, target interval
-taskset -c 2 ./sweep 20 12 20000 0 0.02 > doc/find_vs_size.csv        # 3 = all hits, 4 = all misses
+# max 2^20 entries, 24 points per octave, 20000 operations per batch, workload, target interval
+taskset -c 2 ./sweep 20 24 20000 0 0.02 > doc/find_vs_size.csv        # 3 = all hits, 4 = all misses
 scripts/ab/plot.py doc/find_vs_size.csv doc/find_vs_size.svg \
     "Cost of a random find against table size" "nanoseconds per lookup, 50% of them hits"
 scripts/ab/plot.py doc/find_vs_size.csv doc/find_ratio_vs_size.svg \
@@ -463,7 +463,7 @@ between runs; measuring that regime needs a fresh process per size.
 Three more decisions make the picture say something rather than being a smooth line. **Nothing is
 reserved**, so each table grows on its own and its load factor sweeps from about a half to the
 maximum and falls back at every doubling; that is the sawtooth, and the dotted verticals are where
-this map doubles. **Twelve points per octave**, because a sawtooth sampled once per octave is a
+this map doubles. **Twenty-four points per octave** (twelve until 2026-09-06), because a sawtooth sampled once per octave is a
 straight line. And **two panels**, one to 64K and one over the whole range, with their own y scales,
 which is what a detail view is for.
 

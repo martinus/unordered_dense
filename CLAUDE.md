@@ -175,8 +175,8 @@ decides every lookup with an rng of its own. `find_random.cpp` still replays.
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 **The size sweep, and the measurement mistake it took three tries to get right** (2026-09-06,
 `doc/*_vs_size.svg`, `scripts/ab/sweep.cpp`). Three charts -- find with a 50% hit rate, churn, and
-insert-erase -- of one map grown through 193 sample points, twelve per octave, nothing reserved, to
-1M entries.
+insert-erase -- of one map grown through 377 sample points, twenty-four per octave (193 and twelve
+until the regeneration later the same day), nothing reserved, to 1M entries.
 
 **The mistake is the part worth keeping.** The first two versions measured main to completion, then
 this map, then boost. Sequential phases: anything that drifts between them -- a clock ramp, a noisy
@@ -198,17 +198,24 @@ octave. Reading this map at its fullest against boost at wherever its own cycle 
 "this map is 2.2x ahead of boost on churn below 100000 entries", which the geometric mean over the
 same octave does not support. Retracted; the honest statistic averages over both sawtooths.
 
-Octave geomean, this/boost and this/main, above 1.00 meaning the other map is ahead:
+Octave geomean, this/boost and this/main, above 1.00 meaning the other map is ahead, from the
+2026-09-06 regeneration at twenty-four points per octave (the octave starting at each size):
 
-| workload | 1K | 32K | 208K | 524K |
+| workload | 1K | 32K | 128K | 512K |
 |---|---|---|---|---|
-| find, all hits | 1.17 / 0.75 | 1.29 / 0.73 | 1.15 / 0.74 | 1.25 / 0.70 |
-| churn | 1.12 / 0.70 | 1.20 / 0.65 | 1.47 / 0.75 | 2.03 / 0.89 |
-| insert and erase | **0.94** / 0.73 | 1.19 / 0.72 | 1.27 / 0.77 | 1.51 / 0.72 |
+| find, all hits | 1.07 / 0.76 | 1.21 / 0.72 | 1.14 / 0.76 | 1.28 / 0.70 |
+| churn | 1.13 / 0.68 | 1.25 / 0.66 | 1.46 / 0.72 | 1.90 / 0.85 |
+| insert and erase | **0.97** / 0.74 | 1.22 / 0.73 | 1.31 / 0.78 | 1.56 / 0.74 |
 
 So boost is ahead of this map on all three at every size except insert-and-erase at a thousand
-entries, where the merged block put this map 6% ahead -- by 1.12-1.17x at a thousand entries and
-1.25-2.03x at half a million. This map is ahead of robin hood everywhere, by 1.1-1.5x. The dense
+entries, where this map is 3% ahead -- by 1.07-1.13x at a thousand entries and 1.28-1.90x at half
+a million. This map is ahead of robin hood everywhere, by 1.2-1.5x. The same table for string
+keys, this/boost with this map's hash and this/main and then this/boost with the hash boost ships,
+octaves starting at 1K, 32K, 128K and 256K: find, all hits 1.06 / 0.94 / **0.77**, 1.11 / 0.93 /
+0.95, 1.16 / 0.91 / 0.94, 1.18 / 0.90 / 0.96; churn 1.05 / 0.83 / 0.82, 1.19 / 0.92 / 1.08, 1.28 /
+0.92 / 1.12, 1.38 / 0.92 / 1.21; insert and erase 1.04 / 0.85 / 0.78, 1.13 / 0.92 / 0.95, 1.16 /
+0.92 / 0.98, 1.22 / 0.91 / 1.03. The this/main string column is where the new hash shows, since
+main still has the old one. The dense
 map's answer to that is the two charts boost is not on: 10.9x on iteration and a build that is faster
 at every value size. What is *not* true, and was asserted here for a day, is that the counters buy a
 win over boost on churn at small sizes.
