@@ -1222,37 +1222,50 @@ public:
 
 namespace detail {
 
-// What holds the index: the groups, and beside them the value index of every slot. Two arrays
-// rather than one struct because the groups are what a probe reads -- a miss touches nothing else,
-// and a rehash writes them at random -- and 24 bytes per sixteen slots keeps far more of them in
-// cache than 88 would. Measured, the split is 10% faster on a build for the same lookups.
+// What holds the index: one array of blocks, each a group's metadata followed by that group's own
+// sixteen value indices. 88 bytes per sixteen slots, and no padding -- the same bytes the two arrays
+// took, in one allocation instead of two.
 //
-// Alloc is the table's value allocator; both arrays rebind it.
+// This was two arrays until 2026-09-06, on the argument that the groups are what a probe reads -- a
+// miss touches nothing else, and a rehash writes them at random -- so 24 bytes per sixteen slots
+// keeps far more of them in cache than 88 would, measured then as 10% faster on a build. Re-measured
+// against the merged form after the rehash's store-to-load fix, that build advantage is gone
+// (build64 100.0% and 101.2% in two runs) and the merged form wins the lookups: `find64` 5.8-8.1%,
+// `rhit64` 7.1-7.5%, `findbig` 6.2%, score 1.018 and 1.022. Three counters say why, at 200000,
+// 800000 and 4M entries: **7% fewer instructions**, because the index is now at a fixed offset from
+// the group rather than a second address to compute; 12-14% fewer L1 misses; and 28% fewer dTLB
+// misses at 4M, because a lookup touches two regions rather than three. The gain is largest where
+// the table is largest, which is the half of the size axis the scored benchmark cannot see.
+//
+// Alloc is the table's value allocator; the block array rebinds it.
 template <typename Group, typename Alloc>
 class group_storage {
-public:
-    using value_idx_type = typename Group::value_idx_type;
-    using allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<Group>;
-
-    // How many arrays this allocates, for a test that counts what an empty table costs.
-    static constexpr std::size_t array_count = 2;
-
-private:
-    using index_allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<value_idx_type>;
     static constexpr std::size_t slots = std::tuple_size_v<decltype(Group::m_fingerprints)>;
 
-    std::vector<Group, allocator_type> m_groups{};
-    std::vector<value_idx_type, index_allocator_type> m_index{}; // slots * m_groups.size()
+public:
+    using value_idx_type = typename Group::value_idx_type;
+
+    // Inherits so that every use of a group's fingerprints and counters reads unchanged, and so a
+    // block converts to the Group const& that match_fingerprint takes.
+    struct block : Group {
+        std::array<value_idx_type, slots> m_index;
+    };
+
+    using allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<block>;
+
+    // How many arrays this allocates, for a test that counts what an empty table costs.
+    static constexpr std::size_t array_count = 1;
+
+private:
+    std::vector<block, allocator_type> m_blocks{};
 
 public:
     group_storage() = default;
     explicit group_storage(allocator_type const& alloc)
-        : m_groups(alloc)
-        , m_index(index_allocator_type(alloc)) {}
+        : m_blocks(alloc) {}
     // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
     group_storage(group_storage&& other, allocator_type const& alloc)
-        : m_groups(std::move(other.m_groups), alloc)
-        , m_index(std::move(other.m_index), index_allocator_type(alloc)) {}
+        : m_blocks(std::move(other.m_blocks), alloc) {}
     group_storage(group_storage const&) = default;
     group_storage(group_storage&&) noexcept = default;
     auto operator=(group_storage const&) -> group_storage& = default;
@@ -1260,45 +1273,46 @@ public:
     ~group_storage() = default;
 
     [[nodiscard]] auto get_allocator() const -> allocator_type {
-        return m_groups.get_allocator();
+        return m_blocks.get_allocator();
     }
     [[nodiscard]] auto empty() const -> bool {
-        return m_groups.empty();
+        return m_blocks.empty();
     }
     [[nodiscard]] auto size() const -> std::size_t { // in groups
-        return m_groups.size();
+        return m_blocks.size();
     }
     void clear() {
-        m_groups.clear();
-        m_index.clear();
+        m_blocks.clear();
     }
     void shrink_to_fit() {
-        m_groups.shrink_to_fit();
-        m_index.shrink_to_fit();
+        m_blocks.shrink_to_fit();
     }
     void swap(group_storage& other) noexcept {
-        m_groups.swap(other.m_groups);
-        m_index.swap(other.m_index);
+        m_blocks.swap(other.m_blocks);
     }
     void resize(std::size_t num_groups) {
-        m_groups.resize(num_groups);
-        m_index.resize(num_groups * slots);
+        m_blocks.resize(num_groups);
     }
     void assign(group_storage const& other) {
-        m_groups.assign(other.m_groups.begin(), other.m_groups.end());
-        m_index.assign(other.m_index.begin(), other.m_index.end());
+        m_blocks.assign(other.m_blocks.begin(), other.m_blocks.end());
     }
-    [[nodiscard]] auto data() -> Group* {
-        return m_groups.data();
+    [[nodiscard]] auto data() -> block* {
+        return m_blocks.data();
     }
-    [[nodiscard]] auto data() const -> Group const* {
-        return m_groups.data();
+    [[nodiscard]] auto data() const -> block const* {
+        return m_blocks.data();
     }
-    [[nodiscard]] auto index() -> value_idx_type* {
-        return m_index.data();
+    // The few places that hold a flat slot number rather than a group and a lane. slots is a power
+    // of two, so this is a shift and a mask.
+    [[nodiscard]] auto index_at(std::size_t slot) -> value_idx_type& {
+        return m_blocks[slot / slots].m_index[slot % slots];
     }
-    [[nodiscard]] auto index() const -> value_idx_type const* {
-        return m_index.data();
+    // Zeroes the metadata of every block and leaves the indices alone, which is what the split
+    // version's single memset did: an empty slot's index is never read.
+    void clear_metadata() {
+        for (auto& b : m_blocks) {
+            static_cast<Group&>(b) = Group{};
+        }
     }
 };
 
@@ -1538,13 +1552,14 @@ private:
     // The value indices of a group are the next thing a hit reads, and their address needs only
     // the group, so they are asked for before the fingerprints have arrived: the two latencies
     // overlap instead of adding. Measured 3 cycles off every hit, 0.2 onto every miss.
-    static void prefetch_index(value_idx_type const* index, value_idx_type group_idx) {
-        auto const* p = index + std::size_t{group_idx} * slots_per_group;
-        ANKERL_UNORDERED_DENSE_PREFETCH(p);
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + slots_per_group - 1); // the array is not line aligned, so it may straddle
-        if constexpr (sizeof(value_idx_type) > 4) {
-            ANKERL_UNORDERED_DENSE_PREFETCH(p + 8);
-        }
+    // MERGED VARIANT: the indices sit inside the block, so what has to be pulled in is the rest of
+    // the block rather than a second array. One block is 88 bytes and unaligned, so it covers two or
+    // three lines; the first is the one the fingerprints are already being read from.
+    template <typename Block>
+    static void prefetch_index(Block const* blocks, value_idx_type group_idx) {
+        auto const* p = reinterpret_cast<char const*>(blocks + std::size_t{group_idx});
+        ANKERL_UNORDERED_DENSE_PREFETCH(p + 64);
+        ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
     }
 
     // Forced inline because gcc does not do it on its own in a large translation unit, and the
@@ -1560,15 +1575,15 @@ private:
         auto const counter = word & 7U;
         auto group_idx = group_idx_from_hash(mh);
         auto const* groups = m_buckets.data();
-        auto const* index = m_buckets.index();
         value_idx_type delta = 0;
         while (true) {
-            prefetch_index(index, group_idx);
+            prefetch_index(groups, group_idx);
             auto const& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + first_lane(lanes));
-                auto const value_idx = index[slot];
+                auto const lane = first_lane(lanes);
+                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
+                auto const value_idx = group.m_index[lane];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
                     return {slot, value_idx, true};
                 }
@@ -1597,7 +1612,7 @@ private:
             if (empties != 0) {
                 auto const lane = first_lane(empties);
                 group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
-                m_buckets.index()[std::size_t{group_idx} * slots_per_group + lane] = value_idx;
+                group.m_index[lane] = value_idx;
                 return;
             }
             if (group.m_overflows[counter] != 255) {
@@ -1632,14 +1647,15 @@ private:
         auto const word = fingerprint_word(mh);
         auto group_idx = group_idx_from_hash(mh);
         auto const* groups = m_buckets.data();
-        auto const* index = m_buckets.index();
         value_idx_type delta = 0;
         while (true) {
-            prefetch_index(index, group_idx);
-            auto lanes = match_fingerprint(groups[group_idx], word);
+            prefetch_index(groups, group_idx);
+            auto const& group = groups[group_idx];
+            auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + first_lane(lanes));
-                if (index[slot] == value_idx) {
+                auto const lane = first_lane(lanes);
+                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
+                if (group.m_index[lane] == value_idx) {
                     return slot;
                 }
                 lanes &= lanes - 1;
@@ -1865,7 +1881,7 @@ private:
         }
         // Clearing the groups empties every slot and zeroes every counter; the value indices
         // beside them are never read for an empty slot.
-        std::memset(m_buckets.data(), 0, sizeof(Bucket) * m_buckets.size());
+        m_buckets.clear_metadata();
     }
 
     // Into an index just allocated, so already empty.
@@ -1932,7 +1948,7 @@ private:
             // update the value index of the moved entry
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
             auto const mh = mixed_hash(get_key(val));
-            m_buckets.index()[slot_of_value(mh, values_idx_back)] = value_idx_to_remove;
+            m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
         }
         m_values.pop_back();
     }

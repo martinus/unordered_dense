@@ -151,11 +151,18 @@ void show([[maybe_unused]] track_peak_memory_resource const& mr, [[maybe_unused]
 
 // the following tests are vector specific, so don't use segmented_vector
 //
-// The counts below are one higher per index allocation than they were while the index was one
-// array of buckets: it is two now, the groups and the value indices beside them, and both come
-// from the same resource. Every difference here is exactly that -- an insert into an empty map
-// allocates three times (values, groups, indices) rather than twice, and an assignment that
-// builds an index allocates twice rather than once.
+// The counts below are derived rather than written down, because they encode how many arrays the
+// index is made of and that is a layout decision the header is free to change: it was one array of
+// buckets, then two (the groups and the value indices beside them), and is now one again with each
+// group's indices inside its own block. Every count here is some number of "build a populated
+// table" and "build an index", so they are spelled that way and a layout change moves them by
+// itself. That is the whole reason `array_count` exists.
+using index_t =
+    ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group,
+                                                   std::allocator<std::pair<uint64_t, uint64_t>>>;
+// the values, plus however many arrays the index is
+constexpr auto populated_table = 1 + int{index_t::array_count};
+constexpr auto index_only = int{index_t::array_count};
 
 TEST_CASE("pmr_copy") {
     using map_t = ankerl::unordered_dense::pmr::map<uint64_t, uint64_t>;
@@ -175,11 +182,11 @@ TEST_CASE("pmr_copy") {
     show(mr1, "mr1");
     show(mr2, "mr2");
 
-    REQUIRE(mr1.num_allocs() == 5);
-    REQUIRE(mr1.num_deallocs() == 2);
+    REQUIRE(mr1.num_allocs() == populated_table + index_only);
+    REQUIRE(mr1.num_deallocs() == index_only); // the index it threw away
     REQUIRE(mr1.num_is_equals() == 0);
 
-    REQUIRE(mr2.num_allocs() == 3);
+    REQUIRE(mr2.num_allocs() == populated_table);
     REQUIRE(mr2.num_deallocs() == 0);
     REQUIRE(mr2.num_is_equals() == 0);
 }
@@ -203,10 +210,10 @@ TEST_CASE("pmr_move_different_mr") {
     show(mr1, "mr1");
     show(mr2, "mr2");
 
-    REQUIRE(mr1.num_allocs() == 5);
-    REQUIRE(mr1.num_deallocs() == 2);
+    REQUIRE(mr1.num_allocs() == populated_table + index_only);
+    REQUIRE(mr1.num_deallocs() == index_only); // the index it threw away
 
-    REQUIRE(mr2.num_allocs() == 3);
+    REQUIRE(mr2.num_allocs() == populated_table);
     REQUIRE(mr2.num_deallocs() == 0);
 
     // The total, not one comparison per resource -- that split is only how libstdc++ and Apple's
@@ -229,7 +236,7 @@ TEST_CASE("pmr_move_same_mr") {
     auto mr1 = track_peak_memory_resource();
     auto map1 = map_t(&mr1);
     map1[1] = 2;
-    REQUIRE(mr1.num_allocs() == 3);
+    REQUIRE(mr1.num_allocs() == populated_table);
     REQUIRE(mr1.num_deallocs() == 0);
     REQUIRE(mr1.num_is_equals() == 0);
 
@@ -242,12 +249,12 @@ TEST_CASE("pmr_move_same_mr") {
     REQUIRE(map1.find(3) != map1.end());
     show(mr1, "mr1");
 
-    // Three allocations per map, the values and the two arrays of the index, and nothing for the
-    // move: map1's index and values are handed over rather than copied, and map2 is left as a
-    // default constructed map, which no longer means "with a freshly allocated index". That last
+    // One populated table's worth per map -- the values and the arrays of the index -- and nothing
+    // for the move: map1's index and values are handed over rather than copied, and map2 is left as
+    // a default constructed map, which no longer means "with a freshly allocated index". That last
     // one is what used to make this one higher still.
-    REQUIRE(mr1.num_allocs() == 6);
-    REQUIRE(mr1.num_deallocs() == 3);
+    REQUIRE(mr1.num_allocs() == 2 * populated_table);
+    REQUIRE(mr1.num_deallocs() == populated_table);
     REQUIRE(mr1.num_is_equals() == 0);
 }
 
