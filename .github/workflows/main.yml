@@ -517,12 +517,18 @@ jobs:
         run: |
           cmake -S . -B builddir-install -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
           cmake --build builddir-install --target install
-      # Asking for major version 4 rather than the exact one, so this does not need editing on
-      # every release. SameMajorVersion is the compatibility the generated config declares.
+      # Asking for the major version rather than the exact one, and reading it out of the header
+      # rather than writing it here: SameMajorVersion is the compatibility the generated config
+      # declares, so a minor release must keep working and a major one must be asked for by its
+      # own number. This used to say 4, which meant the 5.0.0 bump failed here rather than in
+      # anything a user would notice.
       - name: find_package
         run: |
+          major=$(sed -n 's/^#define ANKERL_UNORDERED_DENSE_VERSION_MAJOR \([0-9]*\).*/\1/p' include/ankerl/unordered_dense.h)
+          echo "asking find_package for major version $major"
+          test -n "$major"
           cmake -S test/cmake_consumer/installed -B builddir-find \
-            -DCMAKE_PREFIX_PATH="$PWD/prefix" -DUNORDERED_DENSE_REQUIRED_VERSION=4
+            -DCMAKE_PREFIX_PATH="$PWD/prefix" -DUNORDERED_DENSE_REQUIRED_VERSION="$major"
           cmake --build builddir-find
           ./builddir-find/consumer-installed
       # The happy path passing says nothing about whether the version is actually checked.
