@@ -234,9 +234,10 @@ namespace detail {
 
 // hash ///////////////////////////////////////////////////////////////////////
 
-// This is a stripped-down implementation of wyhash: https://github.com/wangyi-fudan/wyhash
-// No big-endian support (because different values on different machines don't matter),
-// hardcodes seed and the secret, reformats the code, and clang-tidy fixes.
+// Descended from wyhash: https://github.com/wangyi-fudan/wyhash -- its reads, its multiply-and-xor
+// mix, its short path and its chained lanes for long keys -- with the middle lengths restructured
+// into independent blocks, which the comment on hash() explains. No big-endian support (because
+// different values on different machines don't matter), hardcodes seed and the secret.
 namespace detail::wyhash {
 
 inline void mum(std::uint64_t* a, std::uint64_t* b) {
@@ -292,6 +293,30 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
     return (static_cast<std::uint64_t>(p[0]) << 16U) | (static_cast<std::uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
+// The shape of this is wyhash's up to 16 bytes and for anything past 144, and in between it is
+// not: every 16 byte block is mixed on its own, with its own pair of secrets, and the results are
+// xor-folded into one finalizer. wyhash chains the blocks through `seed`, so a 48 byte key is
+// three multiplies one after another and then the finalizer, and a map lookup waits for all of
+// them before it can so much as form the group address. Here the block multiplies are independent,
+// so the latency of any key up to 144 bytes is one multiply plus the finalizer, and the block
+// loop's trip count -- a data-dependent branch that mispredicts whenever lengths vary -- is a
+// short chain of compares that the predictor learns from the top. The last sixteen bytes are
+// always a block of their own, wherever they fall, so every byte is read at least once and nothing
+// is read past the end.
+//
+// Measured on the scored benchmark's own keys (8 to 135 bytes, skewed short), one function per
+// binary, ns per hash: throughput 2.52 to 2.00 under clang and 2.18 to 2.05 under gcc, latency
+// 8.64 to 7.69 and 8.47 to 7.81, with fewer branch misses on both. Two shapes measured and
+// rejected on the way: making the block range branchless by always mixing three (17-48) or six
+// (49-96) overlapping blocks, which costs more in redundant multiplies than it saves in
+// mispredictions; and a one multiply short path, which fails an avalanche test outright at 8 bytes
+// (output bits that never flip for some input bits), as does dropping the finalizer in the block
+// range. Both multiplies stay.
+//
+// Independent blocks need distinct secrets: with a shared one, swapping two blocks gives the same
+// hash. Sixteen pairs cover 144 bytes, and past that the chained lanes take over, where reuse is
+// harmless because the chain carries the position. The secrets have wyhash's property, every
+// byte with four bits set, odd, and were drawn once from a fixed seed.
 [[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t len) -> std::uint64_t {
     static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
                                               UINT64_C(0xe7037ed1a0b428db),
@@ -299,7 +324,21 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
                                               UINT64_C(0x589965cc75374cc3),
                                               UINT64_C(0x2d358dccaa6c78a5),
                                               UINT64_C(0x8bb84b93962eacc9),
-                                              UINT64_C(0x4b33a62ed433d4a3)};
+                                              UINT64_C(0x4b33a62ed433d4a3),
+                                              UINT64_C(0xa693c93927d87217),
+                                              UINT64_C(0x2b63728e53473c2b),
+                                              UINT64_C(0x696cb2a95635a3c5),
+                                              UINT64_C(0xa9ccd81ed1b29359),
+                                              UINT64_C(0x5c2d66ace48db84d),
+                                              UINT64_C(0x69a99c5c53b4ca2d),
+                                              UINT64_C(0x9a9c5a1b27d10f69),
+                                              UINT64_C(0x2b27f02dc3d4360f),
+                                              UINT64_C(0x2b39665c8d2d5553),
+                                              UINT64_C(0x966cd8878bb4b187),
+                                              UINT64_C(0xc6351e99932b1ee1),
+                                              UINT64_C(0xd1c5d24d63c959c9),
+                                              UINT64_C(0x56c54d9c955aca2b),
+                                              UINT64_C(0xd136d27872563559)};
 
     auto const* p = static_cast<std::uint8_t const*>(key);
     std::uint64_t seed = secret[0];
@@ -333,64 +372,81 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
             return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
         }
 
-    // Anything longer, in blocks of 16 bytes, ending on the same expression as above.
+    if (ANKERL_UNORDERED_DENSE_LIKELY(len <= 144))
+        ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
+            // The first block and the last sixteen bytes, then whole blocks from the front for as
+            // long as there are any: a key of 17 to 32 bytes is two multiplies, one of 129 to 144
+            // is nine, all of them independent.
+            auto x = mix(r8(p) ^ secret[1], r8(p + 8) ^ secret[2]) ^ mix(r8(p + len - 16) ^ secret[3], r8(p + len - 8) ^ secret[4]);
+            if (len > 32) {
+                x ^= mix(r8(p + 16) ^ secret[5], r8(p + 24) ^ secret[6]);
+                if (len > 48) {
+                    x ^= mix(r8(p + 32) ^ secret[7], r8(p + 40) ^ secret[8]);
+                    if (len > 64) {
+                        x ^= mix(r8(p + 48) ^ secret[9], r8(p + 56) ^ secret[10]);
+                        if (len > 80) {
+                            x ^= mix(r8(p + 64) ^ secret[11], r8(p + 72) ^ secret[12]);
+                            if (len > 96) {
+                                x ^= mix(r8(p + 80) ^ secret[13], r8(p + 88) ^ secret[14]);
+                                if (len > 112) {
+                                    x ^= mix(r8(p + 96) ^ secret[15], r8(p + 104) ^ secret[16]);
+                                    if (len > 128) {
+                                        x ^= mix(r8(p + 112) ^ secret[17], r8(p + 120) ^ secret[18]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return mix(secret[1] ^ len, x);
+        }
+
+    // Anything longer, in chained lanes of 16 bytes, ending on the same expression as above.
     std::size_t i = len;
-    if (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 48))
-        ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-            std::uint64_t see1 = seed;
-            std::uint64_t see2 = seed;
-            // Six lanes cost three more accumulators to set up and fold back in, so the block
-            // has to run more than once to pay for them. Entering it at 96 meant exactly one
-            // iteration for everything from 97 to 192 bytes, which never can: measured, 23.4
-            // cycles for a 100 byte key against 21.8 when it takes the 48 byte loop instead, and
-            // 29.3 against 28.2 at 150. Above 192 the block runs at least twice and wins again --
-            // 143.5 cycles against 147.1 at 1000 bytes -- so it keeps those.
-            if (i > 192) {
-                // 6 independent lanes: twice the instruction level parallelism of the 48 byte loop below
-                std::uint64_t see3 = seed;
-                std::uint64_t see4 = seed;
-                std::uint64_t see5 = seed;
-                do {
-                    seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-                    see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
-                    see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
-                    see3 = mix(r8(p + 48) ^ secret[4], r8(p + 56) ^ see3);
-                    see4 = mix(r8(p + 64) ^ secret[5], r8(p + 72) ^ see4);
-                    see5 = mix(r8(p + 80) ^ secret[6], r8(p + 88) ^ see5);
-                    p += 96;
-                    i -= 96;
-                } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 96));
-                seed ^= see3 ^ see4 ^ see5;
-            }
-            while (i > 48) {
-                seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-                see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
-                see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
-                p += 48;
-                i -= 48;
-            }
-            seed ^= see1 ^ see2;
-            while (i > 16) {
-                seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-                i -= 16;
-                p += 16;
-            }
-
-            // the tail lane only depends on the input, not on seed, so it can execute in parallel
-            // with the lane loops above, and a single dependent mix finishes the hash
-            auto tail = mix(r8(p + i - 16) ^ secret[2], r8(p + i - 8) ^ secret[3]);
-            return mix(secret[1] ^ len, seed ^ tail);
-        }
-    while (ANKERL_UNORDERED_DENSE_UNLIKELY(i > 16))
-        ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+    std::uint64_t see1 = seed;
+    std::uint64_t see2 = seed;
+    // Six lanes cost three more accumulators to set up and fold back in, so the block has to
+    // run more than once to pay for them. Entering it at 96 meant exactly one iteration for
+    // everything from 97 to 192 bytes, which never can: measured, 23.4 cycles for a 100 byte key
+    // against 21.8 when it takes the 48 byte loop instead, and 29.3 against 28.2 at 150. Above
+    // 192 the block runs at least twice and wins again -- 143.5 cycles against 147.1 at 1000
+    // bytes -- so it keeps those.
+    if (i > 192) {
+        // 6 independent lanes: twice the instruction level parallelism of the 48 byte loop below
+        std::uint64_t see3 = seed;
+        std::uint64_t see4 = seed;
+        std::uint64_t see5 = seed;
+        do {
             seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
-            i -= 16;
-            p += 16;
-        }
-    a = r8(p + i - 16);
-    b = r8(p + i - 8);
+            see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
+            see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
+            see3 = mix(r8(p + 48) ^ secret[4], r8(p + 56) ^ see3);
+            see4 = mix(r8(p + 64) ^ secret[5], r8(p + 72) ^ see4);
+            see5 = mix(r8(p + 80) ^ secret[6], r8(p + 88) ^ see5);
+            p += 96;
+            i -= 96;
+        } while (ANKERL_UNORDERED_DENSE_LIKELY(i > 96));
+        seed ^= see3 ^ see4 ^ see5;
+    }
+    while (i > 48) {
+        seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+        see1 = mix(r8(p + 16) ^ secret[2], r8(p + 24) ^ see1);
+        see2 = mix(r8(p + 32) ^ secret[3], r8(p + 40) ^ see2);
+        p += 48;
+        i -= 48;
+    }
+    seed ^= see1 ^ see2;
+    while (i > 16) {
+        seed = mix(r8(p) ^ secret[1], r8(p + 8) ^ seed);
+        i -= 16;
+        p += 16;
+    }
 
-    return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
+    // the tail lane only depends on the input, not on seed, so it can execute in parallel
+    // with the lane loops above, and a single dependent mix finishes the hash
+    auto tail = mix(r8(p + i - 16) ^ secret[2], r8(p + i - 8) ^ secret[3]);
+    return mix(secret[1] ^ len, seed ^ tail);
 }
 
 [[nodiscard]] inline auto hash(std::uint64_t x) -> std::uint64_t {

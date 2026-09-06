@@ -549,6 +549,54 @@ block, which the spatial prefetcher already brought in. So it pays 20 ns per era
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
 Not kept. The lazy version is, and it is the entry below.
 
+**The string hash restructured: independent blocks from 17 to 144 bytes** (2026-09-06, asked as
+"make the hash faster, the values may change"). wyhash chains its 16 byte blocks through `seed`,
+so a 48 byte key is three multiplies in a row before the finalizer and the map cannot form a group
+address until the last of them resolves; and the block loop's trip count is a data-dependent branch
+that mispredicts whenever lengths vary, which the scored keys do on purpose. Now every 16 byte
+block up to 144 bytes is mixed on its own with its own pair of secrets and xor-folded into one
+finalizer: latency is one multiply plus the finalizer for any length in the range, and the branches
+are a short chain of compares on `len` that the predictor learns from the top. The short path and
+the long chained lanes are unchanged, so lengths up to 16 and past 144 hash exactly as before;
+`hash_golden.cpp` was regenerated for the range between, as its own comment says to do.
+
+Measured on the scored keys (8 to 135 bytes, skewed short), one function per binary, ns per hash:
+
+| | clang throughput | clang latency | gcc throughput | gcc latency |
+|---|---|---|---|---|
+| wyhash as it was | 2.52 | 8.64 | 2.18 | 8.47 |
+| 4.8.1's wyhash | 2.19 | 9.14 | 2.21 | 9.16 |
+| independent blocks | **2.00** | **7.69** | **2.05** | **7.81** |
+
+Paired on the score: `hashstr` **1.13 clang and 1.12 gcc**, `rmissstr` 1.08 and 1.10, `iestr` 1.09
+and 1.08, `buildstr` 1.07 and 1.06, `findstr` 1.06 and 1.06, `rhitstr` 1.04 and 1.04, `churnstr`
+1.05 and 1.00, every integer workload at parity; score 1.006 and 1.039. The "string hash is 4-7%
+slower than 4.8.1's" line in the section above is closed by this, in the other direction.
+
+Measured and rejected on the way, all on the same keys:
+
+- **Branchless middle**: always mixing three overlapping blocks for 17-48 and six for 49-96, so
+  the length decides nothing but the read offsets. Slower on both compilers (2.48 against 2.35
+  throughput under clang, 2.45 against 2.04 under gcc): the redundant multiplies cost more than
+  the mispredictions they remove, which is the opposite of what the probe found, because a
+  multiply is a real unit of work where a group compare is not.
+- **One multiply on the short path** (`mix(a ^ s ^ len, b ^ seed)` and no finalizer): the fastest
+  thing measured, 1.96 and 1.95 throughput, 7.41 and 7.74 latency -- and it fails an avalanche
+  test outright: at 8 bytes some output bits never flip for some input bits (worst |p - 1/2| of
+  0.50, mean 0.17 against 0.003 for the two multiply version), because the two reads are the same
+  eight bytes and a single product of them has no second chance to mix. Dropping the finalizer in
+  the block range fails the same test more gently (bits biased 0.42/0.58 at every length). Both
+  multiplies stay; "the values may change" does not extend to a hash that does not avalanche.
+- **AES-NI**, asked as "how about SSE for the hash": one `aesenc` per 16 byte block into an
+  accumulator and two finishing rounds, compiled with `-maes`. Throughput 1.63 against 2.18 under
+  clang and 1.47 against 2.07 under gcc -- a quarter faster -- and latency **12.0 against 7.85**
+  and 11.4 against 7.82, half again slower, which is what the map pays: an `aesenc` is four cycles
+  and the rounds are a chain. It is the 2025 gxhash finding again on the right key lengths this
+  time, and it comes with a flag the header cannot assume. SSE2 itself, the one vector ISA the
+  header may rely on, has nothing that beats a scalar 64x64 multiply for mixing: `pmuludq` is two
+  32x32 products, and four of them plus the adds are slower than one `mulx`. A 16 byte load is no
+  faster than two 8 byte ones. So: no.
+
 **A mutating hit moves itself home, and that takes the churn drift back** (2026-09-06, the lazy
 version of the entry above). The entry a hit just found is the one candidate whose home is known
 without another hash -- the probe computed it -- and whether that home has room is one

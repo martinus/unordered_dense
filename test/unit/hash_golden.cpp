@@ -56,15 +56,16 @@ namespace {
 } // namespace
 
 // One length per branch of wyhash::hash and both sides of every boundary it switches on: 3/4 (the
-// 3-byte read), 7/8 (the 4-byte pair), 16/17 (the 8-byte pair vs the loop), 48/49 (the three-lane
-// loop) and 192/193 (the six-lane one). A mutated bound moves one of these onto the wrong branch.
+// 3-byte read), 7/8 (the 4-byte pair), 16/17 (the 8-byte pair vs the blocks), every 16 byte step
+// of the independent block range (32/33 ... 128/129), 144/145 (the blocks vs the chained lanes)
+// and 192/193 (the six-lane loop). A mutated bound moves one of these onto the wrong branch.
 //
 // The loops need more than their entry conditions, though: a `>` that became `>=` only differs on
 // the iteration where the counter lands exactly on the bound, so there are lengths here that leave
 // it at 17 after the 48-byte loop (65) and at 96 after the 96-byte one (288, 289).
 //
-// 96 and 97 are still here even though they no longer straddle anything: they are where the
-// six-lane block used to begin, and a bound that moved back there has to be caught.
+// The values from 17 to 144 changed on 2026-09-06, when that range became independent blocks;
+// everything shorter and everything longer hashes exactly as it did.
 TEST_CASE("wyhash_golden_values_by_length") {
     if (skip_on_big_endian()) {
         return;
@@ -75,13 +76,15 @@ TEST_CASE("wyhash_golden_values_by_length") {
         {0, UINT64_C(0x42bc986dc5eec4d3)},   {1, UINT64_C(0x3e73bcceee051a90)},   {2, UINT64_C(0xabb36df2a05cdd96)},
         {3, UINT64_C(0x737b3594dbad4615)},   {4, UINT64_C(0x06959e50533f44b2)},   {5, UINT64_C(0x36e18d353c41722a)},
         {7, UINT64_C(0xc3e479040f170b82)},   {8, UINT64_C(0xd7517cd74fe903fb)},   {9, UINT64_C(0x7050188f7743ca56)},
-        {15, UINT64_C(0xb4f9a728274096d7)},  {16, UINT64_C(0xce6a868a78a46c73)},  {17, UINT64_C(0xab9f0d72fd62acbb)},
-        {24, UINT64_C(0xaf048c621425ee78)},  {32, UINT64_C(0x46f297d4bd07d149)},  {48, UINT64_C(0x9e97709342df6b56)},
-        {49, UINT64_C(0x3b846738927f6274)},  {64, UINT64_C(0xd4a468aebbe74bfa)},  {65, UINT64_C(0x68624a1222e1898b)},
-        {96, UINT64_C(0x2d9d003ab847fe53)},  {97, UINT64_C(0x8c7242d7e4010ba0)},  {128, UINT64_C(0x90d38e952fc9b8a0)},
-        {192, UINT64_C(0xbc152e7c1f5e9c40)}, {193, UINT64_C(0x11ff8ae436691f52)}, {200, UINT64_C(0xc0895d26f8d2d90f)},
-        {288, UINT64_C(0x17e4aa47a185f12c)}, {289, UINT64_C(0xede2975ce774d7e7)}, {300, UINT64_C(0xb8446c7b09ba427b)},
-        {512, UINT64_C(0x2c274db7d27dc42b)},
+        {15, UINT64_C(0xb4f9a728274096d7)},  {16, UINT64_C(0xce6a868a78a46c73)},  {17, UINT64_C(0xee61adebf69f0b7c)},
+        {24, UINT64_C(0x62a50aabd2895818)},  {32, UINT64_C(0xbe3fde85c8565cf4)},  {33, UINT64_C(0x840b62081bcacd67)},
+        {48, UINT64_C(0xaecedba5f9e11d4b)},  {49, UINT64_C(0x5d4a6c2e5f0da57b)},  {64, UINT64_C(0x4dbfd66fa0c9cfd0)},
+        {65, UINT64_C(0xbca25379db88b6b3)},  {80, UINT64_C(0x8b814120dd4b2dbd)},  {81, UINT64_C(0x94f12ef94719e083)},
+        {96, UINT64_C(0x1c2a214ee6ab4f84)},  {97, UINT64_C(0x59d3d08678b080c7)},  {112, UINT64_C(0x259da00983eab18e)},
+        {113, UINT64_C(0x92e78d5c3b0065e6)}, {128, UINT64_C(0x3a9b9dbad26c952d)}, {129, UINT64_C(0x6eebaf757eed42ab)},
+        {144, UINT64_C(0x05009220cd4747f6)}, {145, UINT64_C(0x9214c954a67e0c14)}, {192, UINT64_C(0xbc152e7c1f5e9c40)},
+        {193, UINT64_C(0x11ff8ae436691f52)}, {200, UINT64_C(0xc0895d26f8d2d90f)}, {288, UINT64_C(0x17e4aa47a185f12c)},
+        {289, UINT64_C(0xede2975ce774d7e7)}, {300, UINT64_C(0xb8446c7b09ba427b)}, {512, UINT64_C(0x2c274db7d27dc42b)},
     };
 
     auto const data = pattern(512);
@@ -139,7 +142,7 @@ TEST_CASE("public_hashers_golden_values") {
     REQUIRE(ankerl::unordered_dense::hash<std::string>{}("") == UINT64_C(0x42bc986dc5eec4d3));
     REQUIRE(ankerl::unordered_dense::hash<std::string>{}("a") == UINT64_C(0x6cf84e5a2465e867));
     REQUIRE(ankerl::unordered_dense::hash<std::string>{}("hello") == UINT64_C(0x8a530a885be59d42));
-    REQUIRE(ankerl::unordered_dense::hash<std::string>{}("hello world, this is a longer key") == UINT64_C(0x5ff2678617d5e07b));
+    REQUIRE(ankerl::unordered_dense::hash<std::string>{}("hello world, this is a longer key") == UINT64_C(0x24901ff4d8dc478d));
     REQUIRE(ankerl::unordered_dense::hash<std::string>{}(std::string(200, 'x')) == UINT64_C(0xc85c216c50379a39));
 
     // A string_view of the same bytes has to agree with the string, or a transparent lookup finds
