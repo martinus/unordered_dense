@@ -435,8 +435,8 @@ workloads; on AArch64 it is not, which is why the NEON path exists.
 
 `ankerl::unordered_dense` provides a custom container implementation that has lower memory requirements than the default `std::vector`. Memory is not contiguous, but it can allocate segments without having to reallocate and move all the elements. In summary, this leads to
 
-* Much smoother memory usage, memory usage increases continuously.
-* No high peak memory usage.
+* Much smoother memory usage of the values, which increases continuously.
+* No high peak memory usage from the values.
 * Faster insertion because elements never need to be moved to newly allocated blocks
 * Slightly slower indexing compared to `std::vector` because an additional indirection is needed.
 
@@ -447,7 +447,9 @@ Abseil is fastest for this simple insertion test, taking a bit over 0.8 seconds.
 
 `ankerl::unordered_dense::segmented_map` doesn't have these peaks, and instead has a smooth increase in memory usage. Note there are still sudden drops & increases in memory because the indexing data structure still needs to increase by a fixed factor.
 
-The segmenting is about the values, which are the larger part and the ones whose references stay valid. The index is two plain arrays either way, so growing it does allocate the new one beside the old; at 5.5 bytes per slot that peak is small next to the values.
+The segmenting is about the values: it is those that grow smoothly and whose references stay valid. The index is two plain contiguous arrays either way, and growing it still allocates the new one beside the old, so the index alone keeps a doubling spike that `segmented_map` does not remove. Since 5.0.0 that is a change from before, when the index was segmented too.
+
+How much it matters depends on the size of your value. The index is 5.5 bytes per slot, so at the moment it doubles it needs about 16.5 bytes per slot transiently, against `sizeof(value_type)` bytes per element for the values. For `map<uint64_t, uint64_t>` that spike is roughly two thirds of the value storage; for a map with a large value it is a rounding error; for a `set<uint64_t>` it is larger than the values. If you need the index to grow smoothly as well, `reserve()` up front avoids the doubling entirely, which is worth doing for a large map whatever container it uses.
 
 ## 5. Design
 
