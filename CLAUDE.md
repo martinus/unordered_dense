@@ -556,6 +556,53 @@ block, which the spatial prefetcher already brought in. So it pays 20 ns per era
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
 Not kept. The lazy version is, and it is the entry below.
 
+**Latency is what a map pays, tested rather than argued** (2026-09-07). The AES-NI rejection above
+was reasoning -- a quarter faster in throughput, half again slower in latency, so it should lose in
+a map -- and reasoning is not a measurement. Measured: the same `map<std::string, size_t>`, the
+scored string workloads, three hashers interleaved by `compare()` in one binary, where the third is
+a *control* -- `wy2`, the same wyhash written out as a second hasher type so every template is a
+second instantiation. Whatever the control reads is what layout is worth here, and nothing smaller
+than that can be claimed for AES.
+
+| workload | control | AES | what the operation can overlap |
+|---|---|---|---|
+| `hashstr` (a hashing loop) | 1.00 | **1.28** | everything: independent hashes |
+| `buildstr` | 1.01 | 0.91 | a lot: the rehash hashes sixteen ahead |
+| `iestr` | 1.02 | 0.80 | some |
+| `churnstr` | 1.01 | 0.82 | some |
+| `rmissstr` | **1.13** | 0.75 | little |
+| `findstr` | 1.01 | 0.71 | little |
+| `rhitstr` | 1.04 | **0.63** | nothing: one lookup, one dependent chain |
+
+So AES is **28% faster at hashing and 9-37% slower at every single thing a map does**, and the order
+of the map rows is the mechanism rather than noise: the workload that can overlap its hashes loses
+least, the one that cannot loses most. The prediction that `buildstr` might actually *win* was wrong
+in sign and right in rank -- a build is only about half rehashing, and the other half is inserts
+that each pay the hash's latency in full.
+
+The counters say the same thing from the other side, one hasher per binary, 30M all-hits lookups:
+AES executes **fewer instructions** (5.15G against 5.35G) and takes **59% more cycles** (6.54G
+against 4.12G), IPC 1.30 down to 0.79. That is a dependency chain, not extra work. Two explanations
+ruled out: it is not port contention with the SSE2 group compare, since building both with
+`ANKERL_UNORDERED_DENSE_HAS_SSE2=0` leaves `rhitstr` at 0.66 instead of 0.63; and it is not a missed
+inline, since `aeshash::hash` appears in no symbol table and the 36 `aesenc` instructions in the
+binary are all inline. The hash avalanches indistinguishably from wyhash at every length tested, so
+this is not collisions either.
+
+**What does not add up, and is worth knowing before quoting the chart's right panel.** AES's
+standalone latency disadvantage is 4.2 ns per hash, and it costs **14.9 ns per lookup** -- three and
+a half times more than adding the two would predict. So the latency panel of `hash_vs_length.svg`
+*understates* what a map pays: in that loop the next key's loads still issue while the current
+chain runs, where in a lookup the chain's result is the address of the next dependent load and
+nothing after it can start at all. Read that panel as an ordering, not as a number to add to a
+lookup.
+
+The general rule this leaves: **a hash for a map is chosen on latency; a hash for a loop is chosen
+on throughput; and the two can order candidates oppositely by more than 2x** (AES against this
+wyhash: 1.28 one way, 0.63 the other, on the same machine on the same day). Which one applies is
+decided by whether the caller's code can have several hashes in flight -- this map's rehash can,
+which is why it hashes sixteen ahead, and a lookup cannot.
+
 **A chart for the hash, and its own control says how much of it to believe** (2026-09-07,
 `doc/hash_vs_length.svg`, `scripts/ab/hash.cpp`). The scored suite has one hash workload and it
 reports one number over a mix of lengths; that is the right summary and it hides the shape, because
@@ -638,9 +685,10 @@ Measured and rejected on the way, all on the same keys:
 - **AES-NI**, asked as "how about SSE for the hash": one `aesenc` per 16 byte block into an
   accumulator and two finishing rounds, compiled with `-maes`. Throughput 1.63 against 2.18 under
   clang and 1.47 against 2.07 under gcc -- a quarter faster -- and latency **12.0 against 7.85**
-  and 11.4 against 7.82, half again slower, which is what the map pays: an `aesenc` is four cycles
-  and the rounds are a chain. It is the 2025 gxhash finding again on the right key lengths this
-  time, and it comes with a flag the header cannot assume. SSE2 itself, the one vector ISA the
+  and 11.4 against 7.82, half again slower, which is what the map pays -- measured a day later and
+  worse than that, `rhit64`'s string twin at **0.63**; see the entry above. An `aesenc` is four
+  cycles and the rounds are a chain. It is the 2025 gxhash finding again on the right key lengths
+  this time, and it comes with a flag the header cannot assume. SSE2 itself, the one vector ISA the
   header may rely on, has nothing that beats a scalar 64x64 multiply for mixing: `pmuludq` is two
   32x32 products, and four of them plus the adds are slower than one `mulx`. A 16 byte load is no
   faster than two 8 byte ones. So: no.
