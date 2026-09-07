@@ -82,6 +82,13 @@ draw_all() {
     draw find_vs_size.csv find_ratio_vs_size.svg \
         "How much faster than robin hood" "times faster than the index this replaces, paired" ratio
 
+    # The one chart that is about a component rather than a map, so it names neither a key type nor
+    # a mapped type: what the string hash costs against the length of the key.
+    draw hash_vs_length.csv hash_vs_length.svg \
+        "String hash cost, against key length" "nanoseconds per hash, key bodies cache-resident" \
+        "--panels=throughput:many independent hashes|latency:one at a time, as a lookup pays" \
+        "--x=key length, bytes" "--unit=ns" "--of=std::string" --xlin "--xmax=256"
+
     # The two value-size charts put a key type in each panel, so the long-form CSVs are joined into
     # one wide table first: build and iterate are separate charts because they differ by two orders
     # of magnitude and on one axis the iteration would be a flat line along the floor.
@@ -169,21 +176,21 @@ fi
     printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > "$build/nb.cpp"
     "$cxx" "${flags[@]}" -c "$build/nb.cpp" -o "$build/nanobench.o"
 }
-for t in sweep valuesize memory; do
+for t in sweep valuesize memory hash; do
     "$cxx" "${flags[@]}" "$root/scripts/ab/$t.cpp" "$build/nanobench.o" -o "$build/$t"
 done
-echo "built sweep, valuesize, memory"
+echo "built sweep, valuesize, memory, hash"
 
 # Strings are sampled less finely and stop an octave earlier: a string operation costs about four
 # times an integer one, and four sweeps at the integer settings would be most of a day. The shape is
 # what these charts are for, and sixteen points per octave shows the sawtooth in full.
 if [ $quick = 1 ]; then
-    shift_max=14 per_octave=3 width=0.08 entries=50000
+    shift_max=14 per_octave=3 width=0.08 entries=50000 hash_max=64
     s_shift=13 s_octave=3 s_width=0.10 s_entries=20000
 else
     # Twenty-four points per octave, sixteen for strings, since 2026-09-06 -- twice what the first
     # charts had, which puts a sample every 3% of the way through the load-factor sawtooth.
-    shift_max=20 per_octave=24 width=0.03 entries=200000
+    shift_max=20 per_octave=24 width=0.03 entries=200000 hash_max=1024
     s_shift=19 s_octave=16 s_width=0.04 s_entries=200000
 fi
 run() { echo "  $1 ..." >&2; taskset -c "$core" "$build/${@:2}"; }
@@ -196,6 +203,10 @@ run insert_erase sweep "$shift_max" "$per_octave" 20000 2 "$width" 0 > "$doc/ins
 run memory_size  memory "$shift_max" 12 0 0 0                        > "$doc/memory_vs_size.csv"
 run value_size   valuesize "$entries" "$width" 0                     > "$doc/value_size.csv"
 run memory_value memory 0 0 1 1000000 0                              > "$doc/memory_vs_value_size.csv"
+# Not repeated for the other key type: this one measures a hash over a length axis, and the length
+# is the axis rather than a property of the key type. Integer keys never reach it -- their hash is
+# one multiply and has no length to dispatch on.
+run hash         hash "$hash_max" "$width"                            > "$doc/hash_vs_length.csv"
 
 echo "the same again with std::string keys:"
 run find_hits_str    sweep "$s_shift" "$s_octave" 20000 3 "$s_width" 1 > "$doc/find_hits_vs_size_str.csv"

@@ -556,6 +556,47 @@ block, which the spatial prefetcher already brought in. So it pays 20 ns per era
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
 Not kept. The lazy version is, and it is the entry below.
 
+**A chart for the hash, and its own control says how much of it to believe** (2026-09-07,
+`doc/hash_vs_length.svg`, `scripts/ab/hash.cpp`). The scored suite has one hash workload and it
+reports one number over a mix of lengths; that is the right summary and it hides the shape, because
+a hash dispatches on length and its cost is a staircase. Two panels, and the pair is the point:
+**throughput** (independent keys, as many in flight as the machine has multipliers) is what a
+hashing loop pays and what hash benchmarks report; **latency** (a byte of each answer fed into the
+next key, so nothing overlaps) is what a *map* pays, since the hash's result is the address of the
+group to probe. That distinction is what decided AES-NI -- a quarter faster on the left panel, half
+again slower on the right.
+
+Geomean per length range, 4.11.0's time over this map's, above 1.00 meaning this map is faster:
+
+| bytes | throughput | latency | what the code does there |
+|---|---|---|---|
+| 1-16 | 1.09 | **1.00** | identical source: the short path was not touched |
+| 17-48 | 1.21 | 1.18 | independent blocks, two or three multiplies |
+| 49-96 | 1.11 | 1.10 | four to six |
+| 97-144 | 0.99 | 1.17 | seven to nine |
+| 145-256 | 0.99 | 0.99 | identical source: the chained lanes were not touched |
+
+**The two identical-source rows are the control, and they disagree with each other.** The 145-256
+row reads 0.99/0.99, which is what identical code should read. The 1-16 row reads 1.09 in
+throughput and 1.00 in latency -- the same instructions, 9% apart, because restructuring what sits
+*after* the short path's early return moved the code around it. So this chart's throughput panel
+carries about 9% of layout in it and its latency panel does not, which means the honest reading of
+the 17-144 range is the latency column: **10-18%, clean, with a control at 1.00 either side of it**.
+The throughput gain is real too but 1.21 should be read as "up to 1.21, of which up to 9% is not the
+algorithm".
+
+Two more things the chart says that the score cannot. `boost::hash<std::string>` is **2.0-2.2x
+slower than this hash in throughput and 1.1-1.7x in latency**, growing with length -- the mix number
+(8-31%) is dominated by short keys. And 4.8.1's hash is *faster than this one in throughput* over
+17-144 (1.06) while being **1.24x slower in latency**, which is the clearest statement of what July's
+work traded and why the mix could not see it.
+
+Capped at 256 bytes in the SVG, on a linear axis (`--xlin`, `--xmax`, both new in `plot.py`: a table
+size is exponential and belongs on log2, a key length is not, and past 256 every line is straight).
+The CSV keeps the full range to 1024. One length per point, so the length dispatch is perfectly
+predicted here where the scored keys cost it 0.31 branch misses per hash -- `hashstr` is the number
+that includes the dispatch, and this is the shape.
+
 **The string hash restructured: independent blocks from 17 to 144 bytes** (2026-09-06, asked as
 "make the hash faster, the values may change"). wyhash chains its 16 byte blocks through `seed`,
 so a 48 byte key is three multiplies in a row before the finalizer and the map cannot form a group
