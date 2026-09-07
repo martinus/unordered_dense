@@ -175,6 +175,72 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Every other map on the same workloads, in one harness** (2026-09-07, `scripts/ab/maps.{h,cpp,sh}`,
+`maps_one.{cpp,sh}`, `mapsplot.py`, `diagrams.py`; written for the blog post on index structures).
+Eighteen maps for an integer key and sixteen for a string, interleaved by `compare()` in one
+process: this header, this header at `v4.11.0` renamed the way `run.sh` does, boost flat and node,
+abseil flat and node (each also with its own hash as a control), F14 Value/Vector/Node, emhash8,
+emilib, indivi `flat_umap` and `flat_wmap`, Verstable, ihtab and `std::unordered_map`. Three key
+shapes -- `uint64_t`, `std::string`, and `uint64_t` with a 64 byte value -- three octaves each, five
+sizes per octave, every adapter checked against this map over 400000 mixed operations first and
+again under ASan/UBSan. **Two independent runs agree: 372 of 378 integer ratios within 5%, worst
+1.12 on `iterate` at a thousand entries.**
+
+The whole table is in the post; four results are worth having here.
+
+**A miss is where the counter earns its keep, and abseil is the control that proves it.** At the
+32000 octave, time relative to this map: abseil is the fastest map measured on a **hit** (0.73) and
+**1.38 on a miss**; boost is 0.79 and **0.83**; indivi's `flat_umap` 0.82 and 0.97. Same group
+compare, same SIMD, same load factor within 0.075 -- the difference is that abseil's miss has to
+find an *empty control byte* and at load 7/8 that is often not in the home group, where boost's
+overflow bit, indivi's counter and this map's counter all stop at home. So the overflow byte and the
+overflow counter are worth 1.4-1.7x of a miss against an otherwise identical SwissTable, measured
+across families rather than by patching this one.
+
+**`indivi::flat_wmap` is the fastest hit of anything measured** -- 0.71 at 32000, 0.62 at 500000 --
+and it is the *simplest* index in the comparison: one byte per slot, no groups at all, tombstones,
+load 0.8. The reason is that its sixteen byte window is read **unaligned starting at the home
+bucket**, so the home is lane 0 and a key at home is the first bit of the first mask; an aligned
+group puts the home in the middle and half the group is behind it. What it pays is the widest
+sawtooth here: 2.12x between the cheapest and dearest point of the 32000 octave, against 1.5-1.6x
+for the group designs. Worth testing on the group index, and the reason it may not transfer is that
+this map's value indices are addressed per group.
+
+**The chained designs lose the miss badly**: emhash8 2.13 and Verstable 2.10, both against this
+map's counters -- and Verstable executes 17% *fewer* instructions per miss than this map does. A
+chain must be walked to its end and whether there is one is unpredictable, which is the same result
+the counter-width table records from inside this header.
+
+**And the own-hash control moved further than expected.** For a string key `boost::hash` costs boost
+31% on a hit and 48% on a miss (0.87 to 1.14, 0.85 to 1.26) and turns a map that is ahead of this
+one into one that is behind it -- but **`absl::Hash<std::string>` costs abseil 1-4% and nothing
+else**, so the "its own string hash is slower" line above is about boost specifically and not about
+defaults in general. For an integer key both defaults are *cheaper* than this wyhash, and abseil's
+is worth **1.4x on a build** (`absl-own` 1.12 against `absl` 1.61), which is the largest single
+effect of a hash anywhere in this comparison.
+
+**The counters, one map per binary, 30M lookups at 50000 entries** (`scripts/ab/maps_one.sh`), which
+is where the sub-10% questions were settled. Per lookup, instructions / cycles / branch misses:
+all-hits `indivi::flat_wmap` 48.0 / **19.8** / 0.035, absl 56.1 / 21.4 / 0.044, boost 57.0 / 24.8 /
+0.094, this map 60.5 / 29.4 / 0.065, emhash8 **48.4** / 36.6 / 0.420, Verstable 61.2 / 34.8 / 0.426,
+`std::unordered_map` **45.1** / 52.4 / 0.325. All-misses: this map 57.2 / **20.7** / 0.108, boost
+54.2 / 20.4 / 0.164, **absl 61.1 / 32.6 / 0.362**, Verstable **44.6 / 40.8 / 0.806** at IPC 1.09.
+Nobody here is instruction-bound (IPC 0.78 to 3.26 on a four-wide core); the fast ones are the ones
+the predictor gets right. At a million entries the dTLB column is the family split: 1.34-1.37 misses
+per hit for the flat maps that touch one region, 1.78-2.21 for the dense ones that touch two, 2.58
+for a node map -- which is the same 22%-worth-of-huge-pages gap recorded above, measured from the
+outside for the first time.
+
+**Memory, and the second place tombstones show up.** Bytes of heap per live entry, `mallinfo2`
+around a build and around a full turnover, octave geomean at 32000. Eight byte value: absl 27.0 ->
+**31.0**, indivi-w 31.0 -> **35.7**, ihtab 36.1 -> **72.3**, and *every* tombstone-free map flat to
+the byte (this map 32.6, boost 29.2, F14Value 29.2, indivi-u 28.6, Verstable 28.6, emhash8 38.0).
+64 byte value: **the node maps win** (94-95 against this map's 107.6, boost's 122.1 and emilib's
+130.2), because a flat map pays for every empty slot at the full width of the value and a node map
+pays a pointer. That reverses the eight byte ordering completely and is the one column where
+`std::unordered_map` (108.4) is competitive with anything. emilib has tombstones and does *not*
+grow, because it counts only live elements against its limit -- it pays in probe length instead.
+
 **The size sweep, and the measurement mistake it took three tries to get right** (2026-09-06,
 `doc/*_vs_size.svg`, `scripts/ab/sweep.cpp`). Three charts -- find with a 50% hit rate, churn, and
 insert-erase -- of one map grown through 377 sample points, twenty-four per octave (193 and twelve

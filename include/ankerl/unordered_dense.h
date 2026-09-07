@@ -685,8 +685,9 @@ namespace bucket_type {
 // The index is groups of sixteen slots. A group holds one byte of fingerprint per slot, compared
 // sixteen at a time, and eight overflow counters that record how many entries with those low three
 // fingerprint bits had to probe past it. An erase decrements them, so nothing ever moves after it
-// is placed and no tombstone is left behind. The value indices sit in a second array beside the
-// groups: 24 + 64 bytes per sixteen slots, 5.5 bytes per slot. See "5. Design" in the README.
+// is placed and no tombstone is left behind. The value indices sit in the same block as the group
+// they belong to: 24 + 64 bytes per sixteen slots, 5.5 bytes per slot. See "5. Design" in the
+// README, and group_storage::block below for why one block rather than two arrays.
 //
 // The width of the value index is the one thing the two bucket types differ in: `group` indexes
 // up to 2^32 values at 24 + 64 bytes per sixteen slots, `group_big` up to 2^63 at 24 + 128.

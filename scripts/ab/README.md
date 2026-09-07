@@ -42,6 +42,49 @@ compiled -- turning a literal loop bound into a runtime value would be a change 
 benchmark even at the same value, and its absolute numbers are only comparable across time if its
 workloads do not move.
 
+## Every other map, on the same workloads
+
+    scripts/ab/maps.sh [-c COMPILER] [-s] [-r REV] <check|speed|memory|names> [u64|str|big] [base]
+    scripts/ab/maps_one.sh [-c COMPILER] [-k u64|str|big] <workload> <entries> <reps> [map...]
+
+`run.sh` compares this header against another revision of itself. `maps.sh` compares it against
+everything else: `boost::unordered_flat_map` and `unordered_node_map`, `absl::flat_hash_map` and
+`node_hash_map`, `folly::F14ValueMap`/`F14VectorMap`/`F14NodeMap`, `emhash8::HashMap`,
+`emilib::HashMap`, `indivi::flat_umap` and `flat_wmap`, Verstable, ihtab, `std::unordered_map`, and
+this header at `v4.11.0` -- eighteen maps for an integer key, sixteen for a string, all in one
+process with `compare()` interleaving them. `boost` and `absl` appear twice, once with this
+library's hash and once with their own, because the same-hash convention is the right way to
+compare *indexes* and is not what a caller gets by typing the type name; for a string key that
+control moves boost by 31% on a hit.
+
+Every map that is found on the machine is compiled in and one that is not is left out with a note.
+The include paths come from the environment (`ABSL_ROOT`, `FOLLY_ROOT`, `FOLLY_CONFIG`,
+`EMHASH_INCLUDE`, `INDIVI_INCLUDE`, `VERSTABLE_INCLUDE`, `IHTAB_INCLUDE`, `NANOBENCH_INCLUDE`) and
+are documented at the top of the script. F14 needs C++20, so the whole harness is built as C++20 --
+the harness's dialect, not the library's.
+
+`check` runs every adapter against this map operation for operation over 400000 mixed operations,
+and nothing it measures means anything until that is green; `-s` runs the same thing under ASan and
+UBSan, minus abseil, whose installed library half is not built with a sanitizer and whose headers
+turn on generation-counter debugging when one is present. `check` is what caught Verstable's
+`vt_insert` being `insert_or_assign` where the honest counterpart of `try_emplace` is
+`vt_get_or_insert`.
+
+`speed` sweeps three octaves (1000, 32000 and 500000 entries) at five sizes each and reports the
+geometric mean per workload, for the same reason `run.sh` does. `UDM_POINTS` changes the count --
+two dozen draws the sawtooth itself rather than averaging it out -- and `UDM_INTERVAL`,
+`UDM_EPOCHS` and `UDM_CSV` do what they say. `big` is the integer key again with a 64 byte mapped
+value, which is the axis that separates a flat map from a dense one and the one an eight byte value
+hides completely.
+
+`maps_one.sh` builds **one map per binary** and runs it under `perf stat`, because a binary holding
+several maps has a code layout that moves by more than a 3% question every time any of them
+changes. Anything under about 10% is decided there, with counters, and not by the paired harness.
+
+`scripts/ab/mapsplot.py` draws the CSVs (`bars`, `memory`, `octave`) and prints them
+(`table`, `swing`); `scripts/ab/diagrams.py` draws the byte-level layout figures of every index in
+one house style. Both are stdlib only.
+
 ## Regenerating all of it
 
 `scripts/ab/regen.sh` is the whole pipeline: renamed baseline headers, three compiled tools, seven
