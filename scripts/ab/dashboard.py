@@ -14,6 +14,7 @@ works under, for the same reason.
 """
 import csv
 import json
+import math
 import os
 import sys
 
@@ -21,6 +22,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from plot import SERIES  # noqa: E402  the one palette, validated once
 
 DOC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "doc")
+
+# The one fact none of the CSVs carries. Set AB_MACHINE when regenerating elsewhere, so the
+# page never claims a machine it was not measured on.
+MACHINE = os.environ.get("AB_MACHINE", "Ryzen&nbsp;9&nbsp;7950X, clang&nbsp;22")
 
 
 def read(name):
@@ -85,6 +90,35 @@ def main():
     vs = wide_value_size("value_size.csv")
     vs_str = wide_value_size("value_size_str.csv")
 
+    # Facts, derived rather than written down: every figure the prose states about a measurement
+    # comes from the CSV the chart draws, so re-running regen.sh re-derives the sentence with it.
+    maps4 = ["this", "main", "jan", "boost"]
+    po_u64 = per_octave_count(r["find_hits_vs_size.csv"])
+    po_str = per_octave_count(r["find_hits_vs_size_str.csv"])
+    biggest = int(x_range(r["find_hits_vs_size.csv"])[1])
+    hit_boost = span(ratio_range(r["find_hits_vs_size.csv"], "ns", "this", "boost"))
+    hit_main = span(ratio_range(r["find_hits_vs_size.csv"], "ns", "this", "main"), invert=True)
+    hit_jan = span(ratio_range(r["find_hits_vs_size.csv"], "ns", "jan", "this"))
+    str_hashgap = span(ratio_range(r["find_hits_vs_size_str.csv"], "ns", "boostdef", "boost"))
+    str_boostdef = span(ratio_range(r["find_hits_vs_size_str.csv"], "ns", "this", "boostdef"), invert=True)
+    mix_at, mix_span = spread_at(r["find_vs_size.csv"], "ns", 26000, maps4)
+    _, hits_span = spread_at(r["find_hits_vs_size.csv"], "ns", mix_at, maps4)
+    churn_boost = span(ratio_range(r["churn_vs_size.csv"], "ns", "this", "boost"))
+    churn_main = span(ratio_range(r["churn_vs_size.csv"], "ns", "this", "main"), invert=True)
+    vsizes = sorted({int(float(x["entries"])) for x in vs}) if vs else [8, 64]
+    v_lo, v_hi = vsizes[0], vsizes[-1]
+    it_lo = num(at_x(vs, "iterate", v_lo, "boost", "this"), 1)
+    it_hi = num(at_x(vs, "iterate", v_hi, "boost", "this"), 1)
+    bd_lo = num(at_x(vs, "build", v_lo, "boost", "this"), 2)
+    bd_hi = num(at_x(vs, "build", v_hi, "boost", "this"), 2)
+    mem = r["memory_vs_value_size.csv"]
+    mem_lo = num(at_x(mem, "steady", v_lo, "boost", "this"), 2)
+    mem_hi = num(at_x(mem, "steady", v_hi, "boost", "this"), 2)
+    mem_peak = num(at_x(mem, "peak", v_hi, "boost", "this"), 2)
+    hsh = r["hash_vs_length.csv"]
+    hsh_t = span(ratio_range(hsh, "throughput", "boostdef", "this", per_octave=False), digits=1)
+    hsh_l = span(ratio_range(hsh, "latency", "boostdef", "this", per_octave=False), digits=1)
+
     sawtooth = ("Nothing is reserved, so each table grows on its own and its load factor sweeps from "
                 "about 0.5 just after a doubling to its maximum just before the next one. That is the "
                 "sawtooth, and the dotted verticals are where this map doubles. A ratio read at a "
@@ -102,28 +136,29 @@ def main():
         chart("Find, every lookup hitting", "nanoseconds per lookup, uint64_t keys",
               sized("find_hits_vs_size.csv"), "entries", "ns", resize_rows=r["find_hits_vs_size.csv"],
               what="A table of n entries, then random lookups of keys that are all present, drawn "
-                   "uniformly and with the rng carrying on across epochs so no sequence repeats. "
-                   "One lookup is a hash, a probe, and a comparison of the key that was found.",
+                   "uniformly and with the rng carrying on across epochs so no sequence repeats. One "
+                   "lookup is a hash, a probe, and a comparison of the key that was found.",
               why="<b>The most discriminating lookup chart, and the one to decide by.</b> Every map "
-                  "here has to do the same three things, so what differs is how many cache lines the "
-                  "probe touches and how predictably it branches — and with the outcome fixed, "
-                  "neither is masked by anything else. " + sawtooth),
+                  "here does the same three things, so what differs is how many cache lines the probe "
+                  "touches and how predictably it branches \u2014 and with the outcome fixed, neither is "
+                  f"masked by anything else. Over an octave this map runs {hit_main} faster than the "
+                  f"index it replaces and {hit_boost} the time of boost, whose flat layout reaches its "
+                  f"value in one fewer dependent load. {sawtooth}"),
         chart("Find, every lookup hitting", "nanoseconds per lookup, std::string keys",
-              sized("find_hits_vs_size_str.csv"), "entries", "ns",
-              resize_rows=r["find_hits_vs_size_str.csv"],
-              what="The same, with keys of 8 to 135 bytes skewed towards short. One fixed length "
-                   "would make the hash's length dispatch perfectly predictable and hide a third of "
+              sized("find_hits_vs_size_str.csv"), "entries", "ns", resize_rows=r["find_hits_vs_size_str.csv"],
+              what="The same, with keys of 8 to 135 bytes skewed towards short. One fixed length would "
+                   "make the hash's length dispatch perfectly predictable and hide a large part of "
                    "what a string lookup costs.",
               why="<b>The realistic case for most maps, and the one where the index matters least.</b> "
-                  "Hashing is 33-38% of a string lookup and the comparison is a memcmp behind a "
-                  "pointer the map has to chase, so the maps converge: whatever the index does well "
-                  "is diluted by work none of them can avoid. It also sets the ceiling on what a "
-                  "better index can buy a string map. <b>Watch the two green lines here:</b> solid is "
-                  "boost holding this map's wyhash, dashed is boost with the hash it ships with, and "
-                  "the dashed one is 18-31% slower &mdash; enough that this map is ahead of an "
-                  "out-of-the-box boost on string lookups and behind the same map given this hash. "
-                  "Which of those two is the honest comparison depends on whether you are choosing an "
-                  "index or choosing a map."),
+                  "Most of a string lookup is the hash and a memcmp behind a pointer the map has to "
+                  "chase, so the maps converge: whatever the index does well is diluted by work none "
+                  "of them can avoid. It also sets the ceiling on what a better index can buy a string "
+                  f"map. <b>Watch the two green lines here:</b> solid is boost holding this map's "
+                  f"wyhash, dashed is boost with the hash it ships with, and the dashed one is "
+                  f"{str_hashgap} the solid one's time \u2014 enough that this map is {str_boostdef} "
+                  "faster than an out-of-the-box boost while being behind the same map given this "
+                  "hash. Which of those two is the honest comparison depends on whether you are "
+                  "choosing an index or choosing a map."),
         chart("Find, half the lookups hitting", "nanoseconds per lookup, uint64_t keys",
               sized("find_vs_size.csv"), "entries", "ns", resize_rows=r["find_vs_size.csv"],
               what="The same lookups, but each one decides by a coin flip whether to ask for a key "
@@ -133,14 +168,13 @@ def main():
               warn="<b>Do not decide anything on this chart.</b> A 50% hit rate is the maximum-entropy "
                    "point of the hit-rate curve: it adds about half a branch misprediction per lookup "
                    "to every map, which is a flat tax that compresses exactly the differences the "
-                   "chart exists to show: at 26000 entries the four maps span 3.08x on the all-hits chart "
-                   "and 2.11x here. Worse, it can <i>invert</i> their order: measured, this map is fastest on "
-                   "hits (1.25x) and fastest on misses (1.25x) and still loses the 50% mix by 1.6% to "
-                   "a map that is slower at both, because that map's probe already mispredicted 0.6 "
-                   "times per lookup and an unpredictable outcome costs it nothing more. A number "
-                   "that can rank two maps the opposite way from both of its own components is not a "
-                   "summary of them. Use the all-hits chart above, and this one only to see what "
-                   "outcome unpredictability costs."),
+                   f"chart exists to show. Measured here, at {int(mix_at):,} entries the four maps "
+                   f"span {hits_span:.2f}x on the all-hits chart and {mix_span:.2f}x on this one. It "
+                   "can also invert their order, because a map whose probe already mispredicts pays "
+                   "almost nothing more for an unpredictable outcome while a clean one pays in full. "
+                   "A number that can rank two maps the opposite way from both of its own components "
+                   "is not a summary of them. Use the all-hits chart above, and this one only to see "
+                   "what outcome unpredictability costs."),
         chart("Find, half the lookups hitting", "nanoseconds per lookup, std::string keys",
               sized("find_vs_size_str.csv"), "entries", "ns", resize_rows=r["find_vs_size_str.csv"],
               what="The 50% mix on 8 to 135 byte keys.",
@@ -150,16 +184,16 @@ def main():
         chart("Churn at a fixed size", "nanoseconds per erase-and-insert pair, uint64_t keys",
               sized("churn_vs_size.csv"), "entries", "ns", resize_rows=r["churn_vs_size.csv"],
               what="Grow to n once, then forever erase a key that is present and insert one that is "
-                   "not, so the size never changes and neither does the bucket count. The erased key "
-                   "goes back into the spare pool and the inserted one takes its place, so no key is "
-                   "built inside the timed region.",
+                   "not, so the size never changes and neither does the bucket count. What is left is "
+                   "the steady state a long-lived table actually runs in.",
               why="<b>The workload that separates designs rather than constant factors.</b> A table "
                   "that has churned for a long time is not the table you built: a design that frees a "
-                  "slot without undoing what probed past it only degrades, and is relieved only by "
-                  "growing. That is why boost swings 4.2-6.1x across a single octave here where "
-                  "this map swings 1.2-1.5x — its overflow bits only ever get set, where the group "
-                  "index's counters come back down on every erase. Nothing else on this page can "
-                  "tell a long-lived table from a freshly built one. " + sawtooth),
+                  "slot without undoing what once probed past it has probe sequences that only grow, "
+                  "and repairs them with a rehash. Every other chart on this page is measured on a "
+                  "table that has just been built, so this is the only one that can tell the two "
+                  f"apart. Depending on where in the size range it is read, this map takes {churn_boost} the time of boost, and it is "
+                  f"{churn_main} faster than the index it replaces throughout; watch boost's line for the sawtooth "
+                  "of an in-place rehash it pays for at a fixed bucket count."),
         chart("Churn at a fixed size", "nanoseconds per erase-and-insert pair, std::string keys",
               sized("churn_vs_size_str.csv"), "entries", "ns", resize_rows=r["churn_vs_size_str.csv"],
               what="The same, on 8 to 135 byte keys.",
@@ -167,76 +201,76 @@ def main():
                   "degrades under churn is partly the heap the key bodies live on rather than the "
                   "table, so this chart is measuring the allocator as well as the map."),
         chart("Insert and erase", "nanoseconds per operator[] and erase pair, uint64_t keys",
-              sized("insert_erase_vs_size.csv"), "entries", "ns",
-              resize_rows=r["insert_erase_vs_size.csv"],
+              sized("insert_erase_vs_size.csv"), "entries", "ns", resize_rows=r["insert_erase_vs_size.csv"],
               what="Four operations a round with the size invariant by construction: an operator[] "
-                   "that finds, an erase that finds nothing, an erase that removes, and an "
-                   "operator[] that inserts.",
-              why="Largely the same story as churn, which is why the four-chart summary leaves it "
-                  "out. It is here because half of its operations find nothing, so unlike churn it "
-                  "pays for the miss path as well — and because operator[] is the call most programs "
-                  "actually write. " + sawtooth),
+                   "that finds, an erase that finds nothing, an erase that removes, and an operator[] "
+                   "that inserts. Half of each hits, so every round is a coin flip the predictor "
+                   "cannot win.",
+              why="Largely the same story as churn, which is why the four-chart summary leaves it out, "
+                  "and it is the closest thing here to a mixed read-write path. It is also where a "
+                  "dense map does its most awkward work: an erase moves the last value into the hole "
+                  "and has to find the slot that pointed at it, which for an integer key is free and "
+                  "for a string key means hashing a second key."),
         chart("Insert and erase", "nanoseconds per operator[] and erase pair, std::string keys",
-              sized("insert_erase_vs_size_str.csv"), "entries", "ns",
-              resize_rows=r["insert_erase_vs_size_str.csv"],
+              sized("insert_erase_vs_size_str.csv"), "entries", "ns", resize_rows=r["insert_erase_vs_size_str.csv"],
               what="The same, on 8 to 135 byte keys.",
               why="Mostly a check that nothing about a string key changes the ordering. If it ever "
                   "does, that is the interesting result."),
         chart("Build from empty, against mapped-value size",
-              "nanoseconds per entry, 200000 entries, nothing reserved",
+              f"nanoseconds per entry, 200000 entries, nothing reserved",
               [panel_of(vs, "build", "uint64_t keys"), panel_of(vs_str, "build", "std::string keys")],
               "sizeof(mapped_type), bytes", "ns", bars=True,
-              what="Insert n entries into a default-constructed map, so the growth is included: about "
-                   "half of a build is rehashing, and a map that grows badly would otherwise score "
-                   "like one that grows well. Repeated across mapped values of 8 to 64 bytes.",
+              what=f"Insert n entries into a default-constructed map, so the growth is included: about "
+                   f"half of a build is rehashing, and a map that grows badly would otherwise score "
+                   f"like one that grows well. Repeated across mapped values of {v_lo} to {v_hi} bytes.",
               why="<b>The axis that decides dense against flat.</b> A flat map writes the whole "
-                  "value_type into a hash-scattered slot and moves it again on every rehash, so all "
-                  "of its costs scale with the value; a dense map writes eight bytes there and "
-                  "appends the value to a vector in order. Boost's line crosses above robin hood's "
-                  "between 48 and 64 bytes. A suite that fixes the mapped type at size_t — as this one did "
-                  "until September — ranks the two families wrongly for map&lt;Key, SomeStruct&gt;, "
-                  "which is at least as common as map&lt;Key, size_t&gt;. It stops at 64 bytes "
-                  "because 200000 entries of a 64 byte value is 14 MB and still in L3, where 128 is "
-                  "27 MB and is not; past that cliff every line bends upward together and the chart "
-                  "stops being about the value."),
+                  "value_type into a hash-scattered slot and moves it again on every rehash, so all of "
+                  "its costs scale with the value; a dense map writes eight bytes there and appends "
+                  f"the value to a vector in order. Boost takes {bd_lo} this map's time to build at {art(v_lo)} "
+                  f"{v_lo} byte value and {bd_hi} at {v_hi}, and the gap widens across the axis, which "
+                  "is the whole point of having the axis. A suite that fixes the mapped type at size_t "
+                  "ranks the two families wrongly for map&lt;Key, SomeStruct&gt;, which is at least as "
+                  f"common as map&lt;Key, size_t&gt;. It stops at {v_hi} bytes because past that the "
+                  "working set leaves cache and every line bends upward together, and the chart stops "
+                  "being about the value."),
         chart("One iteration pass, against mapped-value size",
               "nanoseconds per entry, 200000 entries",
               [panel_of(vs, "iterate", "uint64_t keys"), panel_of(vs_str, "iterate", "std::string keys")],
               "sizeof(mapped_type), bytes", "ns", bars=True,
               what="Walk every entry once and read one field of each, on a map built and then left "
                    "alone. Separate from the build chart because the two answer different questions "
-                   "and differ by two orders of magnitude — on one axis together, the iteration "
-                   "would be a flat line along the floor.",
+                   "and differ by orders of magnitude \u2014 on one axis together, the iteration would be "
+                   "a flat line along the floor.",
               why="<b>The one place the dense layout wins outright, and by the largest margin on this "
-                   "page.</b> A dense map iterates a contiguous vector; a flat map walks its whole "
-                   "slot array and skips the empty ones, which at load 0.5 is half of what it "
-                   "touches. That is 10.9x at an 8 byte integer-keyed value, narrowing to 2.3x at 64 as the "
-                   "payload starts to dominate, and 3.6x with string keys, where the key bodies cost every map alike. If you iterate at all often, this chart is the argument."),
+                  "page.</b> A dense map iterates a contiguous vector; a flat map walks its whole slot "
+                  "array and skips the empty ones, which at load 0.5 is half of what it touches. That "
+                  f"is {it_lo} at {art(v_lo)} {v_lo} byte integer-keyed value, narrowing to {it_hi} at {v_hi} as "
+                  "the payload starts to dominate. If you iterate at all often, this chart is the "
+                  "argument."),
         chart("String hash cost, against key length",
               "nanoseconds per hash, key bodies cache-resident",
               [panel_of(r["hash_vs_length.csv"], "throughput", "many independent hashes"),
                panel_of(r["hash_vs_length.csv"], "latency", "one at a time, as a lookup pays")],
               "key length, bytes", "ns", xlog=False,
               what="One hash function over 256 keys of a single length, for every length through the "
-                   "short path and the block range and then coarsely to 1024 bytes. The left panel "
-                   "hashes independent keys, so the machine runs as many at once as it has "
+                   "short path and the block range and then coarsely to the right-hand edge. The left "
+                   "panel hashes independent keys, so the machine runs as many at once as it has "
                    "multipliers; the right feeds a byte of each answer into the next key, so no two "
-                   "overlap. The keys are cache-resident on purpose: this is a measurement of "
-                   "hashing, and the size charts above are where the memory system belongs.",
-              why="<b>A hash has two costs and they can disagree completely, which is the whole "
-                  "reason for two panels.</b> Throughput is what a hashing loop pays and what most "
-                  "hash benchmarks report; latency is what a map lookup pays, because the hash's "
-                  "result is the address of the group to probe and nothing can start until the "
-                  "chain of multiplies resolves. An AES-NI hash measured here is a quarter faster "
-                  "on the left and half again slower on the right — faster by the usual benchmark, "
-                  "slower in every map. The staircase is real: a hash dispatches on length, so its "
-                  "cost steps wherever the implementation changes strategy, and this map's steps "
-                  "are at 16 bytes and then every 16 up to 144.",
-              warn="One length per point, so the length dispatch is <b>perfectly predicted here</b> "
-                   "and costs 0.31 branch misses per hash on the scored benchmark's mixed keys. "
-                   "This chart is the shape; <code>hashstr</code> in the scored suite is the number "
-                   "that includes the dispatch. Note also that only two of these lines are a choice "
-                   "a caller makes — the other two are what this library shipped before."),
+                   "overlap. The keys are cache-resident on purpose: this is a measurement of hashing, "
+                   "and the size charts above are where the memory system belongs.",
+              why="<b>A hash has two costs and they can disagree completely, which is the whole reason "
+                  "for two panels.</b> Throughput is what a hashing loop pays and what most hash "
+                  "benchmarks report; latency is what a map lookup pays, because the hash's result is "
+                  "the address of the group to probe and nothing can start until the chain of "
+                  f"multiplies resolves. Boost's own string hash is {hsh_t} this one's time on the "
+                  f"left and {hsh_l} on the right \u2014 the same two measurements disagreeing about how "
+                  "much worse. The staircase is real: a hash dispatches on length, so its cost steps "
+                  "wherever the implementation changes strategy.",
+              warn="One length per point, so the length dispatch is <b>perfectly predicted here</b>, "
+                   "where the scored benchmark's mixed keys cost it about a third of a branch miss per "
+                   "hash. This chart is the shape; <code>hashstr</code> in the scored suite is the "
+                   "number that includes the dispatch. Note also that only two of these lines are a "
+                   "choice a caller makes \u2014 the other two are what this library shipped before."),
         chart("Memory, against mapped-value size", "megabytes held for 1000000 entries, uint64_t keys",
               [panel_of(r["memory_vs_value_size.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_value_size.csv"], "peak", "peak during growth")],
@@ -247,49 +281,211 @@ def main():
                    "before the old one is freed.",
               why="<b>Speed alone picks the wrong map often enough to deserve a chart, and this is the "
                   "axis memory differentiates on.</b> Per entry it barely moves with the table size, "
-                  "but against the value it moves a lot: a flat map pays for its empty slots at the "
-                  "full width of the value, a dense one pays four bytes of index for them. The peak "
-                  "is the number a caller has to have room for and is where the gap is widest."),
+                  f"but against the value it moves a lot: boost holds {mem_lo} this map's bytes at {art(v_lo)} "
+                  f"{v_lo} byte value and {mem_hi} at {v_hi}, because a flat map pays for its empty "
+                  "slots at the full width of the value where a dense one pays four bytes of index. "
+                  f"The peak is the number a caller has to have room for and is where the gap is "
+                  f"widest: {mem_peak} at {v_hi} bytes."),
         chart("Memory, against mapped-value size", "megabytes held for 200000 entries, std::string keys",
               [panel_of(r["memory_vs_value_size_str.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_value_size_str.csv"], "peak", "peak during growth")],
               "sizeof(mapped_type), bytes", "MB", bars=True,
-              what="The same count with string keys, which is why it counts global new rather than "
-                   "the container's allocator: the key bodies are allocated by std::allocator&lt;char&gt; "
+              what="The same count with string keys, which is why it counts global new rather than the "
+                   "container's allocator: the key bodies are allocated by std::allocator&lt;char&gt; "
                    "inside each string, which a container allocator never sees.",
               why="Worth having because it is the case where the dense layout's memory advantage "
                   "mostly disappears. The key bodies are the same heap for every map, and the value "
-                  "vector's capacity overshoots by up to 2x where a slot array is exactly its bucket "
-                  "count, so the two effects nearly cancel. Reserve, and the overshoot goes away."),
+                  "the map holds is a 32 byte string header whatever the mapped type does."),
         chart("Memory, against table size", "megabytes held, uint64_t keys",
               [panel_of(r["memory_vs_size.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_size.csv"], "peak", "peak during growth")],
               "entries", "MB", ylog=True,
-              what="The same count, walked over table size at a fixed size_t value.",
-              why="Mostly a reference for reading a total off: per entry the picture is sixteen "
-                  "near-identical octaves, which is exactly why the value-size chart above is the one "
-                  "that discriminates. The staircase is the doubling."),
+              what="The same count against the number of entries, at a size_t mapped value.",
+              why="Here to show that it is the boring axis: per entry, memory barely moves with the "
+                  "table size, so this is a stack of near-identical octaves, which is exactly why the "
+                  "value-size chart above is the one that discriminates. The staircase is the "
+                  "doubling."),
         chart("Memory, against table size", "megabytes held, std::string keys",
               [panel_of(r["memory_vs_size_str.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_size_str.csv"], "peak", "peak during growth")],
               "entries", "MB", ylog=True,
               what="The same with string keys, the key bodies included.",
-              why="Shows how much of a string map is the strings: most of it at small values, which "
-                  "is the reason the four maps sit almost on top of each other."),
+              why="Shows how much of a string map is the strings: most of it at small values, which is "
+                  "the reason the four maps sit almost on top of each other."),
     ]
     charts = [c for c in charts if c]
+    for c in charts:
+        c["group"] = group_of(c["title"])
 
     colors = {k: {"light": light, "dark": dark, "label": label, "dash": dash}
               for k, label, light, dark, dash in SERIES}
     order = [k for k, _, _, _, _ in SERIES]
     out = os.path.join(DOC, "charts.html")
     with open(out, "w") as f:
-        css = ("  :root {" + "".join(f" --c-{k}: {v['light']};" for k, v in colors.items()) + " }\n"
-               "  @media (prefers-color-scheme: dark) { :root {"
-               + "".join(f" --c-{k}: {v['dark']};" for k, v in colors.items()) + " } }")
-        f.write(PAGE.replace("__DATA__", json.dumps({"charts": charts, "colors": colors, "order": order}))
+        light = "".join(f" --c-{k}: {v['light']};" for k, v in colors.items())
+        dark = "".join(f" --c-{k}: {v['dark']};" for k, v in colors.items())
+        # Three rules rather than two: `auto` follows the system, and an explicit choice has to beat
+        # the media query, which a bare `:root` inside it would not.
+        css = (f"  :root {{{light} }}\n"
+               f"  @media (prefers-color-scheme: dark) {{ :root:not([data-theme=\"light\"]) {{{dark} }} }}\n"
+               f"  :root[data-theme=\"dark\"] {{{dark} }}")
+        intro = (
+            f"{word(len(SERIES)).capitalize()} hash maps, timed interleaved with each other in one "
+            "process, so a clock ramp or a noisy neighbour hits all of them and cancels out of the "
+            "comparison. Nothing is reserved, and the tables are sampled "
+            f"{word(po_u64)} times per octave ({word(po_str)} for strings), so the load-factor "
+            f"sawtooth between doublings is visible rather than aliased away. {MACHINE}.")
+        footer = (
+            "Absolute times are the median epoch. Two runs of the same sweep on a quiet machine agree "
+            "to well under a percent at the median point and several percent at the worst, so read the "
+            "shape rather than the last digit, and check a surprising point against a second run. The "
+            f"sweeps stop at {si(biggest)} entries because a single incremental pass above that "
+            "depends on page placement that varies between runs.")
+        f.write(PAGE.replace("__INTRO__", intro).replace("__FOOTER__", footer).replace("__DATA__", json.dumps({"charts": charts, "colors": colors, "order": order,
+                                                     "groups": GROUPS, "about": ABOUT}))
                     .replace("__SERIESCSS__", css))
     print(f"wrote {out}: {len(charts)} charts")
+
+
+# ---- facts computed from the CSVs, so the prose cannot go stale ----------------------------
+#
+# Every number the page states about a measurement is derived here from the same CSV the chart
+# draws. Writing "18-31% slower" by hand means the sentence is wrong the next time regen.sh runs
+# and nothing says so; a sentence built from the data is re-derived with the chart.
+
+def _pts(rows, col, m):
+    return sorted((float(r["entries"]), float(r[col])) for r in rows if r["map"] == m)
+
+
+def _geomean(vals):
+    vals = [v for v in vals if v > 0]
+    return math.exp(sum(math.log(v) for v in vals) / len(vals)) if vals else float("nan")
+
+
+def ratio_range(rows, col, num, den, per_octave=True):
+    """How `num` compares with `den`, as the octave geomeans run: (smallest, largest).
+
+    Read per octave rather than point by point, because a load-factor sawtooth means one sample can
+    be near either end of a factor-of-two swing; the octave is the unit that averages over it."""
+    a, b = dict(_pts(rows, col, den)), dict(_pts(rows, col, num))
+    shared = sorted(set(a) & set(b))
+    if not shared:
+        return None
+    by_oct = {}
+    for n in shared:
+        by_oct.setdefault(int(math.floor(math.log2(n))) if per_octave else 0, []).append(b[n] / a[n])
+    g = sorted(_geomean(v) for v in by_oct.values())
+    return g[0], g[-1]
+
+
+def spread_at(rows, col, near, maps):
+    """The factor between the fastest and slowest of `maps` at the sample nearest `near`."""
+    have = [m for m in maps if _pts(rows, col, m)]
+    if not have:
+        return None
+    xs = [x for x, _ in _pts(rows, col, have[0])]
+    n = min(xs, key=lambda x: abs(x - near))
+    vals = [dict(_pts(rows, col, m))[n] for m in have if n in dict(_pts(rows, col, m))]
+    return n, max(vals) / min(vals)
+
+
+def at_x(rows, col, x, num, den):
+    """num / den at exactly x, for a categorical axis such as the value size."""
+    a, b = dict(_pts(rows, col, den)), dict(_pts(rows, col, num))
+    return b[x] / a[x] if x in a and x in b else None
+
+
+def x_range(rows):
+    xs = [float(r["entries"]) for r in rows]
+    return min(xs), max(xs)
+
+
+def per_octave_count(rows):
+    """Sample points per octave, counted in a mid octave: near the bottom of the range consecutive
+    samples round to the same integer and collapse, which undercounts the sampling density."""
+    xs = sorted({float(r["entries"]) for r in rows})
+    base = 2 ** int(math.floor(math.log2(xs[len(xs) // 2])))
+    return sum(1 for x in xs if base <= x < base * 2)
+
+
+def num(v, digits=2):
+    """A ratio, written the way the page says ratios: 1.25x."""
+    return "n/a" if v is None else f"{v:.{digits}f}x"
+
+
+def pct_slower(v):
+    return "n/a" if v is None else f"{(v - 1) * 100:.0f}%"
+
+
+def span(rng_, invert=False, digits=2):
+    """A (lo, hi) pair of ratios as text: "1.07-1.33x", or one figure when the ends agree.
+
+    `invert` flips it, for saying how much faster the faster side is when the ratio is of times."""
+    if rng_ is None:
+        return "n/a"
+    lo, hi = (1 / rng_[1], 1 / rng_[0]) if invert else rng_
+    if abs(hi - lo) < 0.025:
+        return f"{(lo + hi) / 2:.{digits}f}x"
+    return f"{lo:.{digits}f}\u2013{hi:.{digits}f}x"
+
+
+def si(n):
+    """16, 128, 1K, 1M -- the same shortening the page's axis labels use."""
+    for cut, suffix in ((1 << 20, "M"), (1 << 10, "K")):
+        if n >= cut:
+            v = n / cut
+            return f"{v:g}{suffix}"
+    return str(int(n))
+
+
+def art(n):
+    """"a" or "an" for a number written as digits: an 8 byte value, a 64 byte one."""
+    t = str(int(n))
+    return "an" if t[0] == "8" or t[:2] in ("11", "18") else "a"
+
+
+def word(n):
+    return {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+            8: "eight", 12: "twelve", 16: "sixteen", 24: "twenty-four"}.get(n, str(n))
+
+
+# The fifteen charts fall into five questions. Grouping them gives the page real structure to
+# navigate, and the heading says which question the charts under it answer.
+GROUPS = {
+    "Lookups": "Reading is what most maps do most of the time. One lookup is a hash, a probe over "
+               "groups of sixteen fingerprints, and one comparison of the key that was found.",
+    "Churn and mixed writes": "A table that has run at a steady size for a long time, and one that "
+                              "mixes finds with inserts and erases. These separate designs rather "
+                              "than constant factors.",
+    "Building and iterating": "Filling a map from empty and walking it once, against the size of "
+                              "the mapped value \u2014 the axis on which a dense layout and a flat "
+                              "one trade places.",
+    "The hash": "One component on its own: what hashing a string costs against the length of the key.",
+    "Memory": "What the process actually holds, counted by replacing global new and delete.",
+}
+
+ABOUT = {
+    "this": "The group index on this branch: sixteen one-byte fingerprints per group, compared in "
+            "one instruction, with the values kept dense in a vector.",
+    "main": "The released robin hood index this one replaces.",
+    "jan": "Where the library stood on 1 January 2026, before this year's work.",
+    "boost": "A flat map \u2014 the values live in the slot array itself. Given this map's hash, so "
+             "what differs from the three above is the index.",
+    "boostdef": "The same boost map with the hash it ships with: what a caller gets by not passing "
+                "a third template argument.",
+}
+
+
+def group_of(title):
+    """Which group a chart belongs to, from its own title, so a missing CSV cannot shift the rest."""
+    for prefix, name in (("Find", "Lookups"), ("Churn", "Churn and mixed writes"),
+                         ("Insert and erase", "Churn and mixed writes"),
+                         ("Build from empty", "Building and iterating"),
+                         ("One iteration pass", "Building and iterating"),
+                         ("String hash cost", "The hash"), ("Memory", "Memory")):
+        if title.startswith(prefix):
+            return name
+    return "Other"
 
 
 def wide_value_size(name):
@@ -305,126 +501,205 @@ def wide_value_size(name):
 
 
 PAGE = r"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>unordered_dense &mdash; measurements</title>
 <style>
+  /* Warm neutral chrome on purpose: the four series hues are validated for colourblind separation
+     against these two surfaces, and they are the only colour the page is allowed to spend. */
   :root {
-    --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --ink3: #86847d;
-    --grid: #e6e5e1; --rule: #dedcd6; --chip: #f1f0ec;
+    --surface: #fcfcfb; --raised: #f5f4f0; --ink: #1f1e1a; --ink2: #56544c; --ink3: #86847b;
+    --grid: #eae8e2; --rule: #e3e1da; --rule-strong: #1f1e1a;
+    --caution: #9a4526; --caution-rule: #ddbfae;
+    --shadow: 0 6px 20px rgba(31,30,26,.13);
     /* Fill the monitor rather than a 1180px column, but stop before a panel gets so wide that its
        own height (the viewBox is 2.2:1) pushes the next chart off the screen. */
     --page: min(100%, 2600px);
-    --bar: 52px;
-    /* The one reserved status colour on the page, used for exactly one thing: a chart whose number
-       should not be used to decide. Kept away from the four series hues on purpose. */
-    --warn-ink: #a8442a; --warn-line: #e6c3b6; --warn-bg: #fdf3ef;
+    --bar: 56px;
+    --t-hero: 42px; --t-group: 29px; --t-chart: 21px; --t-body: 17px; --t-small: 15px; --t-micro: 13.5px;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --ink3: #8b8a80;
-      --grid: #343431; --rule: #2b2b29; --chip: #232322;
-      --warn-ink: #f0a58c; --warn-line: #5a3a2e; --warn-bg: #2a1e19;
+    :root:not([data-theme="light"]) {
+      --surface: #171714; --raised: #1f1f1b; --ink: #f4f3ec; --ink2: #b6b4a8; --ink3: #838177;
+      --grid: #2c2c28; --rule: #2e2e29; --rule-strong: #6f6d64;
+      --caution: #e8a184; --caution-rule: #5b3a2b;
+      --shadow: 0 6px 20px rgba(0,0,0,.45);
     }
+  }
+  :root[data-theme="dark"] {
+    --surface: #171714; --raised: #1f1f1b; --ink: #f4f3ec; --ink2: #b6b4a8; --ink3: #838177;
+    --grid: #2c2c28; --rule: #2e2e29; --rule-strong: #6f6d64;
+    --caution: #e8a184; --caution-rule: #5b3a2b;
+    --shadow: 0 6px 20px rgba(0,0,0,.45);
   }
 __SERIESCSS__
   * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
   body {
-    margin: 0; padding: var(--bar) 24px 72px; background: var(--surface); color: var(--ink);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-feature-settings: "tnum" 1;
+    margin: 0; padding: var(--bar) 28px 96px; background: var(--surface); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: var(--t-body); line-height: 1.65; font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
   }
-  header { max-width: var(--page); margin: 0 auto; padding: 24px 0 20px; }
-  h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 6px; }
-  .lede { color: var(--ink2); font-size: 13px; line-height: 1.6; max-width: 76ch; margin: 0; }
-  .filters {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--rule); padding: 9px 24px;
+  .wrap { max-width: var(--page); margin: 0 auto; }
+  .measure { max-width: 72ch; }
+  a { color: inherit; }
+
+  /* ---- top bar: the map controls, always reachable, plus the theme switch ---- */
+  .bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
   }
-  .filters .row { max-width: var(--page); margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .filters .hint { color: var(--ink3); font-size: 12px; margin-right: 4px; }
+  .bar .wrap { display: flex; gap: 16px; align-items: center; padding: 9px 0; }
+  .bar .chips { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; flex: 1 1 auto; }
+  .bar .hint { color: var(--ink3); font-size: var(--t-micro); margin-right: 2px; }
   button.chip {
-    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
-    border: 1px solid var(--rule); background: var(--chip); color: var(--ink);
-    border-radius: 999px; padding: 5px 12px 5px 9px; font: inherit; font-size: 12.5px;
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    border: 1px solid var(--rule); background: var(--raised); color: var(--ink);
+    border-radius: 999px; padding: 5px 13px 5px 10px; font: inherit; font-size: var(--t-micro);
   }
-  button.chip:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }
-  button.chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-  button.chip[aria-pressed="false"] { color: var(--ink3); }
+  button.chip .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  button.chip[aria-pressed="false"] { color: var(--ink3); background: transparent; }
   button.chip[aria-pressed="false"] .dot { background: none !important; box-shadow: inset 0 0 0 1.5px currentColor; }
-  figure { max-width: var(--page); margin: 34px auto 0; padding: 0; }
-  figcaption { margin-top: 14px; max-width: 96ch; }
-  figcaption p { color: var(--ink2); font-size: 13px; line-height: 1.65; margin: 0 0 8px; }
-  figcaption p.what { color: var(--ink3); }
-  figcaption b { color: var(--ink); font-weight: 600; }
-  .warn {
-    display: flex; gap: 10px; align-items: flex-start; margin: 0 0 12px;
-    border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 8px;
-    padding: 10px 12px; color: var(--ink2); font-size: 13px; line-height: 1.6;
+  :is(button, [tabindex]):focus-visible { outline: 2px solid var(--c-this); outline-offset: 2px; border-radius: 4px; }
+
+  .theme { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; flex: none; }
+  .theme button {
+    cursor: pointer; border: 0; background: transparent; color: var(--ink3);
+    font: inherit; font-size: var(--t-micro); padding: 3px 11px; border-radius: 999px;
   }
-  .warnmark {
-    flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--warn-ink); border: 1px solid var(--warn-line); border-radius: 4px; padding: 2px 6px;
-    margin-top: 1px;
+  .theme button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+
+  /* ---- title block ---- */
+  header { padding: 40px 0 8px; }
+  h1 { font-size: var(--t-hero); font-weight: 620; letter-spacing: -0.021em; line-height: 1.08; margin: 0 0 14px; }
+  h1 .sub { display: block; font-size: var(--t-group); font-weight: 400; color: var(--ink3); letter-spacing: -0.012em; margin-top: 4px; }
+  .lede { color: var(--ink2); margin: 0 0 18px; }
+
+  /* ---- the map key: legend, documentation and control in one ---- */
+  .key { margin: 26px 0 0; border-top: 2px solid var(--rule-strong); }
+  .key h2 { font-size: var(--t-small); font-weight: 600; color: var(--ink3); margin: 14px 0 10px; letter-spacing: 0; }
+  /* Rows separated by hairlines rather than a bordered card: the rows differ in height, and a card
+     grid turns that difference into grey blocks. The fifth has no partner, so it takes the width. */
+  .key ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0 48px; }
+  @media (min-width: 1100px) { .key ul { grid-template-columns: 1fr 1fr; }
+                               .key li:last-child:nth-child(odd) { grid-column: 1 / -1; } }
+  .key li { margin: 0; }
+  .key button {
+    display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 0 13px; align-items: baseline;
+    width: 100%; height: 100%; text-align: left; cursor: pointer; font: inherit;
+    border: 0; border-top: 1px solid var(--rule);
+    background: transparent; color: var(--ink); padding: 14px 12px; margin: 0 -12px;
   }
-  .warn b { color: var(--warn-ink); font-weight: 650; }
-  .ctitle { font-size: 15.5px; font-weight: 650; margin: 0 0 2px; letter-spacing: -0.005em; }
-  .csub { color: var(--ink2); font-size: 12.5px; margin: 0 0 10px; }
-  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; }
-  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+  .key button:hover { background: var(--raised); }
+  .key .swatch { grid-row: span 2; align-self: center; height: 4px; border-radius: 2px; background: var(--sw); }
+  .key .swatch.dashed { background: repeating-linear-gradient(90deg, var(--sw) 0 7px, transparent 7px 12px); }
+  .key .name { font-weight: 600; font-size: var(--t-body); }
+  .key .desc { color: var(--ink2); font-size: var(--t-small); line-height: 1.55; }
+  .key button[aria-pressed="false"] { color: var(--ink3); }
+  .key button[aria-pressed="false"] .name { font-weight: 500; text-decoration: line-through; text-decoration-thickness: 1px; }
+  .key button[aria-pressed="false"] .swatch { background: var(--rule); }
+  .key button[aria-pressed="false"] .desc { color: var(--ink3); }
+  .keynote { color: var(--ink3); font-size: var(--t-small); margin: 12px 0 0; }
+
+  /* ---- benchmark groups ---- */
+  .group { margin: 92px 0 0; border-top: 2px solid var(--rule-strong); padding-top: 18px; }
+  .group h2 { font-size: var(--t-group); font-weight: 600; letter-spacing: -0.014em; margin: 0 0 6px; line-height: 1.15; }
+  .group .gsub { color: var(--ink2); margin: 0; }
+
+  /* ---- one benchmark ---- */
+  figure { margin: 52px 0 0; padding: 0; }
+  figure + figure { border-top: 1px solid var(--rule); padding-top: 44px; }
+  .ctitle { font-size: var(--t-chart); font-weight: 600; letter-spacing: -0.011em; margin: 0 0 3px; }
+  .csub { color: var(--ink2); font-size: var(--t-small); margin: 0 0 20px; }
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 38px; }
+  @media (max-width: 980px) { .panels { grid-template-columns: 1fr; } }
   .panel { position: relative; }
-  .ptitle { font-size: 12.5px; font-weight: 600; color: var(--ink2); margin: 0 0 4px 44px; }
+  .ptitle { font-size: var(--t-small); font-weight: 600; color: var(--ink2); margin: 0 0 6px 46px; }
   svg { display: block; width: 100%; height: auto; touch-action: none; }
+
+  figcaption { margin-top: 22px; }
+  .notes { display: grid; gap: 12px 44px; max-width: 132ch; }
+  @media (min-width: 1100px) { .notes { grid-template-columns: 1fr 1fr; } }
+  .notes h3 { font-size: var(--t-micro); font-weight: 600; color: var(--ink3); margin: 0 0 4px; }
+  .notes p { margin: 0; color: var(--ink2); font-size: var(--t-small); line-height: 1.6; }
+  .notes b { color: var(--ink); font-weight: 600; }
+  /* Quiet by design: this is a qualification on a number, not an error. No fill, no border box. */
+  .caution { margin: 0 0 20px; padding-left: 15px; border-left: 2px solid var(--caution-rule); max-width: 96ch; }
+  .caution p { margin: 0; color: var(--ink2); font-size: var(--t-small); line-height: 1.6; }
+  .caution .lead { color: var(--caution); font-weight: 600; }
+  .caution b { color: var(--ink); font-weight: 600; }
+
   .tip {
     position: absolute; pointer-events: none; opacity: 0; transition: opacity .08s;
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 7px;
-    padding: 7px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.13); white-space: nowrap;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 9px 11px; font-size: var(--t-micro); box-shadow: var(--shadow); white-space: nowrap;
   }
-  .tip .x { color: var(--ink3); margin-bottom: 4px; }
+  .tip .x { color: var(--ink3); margin-bottom: 5px; }
   .tip table { border-collapse: collapse; }
-  .tip td { padding: 1px 0; }
-  .tip td.n { text-align: right; padding-left: 12px; font-variant-numeric: tabular-nums; }
-  .tip .sw { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-  .empty { color: var(--ink3); font-size: 13px; padding: 30px 0 0 44px; }
-  footer { max-width: var(--page); margin: 56px auto 0; color: var(--ink3); font-size: 12px; line-height: 1.7; }
+  .tip td { padding: 1.5px 0; }
+  .tip td.n { text-align: right; padding-left: 14px; }
+  .tip .sw { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 7px; }
+  .empty { color: var(--ink3); font-size: var(--t-small); padding: 34px 0 0 46px; }
+
+  footer { margin: 96px 0 0; border-top: 1px solid var(--rule); padding-top: 20px; color: var(--ink3); font-size: var(--t-small); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
+
+<div class="bar">
+  <div class="wrap">
+    <div class="chips" id="chips"><span class="hint">Show or hide, everywhere:</span></div>
+    <div class="theme" role="group" aria-label="Colour theme">
+      <button type="button" data-theme-set="auto">Auto</button>
+      <button type="button" data-theme-set="light">Light</button>
+      <button type="button" data-theme-set="dark">Dark</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
 <header>
-  <h1>ankerl::unordered_dense &mdash; measurements</h1>
-  <p class="lede">Every alternative is timed interleaved with the others in one process, so a clock
-  ramp or a noisy neighbour hits all of them and cancels out of the comparison. Nothing is reserved,
-  and the tables are sampled twenty-four times per octave (sixteen for strings), so the load-factor sawtooth between doublings
-  is visible rather than aliased away. Ryzen&nbsp;9&nbsp;7950X, clang&nbsp;22.</p>
-  <p class="lede" style="margin-top:8px">Four of the five are given <em>this</em> map's hash, so that
-  what differs between them is the index and not the hash. The dashed line is the fifth: the same
-  <span style="white-space:nowrap">boost::unordered_flat_map</span> with the hash it ships with,
-  which is what you get by not passing a third template argument &mdash; it shares boost's colour
-  because it is boost, and the gap between the two green lines is what the hash choice alone is
-  worth. <b>4.11.0</b> is the released robin hood index this one replaces; <b>4.8.1</b> is where the
-  library stood on 1 January 2026.</p>
+  <h1>ankerl::unordered_dense<span class="sub">Measurements</span></h1>
+  <p class="lede measure">__INTRO__</p>
+
+  <section class="key">
+    <h2>What is being compared</h2>
+    <ul id="key"></ul>
+    <p class="keynote measure">The first four are all given <em>this</em> map's hash, so the only
+    thing that differs between them is the index. The last one shares boost's colour because it is
+    boost: the gap between the two green lines is what the hash choice alone is worth.</p>
+  </section>
 </header>
 
-<div class="filters"><div class="row" id="filters"><span class="hint">Click to show or hide, everywhere:</span></div></div>
 <main id="charts"></main>
 
-<footer>
-  Absolute times are the median epoch. Two runs of the same sweep on a quiet machine agree to 0.78%
-  at the median point and 9.3% at the worst, so read the shape rather than the third digit, and check
-  a surprising point against a second run. The sweeps stop at a million entries because a single
-  incremental pass above that depends on page placement that varies between runs.
-</footer>
+<footer class="measure">__FOOTER__</footer>
+</div>
 
 <script>
 const DATA = __DATA__;
 // Which series are hidden lives in the URL, so a view of the data is a link you can send someone --
-// "#hide=boost" is "the three unordered_dense lines, rescaled to fill the panel".
+// "#hide=boost" is "the four unordered_dense lines, rescaled to fill the panel".
 const hidden = new Set((new URLSearchParams(location.hash.slice(1)).get("hide") || "")
   .split(",").filter(m => DATA.colors[m]));
+
+// ---- theme: auto follows the system, light and dark are explicit and remembered ----
+const themeButtons = [...document.querySelectorAll("[data-theme-set]")];
+function setTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  try { t === "auto" ? localStorage.removeItem("theme") : localStorage.setItem("theme", t); } catch (e) {}
+  for (const b of themeButtons) b.setAttribute("aria-pressed", String(b.dataset.themeSet === t));
+}
+for (const b of themeButtons) b.onclick = () => setTheme(b.dataset.themeSet);
+let saved = "auto";
+try { saved = localStorage.getItem("theme") || "auto"; } catch (e) {}
+setTheme(saved);
 
 // Values in a tooltip, where three significant figures is the most the measurement supports.
 const fmt = (v) => {
@@ -444,11 +719,16 @@ const si = (n) => {
   return String(Math.round(n));
 };
 
+// Ticks that *cover* the data: the last one is at or above max, so a line never leaves the plot.
+// Stopping at the last tick below max is what put 23 points of the find chart above its own frame.
 function niceTicks(max, min) {
-  const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+  const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000];
   for (const s of steps) if ((max - min) / s <= 6) {
+    // The top tick is the first multiple of the step strictly above the data, so the tallest peak
+    // has headroom and a 2px stroke is never half-clipped by the frame.
+    const lo = Math.floor(min / s) * s, hi = (Math.floor(max / s) + 1) * s;
     const out = [];
-    for (let v = Math.floor(min / s) * s; v <= max + s * 1e-9; v += s) out.push(+v.toFixed(10));
+    for (let v = lo; v <= hi + s * 1e-9; v += s) out.push(+v.toFixed(10));
     return out;
   }
   return [min, max];
@@ -456,10 +736,10 @@ function niceTicks(max, min) {
 
 // One panel: axes, grid, the visible lines, and a crosshair that reads values off them.
 function drawPanel(host, chart, panel, xDomain) {
-  const W = 900, H = 418, L = 54, R = 14, T = 32, B = 40;
+  const W = 900, H = 418, L = 56, R = 16, T = 34, B = 42;
   const maps = DATA.order.filter(m => panel.series[m] && !hidden.has(m));
   host.innerHTML = "";
-  if (!maps.length) { host.innerHTML = '<div class="empty">every series hidden</div>'; return; }
+  if (!maps.length) { host.innerHTML = '<div class="empty">Every series is hidden. Turn one back on above.</div>'; return; }
 
   const pts = m => panel.series[m].filter(p => p[0] >= xDomain[0] && p[0] <= xDomain[1]);
   let lo = Infinity, hi = -Infinity;
@@ -484,7 +764,7 @@ function drawPanel(host, chart, panel, xDomain) {
   const py = v => T + (H - T - B) * (1 - ((logy ? Math.log10(v) : v) - y0) / (y1 - y0));
 
   const g = [];
-  g.push(`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">`);
+  g.push(`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${chart.title}, ${panel.title}">`);
   // A hatch carries on a bar the distinction a dash carries on a line: same map, different hash.
   const hatched = maps.filter(m => DATA.colors[m].dash);
   if (hatched.length) {
@@ -496,7 +776,7 @@ function drawPanel(host, chart, panel, xDomain) {
   for (const t of ticks) {
     const y = py(logy ? Math.pow(10, t) : t);
     g.push(`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}" stroke="var(--grid)" stroke-width="1"/>`);
-    g.push(`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="13" fill="var(--ink3)">${logy ? tick(Math.pow(10, t)) : tick(t)}</text>`);
+    g.push(`<text x="${L - 9}" y="${(y + 4.5).toFixed(1)}" text-anchor="end" font-size="14" fill="var(--ink3)">${logy ? tick(Math.pow(10, t)) : tick(t)}</text>`);
   }
   for (const rx of chart.resizes) {
     if (rx < xDomain[0] || rx > xDomain[1]) continue;
@@ -508,15 +788,22 @@ function drawPanel(host, chart, panel, xDomain) {
   let xticks;
   if (xs.length <= 8) {
     xticks = xs;
-  } else {
+  } else if (chart.xlog) {
     xticks = [];
     for (let v = Math.pow(2, Math.ceil(Math.log2(xDomain[0]))); v <= xDomain[1]; v *= 8) xticks.push(v);
+  } else {
+    // A length axis is linear, so round multiples of a step rather than powers of anything.
+    const span = xDomain[1] - xDomain[0];
+    const step = [8, 16, 32, 64, 128, 256, 512, 1024, 2048].find(s => span / s <= 6) || span;
+    xticks = [xDomain[0]];
+    for (let v = Math.ceil(xDomain[0] / step) * step; v <= xDomain[1]; v += step)
+      if (v - xDomain[0] > step / 2) xticks.push(v);
   }
   for (const v of xticks)
-    g.push(`<text x="${px(v).toFixed(1)}" y="${H - B + 18}" text-anchor="middle" font-size="13" fill="var(--ink3)">${chart.xlabel === "entries" ? si(v) : v}</text>`);
-  g.push(`<text x="${(L + (W - R - L) / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="13" fill="var(--ink3)">${chart.xlabel}</text>`);
+    g.push(`<text x="${px(v).toFixed(1)}" y="${H - B + 19}" text-anchor="middle" font-size="14" fill="var(--ink3)">${chart.xlabel === "entries" ? si(v) : v}</text>`);
+  g.push(`<text x="${(L + (W - R - L) / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="14" fill="var(--ink3)">${chart.xlabel}</text>`);
   // Above the plot area rather than beside it: at T - 6 it landed on the topmost y tick.
-  g.push(`<text x="${L - 8}" y="${T - 16}" text-anchor="end" font-size="13" fill="var(--ink3)">${chart.unit}</text>`);
+  g.push(`<text x="${L - 9}" y="${T - 16}" text-anchor="end" font-size="14" fill="var(--ink3)">${chart.unit}</text>`);
 
   if (chart.bars) {
     // 2px of surface between neighbours so two bars never read as one, and rounded at the end away
@@ -596,10 +883,23 @@ function drawPanel(host, chart, panel, xDomain) {
 function render() {
   const main = document.getElementById("charts");
   main.innerHTML = "";
+  let group = null;
   DATA.charts.forEach((chart, ci) => {
+    if (chart.group !== group) {
+      group = chart.group;
+      const sec = document.createElement("section");
+      sec.className = "group";
+      sec.innerHTML = `<h2>${group}</h2><p class="gsub measure">${DATA.groups[group] || ""}</p>`;
+      main.appendChild(sec);
+    }
     const fig = document.createElement("figure");
-    const allx = Object.values(chart.panels[0].series)[0].map(p => p[0]);
-    const full = [Math.min(...allx), Math.max(...allx)];
+    // Each panel's own x extent, so a panel whose CSV stops an octave earlier -- the string sweeps
+    // do -- fills its frame instead of trailing off at nine tenths of the width.
+    const extent = p => {
+      let a = Infinity, b = -Infinity;
+      for (const s of Object.values(p.series)) for (const q of s) { if (q[0] < a) a = q[0]; if (q[0] > b) b = q[0]; }
+      return [a, b];
+    };
     // Two panels of one measurement over two size ranges, or two measurements over one range: the
     // CSV says which by whether the panels carry the same column name.
     const split = chart.panels.length === 2 && chart.panels[0].title !== chart.panels[1].title &&
@@ -607,37 +907,55 @@ function render() {
     fig.innerHTML = `<p class="ctitle">${chart.title}</p><p class="csub">${chart.subtitle}</p>` +
       `<div class="panels">${chart.panels.map((p, i) => `<div><p class="ptitle">${p.title}</p><div class="panel" id="p${ci}_${i}"></div></div>`).join("")}</div>` +
       `<figcaption>` +
-      (chart.warn ? `<div class="warn"><span class="warnmark">avoid</span><div>${chart.warn}</div></div>` : "") +
-      (chart.what ? `<p class="what">${chart.what}</p>` : "") +
-      (chart.why ? `<p class="why">${chart.why}</p>` : "") + `</figcaption>`;
+      (chart.warn ? `<div class="caution"><p><span class="lead">Caution.</span> ${chart.warn}</p></div>` : "") +
+      `<div class="notes">` +
+      (chart.what ? `<div><h3>What it measures</h3><p>${chart.what}</p></div>` : "") +
+      (chart.why ? `<div><h3>Why it matters</h3><p>${chart.why}</p></div>` : "") +
+      `</div></figcaption>`;
     main.appendChild(fig);
+    const full = extent(chart.panels[0]);
     chart.panels.forEach((p, i) => {
-      const dom = split ? (i === 0 ? [full[0], Math.min(65536, full[1])] : full) : full;
+      const dom = split ? (i === 0 ? [full[0], Math.min(65536, full[1])] : full) : extent(p);
       drawPanel(document.getElementById(`p${ci}_${i}`), chart, p, dom);
     });
   });
 }
 
-function buildFilters() {
-  const row = document.getElementById("filters");
+// The key and the top bar are two views of one state: whichever is on screen, the click works.
+function setHidden(m, hide) {
+  hide ? hidden.add(m) : hidden.delete(m);
+  for (const el of document.querySelectorAll(`[data-map="${m}"][aria-pressed]`))
+    el.setAttribute("aria-pressed", String(!hidden.has(m)));
+  history.replaceState(null, "", hidden.size ? "#hide=" + [...hidden].join(",") : location.pathname);
+  render();
+}
+
+function buildControls() {
+  const chips = document.getElementById("chips"), key = document.getElementById("key");
   for (const m of DATA.order) {
+    const c = DATA.colors[m];
     const b = document.createElement("button");
-    b.className = "chip";
-    b.innerHTML = `<span class="dot" style="${DATA.colors[m].dash
+    b.type = "button"; b.className = "chip"; b.dataset.map = m;
+    b.innerHTML = `<span class="dot" style="${c.dash
       ? `background:repeating-linear-gradient(45deg,var(--c-${m}) 0 2px,transparent 2px 4px);border:1px solid var(--c-${m})`
-      : `background:var(--c-${m})`}"></span>${DATA.colors[m].label}`;
-    b.setAttribute("aria-pressed", hidden.has(m) ? "false" : "true");
-    b.onclick = () => {
-      hidden.has(m) ? hidden.delete(m) : hidden.add(m);
-      b.setAttribute("aria-pressed", hidden.has(m) ? "false" : "true");
-      history.replaceState(null, "", hidden.size ? "#hide=" + [...hidden].join(",") : location.pathname);
-      render();
-    };
-    row.appendChild(b);
+      : `background:var(--c-${m})`}"></span>${c.label}`;
+    b.setAttribute("aria-pressed", String(!hidden.has(m)));
+    b.onclick = () => setHidden(m, !hidden.has(m));
+    chips.appendChild(b);
+
+    const li = document.createElement("li");
+    const kb = document.createElement("button");
+    kb.type = "button"; kb.dataset.map = m;
+    kb.style.setProperty("--sw", `var(--c-${m})`);
+    kb.innerHTML = `<span class="swatch${c.dash ? " dashed" : ""}"></span>` +
+                   `<span class="name">${c.label}</span><span class="desc">${DATA.about[m] || ""}</span>`;
+    kb.setAttribute("aria-pressed", String(!hidden.has(m)));
+    kb.onclick = () => setHidden(m, !hidden.has(m));
+    li.appendChild(kb); key.appendChild(li);
   }
 }
 
-buildFilters();
+buildControls();
 render();
 addEventListener("resize", () => { clearTimeout(window._t); window._t = setTimeout(render, 120); });
 </script>
