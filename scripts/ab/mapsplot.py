@@ -217,15 +217,15 @@ def cmd_octave(argv):
         print(f"no data for {work} in {txt}", file=sys.stderr)
         return
     W2, H2 = 760, 330
-    L, R, T, B = 56, 168, 56, 44
+    L, R, T, B = 56, 168, 76, 44
     xs = sorted({n for s in series.values() for n, _ in s})
     lo, hi = xs[0], xs[-1] * 2 ** (1 / (len(xs) or 1))
     vmax = max(v for s in series.values() for _, v in s) * 1.08
     tk = ticks(vmax)
     s = head(W2, H2)
     s += f'  <text x="8" y="20" class="hd">one octave of table sizes, {key} keys</text>\n'
-    s += (f'  <text x="8" y="38" class="m">each map is measured at the same five sizes; the ramp is'
-          f' its own load factor climbing to its maximum</text>\n')
+    s += (f'  <text x="8" y="38" class="m">the same five sizes for every map: the ramp is its load'
+          f' factor climbing to its maximum, and the drop is the doubling</text>\n')
 
     def px(n):
         return L + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * (W2 - L - R)
@@ -239,6 +239,7 @@ def cmd_octave(argv):
     for n in xs:
         s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 16:.0f}" class="m" text-anchor="middle">'
               f'{n:,}</text>\n')
+    ends = []
     for m in want:
         pts = sorted(series.get(m, []))
         if not pts:
@@ -248,10 +249,15 @@ def cmd_octave(argv):
         s += f'  <path d="{d}" fill="none" stroke="{col}" stroke-width="2"/>\n'
         for n, v in pts:
             s += f'  <circle cx="{px(n):.1f}" cy="{py(v):.1f}" r="3.5" fill="{col}"/>\n'
-        n, v = pts[-1]
-        s += (f'  <text x="{px(n) + 8:.1f}" y="{py(v) + 4:.1f}" class="m" fill="{col}">'
-              f'{esc(PRETTY.get(m, m))}</text>\n')
-    s += f'  <text x="8" y="{T - 20}" class="m">ns per operation</text>\n'
+        ends.append((py(pts[-1][1]), px(pts[-1][0]), col, PRETTY.get(m, m)))
+    # direct labels at the right end, pushed apart so that close lines stay readable
+    ends.sort()
+    last = -1e9
+    for y, x, col, label in ends:
+        y = max(y, last + 15)
+        last = y
+        s += f'  <text x="{x + 9:.1f}" y="{y + 4:.1f}" class="m" fill="{col}">{esc(label)}</text>\n'
+    s += f'  <text x="{L}" y="{T - 18}" class="m">ns per operation</text>\n'
     s += "</svg>\n"
     open(out, "w").write(s)
     print(out)
