@@ -153,26 +153,50 @@ def hashmap_basics():
     b += mark(LEFT + BYTE / 2, y + ROW + 46, 5)
     b += text(LEFT + BYTE / 2 + 14, y + ROW + 50, "gone: what does erasing one of them leave behind?", "muted")
 
-    b += note(y + 112, "Every design below answers those five the same way in outline and differently in")
-    b += note(y + 128, "every detail: how many slots are compared at once, how many bits of hash are")
-    b += note(y + 144, "kept, where the probe goes next, and what an erase leaves behind.")
     return svg(y + 158, b)
+
+
+def byte_ruler(x, y, segments, width=None):
+    """The same layout again at true byte scale, with a tick per byte and the offsets labelled.
+
+    The rows above are drawn one cell per *slot* so that two maps can be compared column by column,
+    which means a cell is one byte in some rows and four in others. This strip is the answer to
+    "how many bytes is that really": every byte is the same width in it, and it is the only thing in
+    these figures drawn to scale.
+    """
+    total = sum(n for _, _, n in segments)
+    width = width or 560
+    scale = width / total
+    h = 16
+    out = ""
+    cx = x
+    for label, cls, n in segments:
+        w = n * scale
+        out += f'  <rect x="{cx:.1f}" y="{y}" width="{w:.1f}" height="{h}" class="cell {cls}"/>\n'
+        if w > len(label) * 6.6:
+            out += (f'  <text x="{cx + w / 2:.1f}" y="{y + h - 4}" class="mono" text-anchor="middle" '
+                    f'font-size="9">{esc(label)}</text>\n')
+        cx += w
+    # one faint tick per byte, so the count is countable rather than asserted
+    for i in range(total + 1):
+        tx = x + i * scale
+        out += (f'  <line x1="{tx:.1f}" y1="{y + h}" x2="{tx:.1f}" y2="{y + h + (5 if i % 8 else 8)}" '
+                f'stroke="#9ca3af" stroke-width="{0.6 if i % 8 else 1}"/>\n')
+    off = 0
+    for label, _, n in segments + [("", "", 0)]:
+        tx = x + off * scale
+        anchor = "start" if off == 0 else ("end" if off == total else "middle")
+        out += (f'  <text x="{tx:.1f}" y="{y + h + 21}" class="muted" text-anchor="{anchor}" '
+                f'font-size="10">{off}</text>\n')
+        off += n
+    out += text(x + width + 10, y + h - 3, f"{total} bytes", "muted")
+    return out
 
 
 def rh_bucket():
     """unordered_dense 4.11.0: distance above fingerprint in one word."""
-    b = text(20, 24, "one bucket, 8 bytes -- and no key in it", "hd")
-    y = 36
-    b += row(LEFT, y, [("distance, 24 bits", "dist", 3), ("fp", "fp", 1), ("value index, 32 bits", "idx", 4)])
-    b += text(LEFT - 12, y + 20, "one bucket", "muted", "end")
-    b += text(LEFT + 8 * BYTE + 14, y + 13, "the low 32 bits are one uint32_t, so a compare orders", "muted")
-    b += text(LEFT + 8 * BYTE + 14, y + 29, "by distance first and by fingerprint second", "muted")
-    b += brace(LEFT, LEFT + 4 * BYTE, y + ROW, "m_dist_and_fingerprint")
-    b += note(y + 84, "0 means empty . 1 means at home . the fingerprint is the low byte of the hash, a cheap")
-    b += note(y + 100, "pre-check that saves going to the values vector for a key that cannot be the right one.")
-
-    y = 168
-    b += text(20, y - 10, "a run of buckets, and what an insert does to it", "hd")
+    b = text(20, 24, "a run of buckets, and what an insert does to it", "hd")
+    y = 44
     b += row(LEFT, y, [(t, "", 2) for t in ["1.9C>3", "2.5B>0", "3.11>5", "1.E0>1", "2.A7>4", "0"]])
     b += text(LEFT - 12, y + 20, "before", "muted", "end")
     y2 = y + 56
@@ -180,11 +204,11 @@ def rh_bucket():
                         ("2.E0>1", "", 2), ("3.A7>4", "", 2)])
     b += text(LEFT - 12, y2 + 20, "after", "muted", "end")
     b += f'  <path d="M{LEFT + 5 * BYTE},{y + ROW + 4} L{LEFT + 5 * BYTE},{y2 - 4}" class="arrow"/>\n'
-    b += note(y2 + 64, "The new key arrives at distance 2 and meets a bucket at distance 3: that one is further from")
-    b += note(y2 + 80, "home, so the newcomer takes the slot and everything from there shifts up one, each gaining a")
-    b += note(y2 + 96, "distance. Nothing is left behind -- an erase shifts the run back down, so a table that has")
-    b += note(y2 + 112, "churned for hours is exactly the table a fresh build would have produced. No tombstones.")
-    return svg(y2 + 126, b)
+    b += text(LEFT + 12 * BYTE + 14, y + 20, "each cell is distance . fingerprint > value index", "muted")
+    y2 += 86
+    b += text(20, y2 - 12, "one bucket, to byte scale", "hd")
+    b += byte_ruler(LEFT, y2, [("distance", "dist", 3), ("fp", "fp", 1), ("value index", "idx", 4)])
+    return svg(y2 + 54, b)
 
 
 def swiss_group():
@@ -211,12 +235,10 @@ def swiss_group():
     b += row(LEFT, y, [("", "payload", 1)] * 16)
     b += text(LEFT - 12, y + 20, "slots[]", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "the key and the value, in the slot")
-    b += note(y + 72, "0x80 is empty and 0xFE a tombstone, both with the top bit set, so one sign test finds")
-    b += note(y + 88, "either; an occupied byte is the tag with its top bit clear. A miss stops at the first group")
-    b += note(y + 104, "with an empty byte in it -- and a tombstone is not empty, which is why erasing without")
-    b += note(y + 120, "rehashing lengthens later lookups.")
-    return svg(y + 134, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("one control byte per slot, sixteen of them", "fp", 16)])
+    return svg(y + 54, b)
 
 def boost_group15():
     """boost: fifteen slots and an overflow byte."""
@@ -242,12 +264,10 @@ def boost_group15():
     b += row(LEFT, y, [("", "payload", 1)] * 15)
     b += text(LEFT - 12, y + 20, "slots[]", "muted", "end")
     b += brace(LEFT, LEFT + 15 * BYTE, y + ROW, "the key and the value, in the slot")
-    b += note(y + 72, "A miss stops here unless the bit for its own class is set, so a group that has overflowed")
-    b += note(y + 88, "for one class still stops seven eighths of misses. There are no tombstones -- but an erase")
-    b += note(y + 104, "cannot clear a bit either, since it cannot know whether some other key still needs it, so")
-    b += note(y + 120, "a table that churns without growing gets slower until the next rehash.")
-    return svg(y + 134, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("h00 .. h14, one per slot", "fp", 15), ("ofw", "ovf", 1)])
+    return svg(y + 54, b)
 
 def f14_chunk():
     """folly F14: fourteen tags and two counters."""
@@ -275,12 +295,10 @@ def f14_chunk():
     b += row(LEFT, y, [("", "payload", 1)] * 14)
     b += text(LEFT - 12, y + 20, "items", "muted", "end")
     b += brace(LEFT, LEFT + 14 * BYTE, y + ROW, "the key and the value, in the chunk")
-    b += note(y + 72, "The outbound counter is decremented by an erase, so unlike an overflow bit it comes back")
-    b += note(y + 88, "down and a table that churns at a fixed size does not degrade. One counter for the whole")
-    b += note(y + 104, "chunk, though, so any overflow at all makes every later miss into it carry on.")
-    b += note(y + 120, "Probing is double hashing -- the chunk index steps by 2*tag+1 -- not linear or quadratic.")
-    return svg(y + 134, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("tags_, one per slot", "fp", 14), ("ctl", "ovf", 1), ("out", "ovf", 1)])
+    return svg(y + 54, b)
 
 def emhash8_index():
     """emhash8: a chain through the index, and a fingerprint in the spare bits."""
@@ -311,11 +329,10 @@ def emhash8_index():
     b += row(LEFT, y2, [(str(i), "payload", 2) for i in range(6)])
     b += text(LEFT - 12, y2 + 20, "values", "muted", "end")
     b += brace(LEFT, LEFT + 12 * BYTE, y2 + ROW, "a dense vector, in insertion order")
-    b += note(y2 + 72, "Coalesced chaining: every key whose home is this bucket is on one list, and a key that")
-    b += note(y2 + 88, "found the bucket taken by a stranger evicts the stranger. The values are dense, as here, so")
-    b += note(y2 + 104, "iteration is an array walk -- and a lookup is index, then chain, then value.")
-    return svg(y2 + 118, b)
-
+    y2 += 86
+    b += text(20, y2 - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y2, [("next", "dist", 4), ("slot", "idx", 4)])
+    return svg(y2 + 54, b)
 
 def emilib_state():
     """emilib: a state byte per slot, homes rounded to a group."""
@@ -333,12 +350,10 @@ def emilib_state():
     b += row(LEFT, y, [("", "payload", 1)] * 16)
     b += text(LEFT - 12, y + 20, "slots[]", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "the key and the value, in the slot")
-    b += note(y + 72, "The home slot is rounded down to a multiple of sixteen, so a compare is always an aligned")
-    b += note(y + 88, "group and a probe never straddles two of them. Tombstones, so a table that churns without")
-    b += note(y + 104, "growing gets slower until it is rehashed -- the same trade SwissTable makes, with fewer")
-    b += note(y + 120, "tricks around it.")
-    return svg(y + 134, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("one state byte per slot, sixteen of them", "fp", 16)])
+    return svg(y + 54, b)
 
 def indivi_metagroup():
     """indivi: fragments, counters an erase can undo, and distance nibbles."""
@@ -361,11 +376,10 @@ def indivi_metagroup():
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
                "8 bytes: a four bit distance from home per slot, so an erase by iterator needs no hash")
 
-    b += note(y + 88, "Two bytes of metadata per slot, and no tombstones: the counter that an insert raised on its")
-    b += note(y + 104, "way past a full group is lowered again when that key is erased, so a table that churns at a")
-    b += note(y + 120, "fixed size stays as good as a fresh one. This is where the group index's counters come from.")
-    return svg(y + 134, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("hfrags", "fp", 16), ("oflws", "ovf", 8), ("dists", "dist", 8)])
+    return svg(y + 54, b)
 
 def group_block():
     """unordered_dense 5.0: the 88 byte block."""
@@ -397,26 +411,22 @@ def group_block():
         x0 = LEFT + src * BYTE + BYTE / 2
         x1 = LEFT + dst * 2 * BYTE + BYTE
         b += (f'  <path d="M{x0},{y - 46} C{x0},{y - 22} {x1},{y - 22} {x1},{y - 2}" class="arrow"/>\n')
-    b += note(y + 84, "5.5 bytes of index per slot. The group comes from the top of the hash and the fingerprint")
-    b += note(y + 100, "from the bottom, so the two are independent. A miss stops at the first group whose counter")
-    b += note(y + 116, "for its own class is zero -- or at the end of the array, which is the bound that makes a")
-    b += note(y + 132, "hostile hash slow rather than endless.")
-    return svg(y + 146, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("fingerprints", "fp", 16), ("overflow", "ovf", 8), ("value index", "idx", 64)])
+    return svg(y + 54, b)
 
 def verstable_word():
     """Verstable: a chain in sixteen bits."""
-    b = text(20, 24, "one bucket's metadata: 16 bits", "hd")
-    y = 34
+    b = text(20, 24, "one bucket's metadata: two bytes, used as sixteen bits", "hd")
+    y = 44
     b += row(LEFT, y, [("fragment", "fp", 2), ("home", "ovf", 1), ("displacement", "dist", 5)])
     b += text(LEFT - 12, y + 20, "uint16_t", "muted", "end")
-    b += brace(LEFT, LEFT + 2 * BYTE, y + ROW, "4 bits")
-    b += brace(LEFT + 2 * BYTE, LEFT + 3 * BYTE, y + ROW, "1")
-    b += brace(LEFT + 3 * BYTE, LEFT + 8 * BYTE, y + ROW, "11 bits, to the next key in this chain")
-    b += note(y + 72, "The home bit says a key that belongs in this bucket is sitting here, which is exactly the")
-    b += note(y + 88, "question a miss asks -- and it is exact, where an overflow counter is only a hint.")
+    b += text(LEFT, y + ROW + 18, "4 bits", "muted")
+    b += text(LEFT + 2 * BYTE, y + ROW + 18, "1", "muted")
+    b += text(LEFT + 3 * BYTE, y + ROW + 18, "11 bits, the step to the next key in this bucket's chain", "muted")
 
-    y = 166
+    y = 140
     b += text(20, y - 10, "the chain: a lookup visits only buckets holding keys that belong to it", "hd")
     u = BYTE
     b += row(LEFT, y, [("", "", 1), ("home", "fp", 1), ("", "", 1), ("", "", 1), ("+5", "fp", 1),
@@ -426,10 +436,7 @@ def verstable_word():
           f'{LEFT + 4.5 * u},{y + ROW + 26} {LEFT + 4.5 * u},{y + ROW + 2}" class="arrow"/>\n')
     b += (f'  <path d="M{LEFT + 4.5 * u},{y + ROW} C{LEFT + 4.5 * u},{y + ROW + 42} '
           f'{LEFT + 8.5 * u},{y + ROW + 42} {LEFT + 8.5 * u},{y + ROW + 2}" class="arrow"/>\n')
-    b += note(y + 106, "Fewest instructions of any map measured here, and twice the cycles of a group compare on a")
-    b += note(y + 122, "miss: how long the chain is, and whether there is one at all, are decisions the branch")
-    b += note(y + 138, "predictor cannot make. A group compare asks one question whatever the group holds.")
-    return svg(y + 152, b)
+    return svg(y + ROW + 66, b)
 
 
 def ihtab_group():
@@ -451,11 +458,10 @@ def ihtab_group():
     b += row(LEFT, y, [(str(i), "payload" if i not in (2, 4) else "sent", 1) for i in range(8)])
     b += text(LEFT - 12, y + 20, "els", "muted", "end")
     b += brace(LEFT, LEFT + 8 * BYTE, y + ROW, "appended in order, never compacted: the hatched two are erased")
-    b += note(y + 72, "Fast for a reason that is on the label: the maximum load is one half, so a lookup almost")
-    b += note(y + 88, "always lands in its home group and the tag compare is the whole probe. Buying probe length")
-    b += note(y + 104, "with memory is available to any of these designs; it is not an idea about the index.")
-    return svg(y + 118, b)
-
+    y += 86
+    b += text(20, y - 12, "the same bytes, to scale", "hd")
+    b += byte_ruler(LEFT, y, [("tags", "fp", 8), ("indices", "idx", 32)])
+    return svg(y + 54, b)
 
 def families():
     """flat, dense, node: what a lookup has to touch."""
@@ -491,11 +497,6 @@ def families():
                   (col[2], "3 loads, a node each")):
         b += text(x + wide / 2, ymax + 6, s2, "muted", "middle")
     y = ymax + 34
-    b += note(y, "Flat has the shortest chain and pays for it with every cost scaling in sizeof(value_type):")
-    b += note(y + 16, "a hash-scattered slot is written whole. Dense writes four bytes there and appends the payload")
-    b += note(y + 32, "in order, so iteration is an array walk and a large value costs the vector rather than the")
-    b += note(y + 48, "table -- for one more dependent load on every hit. Node maps keep references and iterators")
-    b += note(y + 64, "valid forever, and pay an allocation per insert and a cache miss per lookup for it.")
     return svg(y + 78, b)
 
 
@@ -531,11 +532,6 @@ def lookup_touches():
         if extra:
             b += text(x + 4, y + 20, extra, "muted")
         y += ROW + 14
-    b += note(y + 8, "Every arrow is a load whose address the box before it produced, so nothing after it can")
-    b += note(y + 24, "start early. Boxes at the same depth are not the same cost: a group compare is one")
-    b += note(y + 40, "instruction over sixteen slots, and a chain step is a branch the predictor has to guess.")
-    b += note(y + 66, "The dense designs are the ones with four boxes; that fourth load is what they pay for")
-    b += note(y + 82, "iteration, for large values and for a vector of keys in insertion order.")
     return svg(y + 96, b)
 
 
