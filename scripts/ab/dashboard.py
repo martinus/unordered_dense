@@ -80,7 +80,8 @@ def main():
         "find_hits_vs_size.csv", "find_vs_size.csv", "churn_vs_size.csv", "insert_erase_vs_size.csv",
         "memory_vs_size.csv", "memory_vs_value_size.csv",
         "find_hits_vs_size_str.csv", "find_vs_size_str.csv", "churn_vs_size_str.csv",
-        "insert_erase_vs_size_str.csv", "memory_vs_size_str.csv", "memory_vs_value_size_str.csv")}
+        "insert_erase_vs_size_str.csv", "memory_vs_size_str.csv", "memory_vs_value_size_str.csv",
+        "hash_vs_length.csv")}
     vs = wide_value_size("value_size.csv")
     vs_str = wide_value_size("value_size_str.csv")
 
@@ -211,6 +212,31 @@ def main():
                    "slot array and skips the empty ones, which at load 0.5 is half of what it "
                    "touches. That is 10.9x at an 8 byte integer-keyed value, narrowing to 2.3x at 64 as the "
                    "payload starts to dominate, and 3.6x with string keys, where the key bodies cost every map alike. If you iterate at all often, this chart is the argument."),
+        chart("String hash cost, against key length",
+              "nanoseconds per hash, key bodies cache-resident",
+              [panel_of(r["hash_vs_length.csv"], "throughput", "many independent hashes"),
+               panel_of(r["hash_vs_length.csv"], "latency", "one at a time, as a lookup pays")],
+              "key length, bytes", "ns", xlog=False,
+              what="One hash function over 256 keys of a single length, for every length through the "
+                   "short path and the block range and then coarsely to 1024 bytes. The left panel "
+                   "hashes independent keys, so the machine runs as many at once as it has "
+                   "multipliers; the right feeds a byte of each answer into the next key, so no two "
+                   "overlap. The keys are cache-resident on purpose: this is a measurement of "
+                   "hashing, and the size charts above are where the memory system belongs.",
+              why="<b>A hash has two costs and they can disagree completely, which is the whole "
+                  "reason for two panels.</b> Throughput is what a hashing loop pays and what most "
+                  "hash benchmarks report; latency is what a map lookup pays, because the hash's "
+                  "result is the address of the group to probe and nothing can start until the "
+                  "chain of multiplies resolves. An AES-NI hash measured here is a quarter faster "
+                  "on the left and half again slower on the right — faster by the usual benchmark, "
+                  "slower in every map. The staircase is real: a hash dispatches on length, so its "
+                  "cost steps wherever the implementation changes strategy, and this map's steps "
+                  "are at 16 bytes and then every 16 up to 144.",
+              warn="One length per point, so the length dispatch is <b>perfectly predicted here</b> "
+                   "and costs 0.31 branch misses per hash on the scored benchmark's mixed keys. "
+                   "This chart is the shape; <code>hashstr</code> in the scored suite is the number "
+                   "that includes the dispatch. Note also that only two of these lines are a choice "
+                   "a caller makes — the other two are what this library shipped before."),
         chart("Memory, against mapped-value size", "megabytes held for 1000000 entries, uint64_t keys",
               [panel_of(r["memory_vs_value_size.csv"], "steady", "steady state"),
                panel_of(r["memory_vs_value_size.csv"], "peak", "peak during growth")],

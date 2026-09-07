@@ -64,6 +64,12 @@ def main():
     #                                        instead of the default two size ranges of one column
     #   --x=Label                            what the x axis counts, if not entries
     #   --unit=ns                            what the y axis counts
+    #   --xlin                               a linear x axis. A table size is exponential and belongs
+    #                                        on log2; a key length is not, and on a log axis three
+    #                                        quarters of the ink lands in the last octave.
+    #   --xmax=N                             draw only up to N. The CSV keeps whatever was measured;
+    #                                        this is for a range whose tail is a straight line and
+    #                                        would otherwise set the y scale for everything.
     argv = [a for a in sys.argv if not a.startswith("--")]
     # `--logy` is a bare switch; the rest take a value
     flags = dict((a[2:].split("=", 1) + [""])[:2] for a in sys.argv if a.startswith("--"))
@@ -90,6 +96,9 @@ def main():
     data = defaultdict(dict)
     buckets = {}
     band = defaultdict(dict)
+    xmax = float(flags["xmax"]) if flags.get("xmax") else None
+    if xmax is not None:
+        rows = [r for r in rows if float(r["entries"]) <= xmax]
     for r in rows:
         n = int(float(r["entries"]))
         if "panels" in flags:
@@ -197,9 +206,11 @@ def main():
 
         bars = "bars" in flags
 
-        def px(n, left=left, lo=lo, hi=hi, sizes=sizes):
+        def px(n, left=left, lo=lo, hi=hi, sizes=sizes, xlin="xlin" in flags):
             if bars:  # band scale: the categories are evenly spaced whatever their values
                 return left + (sizes.index(n) + 0.5) / len(sizes) * panel_w
+            if xlin:
+                return left + (n - lo) / (hi - lo) * panel_w
             return left + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * panel_w
 
         def py(v, ybot=ybot, ytop=ytop, logy="logy" in flags):
@@ -221,6 +232,12 @@ def main():
         # points -- a value-size axis has six -- every one of them is a label instead.
         if bars or len(sizes) <= 8:
             ticks = list(sizes)
+        elif "xlin" in flags:
+            # Round multiples of a step, not five even divisions of the range: a length axis whose
+            # labels read 1, 52, 103, 154 tells a reader nothing about where 128 is.
+            step = next(v for v in (8, 16, 32, 64, 128, 256, 512, 1024) if (hi - lo) / v <= 6)
+            ticks = [lo] + [v for v in range(step, int(hi) + 1, step) if v - lo > step / 2]
+            ticks = [min(sizes, key=lambda n, t=t: abs(n - t)) for t in ticks]
         else:
             ticks, target = [], lo
             while target <= hi:
