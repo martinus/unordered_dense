@@ -81,6 +81,13 @@ hides completely.
 several maps has a code layout that moves by more than a 3% question every time any of them
 changes. Anything under about 10% is decided there, with counters, and not by the paired harness.
 
+Two smaller tools answer questions the harnesses cannot. `scripts/ab/probe_length.sh` patches a
+counter into a copy of the probe and reports **groups visited per lookup**, fresh and after churn,
+with an argument for how many writing lookups each churn round does -- which is the only path
+`move_home()` runs on, so 0 measures the drift and 4 measures what taking it back is worth. And
+`scripts/ab/placement.cpp` simulates bucketized placement against sliding-window placement with no
+map involved, which is how the ungrouped-window idea was priced without building it.
+
 `scripts/ab/mapsplot.py` draws the CSVs (`bars`, `memory`, `octave`) and prints them
 (`table`, `swing`); `scripts/ab/diagrams.py` draws the byte-level layout figures of every index in
 one house style. Both are stdlib only.
