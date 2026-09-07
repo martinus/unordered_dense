@@ -556,6 +556,50 @@ block, which the spatial prefetcher already brought in. So it pays 20 ns per era
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
 Not kept. The lazy version is, and it is the entry below.
 
+**Where a string hit's ~90 cycles go, from perf, and two more things it led to that lost**
+(2026-09-07, asked as "try perf"). One map per binary, `find_all<map<std::string, size_t>, true>`
+at 50000 entries, `cycles:P`, by symbol:
+
+| | clang | gcc | what it is |
+|---|---|---|---|
+| `wyhash::hash` | **41%** | **46%** | the hash, **called out of line** -- neither compiler inlines it |
+| `do_find_hashed` | 30% | (inlined into the harness) | the probe: group compare, index load, the stored key's size, the compare's setup, and its own prologue and epilogue -- it is an out-of-line call too |
+| `__memcmp_evex_movbe` + plt | 11% | 12% | the key compare |
+| the harness | 17% | | rng, key selection |
+
+Inside the hash, by line: ~25% on the multiplies, ~16% draining at the finalizer (the tail of the
+chain, where a latency-bound pipeline empties), ~15% on the length compares (mispredict skid), ~10%
+on the loads. Branch misses: **1.1 per lookup**, 829M branches per 30M lookups.
+
+**The per-instruction miss attribution is not to be trusted here, and the check that shows it is
+cheap.** `perf annotate` put 0.30 misses per lookup on the string `operator==`'s size check -- a
+`jne` on `cmp 0x8(%rbp,%rax,8), %r15`, the stored key's size loaded from the value vector at a random
+index -- and 0.32 inside `memcmp` on its `vpcmpnequb` instructions. A counting `KeyEqual` says the
+size check actually fails **0.025 times per lookup** and the content compare 0.0005, and that `jne`
+has zero *cycle* samples. Both attributions are skid: on this machine (IBS) a miss lands on the
+first branch after a load that is waiting on memory, and the size load is a cache miss on every
+lookup. So the symbol-level split is roughly right and the instruction-level one is not, and the
+probe's own branches are clean -- 2.5% of lookups see a wrong-sized fingerprint collision first,
+which the predictor absorbs.
+
+Two things the profile pointed at, both measured in the map with a same-code control:
+
+- **Force-inlining the hash** (the restated body under `always_inline`, the lane path left out of
+  line, confirmed inlined by `nm`): clang `rhitstr` 1.015 against a control of 1.040, `findstr`
+  0.991 against 1.011 -- nothing, or slightly worse; gcc 1.035 against 1.023, `rmissstr` 1.059
+  against 1.010 -- one to four percent, inside a control that swings up to 10% in this binary. The
+  41% is the hash's work, not its call.
+- **A block-structured string compare in place of `memcmp`**, eight bytes at a time with length
+  branches at the hash's own thresholds so the predictor has just seen their outcomes: **3-7%
+  behind the control on hits under both compilers** (clang 0.969 against 1.046, gcc 0.970 against
+  1.030). libc compares 32 bytes per instruction; the "0.32 mispredicts inside memcmp" that
+  motivated this were the skid above.
+
+What is left is the shape of the thing: a string hit is the hash's arithmetic and dispatch (at
+their floor, four experiments), one cache miss for the stored key through the value index (the
+dense design's structural extra hop, documented since the first chart), and a `memcmp` libc does
+well. None of the three has a lever a hash or compare change can pull. Stop here.
+
 **The last structural lever on the hash, taken and found to weigh nothing** (2026-09-07, asked as
 "you are the most advanced model, improve the hash for the map"). The block range's chain is two
 dependent multiplies and the second exists only to repair the bits a product leaves weak. The map
