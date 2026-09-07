@@ -25,11 +25,14 @@ import math
 import sys
 from collections import defaultdict
 
-# family -> (light, dark) from the validated categorical set
+# family -> (light, dark). Three hues, validated as a categorical set against both surfaces with
+# dataviz/scripts/validate_palette.js: adjacent CVD separation 11.0 deuteranopia and 6.5 tritanopia,
+# normal-vision floor 23.4, and every one of them at or above 3:1 against the page, which the
+# brighter set they replaced was not -- its green sat at 2.74:1 and read as washed out on white.
 FAMILY = {
-    "flat": ("#2a78d6", "#3987e5"),
-    "dense": ("#1baf7a", "#199e70"),
-    "node": ("#b5399e", "#c74ab0"),
+    "flat": ("#2563c9", "#5b9bf0"),
+    "dense": ("#0e8f60", "#3cc492"),
+    "node": ("#a53393", "#e070cd"),
 }
 OF = {
     "udm": "dense", "udm-4.11": "dense", "emhash8": "dense", "f14-vector": "dense", "ihtab": "dense",
@@ -45,6 +48,12 @@ PRETTY = {
     "indivi-w": "indivi flat_wmap", "verstable": "Verstable", "ihtab": "ihtab",
     "std": "std::unordered_map", "boost-node": "boost node", "absl-node": "absl node",
 }
+# One hue per *map* rather than per family, for the charts where two lines are the same family and
+# the family colouring would make them indistinguishable. Validated as a categorical set over all
+# pairs: worst CVD separation 8.5 deuteranopia, normal-vision floor 20.3, all four at or above 3:1
+# against the page.
+LINE = ["#2563c9", "#0e8f60", "#b45309", "#a53393"]
+
 REF = "udm"
 
 W = 920
@@ -57,14 +66,16 @@ def head(w, h):
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
             f'font-family="Inter, system-ui, sans-serif" font-size="12">\n'
             '  <style>\n'
-            '    .ax{stroke:#d1d5db;stroke-width:1}\n'
-            '    .ref{stroke:#6b7280;stroke-width:1;stroke-dasharray:3 3}\n'
-            '    .t{fill:#374151}\n'
-            '    .m{fill:#6b7280;font-size:11px}\n'
-            '    .hd{fill:#1f2937;font-weight:600;font-size:13px}\n'
+            '    .ax{stroke:#e5e7eb;stroke-width:1}\n'
+            '    .base{stroke:#9ca3af;stroke-width:1.2}\n'
+            '    .ref{stroke:#4b5563;stroke-width:1.2;stroke-dasharray:4 3}\n'
+            '    .t{fill:#1f2937;font-size:12.5px}\n'
+            '    .m{fill:#4b5563;font-size:11.5px}\n'
+            '    .hd{fill:#111827;font-weight:600;font-size:13.5px}\n'
+            '    .sub{fill:#4b5563;font-size:12px}\n'
             '    @media (prefers-color-scheme: dark){\n'
-            '      .t{fill:#d1d5db} .m{fill:#9ca3af} .hd{fill:#f3f4f6}\n'
-            '      .ax{stroke:#4b5563} .ref{stroke:#9ca3af}\n'
+            '      .t{fill:#e5e7eb} .m{fill:#9ca3af} .hd{fill:#f9fafb} .sub{fill:#9ca3af}\n'
+            '      .ax{stroke:#374151} .base{stroke:#6b7280} .ref{stroke:#9ca3af}\n'
             '    }\n'
             '  </style>\n')
 
@@ -106,7 +117,7 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True):
     h = top + n * ROWH + 58
     s = head(W, h)
     s += f'  <text x="8" y="20" class="hd">{esc(title)}</text>\n'
-    s += f'  <text x="8" y="38" class="m">{esc(sub)}</text>\n'
+    s += f'  <text x="8" y="38" class="sub">{esc(sub)}</text>\n'
     for ci, (ck, ch) in enumerate(cols):
         x0 = LABEL + ci * (pw + GAP)
         vmax = max(vals.get((m, ck), 0.0) for m in order) * 1.02
@@ -123,6 +134,8 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True):
         if ref_line:
             x = x0 + 1.0 * scale
             s += f'  <line x1="{x:.1f}" y1="{top - 12}" x2="{x:.1f}" y2="{top + n * ROWH}" class="ref"/>\n'
+        s += (f'  <line x1="{x0:.1f}" y1="{top - 12}" x2="{x0:.1f}" y2="{top + n * ROWH}" '
+              f'class="base"/>\n')
         for i, m in enumerate(order):
             v = vals.get((m, ck))
             if v is None:
@@ -173,7 +186,7 @@ def cmd_bars(argv):
     panels(out, f"relative to unordered_dense 5.0, {key} keys",
            f"geometric mean over one octave from {base:,} entries; lower is faster",
            order, [(w[0], w[1] if len(w) > 1 else w[0]) for w in works], vals,
-           "time relative to the group index, so 1.00 is level with it")
+           "time relative to unordered_dense 5.0, so 1.00 is level with it")
 
 
 def cmd_memory(argv):
@@ -196,9 +209,15 @@ def cmd_memory(argv):
 
 
 def cmd_octave(argv):
-    """The sawtooth: per-point ns across one octave, from the run's stdout."""
+    """The sawtooth: cost against table size across one doubling, from the run's stdout.
+
+    Drawn from a fine sweep -- fifty sizes across the octave -- with the handful of sizes the
+    reported geometric means are actually taken at marked as larger dots, so that the picture says
+    both what the curve does and how coarsely it is sampled everywhere else in the post.
+    """
     txt, key, base, work, out = argv[0], argv[1], int(argv[2]), argv[3], argv[4]
-    want = argv[5:]
+    stride = int(argv[5])
+    want = argv[6:]
     series = defaultdict(list)
     inside = False
     for line in open(txt):
@@ -216,16 +235,18 @@ def cmd_octave(argv):
     if not series:
         print(f"no data for {work} in {txt}", file=sys.stderr)
         return
-    W2, H2 = 760, 330
-    L, R, T, B = 56, 168, 76, 44
+    W2, H2 = 900, 430
+    L, R, T, B = 64, 210, 92, 58
     xs = sorted({n for s in series.values() for n, _ in s})
-    lo, hi = xs[0], xs[-1] * 2 ** (1 / (len(xs) or 1))
-    vmax = max(v for s in series.values() for _, v in s) * 1.08
+    lo, hi = xs[0], xs[-1]
+    vmax = max(v for s in series.values() for _, v in s) * 1.06
     tk = ticks(vmax)
     s = head(W2, H2)
-    s += f'  <text x="8" y="20" class="hd">one octave of table sizes, {key} keys</text>\n'
-    s += (f'  <text x="8" y="38" class="m">the same five sizes for every map: the ramp is its load'
-          f' factor climbing to its maximum, and the drop is the doubling</text>\n')
+    s += (f'  <text x="8" y="22" class="hd">{esc(work)} against table size, across one doubling and '
+          f'a little past it, {key} keys</text>\n')
+    s += (f'  <text x="8" y="42" class="sub">the same {len(xs)} sizes for every map, {lo:,} to '
+          f'{hi:,} entries; the large dots are the five sizes every ratio in this post is '
+          f'averaged over</text>\n')
 
     def px(n):
         return L + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * (W2 - L - R)
@@ -235,29 +256,39 @@ def cmd_octave(argv):
 
     for t in tk:
         s += f'  <line x1="{L}" y1="{py(t):.1f}" x2="{W2 - R}" y2="{py(t):.1f}" class="ax"/>\n'
-        s += f'  <text x="{L - 6}" y="{py(t) + 4:.1f}" class="m" text-anchor="end">{t:g}</text>\n'
-    for n in xs:
-        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 16:.0f}" class="m" text-anchor="middle">'
+        s += f'  <text x="{L - 8}" y="{py(t) + 4:.1f}" class="m" text-anchor="end">{t:g}</text>\n'
+    s += f'  <line x1="{L}" y1="{py(0):.1f}" x2="{W2 - R}" y2="{py(0):.1f}" class="base"/>\n'
+    s += f'  <text x="{L}" y="{T - 14}" class="m">nanoseconds per operation</text>\n'
+    for i, n in enumerate(xs):
+        if i % stride and i != len(xs) - 1:
+            continue
+        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 18:.0f}" class="m" text-anchor="middle">'
               f'{n:,}</text>\n')
+        s += (f'  <line x1="{px(n):.1f}" y1="{py(0):.1f}" x2="{px(n):.1f}" y2="{py(0) + 4:.1f}" '
+              f'class="base"/>\n')
+    s += f'  <text x="{(L + W2 - R) / 2:.0f}" y="{H2 - 14}" class="m" text-anchor="middle">entries</text>\n'
+
     ends = []
     for m in want:
         pts = sorted(series.get(m, []))
         if not pts:
             continue
-        col = FAMILY[OF[m]][0]
+        col = LINE[want.index(m) % len(LINE)]
         d = " ".join(("M" if i == 0 else "L") + f"{px(n):.1f},{py(v):.1f}" for i, (n, v) in enumerate(pts))
-        s += f'  <path d="{d}" fill="none" stroke="{col}" stroke-width="2"/>\n'
-        for n, v in pts:
-            s += f'  <circle cx="{px(n):.1f}" cy="{py(v):.1f}" r="3.5" fill="{col}"/>\n'
+        s += f'  <path d="{d}" fill="none" stroke="{col}" stroke-width="1.8" stroke-linejoin="round"/>\n'
+        for i, (n, v) in enumerate(pts):
+            # only the sizes inside the octave itself; the points past it are there to show the far
+            # side of the doubling and are not what any ratio is averaged over
+            if i % stride == 0 and n < lo * 2:
+                s += (f'  <circle cx="{px(n):.1f}" cy="{py(v):.1f}" r="5" fill="{col}" '
+                      f'stroke="#ffffff" stroke-width="1.6"/>\n')
         ends.append((py(pts[-1][1]), px(pts[-1][0]), col, PRETTY.get(m, m)))
-    # direct labels at the right end, pushed apart so that close lines stay readable
     ends.sort()
     last = -1e9
     for y, x, col, label in ends:
-        y = max(y, last + 15)
+        y = max(y, last + 16)
         last = y
-        s += f'  <text x="{x + 9:.1f}" y="{y + 4:.1f}" class="m" fill="{col}">{esc(label)}</text>\n'
-    s += f'  <text x="{L}" y="{T - 18}" class="m">ns per operation</text>\n'
+        s += f'  <text x="{x + 10:.1f}" y="{y + 4:.1f}" class="m" fill="{col}">{esc(label)}</text>\n'
     s += "</svg>\n"
     open(out, "w").write(s)
     print(out)
@@ -284,7 +315,8 @@ def cmd_merge(argv):
             a = math.exp(sum(math.log(v[0]) for v in vs) / len(vs))
             b = math.exp(sum(math.log(v[1]) for v in vs) / len(vs))
             f.write(f"{k[0]},{k[1]},{k[2]},{k[3]},{a:.4f},{b:.4f}\n")
-    print(f"{out}: {len(acc)} points from {len(ins)} runs, worst spread {worst:.3f} at {worst_at[0] if worst_at else '--'}")
+    print(f"{out}: {len(acc)} points from {len(ins)} runs, worst spread {worst:.3f} at "
+          f"{worst_at[0] if worst_at else '--'}")
 
 
 WORKS = [("build", "build"), ("hit", "hit"), ("miss", "miss"), ("half", "50% hits"),

@@ -96,6 +96,69 @@ def note(y, s, x=20):
 
 # --------------------------------------------------------------------------- the figures
 
+def hashmap_basics():
+    """What an open addressing lookup does, and where the five questions sit in it."""
+    b = text(20, 24, "one lookup in an open addressing hash map", "hd")
+
+    def mark(x, y, n):
+        return (f'  <circle cx="{x}" cy="{y}" r="9" fill="#0f766e"/>\n'
+                f'  <text x="{x}" y="{y + 4}" text-anchor="middle" fill="#ffffff" font-size="11" '
+                f'font-weight="600">{n}</text>\n')
+
+    # the key, the hash, and which bits of it go where
+    y = 46
+    b += row(20, y, [("key", "payload", 3)])
+    b += f'  <path d="M{20 + 3 * BYTE + 4},{y + ROW / 2} L{20 + 3 * BYTE + 26},{y + ROW / 2}" class="arrow"/>\n'
+    b += row(20 + 3 * BYTE + 30, y, [("hash", "dist", 3)])
+    hx = 20 + 6 * BYTE + 60
+    b += f'  <path d="M{hx - 26},{y + ROW / 2} L{hx - 4},{y + ROW / 2}" class="arrow"/>\n'
+    b += row(hx, y, [("home bits", "dist", 4), ("", "", 5), ("fp", "fp", 2)])
+    b += text(hx, y - 8, "the 64 bit hash", "muted")
+    b += text(hx + 11 * BYTE + 8, y + 20, "kept beside the slot", "muted")
+
+    # the metadata, with the home slot the top bits picked
+    y = 150
+    b += text(20, y - 22, "the metadata", "hd")
+    b += text(112, y - 22, "a byte or two per slot", "muted")
+    cells = [("--", "", 1), ("A2", "fp", 1), ("--", "", 1), ("7C", "fp", 1), ("11", "fp", 1),
+             ("--", "", 1), ("A2", "fp", 1), ("3F", "fp", 1), ("--", "", 1), ("62", "fp", 1),
+             ("A2", "fp", 1), ("--", "", 1), ("18", "fp", 1), ("--", "", 1), ("5E", "fp", 1),
+             ("--", "", 1)]
+    b += row(LEFT, y, cells)
+    b += text(LEFT - 12, y + 20, "metadata", "muted", "end")
+    home = LEFT + 6 * BYTE
+    b += (f'  <rect x="{home}" y="{y - 3}" width="{BYTE}" height="{ROW + 6}" fill="none" '
+          f'stroke="#0f766e" stroke-width="2"/>\n')
+    # the top bits pick that slot
+    b += (f'  <path d="M{hx + 2 * BYTE},{46 + ROW + 2} C{hx + 2 * BYTE},{y - 40} '
+          f'{home + BYTE / 2},{y - 40} {home + BYTE / 2},{y - 8}" class="arrow"/>\n')
+    b += mark(hx + 2 * BYTE + 22, 46 + ROW + 30, 1)
+    b += text(hx + 2 * BYTE + 36, 46 + ROW + 34, "home: which slot the key belongs in", "muted")
+    b += mark(LEFT + BYTE / 2, y + ROW + 24, 2)
+    b += text(LEFT + BYTE / 2 + 14, y + ROW + 28,
+              "here? one compare says whether any of these sixteen could be mine", "muted")
+    b += mark(LEFT + 16 * BYTE + 22, y + ROW / 2, 4)
+    b += (f'  <path d="M{LEFT + 16 * BYTE + 34},{y + ROW / 2} L{LEFT + 16 * BYTE + 56},{y + ROW / 2}" '
+          f'class="arrow"/>\n')
+    b += text(LEFT + 16 * BYTE + 60, y + 14, "where next:", "muted")
+    b += text(LEFT + 16 * BYTE + 60, y + 28, "on to the next", "muted")
+    b += mark(LEFT + BYTE / 2, y + ROW + 46, 3)
+    b += text(LEFT + BYTE / 2 + 14, y + ROW + 50, "absent: an empty slot proves the key is not in the table", "muted")
+
+    # the slots
+    y = 264
+    b += row(LEFT, y, [("", "" if i in (0, 2, 5, 8, 11, 13, 15) else "payload", 1) for i in range(16)])
+    b += text(LEFT - 12, y + 20, "slots", "muted", "end")
+    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "the key and the value, or an index that finds them")
+    b += mark(LEFT + BYTE / 2, y + ROW + 46, 5)
+    b += text(LEFT + BYTE / 2 + 14, y + ROW + 50, "gone: what does erasing one of them leave behind?", "muted")
+
+    b += note(y + 112, "Every design below answers those five the same way in outline and differently in")
+    b += note(y + 128, "every detail: how many slots are compared at once, how many bits of hash are")
+    b += note(y + 144, "kept, where the probe goes next, and what an erase leaves behind.")
+    return svg(y + 158, b)
+
+
 def rh_bucket():
     """unordered_dense 4.11.0: distance above fingerprint in one word."""
     b = text(20, 24, "one bucket, 8 bytes -- and no key in it", "hd")
@@ -432,8 +495,8 @@ def families():
     b += note(y + 16, "a hash-scattered slot is written whole. Dense writes four bytes there and appends the payload")
     b += note(y + 32, "in order, so iteration is an array walk and a large value costs the vector rather than the")
     b += note(y + 48, "table -- for one more dependent load on every hit. Node maps keep references and iterators")
-    b += note(y + 74, "valid forever, and pay an allocation per insert and a cache miss per lookup for it.")
-    return svg(y + 88, b)
+    b += note(y + 64, "valid forever, and pay an allocation per insert and a cache miss per lookup for it.")
+    return svg(y + 78, b)
 
 
 def lookup_touches():
@@ -477,6 +540,7 @@ def lookup_touches():
 
 
 FIGURES = {
+    "hashmap-basics": hashmap_basics,
     "rh-bucket": rh_bucket,
     "swiss-group": swiss_group,
     "boost-group15": boost_group15,
