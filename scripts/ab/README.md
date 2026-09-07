@@ -1,6 +1,6 @@
 # Paired A/B measurements
 
-    scripts/ab/run.sh [-r REV] [-b] [-c COMPILER] <workload|all> [epochs]
+    scripts/ab/run.sh [-r REV] [-b] [-c COMPILER] [-p POINTS] <workload|all> [epochs]
 
 Builds the working-tree header against `REV`'s (default `HEAD`) in one binary -- the baseline is
 renamed into a second namespace -- and runs nanobench's `compare()`: the alternatives run
@@ -11,6 +11,36 @@ workloads are `test/bench/workloads.h`, the ones `bench_quick_overall_udm` score
 five, a `map<uint64_t, big_value>` whose 64 byte mapped value is what separates a dense map from a
 flat one -- plus all-hits and no-hits lookups. Its string keys run from 8 to 135 bytes, skewed towards short; a fixed length
 would leave the length dispatch of the hash perfectly predicted. Believe a change when the interval excludes 100%.
+
+**Every size-sensitive workload is measured at five sizes across one octave and what is reported is
+the geometric mean of those five ratios** (`-p` changes the count; `-p 1` is the single size the
+score used before 2026-09-07 and runs five times faster). This is not a refinement. A table doubles
+its bucket array at one size and not at another, so its load factor sweeps a sawtooth from about a
+half up to the maximum and drops back, and the cost of every lookup, insert and erase rides it. Two
+indexes that hold different numbers of slots per group double at *different* sizes, so a comparison
+at one fixed size reports wherever that size happens to fall on each of their sawtooths.
+
+Measured, an eleven-slot group against the shipped sixteen-slot one:
+
+| | one size, n=200000 | octave geomean |
+|---|---|---|
+| `rmiss64` | 1.384 | 1.039 |
+| `churn64` | 1.199 | **0.974** |
+| `build64` | 0.924 | 0.992 |
+
+Churn reversed sign, and every headline number of that run sat inside the sawtooth's own range,
+which spans 0.79 to 1.33 point to point. The same thing happens to the boost column even with the
+header untouched: a single same-code run reads `boost/cand` at 1.205, 0.641, 0.649, 0.685 and 0.831
+across one octave of `churn64`, a 1.9x swing, geomean 0.779.
+
+`it64`, `itstr`, `itbig` and `hashstr` are measured at one size on purpose. Iteration walks the
+dense value vector, which has no buckets and so no sawtooth to average out, and its cost is
+quadratic in the element count, so sweeping it would triple the run for an answer that does not
+move; `hashstr` never touches a table. The sizes are template parameters rather than function
+arguments, so the default instantiation is the same code `bench_quick_overall_udm` has always
+compiled -- turning a literal loop bound into a runtime value would be a change to the scored
+benchmark even at the same value, and its absolute numbers are only comparable across time if its
+workloads do not move.
 
 ## Regenerating all of it
 

@@ -175,14 +175,20 @@ struct insert_erase_result {
     size_t size;
 };
 
-// Random insert & erase, ~10k entries live
-template <typename Map>
+// Random insert & erase, ~10k entries live.
+//
+// Range is the size knob: a template parameter, not a function argument, so that the default
+// instantiation is the same code it has always been. That matters -- the scored benchmark's
+// absolute numbers are only comparable across time if its workloads do not change, and turning a
+// literal loop bound into a runtime value is a change even when the value is the same. The A/B
+// harness instantiates other sizes to average a ratio over a whole doubling; see scripts/ab.
+template <typename Map, size_t Range = 20000>
 auto insert_erase() -> insert_erase_result {
     tame_allocator();
     ankerl::nanobench::Rng rng(123);
     size_t erased{};
     Map map;
-    for (int n = 1; n < 20000; ++n) {
+    for (int n = 1; n < static_cast<int>(Range); ++n) {
         for (int i = 0; i < 200; ++i) {
             map[random_key<Map>(&rng, n)];
             erased += map.erase(random_key<Map>(&rng, n));
@@ -192,10 +198,10 @@ auto insert_erase() -> insert_erase_result {
 }
 
 // iterate while adding, then while removing
-template <typename Map>
+template <typename Map, size_t NumElements = 5000>
 auto iterate() -> size_t {
     tame_allocator();
-    size_t const num_elements = 5000;
+    size_t const num_elements = NumElements;
     ankerl::nanobench::Rng rng(555);
     Map map;
     size_t result = 0;
@@ -223,7 +229,7 @@ auto iterate() -> size_t {
 // a branch predictor with a long history learned half of the outcomes (0.6 mispredictions per
 // lookup where a random sequence costs 1.35). A change that trades instructions for
 // mispredictions looked worse here than it was.
-template <typename Map>
+template <typename Map, size_t Steps = 100000>
 auto find_50() -> size_t {
     tame_allocator();
     ankerl::nanobench::Rng insert_rng(123123);
@@ -231,10 +237,10 @@ auto find_50() -> size_t {
     constexpr auto never_inserted = uint64_t{1} << 63U;
 
     std::vector<uint64_t> inserted;
-    inserted.reserve(100000);
+    inserted.reserve(Steps);
     size_t checksum = 0;
     Map map;
-    for (size_t i = 0; i < 100000; ++i) {
+    for (size_t i = 0; i < Steps; ++i) {
         // half of the candidates go in; the first one always, so there is something to find
         auto candidate = insert_rng() & ~never_inserted;
         if (inserted.empty() || (insert_rng() & 1U) != 0) {
@@ -259,15 +265,15 @@ auto find_50() -> size_t {
 
 // 50k entries, then 10M lookups that all hit (a random key that is there) or all miss (one that
 // cannot be): the two ends of what a workload's hit rate can do to the probe.
-template <typename Map, bool Hits>
+template <typename Map, bool Hits, size_t NumElements = 50000>
 auto find_all() -> size_t {
     tame_allocator();
     ankerl::nanobench::Rng rng(999);
     constexpr auto never_inserted = uint64_t{1} << 63U;
     Map map;
     std::vector<uint64_t> keys;
-    keys.reserve(50000);
-    while (map.size() < 50000) {
+    keys.reserve(NumElements);
+    while (map.size() < NumElements) {
         auto v = rng() & ~never_inserted;
         if (map.emplace(key_for<Map>(v), keys.size()).second) {
             keys.push_back(v);
@@ -311,12 +317,12 @@ inline auto hash_keys() -> std::vector<std::string> const& {
 // rounding error there. It is not one in general: building a map of a million entries against one
 // that reserved the room first costs 52% more for uint64_t keys and 31% more for strings, all of
 // it rehashing. A map that grew badly would have scored the same as one that grew well.
-template <typename Map>
+template <typename Map, size_t NumElements = 200000>
 auto build() -> size_t {
     tame_allocator();
     ankerl::nanobench::Rng rng(777);
     Map map;
-    for (size_t i = 0; i < 200000; ++i) {
+    for (size_t i = 0; i < NumElements; ++i) {
         map[key_for<Map>(rng())] = i;
     }
     return map.size();
@@ -340,10 +346,10 @@ auto build() -> size_t {
 //
 // The lookups are interleaved rather than left to the end so that a table which has degraded pays
 // for it while it is degraded, which is what a real churning cache does.
-template <typename Map>
+template <typename Map, size_t NumElements = 50000>
 auto churn() -> size_t {
     tame_allocator();
-    constexpr size_t num_elements = 50000;
+    constexpr size_t num_elements = NumElements;
     constexpr size_t num_rounds = 4;
     constexpr auto never_inserted = uint64_t{1} << 63U;
 
