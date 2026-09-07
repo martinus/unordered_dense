@@ -264,9 +264,9 @@ waiting on memory.
 just after a doubling to 1.30x just before one. The year did not make the best case much faster, it
 removed the worst case.
 
-**`scripts/ab/regen.sh` rebuilds everything in `doc/`** -- baseline headers, the three tools, seven
-measurements, eight SVGs and the page -- and `--redraw` does the drawing half alone in a fifth of a
-second, which is what to use after touching `plot.py` or `dashboard.py`, since it reproduces every
+**`scripts/ab/regen.sh` rebuilds everything in `doc/`** -- baseline headers, the four tools, the
+measurements, the SVGs and the page -- and it is the only way to get them, since none of its output
+is tracked. `--redraw` does the drawing half alone in a fifth of a second, which is what to use after touching `plot.py` or `dashboard.py`, since it reproduces every
 SVG byte for byte from unchanged CSVs. `--quick` runs the whole pipeline coarsely in ten minutes,
 which is how to find out that a tool no longer compiles without spending four hours. It refuses to
 start against a nanobench without `targetIntervalWidth()` and says to point `NANOBENCH_INCLUDE` at a
@@ -523,8 +523,10 @@ the size it was taken at. What makes it awkward to add as a *scored* workload is
 ~170 MB and about a second to build, so it would dominate the suite. So it is a tool rather than a
 score entry -- `scripts/ab/sweep.cpp` walks every power of two from 16 to 8M for the working tree,
 a baseline revision and boost, and `scripts/ab/plot.py` draws the CSV as an SVG with nothing but
-the standard library. `doc/lookup_vs_size.svg` is the result, committed beside its CSV, and
-`scripts/ab/README.md` says how to regenerate it. It measures the scored find workload's case, a
+the standard library. `doc/find_vs_size.svg` is the result, and `scripts/ab/README.md` says how to
+regenerate it. Nothing under `doc/` is tracked except the two `allocated_memory` files: the CSVs
+and the charts drawn from them are derived, so they are produced by `scripts/ab/regen.sh` rather
+than committed, and a fresh clone has none of them until it runs it. It measures the scored find workload's case, a
 random lookup with a 50% hit rate decided by its own rng, and draws two linear panels: sizes to
 64K, which is every table most programs build, and the whole range, which now runs to 134M entries
 -- about 5 GB of map, and far enough past the caches that the curve flattens into the

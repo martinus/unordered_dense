@@ -91,6 +91,17 @@ def main():
     vs = wide_value_size("value_size.csv")
     vs_str = wide_value_size("value_size_str.csv")
 
+    # Every figure in the prose is derived from a CSV, so a missing one is not a chart that quietly
+    # disappears -- it is a sentence with nothing to say. Since doc/ is not tracked, an empty one is
+    # the normal state of a fresh clone, so say what to run rather than fail on a None.
+    missing = sorted([n for n, rows in r.items() if rows is None] +
+                     ([] if vs else ["value_size.csv"]) + ([] if vs_str else ["value_size_str.csv"]))
+    if missing:
+        print(f"doc/ is missing {len(missing)} of the measurements this page is built from:")
+        print("  " + ", ".join(missing))
+        print("run scripts/ab/regen.sh to measure and draw, or --redraw once the CSVs are there.")
+        return 1
+
     # Facts, derived rather than written down: every figure the prose states about a measurement
     # comes from the CSV the chart draws, so re-running regen.sh re-derives the sentence with it.
     maps4 = ["this", "main", "jan", "boost"]
@@ -1033,4 +1044,4 @@ addEventListener("resize", () => { clearTimeout(window._t); window._t = setTimeo
 """
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
