@@ -29,7 +29,7 @@ auto long_key(std::string const& name) -> std::string {
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 size_t g_num_hashed = 0;
 
-struct counting_hash {
+struct hash_call_counter {
     using is_avalanching = void;
 
     [[nodiscard]] auto operator()(std::string const& str) const noexcept -> uint64_t {
@@ -38,7 +38,7 @@ struct counting_hash {
     }
 };
 
-using counting_map = ankerl::unordered_dense::map<std::string, int, counting_hash>;
+using hash_counting_map = ankerl::unordered_dense::map<std::string, int, hash_call_counter>;
 
 // The two hashers whose results mixed_hash() has to finalize differently: one that says nothing
 // about its quality, so wyhash is applied to it, and a 32 bit one that is avalanching, so it gets
@@ -92,7 +92,7 @@ TEST_CASE_SET("precomputed_hash_answers_the_same_in_a_set", std::string) {
 
 // The point of the whole feature: the hasher does not run again.
 TEST_CASE("a_precomputed_lookup_does_not_hash") {
-    auto map = counting_map();
+    auto map = hash_counting_map();
     for (int i = 0; i < 100; ++i) {
         map[long_key(std::to_string(i))] = i;
     }

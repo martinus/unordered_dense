@@ -157,9 +157,8 @@ void show([[maybe_unused]] track_peak_memory_resource const& mr, [[maybe_unused]
 // group's indices inside its own block. Every count here is some number of "build a populated
 // table" and "build an index", so they are spelled that way and a layout change moves them by
 // itself. That is the whole reason `array_count` exists.
-using index_t =
-    ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group,
-                                                   std::allocator<std::pair<uint64_t, uint64_t>>>;
+using index_t = ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group,
+                                                               std::allocator<std::pair<uint64_t, uint64_t>>>;
 // the values, plus however many arrays the index is
 constexpr auto populated_table = 1 + int{index_t::array_count};
 constexpr auto index_only = int{index_t::array_count};

@@ -318,27 +318,13 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 // harmless because the chain carries the position. The secrets have wyhash's property, every
 // byte with four bits set, odd, and were drawn once from a fixed seed.
 [[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t len) -> std::uint64_t {
-    static constexpr auto secret = std::array{UINT64_C(0xa0761d6478bd642f),
-                                              UINT64_C(0xe7037ed1a0b428db),
-                                              UINT64_C(0x8ebc6af09c88c6e3),
-                                              UINT64_C(0x589965cc75374cc3),
-                                              UINT64_C(0x2d358dccaa6c78a5),
-                                              UINT64_C(0x8bb84b93962eacc9),
-                                              UINT64_C(0x4b33a62ed433d4a3),
-                                              UINT64_C(0xa693c93927d87217),
-                                              UINT64_C(0x2b63728e53473c2b),
-                                              UINT64_C(0x696cb2a95635a3c5),
-                                              UINT64_C(0xa9ccd81ed1b29359),
-                                              UINT64_C(0x5c2d66ace48db84d),
-                                              UINT64_C(0x69a99c5c53b4ca2d),
-                                              UINT64_C(0x9a9c5a1b27d10f69),
-                                              UINT64_C(0x2b27f02dc3d4360f),
-                                              UINT64_C(0x2b39665c8d2d5553),
-                                              UINT64_C(0x966cd8878bb4b187),
-                                              UINT64_C(0xc6351e99932b1ee1),
-                                              UINT64_C(0xd1c5d24d63c959c9),
-                                              UINT64_C(0x56c54d9c955aca2b),
-                                              UINT64_C(0xd136d27872563559)};
+    static constexpr auto secret = std::array{
+        UINT64_C(0xa0761d6478bd642f), UINT64_C(0xe7037ed1a0b428db), UINT64_C(0x8ebc6af09c88c6e3), UINT64_C(0x589965cc75374cc3),
+        UINT64_C(0x2d358dccaa6c78a5), UINT64_C(0x8bb84b93962eacc9), UINT64_C(0x4b33a62ed433d4a3), UINT64_C(0xa693c93927d87217),
+        UINT64_C(0x2b63728e53473c2b), UINT64_C(0x696cb2a95635a3c5), UINT64_C(0xa9ccd81ed1b29359), UINT64_C(0x5c2d66ace48db84d),
+        UINT64_C(0x69a99c5c53b4ca2d), UINT64_C(0x9a9c5a1b27d10f69), UINT64_C(0x2b27f02dc3d4360f), UINT64_C(0x2b39665c8d2d5553),
+        UINT64_C(0x966cd8878bb4b187), UINT64_C(0xc6351e99932b1ee1), UINT64_C(0xd1c5d24d63c959c9), UINT64_C(0x56c54d9c955aca2b),
+        UINT64_C(0xd136d27872563559)};
 
     auto const* p = static_cast<std::uint8_t const*>(key);
     std::uint64_t seed = secret[0];
@@ -377,7 +363,8 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
             // The first block and the last sixteen bytes, then whole blocks from the front for as
             // long as there are any: a key of 17 to 32 bytes is two multiplies, one of 129 to 144
             // is nine, all of them independent.
-            auto x = mix(r8(p) ^ secret[1], r8(p + 8) ^ secret[2]) ^ mix(r8(p + len - 16) ^ secret[3], r8(p + len - 8) ^ secret[4]);
+            auto x =
+                mix(r8(p) ^ secret[1], r8(p + 8) ^ secret[2]) ^ mix(r8(p + len - 16) ^ secret[3], r8(p + len - 8) ^ secret[4]);
             if (len > 32) {
                 x ^= mix(r8(p + 16) ^ secret[5], r8(p + 24) ^ secret[6]);
                 if (len > 48) {
@@ -1613,8 +1600,20 @@ private:
     // three lines; the first is the one the fingerprints are already being read from.
     template <typename Block>
     static void prefetch_index(Block const* blocks, value_idx_type group_idx) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(blocks + std::size_t{group_idx});
         ANKERL_UNORDERED_DENSE_PREFETCH(p + 64);
+        ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
+    }
+
+    // Every line of a block, for a caller that has not touched the group at all. prefetch_index
+    // skips the first line because the probe is about to read it anyway; a rehash is about to
+    // write a group it has never read, so it wants that line too.
+    template <typename Block>
+    static void prefetch_block(Block const* blocks, std::size_t group_idx) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
+        auto const* p = reinterpret_cast<char const*>(blocks + group_idx);
+        ANKERL_UNORDERED_DENSE_PREFETCH(p);
         ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
     }
 
@@ -1685,7 +1684,8 @@ private:
     // step of the walk. Measured as a 2% loss on a churn sweep when this was refactored the other
     // way round.
     template <typename Group>
-    static void uncount(Group* groups, value_idx_type mask, value_idx_type home_idx, unsigned counter, value_idx_type found_in) {
+    static void
+    uncount(Group* groups, value_idx_type mask, value_idx_type home_idx, unsigned counter, value_idx_type found_in) {
         auto group_idx = home_idx;
         value_idx_type delta = 0;
         while (group_idx != found_in) {
@@ -2035,16 +2035,14 @@ private:
         auto* const groups = m_buckets.data();
         auto const mask = m_group_mask;
         auto const shifts = m_shifts;
-        std::uint64_t ring[ahead];
+        auto ring = std::array<std::uint64_t, ahead>{};
         auto it = m_values.begin();
         auto const end = m_values.end();
-        auto const fetch = [&](std::size_t i) {
+        auto const fetch = [&](std::size_t i) -> void {
             auto const mh = mixed_hash(get_key(*it));
             ++it;
             ring[i] = mh;
-            auto const* p = reinterpret_cast<char const*>(groups + (mh >> shifts));
-            ANKERL_UNORDERED_DENSE_PREFETCH(p);
-            ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(typename bucket_container_type::block) - 1);
+            prefetch_block(groups, static_cast<std::size_t>(mh >> shifts));
         };
         for (auto i = std::size_t{}; i < ahead && it != end; ++i) {
             fetch(i);
