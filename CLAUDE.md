@@ -71,6 +71,8 @@ Benchmarking practices:
 - Always benchmark a `--buildtype release` build (never debug).
 - Record a baseline score on the unmodified code first, then compare after each change. Run each measurement 2–3 times; treat differences within run-to-run noise (~1–2%) as no change.
 - Don't compare runs made at different times — even a desktop drifts by a few percent over minutes. `scripts/ab/run.sh` runs baseline (any git revision) and candidate (the working tree) interleaved in one process, on the benchmark's own workloads, and reports a confidence interval for the ratio; believe a change when the interval excludes 100%.
+- **A ratio at one table size is a ratio at one point of a sawtooth.** A table doubles its bucket array at one size and not at another, so its load factor sweeps from about a half to the maximum and back, and two indexes with different slots per group double at *different* sizes. `scripts/ab/run.sh` therefore measures every size-sensitive workload at five sizes across one octave and reports the geometric mean; `-p 1` restores the old single size. Measured on an eleven-slot group against the shipped sixteen-slot one, `rmiss64` read 1.384 at one size and 1.039 over the octave, and `churn64` read 1.199 and **0.974** — the sign reversed. Point-to-point the range was 0.79 to 1.33, and the boost column swings 1.9x across an octave with the header untouched.
+- **A churn loop that recycles its insert keys from a small spare pool under-reports the drift by half.** Measured 2026-09-07 while instrumenting the probe: the same table at the same load after the same number of turnovers reads 1.09 groups per miss when each insert is drawn from a 4096 key pool that the erases feed back into, and **1.27** when every insert is a key the map has never held. A key that comes back soon tends to land in the home it just left. The scored `churn` in `test/bench/workloads.h` is safe, since it draws `next++`; this is a warning for any harness written beside it, and one such harness had it.
 - Beware code-layout luck: any edit (even to never-executed code) can shift alignment and move individual sub-benchmarks by ±3%. Judge micro-optimizations by mechanism plus a focused microbenchmark, and confirm on the paired geomean, not on a single sub-benchmark delta.
 - nanobench prints per-benchmark `err%`; rerun if it's high (> ~3%). A warning about CPU governor/turbo is normal on non-tuned machines — it just means more noise.
 - Other useful benchmarks in `test/bench/` (e.g. `bench_copy`, `bench_game_of_life`, find variants) can be run the same way via `-tc=<name>`; run all with `-ns -ts=bench`. List all test cases with `-ltc`.
@@ -957,6 +959,42 @@ doubling for a caller who cares. The README says so plainly now; it previously c
 "small next to the values", which is only true when the value is large.
 
 
+**The SSE probe audited, and its one real redundancy is compiler-dependent** (2026-09-07, asked as
+"take a good look at the SSE code, is there anything that can be optimized there"). The match
+sequence has nothing left in it: `movdqu`, `pcmpeqb` against a broadcast that *both* compilers hoist
+out of the loop (checked in the disassembly rather than assumed), `pmovmskb`, `test`. The broadcast
+is only that cheap because `fingerprint_words` already holds the byte in all four positions, so
+`_mm_set1_epi32` is `movd` plus `pshufd` where a genuine SSE2 byte broadcast would need a
+`punpcklbw` as well; `match_empty` compiles to a `pxor`-zeroed compare, `lanes &= lanes - 1` to
+`blsr`, and `first_lane` to `tzcnt`.
+
+The redundancy is in `prefetch_index`, which asks for `p + 64` and `p + sizeof(block) - 1` = `p +
+87`. With an 88 byte stride a block's offset within a cache line cycles through eight values, and
+**six of the eight put both prefetches on the same line**, so one of them is waste three times in
+four. Removing it is a clang win and a larger gcc loss. One map per binary, 30M all-hits lookups,
+ns per hit, both prefetches / last only / `+64` only / none:
+
+| | 50000 | 1000000 | 4000000 |
+|---|---|---|---|
+| clang | 6.47 / **6.03** / 6.16 / 6.15 | 29.71 / **26.42** / 27.94 / 28.03 | 51.73 / 49.05 / **48.69** / 49.48 |
+| gcc | **5.78** / 5.87 / 5.91 / 6.17 | | **44.79** / 45.64 / 45.35 / 51.28 |
+
+Dropping both costs gcc **12% at four million entries** -- 313.5 cycles per lookup against 277.9
+while executing *fewer* instructions, which is a cache miss that stopped being hidden. The cause is
+scheduling rather than source: gcc emits the `movdqu` before the two prefetches and clang emits both
+prefetches before it, so under clang they take load-port slots in front of the load that is actually
+on the critical path. **Left as it is**, because the gcc gain is larger than the clang cost and both
+compilers are in CI. Misses are unaffected under either, which fits -- a miss with no fingerprint
+match never reads the index at all. The paired score could not settle this: it read 1.006 for the
+single-prefetch variant in a run where `hashstr`, which never touches the map, read 1.13.
+
+That is the x86 half of the question the boost review left open above ("boost tunes the prefetch per
+architecture ... this map issues the same two or three prefetches everywhere ... it has not been
+asked"), and the answer for x86 is that there is nothing to tune that is right for both compilers.
+The ARM half is still unasked and `bench.yml` could settle it. One trap worth naming: `-march=native`
+silently upgrades these intrinsics to AVX-512 on this machine -- `vpcmpeqb` into `%k0`, `kmovd`, no
+`pmovmskb` at all -- so a profile taken that way is not the code most callers run.
+
 **Fingerprints and counters in two arrays instead of one 24 byte group** (2026-09-05). The layout
 sweep in `martinus/ai#3` kept the two together in every one of its eleven layouts, so the split was
 the one form never measured. The case for it: sixteen fingerprints are a quarter of a cache line,
@@ -1025,6 +1063,49 @@ hop saves. The general shape is the one this file keeps rediscovering -- a filte
 nothing cheaper filtered first, and here the group's own fingerprint compare already did most of it,
 so a finer counter is refining a decision that is nearly always already made. A byte per class is
 the point where the counter is a single aligned load and still per-class.
+
+**And the fifth point on that axis: an exact counter, worth 2-3%** (2026-09-07, the one idea
+Verstable has that this map does not -- see its entry below). `m_overflows[g][c]` counts every live
+entry of class c that *passed* group g on its own sequence, whatever its home; Verstable's
+in-home-bucket bit answers the narrower and exact question "does anything belong here". The
+analogue here is a second set of eight counters per group holding "entries of class c whose home
+**is** g and which did not fit in g", consulted at step 0, where the current test costs a whole
+extra group visit whenever it is wrong.
+
+Measured before writing any of it, on an instrumented copy of the header that rebuilds the exact
+answer offline by hashing every occupied slot -- and checked against the invariant it must obey,
+that an entry displaced out of g incremented g's counter on the way out, over 4096 groups and eight
+classes with no violation. The instrumented probe reproduces this file's own figures to three
+digits (churned miss 1.266 groups at load 0.763 after 200 turnovers against the 1.265 recorded
+above in the `move_home` entry, 17.6% of misses continuing at step 0 against 17.5%), which is what
+makes the rest of it
+believable. On the table the shipped header actually leaves, with `move_home` firing:
+
+| load | groups per miss now | with the exact counter | continuing at step 0 | of those, siblings |
+|---|---|---|---|---|
+| 0.763 fresh | 1.046 | 1.040 | 3.7% | 85.5% |
+| 0.763, 200 turnovers | 1.159 | **1.134** | 11.4% to 9.3% | **81.5%** |
+| 0.793, 200 turnovers | 1.242 | **1.201** | 16.1% to 12.9% | **79.7%** |
+| 0.50, churned | 1.003 | 1.003 | 0.3% | ~99% |
+
+**About 80% of what the counter fails to filter is siblings** -- entries that genuinely home in that
+group and genuinely did not fit in it. Both tests say continue for those and both are right, since
+the key really could be further along; being exact only removes the strangers, and strangers are a
+fifth of the problem. For calibration against a change that was kept, `move_home` took 0.107 groups
+off a churned miss and that was worth 11% off an in-cache miss and nothing out of cache. This takes
+**0.025**, under a quarter of it, so 2-3% in cache on a churned table, nothing on a fresh one,
+nothing at half load, and nothing out of cache. Against that: 8 more bytes per group (88 to 96, so
+5.5 to 6.0 bytes per slot, 9% more index memory), a store into the home group on every insert that
+does not fit home and every matching erase and every `move_home`, and a second counter for the
+rehash, the erase and `move_home` to keep consistent -- more of exactly the invariant the mutation
+sweeps keep finding uncovered.
+
+So **this map's approximate counter is within 2-3% of the exact version of itself**, and the counter
+axis is closed: folly's single counter 0.959 on the score, nibble counters 0.986, two-bit counters
+0.988, three fresh hash bits per step noise, and exactness at step 0 worth 2-3% in cache only. What
+is left of a churned miss is siblings, and the only thing that removes a sibling is putting it back
+home -- `move_home` for the writing case, and for the reading case the erase-side pull-back that was
+rejected for costing 20 ns per erase.
 
 
 Both came from reading how other maps do it, and both lose for the same kind of reason: they add
@@ -1139,6 +1220,128 @@ forward_as_tuple(key), forward_as_tuple(args...))` -- for a map of trivially con
 that is a 16 byte store dressed as 225 units of inline cost. Under gcc the same code is already
 fully inlined, so this is a clang-only 7% on builds and churn waiting on codegen, not on design.
 
+**ihtab and ixhtab measured, and a bug in one of them reported upstream** (2026-09-07,
+`/home/martinus/gra/ihtab/sololynx`, vnmakarov/ihtab). `iht::ihtab` is an eight slot SSE group --
+eight one byte tags interleaved with eight four byte indices -- at a **50% maximum load**, with
+tombstones it never reclaims: `EMPTY` is `0xc0` and `DELETED` `0x80`, chosen so that `match_empty`
+is one `movemask(g & (g << 1))`, and `els_bound` only ever grows, so a full element array is
+compacted by rebuilding the whole table. `ixht::ixhtab` puts extendible hashing on top: a directory
+of bins, each an `ihtab` with sixteen bit indices, split once a bin reaches
+`1 << MAX_BIN_SIZE_POWER`.
+
+Measured with the same harness as the Verstable entry below, but before it grew the octave sweep,
+so these are single sizes and therefore single points of four different sawtooths -- read them as an
+ordering, not as ratios. ns per operation:
+
+| n | map | build | hit | 50% hits | iterate | churn | insert/erase |
+|---|---|---|---|---|---|---|---|
+| 50000 | this map | 7.80 | 5.65 | 10.38 | **0.11** | 33.87 | 26.41 |
+| | boost | 10.34 | **4.53** | 9.47 | 0.91 | 35.57 | 27.19 |
+| | ihtab | **5.89** | 4.83 | **9.13** | 1.12 | 35.62 | 27.54 |
+| | ixhtab | 12.38 | 6.37 | 11.23 | 1.38 | 165.28 | 111.70 |
+| 1000000 | this map | 13.71 | 34.28 | 36.04 | **0.27** | 180.40 | 112.36 |
+| | boost | 20.10 | **25.41** | **28.80** | 2.08 | **79.15** | **74.90** |
+| | ihtab | **10.88** | 32.99 | 34.25 | 1.12 | 116.06 | 95.07 |
+| | ixhtab | 24.16 | 54.44 | 60.17 | 1.41 | 212.24 | 185.38 |
+
+ihtab is genuinely quick and the reason is on the label: at a 50% load factor a lookup almost always
+lands home, and it pays for that with twice the slots. Buying probe length with memory is always
+available to any of these designs and is not an index idea -- it is the same axis the two bit
+counter sat on, filtering best when fresh. ixhtab's churn column is not a design property but the
+bug below.
+
+**The bug.** `ixhtab.hpp:290` decides whether a full bin should grow with `if (2 * els_num >=
+indexes_size)`, where `els_num` is the **whole table's** live count (member at `ixhtab.hpp:102`) and
+`indexes_size` is **one bin's** index size. For any table larger than a single bin that is always
+true, so `grow` is always set and the code splits instead of compacting in place -- and since a
+deleted slot is never reclaimed, a bin fills its element array from tombstones alone however few of
+its elements are live. Each bin then splits about once per turnover, each split halves the live
+occupancy of both halves, and nothing merges back. At a constant 50000 live elements over 40
+turnovers the heap goes **1.4 MB to 44.8 MB**, 29.5 to 938.9 bytes per element and still doubling,
+and a hit goes from 8.2 ns to 17-30. `ihtab::rebuild()` has the same-shaped test and is correct
+there, because both quantities describe the same single table, which is why ihtab stays flat.
+Present in all four headers (`ixhtab.hpp:290`, `ixhtab.h:290`, `ixhtab-v0.hpp:298`,
+`ixhtab-v0.h:298`) and reported as vnmakarov/ihtab#2 with a self-contained reproducer, the cause and
+a fix. The transferable part is the test that found it: **a workload that holds the element count
+exactly constant while churning is the only one that can see this class of fault**, which is why
+`churn` is in the score.
+
+**Verstable measured rather than read** (2026-09-07, asked as "here is another hashtable I want
+compared"; the bullet further down had it from reading the header alone). One `uint16_t` per bucket:
+four bits of hash fragment, one bit saying "the key here belongs here", and an eleven bit quadratic
+displacement to the next key in this bucket's chain -- so every key homed at a bucket sits on one
+linked list threaded through otherwise-unused buckets, and a lookup visits *only* buckets holding
+keys that belong to it. Key and value inline in a flat bucket array, both arrays out of one
+`malloc`, `MAX_LOAD` 0.9, tombstone-free, and an insert evicts at most one key to keep the invariant
+that a chain starts at its home bucket. It compiles as C++ unchanged, so the comparison is one
+translation unit and every lookup inlines; its buckets are raw `malloc` memory that is never
+constructed, so the key has to be trivially copyable, which is why this is an integer-key
+comparison. The adapter was cross-checked against this map over 400000 mixed operations under
+ASan/UBSan first, and that caught a real mapping error: Verstable's `_insert` *replaces* an existing
+value, like `insert_or_assign`, so the honest counterpart of `try_emplace` is `_get_or_insert`.
+
+Every map given this map's wyhash, five sizes per octave and the geomean, because 0.9 against
+boost's 0.875 against sixteen slots per group is three maps that double at three different sizes.
+Time relative to this map, below 1.00 meaning faster than it:
+
+| workload | verst 1K | boost 1K | verst 32K | boost 32K | verst 500K | boost 500K |
+|---|---|---|---|---|---|---|
+| build from empty | 1.30 | 1.51 | **3.24** | 1.73 | 2.75 | 1.64 |
+| find, all hits | 1.50 | 0.88 | 1.09 | 0.79 | **0.75** | 0.75 |
+| find, all misses | 2.48 | 1.05 | 2.04 | 0.90 | 0.97 | 0.76 |
+| find, 50% hits | 1.84 | 0.99 | 1.64 | 0.88 | 0.85 | 0.77 |
+| iterate | 15.4 | 11.8 | 10.6 | 9.0 | 5.9 | 6.4 |
+| churn at a fixed size | 1.71 | 0.83 | 1.25 | 0.68 | 0.62 | 0.49 |
+| insert and erase | 1.81 | 0.92 | 1.31 | 0.75 | 0.67 | 0.60 |
+
+In cache it loses to both maps on everything; out of cache it converges on boost, catching it
+exactly on hits at half a million entries. gcc agrees on the ranking at every workload (verst
+against this map at 32K: 2.08, 1.20, 2.08, 1.65, 7.96, 1.21, 1.24), so it is not clang layout. Its
+own integer hash -- a three-op xorshift-multiply-xorshift -- costs it a further **3-14%** against
+being handed this wyhash, largest in cache, which is the opposite sign from boost, whose own integer
+hash is 1-7% *faster*.
+
+**Why, and it is a mechanism this file keeps arriving at from new directions.** One map per binary,
+30M lookups at 50000 entries:
+
+| | instructions | cycles | branch misses | L1 misses |
+|---|---|---|---|---|
+| miss, this map | 44.1 | 19.0 | 0.107 | 3.24 |
+| miss, boost | 45.1 | 19.1 | 0.162 | 1.89 |
+| miss, Verstable | **36.7** | **38.0** | **0.812** | 1.96 |
+| hit, this map | 50.5 | 29.1 | 0.065 | 4.22 |
+| hit, Verstable | 49.0 | 33.2 | 0.418 | 3.26 |
+
+**A Verstable miss executes 17% fewer instructions than this map's and takes twice the cycles.** The
+design delivers exactly what it advertises -- fewest instructions, fewest cache lines touched -- and
+hands all of it back at the branch predictor, because "is my home bucket a chain head, and how long
+is the chain" is a data-dependent decision on every lookup where a group compare is not. At load 0.9
+about 59% of misses land on a chain head and have to walk it. That is the
+robin-hood-against-group-probe result again, reached by a completely different design.
+
+The build gap is the insert path. At 200000 entries, ns per element: reserved inserts 6.84 for this
+map, 3.80 for boost, 11.32 for Verstable; from empty 9.64, 12.89 and **26.49**, with branch misses
+per element 0.132, 0.312 and **2.398**. Growth costs Verstable 143 instructions and 79 cycles per
+element against this map's 44 and 12, because a rehash re-runs the whole insert for every key:
+`find_first_empty` quadratic-probes for a free slot, `find_insert_location_in_chain` walks the chain
+to keep it ordered by displacement, and an occupied home bucket calls `evict`, which re-hashes the
+occupant and walks *its* chain. "Only moves one existing key" is a statement about moves and says
+nothing about probing.
+
+Memory, bytes per entry with an 8 byte value, octave geomean: this map 32.6-33.9, boost 27.7-29.2,
+**Verstable 27.1-28.6** -- the leanest of the three, at 18 bytes per slot against boost's 16 at a
+lower maximum load -- and flat across churn for all three, which is the check that all three are
+genuinely tombstone-free. At a 64 byte value it is a flat map and behaves like one on a build (84.9
+ns per element against this map's 55.5, boost 87.1) while iterating 1.6x better than boost (2.84
+against 4.49, this map 1.10), because the two byte metadata array finds a sparse table's occupied
+buckets without touching the buckets themselves.
+
+The one transferable idea in it -- the exact in-home-bucket test -- is measured and rejected in the
+counter section above. What makes Verstable competitive out of cache is not that: it is key and
+value inline behind no value index, and one allocation rather than two, which at a million entries
+is 0.13 dTLB misses per miss against this map's 0.77. That is the dense design's known structural
+cost and not a new idea.
+
 **Read boost's `unordered_flat_map` again after it turned out to have the probe bound this map was
 missing** (2026-09-06). Three things came back, in descending order of worth:
 
@@ -1185,7 +1388,9 @@ Read and found to have nothing to transfer, with the reason in each case:
   displacement into one 16 bit word per bucket. Same conclusion, and it confirms a detail: it takes
   the fragment from the *high* bits because the bucket comes from the low ones, which is the same
   independence this map gets by taking the group from the top of the hash and the fingerprint from
-  the bottom.
+  the bottom. Benchmarked on 2026-09-07 rather than only read -- see the entry above, which
+  supersedes this bullet -- and its one transferable idea, the exact in-home-bucket test, is
+  measured and rejected in the counter section.
 - **tsl::hopscotch_map** keeps a per-bucket bitmap of which of the next N buckets hold keys
   belonging here. It is positional where the counters are numeric, but it is *coarser* -- one
   bitmap per bucket against eight counters per group -- and it maintains its invariant by moving
@@ -1199,6 +1404,45 @@ excluding the three iteration workloads, `boost::unordered_flat_map` is level (0
 lookups alone by 11%**; `emilib` is 12% behind, `emhash7` 20%, `emhash8` 27%, `emhash5` 28%. With
 iteration included this map leads all of them, because only `emhash8` is dense as well and the rest
 lose 3-10x there. The standing weakness is the same one this file has always named: building.
+
+**Every boost comparison in this file that predates 2026-09-07 was taken at one size, and five of
+them cross 1.00 when the octave is averaged instead.** Re-run with the octave sweep, one binary,
+`main` against the working tree against boost, the same 20 workloads at one size and at five sizes
+per octave. Above 1.00 means this map is faster.
+
+| | vs main | vs boost | vs boost, no iteration |
+|---|---|---|---|
+| one size | 1.242 | 1.586 | 1.144 |
+| octave geomean | 1.208 | 1.502 | **1.066** |
+
+The `vs main` column barely moves and no workload in it changes sign; the boost column moves a lot
+and five workloads do:
+
+| workload | boost, one size | boost, octave |
+|---|---|---|
+| `churn64` | 1.191 | **0.776** |
+| `churnbig` | 1.237 | **0.797** |
+| `churnstr` | 1.087 | **0.866** |
+| `rmiss64` | 1.112 | **0.916** |
+| `iebig` | 0.984 | 1.002 |
+| `buildstr` | 1.544 | 1.993 |
+| `buildbig` | 1.928 | 1.775 |
+
+**The reason the two columns behave differently is the whole point.** This map and `main` have
+power-of-two bucket counts and the same maximum load factor, so they double at the *same* sizes:
+their sawtooths are in phase and cancel out of the ratio, which is why every same-family paired A/B
+in this file is sound however it was sampled. boost's bucket counts are not powers of two (1966079
+at a million entries) and its maximum load is 0.875, so it is out of phase, and a single size reads
+one map near the top of its cycle against the other wherever its own cycle happened to be.
+
+So **"this map is ahead of boost on churn at a fixed size" is a single-size artefact** -- it is
+stated in the table just below (`churn at a fixed size` 1.16 and 1.21) and again in the "nothing
+measured a table that only churns" section above it (`churn64` 1.32x). Averaged over an octave boost
+is 1.15-1.29x ahead on churn for all three value types, and this map's remaining lead over boost
+outside iteration is 1.066 rather than 1.144. The lead over `main` is unaffected. **Every boost
+ratio anywhere in this file and in `scripts/ab/README.md` that is not explicitly labelled as an
+octave geomean is a point measurement**; re-take it with `run.sh` at its default `-p 5` before
+quoting it. The charts sections of both files already summarise by octave and are not affected.
 
 **That last sentence stopped being true on 2026-09-05.** Re-measured against
 `boost::unordered_flat_map` after the rehash fix, same hash, 12 paired epochs, boost's time over
@@ -1229,6 +1473,18 @@ against 67.9, and 144.5 against 209.0 -- do not reproduce under either method, a
 one cannot be right by arithmetic: a million entries in 1966079 slots of a 16 byte `value_type` is
 31.5 MB, which is what both methods return.
 
+**Those memory figures are a point on the sawtooth, and the octave says something else** (2026-09-07,
+found while measuring Verstable's footprint). Bytes per entry with a 64 byte value, this map against
+boost: 87.0 against 143.7 at a million entries, which is the 1.65x above -- and **135.4 against
+119.7 at 1.2M and 108.4 against 95.8 at 1.5M, where boost is 12% ahead**. A million is near this
+map's best point, the value vector's capacity overhanging by 4.9%, and near boost's worst, 1966079
+buckets for a million keys being load 0.51. Averaged over an octave the two are a wash at a 64 byte
+value (118.3 against 118.5 at 200000) and boost is ahead at an 8 byte one (32.6 against 29.2),
+because the dense value vector's doubling overhang is a cost a point measurement can miss entirely.
+Every one of these numbers is true; only the octave ones are a summary. The rule the charts section
+states for time -- summarise across an octave, never at a chosen load -- applies to memory, and the
+lines above predate it.
+
 **A miss had no bound, and eight chosen keys made it loop forever** (found 2026-09-05, in the
 review before release). The probe stopped only at a group whose counter for the key's class was
 zero, on the argument that exact counters put a zero right after the furthest entry of that class.
@@ -1249,8 +1505,13 @@ identity hash; the corpus fuzzers, all on wyhash, could not have reached either.
 second effect worth knowing: it converts a *missing or wrong-home* erase decrement from a hang into
 a silent slowdown. That fault used to be caught loudly -- the counters only grew, a miss found no
 zero, the suite hung -- and now the miss stops at the end of the array and the table stays correct,
-just slower. So the erase decrement is no longer covered by any correctness test (mutating it away
-SURVIVES the suite), only by the A/B score. That is the deliberate trade of making the map robust
+just slower. That left the erase decrement uncovered by any correctness test for a while -- mutating
+it away SURVIVED all 771 cases -- which is closed since 2026-09-07 by `test/unit/erase_uncounts.cpp`.
+The way to test anything in this family is to measure the lengthening rather than an answer: the map
+is given a counting `KeyEqual`, and a table that reached its contents by erasing a run of entries
+that had overflowed one group into the next has to compare a miss exactly as often as a table built
+from the survivors directly. Three cases, covering the erase path, the rehash that rebuilds the
+counters, and the two together. That is the deliberate trade of making the map robust
 to a hostile hash: a hang is loud, degradation is quiet, and the map has to prefer the quiet one.
 
 **Mutation triage after the bound** (2026-09-05, `invariants.txt` and `erase-path.txt` re-run,
@@ -1259,7 +1520,17 @@ of 46 caught after a test was added for the one real gap the sweep found: copyin
 grown* table by assignment into a grown target left the copy at the source's shift, so its first
 insert allocated the large array instead of the smallest (2048 buckets against 64) -- observable,
 and nothing checked it, now `copying_an_emptied_table_starts_from_the_smallest_array` in
-`lazy_bucket_allocation.cpp`. The two `invariants.txt` survivors are equivalent: the moved-from mask
+`lazy_bucket_allocation.cpp`. Re-run 2026-09-07 it is **45 of 46 with one survivor**, 31 of them
+caught by a test rather than by the compiler or a hang. Five of its blocks had gone stale in the
+meantime -- the merged block renamed `index[slot]` to `group.m_index[lane]` and `m_buckets.index()`
+to `index_at()`, and `move_home` moved into `emplace` -- and because the tool refuses to run a file
+with any block that does not apply, **none of the other 41 were being checked either**. Re-deriving
+them is a job with a trap in it: three of the obvious rewrites are rejected by the compiler rather
+than by a test (`if (true)` leaves the `key` parameter unused; `m_equal(key, key)` trips gcc's
+`-Warray-compare` on the array-keyed map in `transparent.cpp`; dropping a repoint leaves its two
+locals unused), and a `compiler` verdict means the question was never asked. A fourth rewrite
+computed the same index as the correct code and was an equivalent mutant wearing a bug's name. Check
+the verdict, not just that the block applies. The one remaining survivor is equivalent: the moved-from mask
 (every find and erase checks `empty()` before it could read the mask, and a moved-from table is
 empty) and the erase decrement just above. The sweep's sixteen survivors are all one of three
 kinds: deletions and bitwise rewrites inside the SWAR fallback, which an SSE2 build does not compile
