@@ -175,6 +175,42 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**What `move_home` is actually worth, re-measured** (2026-09-07, `scripts/ab/move_home.{cpp,sh}`,
+asked as "I am now sceptical this is of any use" -- reasonably, since the drift entry it was
+justified by does not reproduce). One map per binary, the same header with `move_home` turned into a
+no-op beside it, a reserved table at load 0.80 churned through with `hits` writing lookups per
+round, then the region under test timed on its own. **The control is the part that makes it
+believable**: with `hits` at 0 `move_home` never fires, so the two binaries have to measure the
+same, and where they do not that is code layout to be subtracted.
+
+| entries | control (no writing hits) | with one writing hit per round | hits | churn round |
+|---|---|---|---|---|
+| 52363 (in L2) | 0.951 | **1.107** | 1.041 | 1.012 |
+| 838860 (L3) | 0.998 | **1.101** | 1.003 | -- |
+| 3355443 (past L3) | 0.997 | **1.099** | 0.991 | -- |
+
+Ratios are off over `move_home`, so above 1.00 means `move_home` is faster. So it is worth **about a
+tenth of a miss**, it is worth **nothing on a hit**, it costs nothing on the writing path that pays
+for it (the churn round reads 1.00-1.01), and -- correcting the entry below -- **it is worth the same
+tenth out of cache as in it**, at 3.4M entries where the index is 23 MB, not "nothing out of cache".
+
+The mechanism, per lookup at 52363 entries, `perf stat` on the same two binaries: with no writing
+hits **27.59 cycles and 0.2118 branch misses against 27.52 and 0.2116** -- identical, as the control
+demands -- and with one writing hit per round **25.58 and 0.1591 against 28.93 and 0.2177**.
+Instructions barely move (53.9 against 54.9). So a quarter of the branch misses go and an eighth of
+the cycles, on 0.04 fewer groups per miss: **most of what the drift costs is the stop-or-continue
+branch becoming unpredictable, not the extra group visit**, which is why the time effect (11%) is
+three times the probe-length effect (3.7%) and why it survives out of cache where the extra group is
+in the adjacent block.
+
+**What this does not say.** `move_home` fires only on a hit inside a writing path, so a workload
+that only reads gets exactly nothing from it -- the control row *is* that workload, and it reads
+1.00. And the gain is entirely on misses. The profile it pays for is a map that churns at a fixed
+size, is written to by key, and is asked about keys that are not there; that is a real shape (a
+dedup set, a cache with negative lookups, any `++m[k]` counter over a sliding window) and it is not
+the shape of any workload in the scored suite, which is why the score reads 1.000 on it and always
+will.
+
 **Three ideas the eighteen-map comparison suggested, all measured, none kept** (2026-09-07, from
 asking what the post's own findings imply for this map).
 
