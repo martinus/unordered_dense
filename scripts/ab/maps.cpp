@@ -84,6 +84,13 @@ void print_geomean(char const* what, std::size_t base, acc_row const& acc) {
 
 double g_interval = 0.03;
 std::size_t g_max_epochs = 200;
+// UDM_ONLY=hit,churn runs those workloads and skips the rest, which is what drawing one of them at
+// fifty sizes needs; empty means all of them.
+std::string g_only;
+
+auto wanted(char const* what) -> bool {
+    return g_only.empty() || g_only.find(what) != std::string::npos;
+}
 
 template <typename Tuple, typename F>
 void one_point(char const* what, std::size_t n, std::size_t batch, acc_row& acc, F&& f) {
@@ -105,6 +112,10 @@ void one_point(char const* what, std::size_t n, std::size_t batch, acc_row& acc,
 // one doubling however many points are asked for. Five is the default and is what a ratio is
 // summarised over; a couple of dozen is what draws the sawtooth itself.
 std::size_t g_points = 5;
+// How many points to actually run. Normally the same as g_points, which is exactly one octave;
+// UDM_SPAN runs a few more at the same spacing, so a chart of the sawtooth can show the far side of
+// the doubling instead of stopping on top of it.
+std::size_t g_span = 0;
 
 auto octave_size(std::size_t base, std::size_t i) -> std::size_t {
     return static_cast<std::size_t>(
@@ -127,24 +138,29 @@ void sweep(std::size_t base) {
     auto a_ie = acc_row(k);
 
     std::printf("== %s octave starting at %zu ==\n", g_keyname, base);
-    for (std::size_t i = 0; i < g_points; ++i) {
+    for (std::size_t i = 0; i < (g_span != 0 ? g_span : g_points); ++i) {
         auto const n = octave_size(base, i);
         auto const p = pools<Key>(n);
         auto const lookup_batch = std::size_t{20000};
 
+        if (wanted("build")) {
         one_point<Tuple>("build", n, n, a_build, [&](auto ic) {
             return [&] {
                 ankerl::nanobench::doNotOptimizeAway(build<std::tuple_element_t<ic.value, Tuple>>(p));
             };
         });
+        }
 
-        {
+        if (wanted("hit") || wanted("miss") || wanted("half") || wanted("iterate")) {
             auto ms = Tuple();
             std::apply([&](auto&... m) { (fill(m, p), ...); }, ms);
             auto st = std::vector<lookup_state>(k);
             for (auto const what : {asking::hits, asking::misses, asking::half}) {
                 auto* acc = what == asking::hits ? &a_hit : (what == asking::misses ? &a_miss : &a_half);
                 char const* label = what == asking::hits ? "hit" : (what == asking::misses ? "miss" : "half");
+                if (!wanted(label)) {
+                    continue;
+                }
                 one_point<Tuple>(label, n, lookup_batch, *acc, [&](auto ic) {
                     return [&, what] {
                         ankerl::nanobench::doNotOptimizeAway(
@@ -152,12 +168,14 @@ void sweep(std::size_t base) {
                     };
                 });
             }
-            one_point<Tuple>("iterate", n, n, a_iter, [&](auto ic) {
-                return [&] { ankerl::nanobench::doNotOptimizeAway(std::get<ic.value>(ms).sum()); };
-            });
+            if (wanted("iterate")) {
+                one_point<Tuple>("iterate", n, n, a_iter, [&](auto ic) {
+                    return [&] { ankerl::nanobench::doNotOptimizeAway(std::get<ic.value>(ms).sum()); };
+                });
+            }
         }
 
-        {
+        if (wanted("churn")) {
             auto ms = Tuple();
             std::apply([&](auto&... m) { (fill(m, p), ...); }, ms);
             auto present = std::vector<std::vector<Key>>(k, p.present);
@@ -177,7 +195,7 @@ void sweep(std::size_t base) {
             });
         }
 
-        {
+        if (wanted("ie")) {
             auto ms = Tuple();
             std::apply([&](auto&... m) { (fill(m, p), ...); }, ms);
             auto ps = std::vector<pools<Key>>(k, p);
@@ -372,6 +390,12 @@ int main(int argc, char** argv) {
     if (char const* e = std::getenv("UDM_EPOCHS")) {
         g_max_epochs = std::strtoull(e, nullptr, 10);
     }
+    if (char const* e = std::getenv("UDM_SPAN")) {
+        g_span = std::strtoull(e, nullptr, 10);
+    }
+    if (char const* e = std::getenv("UDM_ONLY")) {
+        g_only = e;
+    }
     if (char const* e = std::getenv("UDM_CSV")) {
         g_csv = std::fopen(e, "ae");
     }
@@ -396,18 +420,24 @@ int main(int argc, char** argv) {
         }
 #if defined(__GLIBC__)
         if (mode == "memory") {
+            if (base != 0) {
+                memory<Key, Val>(base);
+                return 0;
+            }
             for (auto b : {std::size_t{1000}, std::size_t{32000}, std::size_t{500000}}) {
-                if (base == 0 || base == b) {
-                    memory<Key, Val>(b);
-                }
+                memory<Key, Val>(b);
             }
             return 0;
         }
 #endif
+        // A base of 0 means the three octaves the comparison is reported at; anything else is the
+        // one octave asked for, which is how a single workload gets swept finely for a chart.
+        if (base != 0) {
+            sweep<Key, Val>(base);
+            return 0;
+        }
         for (auto b : {std::size_t{1000}, std::size_t{32000}, std::size_t{500000}}) {
-            if (base == 0 || base == b) {
-                sweep<Key, Val>(b);
-            }
+            sweep<Key, Val>(b);
         }
         return 0;
     };
