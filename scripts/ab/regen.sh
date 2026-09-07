@@ -172,12 +172,13 @@ else
     echo "note: boost not found, its line will be missing from every chart" >&2
 fi
 
+mkdir -p "$build/bin"
 [ -f "$build/nanobench.o" ] || {
     printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > "$build/nb.cpp"
     "$cxx" "${flags[@]}" -c "$build/nb.cpp" -o "$build/nanobench.o"
 }
 for t in sweep valuesize memory hash; do
-    "$cxx" "${flags[@]}" "$root/scripts/ab/$t.cpp" "$build/nanobench.o" -o "$build/$t"
+    "$cxx" "${flags[@]}" "$root/scripts/ab/$t.cpp" "$build/nanobench.o" -o "$build/bin/$t"
 done
 echo "built sweep, valuesize, memory, hash"
 
@@ -193,7 +194,7 @@ else
     shift_max=20 per_octave=24 width=0.03 entries=200000 hash_max=1024
     s_shift=19 s_octave=16 s_width=0.04 s_entries=200000
 fi
-run() { echo "  $1 ..." >&2; taskset -c "$core" "$build/${@:2}"; }
+run() { echo "  $1 ..." >&2; taskset -c "$core" "$build/bin/${@:2}"; }
 
 echo "measuring (pinned to core $core; leave the machine alone):"
 run find_hits    sweep "$shift_max" "$per_octave" 20000 3 "$width" 0 > "$doc/find_hits_vs_size.csv"
