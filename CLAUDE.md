@@ -556,6 +556,36 @@ block, which the spatial prefetcher already brought in. So it pays 20 ns per era
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
 Not kept. The lazy version is, and it is the entry below.
 
+**The last structural lever on the hash, taken and found to weigh nothing** (2026-09-07, asked as
+"you are the most advanced model, improve the hash for the map"). The block range's chain is two
+dependent multiplies and the second exists only to repair the bits a product leaves weak. The map
+reads two places -- the top bits for the group, the bottom byte for the fingerprint -- and a per-bit
+avalanche of the fold *without* its finalizer says those are exactly the weak places: worst
+|p - 1/2| 0.076 in bits 0-7 and 0.074 in bits 36-63, 0.024 in between. So the question was whether
+something cheaper than a 128-bit multiply repairs them. Two things do, at every boundary length from
+17 to 300 and under two seeds: **`x * C`** (one `imul`, 3 cycles, a bijection) and **`x ^ rotl(x,
+32)`** (2 cycles), both at the 0.02 noise floor everywhere the current finalizer is. `hi64(x * C)`
+does not (0.041 in the top bits: the high half of a product by a constant is weak at the top). And
+neither works on the short path: at 8 bytes the two reads are the same bytes and at 9-15 they
+overlap, the inner multiply's operands are correlated, and only a real second multiply repairs
+that (0.36-0.50 otherwise). So the candidate was precisely scoped -- the short path keeps its two
+multiplies, the 73% of scored keys past 16 bytes lose one.
+
+**In the map it is worth nothing.** Six hashers interleaved with a same-code control, the control
+reading 0.996-1.008: block-range `imul` `rhitstr` 1.006, `findstr` 1.009, `churnstr` 1.009,
+`iestr` 1.009, `rmissstr` 0.988; block-range `rotl` 1.001, 1.006, 1.008, 1.008, 0.971; `hashstr`
+1.09-1.18 against a control of 1.08, which is that benchmark's layout swing and not a result.
+Three cycles off the hash's chain does not show in a lookup at all. Not adopted, since when speed
+ties the stronger finalizer is the one to keep for everyone who uses `hash<std::string>` outside
+the map.
+
+Taken together with the entry below, the picture is now complete enough to stop: the hash's serial
+chain is two multiplies, removing one is invisible, a length-branch structure that removes
+mispredictions costs more than it saves, and a hash that is faster in every hashing loop (AES)
+loses 37% in the map. **The hash is done; what a string lookup still pays is in the probe and the
+key compare, not in hashing.** The next thing to measure, if the string lookup is the target, is
+where its ~90 cycles actually go.
+
 **Four attempts at tuning the hash for latency, all worthless in the map, and the microbenchmark
 that said otherwise was wrong** (2026-09-07, asked as "can you do more latency tuning"). The premise
 was sound: on unpredictable lengths the length dispatch costs **0.50 branch mispredictions per
