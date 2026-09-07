@@ -15,6 +15,7 @@ works under, for the same reason.
 import csv
 import json
 import math
+import re
 import os
 import sys
 
@@ -316,6 +317,7 @@ def main():
     charts = [c for c in charts if c]
     for c in charts:
         c["group"] = group_of(c["title"])
+    chart_ids(charts)
 
     colors = {k: {"light": light, "dark": dark, "label": label, "dash": dash}
               for k, label, light, dark, dash in SERIES}
@@ -436,6 +438,28 @@ def si(n):
             v = n / cut
             return f"{v:g}{suffix}"
     return str(int(n))
+
+
+def slug(text):
+    """A stable, readable id: "Find, every lookup hitting" -> find-every-lookup-hitting."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", text.lower())).strip("-")
+
+
+def chart_ids(charts):
+    """An id per chart, disambiguated by key type rather than by a counter: four titles appear
+    twice, once per key type, and `-uint64` says which far better than `-2` does."""
+    used = {}
+    for c in charts:
+        base = slug(c["title"])
+        sub = c["subtitle"]
+        if "uint64_t" in sub:
+            base += "-uint64"
+        elif "std::string" in sub:
+            base += "-string"
+        n = used.get(base, 0)
+        used[base] = n + 1
+        c["id"] = base if n == 0 else f"{base}-{n + 1}"
+        c["gid"] = slug(c["group"])
 
 
 def art(n):
@@ -565,7 +589,7 @@ __SERIESCSS__
   button.chip .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   button.chip[aria-pressed="false"] { color: var(--ink3); background: transparent; }
   button.chip[aria-pressed="false"] .dot { background: none !important; box-shadow: inset 0 0 0 1.5px currentColor; }
-  :is(button, [tabindex]):focus-visible { outline: 2px solid var(--c-this); outline-offset: 2px; border-radius: 4px; }
+  :is(a, button, [tabindex]):focus-visible { outline: 2px solid var(--c-this); outline-offset: 3px; border-radius: 4px; }
 
   .theme { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; flex: none; }
   .theme button {
@@ -609,6 +633,16 @@ __SERIESCSS__
   /* ---- benchmark groups ---- */
   .group { margin: 92px 0 0; border-top: 2px solid var(--rule-strong); padding-top: 18px; }
   .group h2 { font-size: var(--t-group); font-weight: 600; letter-spacing: -0.014em; margin: 0 0 6px; line-height: 1.15; }
+  /* Every heading is a link to itself. The marker sits after the text rather than in the left
+     margin, which at this page width has no room for it and would clip on a narrow screen. */
+  .group, figure { scroll-margin-top: calc(var(--bar) + 18px); }
+  a.anchor { color: inherit; text-decoration: none; }
+  a.anchor::after {
+    content: "#"; margin-left: .4em; color: var(--ink3); font-weight: 400;
+    opacity: 0; transition: opacity .12s;
+  }
+  a.anchor:hover::after, a.anchor:focus-visible::after { opacity: 1; }
+  a.anchor:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; }
   .group .gsub { color: var(--ink2); margin: 0; }
 
   /* ---- one benchmark ---- */
@@ -686,8 +720,27 @@ __SERIESCSS__
 const DATA = __DATA__;
 // Which series are hidden lives in the URL, so a view of the data is a link you can send someone --
 // "#hide=boost" is "the four unordered_dense lines, rescaled to fill the panel".
+// The fragment carries two things: which chart to scroll to, and which series are hidden. A bare
+// "#churn-at-a-fixed-size-uint64" is what the heading links copy, and the browser scrolls to it on
+// its own; "#churn-at-a-fixed-size-uint64&hide=boost" adds the state, and is scrolled to by hand
+// because no element has that whole string as an id.
 const hidden = new Set((new URLSearchParams(location.hash.slice(1)).get("hide") || "")
   .split(",").filter(m => DATA.colors[m]));
+const anchorOf = (h) => (h || "").replace(/^#/, "").split("&").find(t => t && !t.includes("=")) || "";
+let anchor = anchorOf(location.hash);
+
+function writeHash() {
+  const bits = [];
+  if (anchor) bits.push(anchor);
+  if (hidden.size) bits.push("hide=" + [...hidden].join(","));
+  history.replaceState(null, "", bits.length ? "#" + bits.join("&") : location.pathname);
+}
+
+function scrollToAnchor(smooth) {
+  if (!anchor) return;
+  const el = document.getElementById(anchor);
+  if (el) el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+}
 
 // ---- theme: auto follows the system, light and dark are explicit and remembered ----
 const themeButtons = [...document.querySelectorAll("[data-theme-set]")];
@@ -889,7 +942,9 @@ function render() {
       group = chart.group;
       const sec = document.createElement("section");
       sec.className = "group";
-      sec.innerHTML = `<h2>${group}</h2><p class="gsub measure">${DATA.groups[group] || ""}</p>`;
+      sec.id = chart.gid;
+      sec.innerHTML = `<h2><a class="anchor" href="#${chart.gid}" title="Link to this section">${group}</a></h2>` +
+                      `<p class="gsub measure">${DATA.groups[group] || ""}</p>`;
       main.appendChild(sec);
     }
     const fig = document.createElement("figure");
@@ -904,7 +959,9 @@ function render() {
     // CSV says which by whether the panels carry the same column name.
     const split = chart.panels.length === 2 && chart.panels[0].title !== chart.panels[1].title &&
                   chart.panels[0].title.includes("entries") && chart.panels[1].title.includes("sizes");
-    fig.innerHTML = `<p class="ctitle">${chart.title}</p><p class="csub">${chart.subtitle}</p>` +
+    fig.id = chart.id;
+    fig.innerHTML = `<p class="ctitle"><a class="anchor" href="#${chart.id}" title="Link to this chart">${chart.title}</a></p>` +
+      `<p class="csub">${chart.subtitle}</p>` +
       `<div class="panels">${chart.panels.map((p, i) => `<div><p class="ptitle">${p.title}</p><div class="panel" id="p${ci}_${i}"></div></div>`).join("")}</div>` +
       `<figcaption>` +
       (chart.warn ? `<div class="caution"><p><span class="lead">Caution.</span> ${chart.warn}</p></div>` : "") +
@@ -926,7 +983,7 @@ function setHidden(m, hide) {
   hide ? hidden.add(m) : hidden.delete(m);
   for (const el of document.querySelectorAll(`[data-map="${m}"][aria-pressed]`))
     el.setAttribute("aria-pressed", String(!hidden.has(m)));
-  history.replaceState(null, "", hidden.size ? "#hide=" + [...hidden].join(",") : location.pathname);
+  writeHash();
   render();
 }
 
@@ -955,8 +1012,20 @@ function buildControls() {
   }
 }
 
+// A heading click keeps whatever is hidden, which a plain href would drop.
+addEventListener("click", (e) => {
+  const a = e.target.closest && e.target.closest("a.anchor");
+  if (!a) return;
+  e.preventDefault();
+  anchor = a.getAttribute("href").slice(1);
+  writeHash();
+  scrollToAnchor(true);
+});
+addEventListener("hashchange", () => { anchor = anchorOf(location.hash); scrollToAnchor(true); });
+
 buildControls();
 render();
+scrollToAnchor(false);
 addEventListener("resize", () => { clearTimeout(window._t); window._t = setTimeout(render, 120); });
 </script>
 </body>
