@@ -45,6 +45,13 @@ build against the vendored nanobench as they always did.
 
 ## The charts, interactively
 
+Nothing under `doc/` is tracked except the two `allocated_memory` files. The CSVs are
+measurements and the SVGs and the page are drawn from them, so all of it is derived and all of
+it comes from `regen.sh`; a fresh clone starts with an empty `doc/`. `plot.py` is driven per
+chart and `regen.sh` skips one whose CSV is absent, but `dashboard.py` derives every figure in
+the page's prose from the CSVs, so it names what is missing and asks you to run `regen.sh`
+rather than write a sentence with a hole in it.
+
 `scripts/ab/dashboard.py` builds **`doc/charts.html`** from whatever CSVs are in `doc/`: every chart
 on one page, with a legend you click to show or hide a map. Hiding is global -- a map hidden in one
 chart is hidden in all of them, because the question a reader has is about a map rather than about a

@@ -26,3 +26,10 @@ __pycache__/
 # scripts/mutate/mutate.py sets RLIMIT_CORE to 0 for what it spawns; this is for everything else.
 core
 core.*
+
+# doc/ charts and the measurements behind them: everything under doc/ except the two
+# allocated_memory files is produced by scripts/ab/regen.sh, so it is derived and not tracked.
+# `regen.sh` measures and draws; `regen.sh --redraw` only draws, and needs the CSVs to be there.
+/doc/*.csv
+/doc/*.svg
+/doc/charts.html
