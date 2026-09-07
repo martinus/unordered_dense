@@ -157,15 +157,15 @@ def hashmap_basics():
 
 
 def byte_ruler(x, y, segments, width=None):
-    """The same layout again at true byte scale, with a tick per byte and the offsets labelled.
+    """The block drawn to true byte scale, with a tick per byte and the offsets labelled.
 
-    The rows above are drawn one cell per *slot* so that two maps can be compared column by column,
-    which means a cell is one byte in some rows and four in others. This strip is the answer to
-    "how many bytes is that really": every byte is the same width in it, and it is the only thing in
-    these figures drawn to scale.
+    This goes at the *top* of a layout figure, because it is the anatomy: how many bytes there are
+    and how they are divided. The detail rows below expand one of these segments at a time, in the
+    same colour and under the same name, and they are drawn one cell per *slot* so that two maps can
+    be compared column by column -- which is why they are not to scale and this is.
     """
     total = sum(n for _, _, n in segments)
-    width = width or 560
+    width = width or 600
     scale = width / total
     h = 16
     out = ""
@@ -189,14 +189,26 @@ def byte_ruler(x, y, segments, width=None):
         out += (f'  <text x="{tx:.1f}" y="{y + h + 21}" class="muted" text-anchor="{anchor}" '
                 f'font-size="10">{off}</text>\n')
         off += n
-    out += text(x + width + 10, y + h - 3, f"{total} bytes", "muted")
+    # no total label: every figure's title already says how many bytes it is
     return out
+
+
+def anatomy(title, segments, y=40):
+    """A figure's opening: what it is, then the bytes it is made of, to scale."""
+    b = text(20, 24, title, "hd")
+    b += byte_ruler(LEFT, y, segments)
+    return b
+
+
+ANATOMY_H = 96  # where the first detail row goes, under the byte strip
 
 
 def rh_bucket():
     """unordered_dense 4.11.0: distance above fingerprint in one word."""
-    b = text(20, 24, "a run of buckets, and what an insert does to it", "hd")
-    y = 44
+    b = anatomy("one bucket: 8 bytes, and no key in it",
+                [("distance", "dist", 3), ("fp", "fp", 1), ("value index", "idx", 4)])
+    y = ANATOMY_H + 20
+    b += text(20, y - 12, "a run of buckets, and what an insert does to it", "hd")
     b += row(LEFT, y, [(t, "", 2) for t in ["1.9C>3", "2.5B>0", "3.11>5", "1.E0>1", "2.A7>4", "0"]])
     b += text(LEFT - 12, y + 20, "before", "muted", "end")
     y2 = y + 56
@@ -204,24 +216,22 @@ def rh_bucket():
                         ("2.E0>1", "", 2), ("3.A7>4", "", 2)])
     b += text(LEFT - 12, y2 + 20, "after", "muted", "end")
     b += f'  <path d="M{LEFT + 5 * BYTE},{y + ROW + 4} L{LEFT + 5 * BYTE},{y2 - 4}" class="arrow"/>\n'
-    b += text(LEFT + 12 * BYTE + 14, y + 20, "each cell is distance . fingerprint > value index", "muted")
-    y2 += 86
-    b += text(20, y2 - 12, "one bucket, to byte scale", "hd")
-    b += byte_ruler(LEFT, y2, [("distance", "dist", 3), ("fp", "fp", 1), ("value index", "idx", 4)])
-    return svg(y2 + 54, b)
+    b += text(LEFT + 12 * BYTE + 14, y + 20, "each cell reads", "muted")
+    b += text(LEFT + 12 * BYTE + 14, y + 36, "distance . fp > value index", "muted")
+    return svg(y2 + ROW + 24, b)
 
 
 def swiss_group():
     """abseil: one control byte per slot, sixteen compared at once."""
-    b = text(20, 24, "the hash, split in two", "hd")
-    y = 34
+    b = anatomy("abseil: 16 control bytes for 16 slots", [("ctrl[]", "fp", 16)])
+    y = ANATOMY_H + 22
+    b += text(20, y - 12, "the hash, split in two", "hd")
     b += row(LEFT, y, [("H2", "fp", 1), ("", "", 5), ("H1", "dist", 2)])
     b += text(LEFT - 12, y + 20, "64 bit hash", "muted", "end")
     b += text(LEFT + 8 * BYTE + 14, y + 13, "H2: the top 7 bits, stored as the control byte", "muted")
     b += text(LEFT + 8 * BYTE + 14, y + 29, "H1: the whole hash, masked, picks the group", "muted")
 
-    y = 104
-    b += text(20, y - 10, "the control bytes: one per slot, sixteen read at once", "hd")
+    y += 76
     tags = [("80", "", 1), ("2C", "fp", 1), ("80", "", 1), ("7A", "fp", 1),
             ("FE", "ovf", 1), ("2C", "fp", 1), ("11", "fp", 1), ("80", "", 1),
             ("4D", "fp", 1), ("80", "", 1), ("2C", "fp", 1), ("FE", "ovf", 1),
@@ -231,19 +241,18 @@ def swiss_group():
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
                "one 16 byte load, one compare, one movemask: sixteen verdicts")
 
-    y = 194
+    y += 84
     b += row(LEFT, y, [("", "payload", 1)] * 16)
     b += text(LEFT - 12, y + 20, "slots[]", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "the key and the value, in the slot")
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("one control byte per slot, sixteen of them", "fp", 16)])
-    return svg(y + 54, b)
+    return svg(y + ROW + 40, b)
+
 
 def boost_group15():
     """boost: fifteen slots and an overflow byte."""
-    b = text(20, 24, "the metadata word: 16 bytes for 15 slots", "hd")
-    y = 34
+    b = anatomy("boost: 16 metadata bytes for 15 slots",
+                [("h00 .. h14", "fp", 15), ("ofw", "ovf", 1)])
+    y = ANATOMY_H + 22
     tags = [("h00", "fp", 1), ("h01", "fp", 1), ("h02", "fp", 1), ("--", "", 1), ("h04", "fp", 1),
             ("h05", "fp", 1), ("--", "", 1), ("h07", "fp", 1), ("h08", "fp", 1), ("h09", "fp", 1),
             ("h10", "fp", 1), ("--", "", 1), ("h12", "fp", 1), ("h13", "fp", 1), ("h14", "fp", 1),
@@ -251,217 +260,202 @@ def boost_group15():
     b += row(LEFT, y, tags)
     b += text(LEFT - 12, y + 20, "group15", "muted", "end")
     b += brace(LEFT, LEFT + 15 * BYTE, y + ROW, "0 available, otherwise 2..255 of the hash")
-    b += text(LEFT + 16 * BYTE + 14, y + 20, "the overflow byte", "muted")
 
-    y = 122
-    b += text(20, y - 10, "the overflow byte: one bit per hash class", "hd")
+    y += 84
+    b += text(20, y - 12, "the overflow byte: one bit per hash class", "hd")
     b += row(LEFT, y, [(str(i), "ovf" if i == 3 else "", 1) for i in range(8)])
-    b += text(LEFT - 12, y + 20, "bit h%8", "muted", "end")
+    b += text(LEFT - 12, y + 20, "ofw", "muted", "end")
     b += text(LEFT + 8 * BYTE + 14, y + 13, "an insert that found this group full set bit 3,", "muted")
     b += text(LEFT + 8 * BYTE + 14, y + 29, "because its hash is 3 mod 8, and probed on", "muted")
 
-    y = 200
+    y += 76
     b += row(LEFT, y, [("", "payload", 1)] * 15)
     b += text(LEFT - 12, y + 20, "slots[]", "muted", "end")
     b += brace(LEFT, LEFT + 15 * BYTE, y + ROW, "the key and the value, in the slot")
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("h00 .. h14, one per slot", "fp", 15), ("ofw", "ovf", 1)])
-    return svg(y + 54, b)
+    return svg(y + ROW + 40, b)
+
 
 def f14_chunk():
     """folly F14: fourteen tags and two counters."""
-    b = text(20, 24, "one chunk: 14 tags, and two counters in two bytes", "hd")
-    y = 34
+    b = anatomy("folly F14: 16 metadata bytes for 14 slots",
+                [("tags_", "fp", 14), ("ctl", "ovf", 1), ("out", "ovf", 1)])
+    y = ANATOMY_H + 22
     tags = [(t, "fp", 1) for t in ["3A", "--", "91", "3A", "07", "--", "C4", "5F", "--", "22",
                                    "3A", "8B", "--", "6E"]]
     b += row(LEFT, y, tags + [("ctl", "ovf", 1), ("out", "ovf", 1)])
     b += text(LEFT - 12, y + 20, "F14Chunk", "muted", "end")
     b += brace(LEFT, LEFT + 14 * BYTE, y + ROW, "tags_: 0 is empty, otherwise the top byte of the hash")
 
-    y = 122
+    y += 84
     b += row(LEFT, y, [("scale", "dist", 2), ("hosted", "ovf", 2)], unit=BYTE * 2)
-    b += text(LEFT - 12, y + 20, "control_", "muted", "end")
+    b += text(LEFT - 12, y + 20, "ctl", "muted", "end")
     b += text(LEFT + 8 * BYTE + 14, y + 13, "four bits of capacity scale, in chunk 0 only, and four", "muted")
     b += text(LEFT + 8 * BYTE + 14, y + 29, "bits counting the keys hosted here that belong elsewhere", "muted")
 
-    y = 176
+    y += 54
     b += row(LEFT, y, [("saturating count", "ovf", 8)])
-    b += text(LEFT - 12, y + 20, "outbound", "muted", "end")
+    b += text(LEFT - 12, y + 20, "out", "muted", "end")
     b += text(LEFT + 8 * BYTE + 14, y + 13, "how many keys wanted this chunk and did not fit,", "muted")
     b += text(LEFT + 8 * BYTE + 14, y + 29, "including those that had already passed a full one", "muted")
 
-    y = 236
+    y += 60
     b += row(LEFT, y, [("", "payload", 1)] * 14)
     b += text(LEFT - 12, y + 20, "items", "muted", "end")
     b += brace(LEFT, LEFT + 14 * BYTE, y + ROW, "the key and the value, in the chunk")
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("tags_, one per slot", "fp", 14), ("ctl", "ovf", 1), ("out", "ovf", 1)])
-    return svg(y + 54, b)
+    return svg(y + ROW + 40, b)
+
 
 def emhash8_index():
     """emhash8: a chain through the index, and a fingerprint in the spare bits."""
-    b = text(20, 24, "one bucket: two 32 bit words, and no key", "hd")
-    y = 34
-    b += row(LEFT, y, [("next", "dist", 4), ("slot", "idx", 4)])
-    b += text(LEFT - 12, y + 20, "Index", "muted", "end")
-    b += text(LEFT + 8 * BYTE + 14, y + 13, "next: where this bucket's chain continues", "muted")
-    b += text(LEFT + 8 * BYTE + 14, y + 29, "slot: where the value is", "muted")
-
-    y = 100
-    b += text(20, y - 10, "the slot word, when the table has fewer than 2^32 slots", "hd")
+    b = anatomy("emhash8: 8 index bytes per bucket, and no key",
+                [("next", "dist", 4), ("slot", "idx", 4)])
+    y = ANATOMY_H + 22
+    b += text(20, y - 12, "the slot word, when the table has fewer than 2^32 slots", "hd")
     b += row(LEFT, y, [("hash bits", "fp", 5), ("slot", "idx", 3)])
+    b += text(LEFT - 12, y + 20, "slot", "muted", "end")
     b += brace(LEFT, LEFT + 5 * BYTE, y + ROW, "everything above log2(bucket count)")
     b += text(LEFT + 8 * BYTE + 14, y + 13, "a fingerprint that costs nothing, because", "muted")
     b += text(LEFT + 8 * BYTE + 14, y + 29, "the word has to be loaded anyway", "muted")
 
-    y = 190
-    b += text(20, y - 10, "the chain, threaded through the index", "hd")
-    b += row(LEFT, y, [("next 2", "", 2), ("--", "", 2), ("next 4", "", 2), ("--", "", 2),
-                       ("end", "", 2), ("--", "", 2)])
+    y += 90
+    b += text(20, y - 12, "the chain, threaded through the index", "hd")
+    b += row(LEFT, y, [("next 2", "dist", 2), ("--", "", 2), ("next 4", "dist", 2), ("--", "", 2),
+                       ("end", "dist", 2), ("--", "", 2)])
     b += text(LEFT - 12, y + 20, "index[]", "muted", "end")
     b += (f'  <path d="M{LEFT + 1 * BYTE},{y + ROW} C{LEFT + 1 * BYTE},{y + ROW + 26} '
           f'{LEFT + 5 * BYTE},{y + ROW + 26} {LEFT + 5 * BYTE},{y + ROW + 2}" class="arrow"/>\n')
     b += (f'  <path d="M{LEFT + 5 * BYTE},{y + ROW} C{LEFT + 5 * BYTE},{y + ROW + 40} '
           f'{LEFT + 9 * BYTE},{y + ROW + 40} {LEFT + 9 * BYTE},{y + ROW + 2}" class="arrow"/>\n')
-    y2 = y + 96
-    b += row(LEFT, y2, [(str(i), "payload", 2) for i in range(6)])
-    b += text(LEFT - 12, y2 + 20, "values", "muted", "end")
-    b += brace(LEFT, LEFT + 12 * BYTE, y2 + ROW, "a dense vector, in insertion order")
-    y2 += 86
-    b += text(20, y2 - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y2, [("next", "dist", 4), ("slot", "idx", 4)])
-    return svg(y2 + 54, b)
+    y += 96
+    b += row(LEFT, y, [(str(i), "payload", 2) for i in range(6)])
+    b += text(LEFT - 12, y + 20, "values", "muted", "end")
+    b += brace(LEFT, LEFT + 12 * BYTE, y + ROW, "a dense vector, in insertion order")
+    return svg(y + ROW + 40, b)
+
 
 def emilib_state():
     """emilib: a state byte per slot, homes rounded to a group."""
-    b = text(20, 24, "one state byte per slot", "hd")
-    y = 34
+    b = anatomy("emilib: 16 state bytes for 16 slots", [("states[]", "fp", 16)])
+    y = ANATOMY_H + 22
     st = [("80", "", 1), ("A2", "fp", 1), ("80", "", 1), ("del", "ovf", 1),
           ("11", "fp", 1), ("A2", "fp", 1), ("80", "", 1), ("7C", "fp", 1),
           ("80", "", 1), ("3F", "fp", 1), ("del", "ovf", 1), ("80", "", 1),
           ("62", "fp", 1), ("80", "", 1), ("A2", "fp", 1), ("18", "fp", 1)]
     b += row(LEFT, y, st)
     b += text(LEFT - 12, y + 20, "states[]", "muted", "end")
-    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "empty is -128, deleted its own value, otherwise the hash mod 253")
+    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
+               "empty is -128, deleted its own value, otherwise the hash mod 253")
 
-    y = 116
+    y += 84
     b += row(LEFT, y, [("", "payload", 1)] * 16)
     b += text(LEFT - 12, y + 20, "slots[]", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "the key and the value, in the slot")
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("one state byte per slot, sixteen of them", "fp", 16)])
-    return svg(y + 54, b)
+    return svg(y + ROW + 40, b)
+
 
 def indivi_metagroup():
     """indivi: fragments, counters an erase can undo, and distance nibbles."""
-    b = text(20, 24, "one metadata group: 32 bytes for 16 slots", "hd")
-    y = 34
+    b = anatomy("indivi flat_umap: 32 metadata bytes for 16 slots",
+                [("hfrags", "fp", 16), ("oflws", "ovf", 8), ("dists", "dist", 8)])
+    y = ANATOMY_H + 22
     b += row(LEFT, y, [(t, "fp", 1) for t in ["9C", "--", "41", "9C", "07", "--", "B3", "5A",
                                               "--", "22", "9C", "8E", "--", "6D", "F1", "--"]])
-    b += text(LEFT - 12, y + 20, "hfrag", "muted", "end")
-    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "16 one byte hash fragments, compared with one SIMD instruction")
+    b += text(LEFT - 12, y + 20, "hfrags", "muted", "end")
+    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "one byte per slot, compared with one SIMD instruction")
 
-    y = 116
+    y += 84
     b += row(LEFT, y, [(str(v), "ovf", 2) for v in [0, 1, 0, 0, 2, 0, 0, 0]])
-    b += text(LEFT - 12, y + 20, "overflow", "muted", "end")
+    b += text(LEFT - 12, y + 20, "oflws", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
-               "8 counters, one per hash class, incremented on the way past and decremented by an erase")
+               "8 counters, one per hash class, drawn across the sixteen slots they cover")
 
-    y = 198
+    y += 84
     b += row(LEFT, y, [(str(v), "dist", 1) for v in [0, 1, 0, 0, 2, 0, 1, 0, 0, 0, 3, 0, 1, 0, 0, 0]])
-    b += text(LEFT - 12, y + 20, "distance", "muted", "end")
+    b += text(LEFT - 12, y + 20, "dists", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
-               "8 bytes: a four bit distance from home per slot, so an erase by iterator needs no hash")
+               "a four bit distance from home per slot, two to a byte")
+    return svg(y + ROW + 44, b)
 
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("hfrags", "fp", 16), ("oflws", "ovf", 8), ("dists", "dist", 8)])
-    return svg(y + 54, b)
 
 def group_block():
     """unordered_dense 5.0: the 88 byte block."""
-    b = text(20, 24, "one block: 88 bytes for 16 slots, in one allocation", "hd")
-    y = 34
+    b = anatomy("unordered_dense 5.0: an 88 byte block for 16 slots, in one allocation",
+                [("fingerprints", "fp", 16), ("overflow", "ovf", 8), ("value index", "idx", 64)])
+    y = ANATOMY_H + 22
     b += row(LEFT, y, [(t, "fp", 1) for t in ["9C", "--", "41", "9C", "07", "--", "B3", "5A",
                                               "--", "22", "9C", "8E", "--", "6D", "F1", "--"]])
     b += text(LEFT - 12, y + 20, "fingerprints", "muted", "end")
-    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
-               "16 bytes: 0 is empty, otherwise the low byte of the hash, never 0")
+    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "one byte per slot: 0 is empty, otherwise the low byte of the hash")
 
-    y = 116
+    y += 84
     b += row(LEFT, y, [(str(v), "ovf", 2) for v in [0, 1, 0, 0, 2, 0, 0, 0]])
     b += text(LEFT - 12, y + 20, "overflow", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
-               "8 bytes: one counter per fingerprint class, up on the way past, down on erase")
+               "8 counters, one per fingerprint class, drawn across the sixteen slots they cover")
 
-    y = 198
+    y += 84
     b += row(LEFT, y, [(str(v), "idx", 1) for v in [7, 0, 3, 12, 5, 0, 1, 9, 0, 4, 2, 8, 0, 6, 11, 0]])
     b += text(LEFT - 12, y + 20, "value index", "muted", "end")
-    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW,
-               "64 bytes: a uint32_t per slot, at a fixed offset from the fingerprints")
+    b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "a uint32_t per slot, four bytes each")
 
-    y = 306
+    y += 108
     b += row(LEFT, y, [(str(i), "payload", 2) for i in range(8)])
     b += text(LEFT - 12, y + 20, "m_values", "muted", "end")
     b += brace(LEFT, LEFT + 16 * BYTE, y + ROW, "a std::vector<std::pair<Key, T>> in insertion order")
     for src, dst in ((0, 7), (2, 3), (9, 4)):
         x0 = LEFT + src * BYTE + BYTE / 2
         x1 = LEFT + dst * 2 * BYTE + BYTE
-        b += (f'  <path d="M{x0},{y - 46} C{x0},{y - 22} {x1},{y - 22} {x1},{y - 2}" class="arrow"/>\n')
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("fingerprints", "fp", 16), ("overflow", "ovf", 8), ("value index", "idx", 64)])
-    return svg(y + 54, b)
+        b += f'  <path d="M{x0},{y - 46} C{x0},{y - 22} {x1},{y - 22} {x1},{y - 2}" class="arrow"/>\n'
+    return svg(y + ROW + 44, b)
+
 
 def verstable_word():
     """Verstable: a chain in sixteen bits."""
-    b = text(20, 24, "one bucket's metadata: two bytes, used as sixteen bits", "hd")
+    b = text(20, 24, "Verstable: two metadata bytes per bucket, used as sixteen bits", "hd")
     y = 44
-    b += row(LEFT, y, [("fragment", "fp", 2), ("home", "ovf", 1), ("displacement", "dist", 5)])
+    # to scale: one cell is one bit
+    u = 30
+    b += row(LEFT, y, [("fragment", "fp", 4), ("home", "ovf", 1), ("displacement", "dist", 11)], unit=u)
     b += text(LEFT - 12, y + 20, "uint16_t", "muted", "end")
-    b += text(LEFT, y + ROW + 18, "4 bits", "muted")
-    b += text(LEFT + 2 * BYTE, y + ROW + 18, "1", "muted")
-    b += text(LEFT + 3 * BYTE, y + ROW + 18, "11 bits, the step to the next key in this bucket's chain", "muted")
+    b += text(LEFT + 16 * u + 10, y + 20, "16 bits", "muted")
+    for i, (lab, n) in enumerate((("4 bits", 0), ("1", 4), ("11 bits", 5))):
+        b += text(LEFT + n * u, y + ROW + 18, lab, "muted")
 
-    y = 140
-    b += text(20, y - 10, "the chain: a lookup visits only buckets holding keys that belong to it", "hd")
-    u = BYTE
+    y = 150
+    b += text(20, y - 12, "the chain: a lookup visits only buckets holding keys that belong to it", "hd")
+    bu = BYTE
     b += row(LEFT, y, [("", "", 1), ("home", "fp", 1), ("", "", 1), ("", "", 1), ("+5", "fp", 1),
-                       ("", "", 1), ("", "", 1), ("", "", 1), ("end", "fp", 1), ("", "", 1)], unit=u)
+                       ("", "", 1), ("", "", 1), ("", "", 1), ("end", "fp", 1), ("", "", 1)], unit=bu)
     b += text(LEFT - 12, y + 20, "buckets", "muted", "end")
-    b += (f'  <path d="M{LEFT + 1.5 * u},{y + ROW} C{LEFT + 1.5 * u},{y + ROW + 26} '
-          f'{LEFT + 4.5 * u},{y + ROW + 26} {LEFT + 4.5 * u},{y + ROW + 2}" class="arrow"/>\n')
-    b += (f'  <path d="M{LEFT + 4.5 * u},{y + ROW} C{LEFT + 4.5 * u},{y + ROW + 42} '
-          f'{LEFT + 8.5 * u},{y + ROW + 42} {LEFT + 8.5 * u},{y + ROW + 2}" class="arrow"/>\n')
+    b += (f'  <path d="M{LEFT + 1.5 * bu},{y + ROW} C{LEFT + 1.5 * bu},{y + ROW + 26} '
+          f'{LEFT + 4.5 * bu},{y + ROW + 26} {LEFT + 4.5 * bu},{y + ROW + 2}" class="arrow"/>\n')
+    b += (f'  <path d="M{LEFT + 4.5 * bu},{y + ROW} C{LEFT + 4.5 * bu},{y + ROW + 42} '
+          f'{LEFT + 8.5 * bu},{y + ROW + 42} {LEFT + 8.5 * bu},{y + ROW + 2}" class="arrow"/>\n')
     return svg(y + ROW + 66, b)
 
 
 def ihtab_group():
     """ihtab: eight slots, half load, and a dense element array."""
-    b = text(20, 24, "one group: 40 bytes for 8 slots", "hd")
-    y = 34
+    b = anatomy("ihtab: a 40 byte group for 8 slots",
+                [("tags", "fp", 8), ("indices", "idx", 32)])
+    y = ANATOMY_H + 22
     b += row(LEFT, y, [(t, "fp", 1) for t in ["c0", "5A", "80", "11", "c0", "7F", "3C", "c0"]])
     b += text(LEFT - 12, y + 20, "tags", "muted", "end")
     b += brace(LEFT, LEFT + 8 * BYTE, y + ROW, "0xc0 empty, 0x80 deleted, otherwise the top 7 bits")
     b += text(LEFT + 8 * BYTE + 14, y + 13, "both markers have the top two bits set, so one", "muted")
     b += text(LEFT + 8 * BYTE + 14, y + 29, "and-shift-movemask finds every empty slot", "muted")
 
-    y = 122
+    y += 84
     b += row(LEFT, y, [(str(v), "idx", 1) for v in [0, 3, 0, 7, 0, 1, 5, 0]])
     b += text(LEFT - 12, y + 20, "indices", "muted", "end")
-    b += brace(LEFT, LEFT + 8 * BYTE, y + ROW, "32 bytes: a uint32_t per slot")
+    b += brace(LEFT, LEFT + 8 * BYTE, y + ROW, "a uint32_t per slot, four bytes each")
 
-    y = 204
+    y += 84
     b += row(LEFT, y, [(str(i), "payload" if i not in (2, 4) else "sent", 1) for i in range(8)])
     b += text(LEFT - 12, y + 20, "els", "muted", "end")
     b += brace(LEFT, LEFT + 8 * BYTE, y + ROW, "appended in order, never compacted: the hatched two are erased")
-    y += 86
-    b += text(20, y - 12, "the same bytes, to scale", "hd")
-    b += byte_ruler(LEFT, y, [("tags", "fp", 8), ("indices", "idx", 32)])
-    return svg(y + 54, b)
+    return svg(y + ROW + 44, b)
+
 
 def families():
     """flat, dense, node: what a lookup has to touch."""
