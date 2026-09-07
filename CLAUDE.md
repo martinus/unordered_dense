@@ -556,6 +556,51 @@ block, which the spatial prefetcher already brought in. So it pays 20 ns per era
 ns per lookup in cache, break-even at thirty to fifty lookups per erase, and never out of cache.
 Not kept. The lazy version is, and it is the entry below.
 
+**Four attempts at tuning the hash for latency, all worthless in the map, and the microbenchmark
+that said otherwise was wrong** (2026-09-07, asked as "can you do more latency tuning"). The premise
+was sound: on unpredictable lengths the length dispatch costs **0.50 branch mispredictions per
+hash**, which at ~16 cycles is a whole multiply. Four structures, all keeping the short path and the
+long lanes:
+
+- **v2, 32 byte steps instead of 16** -- half as many decisions for the predictor, at the price of
+  up to one extra pair of reads and one extra multiply, which are independent and so cost throughput
+  rather than latency. It does what it claims: branch misses 0.50 to 0.42.
+- **v5**, `len` out of the finalizer, so the last multiply has a compile-time constant operand.
+- **v6**, `len` mixed into the head block as well as the finalizer.
+- **v3**, both.
+
+In a standalone latency harness these looked decisive and reproduced on both compilers to 0.02 ns:
+v0 6.87, v5 5.52, v6 5.44, **v3 4.90** -- a 1.40x improvement, clang and gcc agreeing exactly, which
+is normally enough to rule out layout.
+
+**In the map every one of them is nothing.** Same map, the scored string workloads, six hashers
+interleaved with a same-code control: `rhitstr` v3 0.998, v5 0.996, v6 0.997 against a control of
+0.996; `findstr`, `churnstr`, `iestr`, `buildstr` all 0.99-1.01. And v2, the one that genuinely
+removed mispredictions, is a consistent **loss** (0.92-0.97) -- so the extra multiplies cost more
+than the branches they save, which is the same answer the fully branchless version gave and for the
+same reason.
+
+**Why the harness lied, and it is a trap worth naming.** To make lengths unpredictable it took the
+next key's index out of the previous hash -- `x = hash(keys[x & mask])` -- which is the standard way
+to build a dependency chain and is what the hash chart's latency panel does. But that puts the
+key's *length* on the chain: `len` is `keys[x & mask].size()`, so it arrives late, and a finalizer
+that consumes `len` extends the chain. A real lookup has no such edge. The caller already holds the
+key, so its length is known before the hash starts and only the *bytes* are loaded. The assembly
+says the same thing plainly: v0 and v5 differ by exactly one `xor` instruction before the final
+`mul`, with no spills in either -- one cycle, not the five the harness reported. `v7`, which hoists
+`S[1] ^ len` into a named variable, is the control that proves it is not about scheduling: 6.84
+against v0's 6.87, i.e. nothing.
+
+So: **a latency microbenchmark that chains through key selection measures a chain the map does not
+have, and it overstates anything that touches the key's length or address.** The hash chart's
+latency panel has the same edge in it, which is a second reason its numbers are an ordering rather
+than an amount.
+
+What this leaves is that the block range is already at its floor: two dependent multiplies, and the
+second one cannot go, since dropping it fails avalanche outright. One multiply is ~4 cycles on
+about a third of a string lookup, which is ~1.5% of a lookup even if it were free -- under the
+noise of the score. The hash is not where the remaining time is.
+
 **Latency is what a map pays, tested rather than argued** (2026-09-07). The AES-NI rejection above
 was reasoning -- a quarter faster in throughput, half again slower in latency, so it should lose in
 a map -- and reasoning is not a measurement. Measured: the same `map<std::string, size_t>`, the
