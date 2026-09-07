@@ -1608,12 +1608,24 @@ meson test -C builddir --print-errorlogs
 `--force-fallback-for=fmt` is what makes every runner build against the vendored fmt instead of
 whatever the machine happens to have installed.
 
-One leg builds `--unity=on`. It is off by default because merging translation units is bad for
-development — touching one file recompiles its whole chunk — but it catches a class of problem
-separate compilation hides, and an anonymous namespace stops isolating a file once its neighbours
-share the chunk. Everything it caught the first time had been there and invisible: `test/app/print.h`
-had no include guard, and four `test/bench/*.cpp` each defined a `bench()` that only became
-ambiguous when two landed in the same chunk.
+One leg builds `--unity=on --unity-size=16`. It is off by default because merging translation units
+is bad for development — touching one file recompiles its whole chunk — but it catches a class of
+problem separate compilation hides, and an anonymous namespace stops isolating a file once its
+neighbours share the chunk. Everything it caught the first time had been there and invisible:
+`test/app/print.h` had no include guard, and four `test/bench/*.cpp` each defined a `bench()` that
+only became ambiguous when two landed in the same chunk.
+
+**A collision surfaces when the chunking changes, not when the collision is written**, which makes
+this leg fail on a commit that has nothing to do with it. `precomputed_hash.cpp` and
+`lazy_bucket_allocation.cpp` had each declared a `counting_map` since long before 2026-09-06 —
+one counts hash calls, one counts allocations, both in anonymous namespaces — and adding
+`test/unit/move_home.cpp` to `test/meson.build` shifted every later file one place and brought the
+two into chunk 4 together. So: reproduce this leg with its own size (`meson setup --unity=on
+--unity-size=16`, since meson's default is 4 and the boundaries land elsewhere) whenever a test
+file is *added or removed*, not only when one is edited. Renamed to `hash_counting_map` rather
+than made distinct by chunk luck. The second error cluster in that log, `_Rb_tree_color does not
+name a type` inside `stl_tree.h`, is gcc error recovery after the first failure and not a second
+bug.
 
 Linters (`scripts/lint/lint-*.py`, all of them via `scripts/lint/all.py`) run in the `lint` job.
 Two of them pin their tool, because both tools gain checks or change their output between
