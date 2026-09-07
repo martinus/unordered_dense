@@ -175,6 +175,85 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Three ideas the eighteen-map comparison suggested, all measured, none kept** (2026-09-07, from
+asking what the post's own findings imply for this map).
+
+**Double hashing instead of the triangular sequence, so siblings take different tours.** Folly's
+`probeDelta = 2*tag+1` with the comment that quadratic and linear "result in longer probe lengths",
+aimed at the finding above that ~80% of what a counter fails to filter is siblings -- keys homed in
+the same group, which under a triangular sequence walk the *same* groups a later miss walks. Step
+taken from bits 8-15 of the hash, which the group (top bits) and the fingerprint (low byte) do not
+use; odd, so it still reaches every group of a power-of-two array exactly once, and `uncount`,
+`place_group`, `slot_of_value` and the rehash's own copy of the placement walk all take it too.
+(Missing the rehash's copy is what six failing tests found first; the seventh failure is
+`erase_uncounts`, which asserts a comparison count that encodes the triangular shape.)
+
+**The mechanism works and the time is worse.** Instrumented, 4096 groups, 200 turnovers, groups per
+lookup, triangular against double hashed: fresh miss 1.0522 -> **1.0349**, churned miss 1.0609 ->
+1.0497 at load 0.76; at load 0.799 fresh miss 1.0856 -> **1.0542** and churned 1.1223 -> 1.0959. So
+it removes a third of the excess on a fresh miss, exactly as intended. Paired on the score:
+`rmiss64` **0.915**, `build64` 0.950, `churnbig` 0.970, `rhit64` 0.984, control `hashstr` 1.04. One
+map per binary at 50000 entries: +4.6 instructions per lookup (57.2 -> 61.8 on a miss, 60.5 -> 65.4
+on a hit), cycles 20.6 -> 21.3 and 29.5 -> 31.1, branch misses slightly *better* (0.108 -> 0.093),
+L1 misses unchanged. Three cheap ops and a live register in three loops, against 0.03 groups on a
+path 5% of misses reach. The general shape again: **the group compare and the counter have already
+taken the probe down to 1.03-1.09 groups, so the shape of the sequence past home has nothing left
+to win.**
+
+**An ungrouped, unaligned window, which is what `indivi::flat_wmap` does -- rejected on a simulation
+rather than built.** It is the fastest hit of the eighteen maps and 1.15-1.31x faster than its own
+grouped sibling, so it is worth knowing what the window itself is worth. Simulated with the same
+keys at the same load, windows visited per placement, bucketized (home is a group of sixteen)
+against sliding (home is a slot, first free slot within sixteen): at load 0.799 **1.0481 against
+1.0396**, at 0.76 1.0318 against 1.0238. So slot-level placement removes about a *fifth* of an
+excess that is already under 5% -- a quarter of what `move_home` is worth, and `move_home` is worth
+11% of an in-cache miss and nothing out of cache. To collect it this map would have to give up the
+merged block, since sixteen fingerprints starting at an arbitrary slot are not contiguous in an
+88 byte block, and that is measured at 2% of the score and 28% of the dTLB misses at 4M. Ceiling
+below cost; not built.
+
+**And the reason `flat_wmap` is actually fast is not the window.** One map per binary, hits, its
+grouped sibling against it: **53.3 against 47.3 instructions** at 1000 entries, 54.6 against 48.3 at
+50000, 72.6 against 64.4 at 1M, with fewer L1 misses at every size *including* the one that fits in
+L1 (0.876 against 0.378). Six fewer instructions and half the metadata per slot (one byte against
+two), not the alignment. This map is at 60.8 instructions and 4.2 L1 misses per hit at 50000 against
+its 48.3 and 3.3, and closing *that* is a different and still-open question.
+
+**A per-table seed, abseil's defence against keys chosen for a known hash.** `mixed_hash` returns
+`hash ^ m_seed`, the seed scrambled from the table's own address so that two live tables differ and
+ASLR makes two processes differ. **On lookups it is free**: one map per binary at 50000 entries,
++1.0 instruction and **0.0 cycles** on both a hit and a miss (21.4 against 21.4, 29.6 against 29.6),
+ns/op identical to two decimals. On a build it is **3.5%** (7.13 -> 7.38 ns per element, +1.7
+cycles), because the pipelined rehash is latency-bound and the xor sits between the hash and the
+group address.
+
+Two things make it a feature rather than a patch. The seed has to travel with the index it built
+through **six sites** -- the allocator-aware copy and move constructors, `copy_everything_from`,
+`move_everything_from`'s two branches and `swap` -- and the suite caught every one of them (85
+failures, then 70, then 11). The 11 that remain are `avalanching.cpp` asserting that `mixed_hash`
+returns an avalanching hash *unchanged*, which the seed contradicts by design, plus one steered
+`erase_uncounts` case; they test a value where they would have to test the property. And iteration
+order stops being reproducible between runs. So: worth having behind a macro, not worth making the
+default, since the price is paid by everyone and the threat is not everyone's.
+
+**The paired harness read this one wrong, which is the rule working.** With the two headers in one
+binary the seed measured `build64` 0.936, `rmiss64` 0.940, `rhit64` 0.968 -- and one map per binary
+says 0.0 cycles on both lookup paths. The control `hashstr`, which never touches a map, read 1.027
+in the same run. A paired two-header run decides a 10% question and not a 3% one.
+
+**Also: the churned drift figures recorded below do not reproduce.** The `move_home` entry has, at
+load 0.76 after 200 turnovers, 1.143 groups per hit and 1.265 per miss against a fresh 1.032 and
+1.052. An instrumented header that reproduces the **fresh** pair to three digits (1.0311 and 1.0522)
+measures the churned pair at **1.0358 and 1.0609**, and it saturates -- 5, 20, 100 and 400 turnovers
+give 1.039, 1.036, 1.035 and 1.035 per hit. It is load-sensitive as expected (at 0.799, 1.0660 and
+1.1223) but never approaches 1.14/1.27 at 0.76. Either that harness churned differently in a way
+that matters or the figure is wrong; the churn here erases a uniformly random live key and inserts
+one the map has never held, at a constant size, on a reserved table. `move_home` itself is not in
+doubt -- it was kept on a one-map-per-binary timing (misses 5.16 to 4.64 ns) rather than on the
+drift figure -- but **the drift it takes back is smaller than recorded**, which also means the
+headline "a churned table probes 1.14 groups per hit against a fresh 1.03" in the design paragraph
+at the top of this file should be re-derived before it is quoted again.
+
 **Every other map on the same workloads, in one harness** (2026-09-07, `scripts/ab/maps.{h,cpp,sh}`,
 `maps_one.{cpp,sh}`, `mapsplot.py`, `diagrams.py`; written for the blog post on index structures).
 Eighteen maps for an integer key and sixteen for a string, interleaved by `compare()` in one
