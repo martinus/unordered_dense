@@ -1,11 +1,17 @@
 #!/bin/bash
 # Paired A/B of the working-tree header against a git revision of it (default: HEAD).
 #
-#   scripts/ab/run.sh [-r REV] [-b] [-c COMPILER] <workload|all> [epochs] 
+#   scripts/ab/run.sh [-r REV] [-b] [-c COMPILER] [-p POINTS] <workload|all> [epochs] 
 #
 #   -r REV       baseline revision (default HEAD)
 #   -b           also measure boost::unordered_flat_map (needs boost headers)
 #   -c COMPILER  default clang++
+#   -p POINTS    sizes per octave, default 5. Each size-sensitive workload is measured at POINTS
+#                sizes from n to just under 2n and the geometric mean of those ratios is what is
+#                reported, because a table's load factor sweeps a sawtooth between doublings and
+#                two indexes double at different sizes -- so one fixed size measures wherever that
+#                size happens to land on each. `-p 1` is the single size the score used before
+#                2026-09-07; it runs five times faster and is only comparable with itself.
 #
 # Uses the vendored nanobench (test/third-party, >= 4.6 for Bench::compare()); NANOBENCH_INCLUDE
 # overrides it. The workloads come from test/bench/workloads.h, the benchmark's own. Everything is built in $AB_BUILD (default: a temporary directory), the tree is not
@@ -19,17 +25,18 @@
 # Both prefixes are needed: the baseline header is rewritten into its own macro namespace, so
 # defining only one of them would compare a scalar candidate against a vector baseline.
 set -euo pipefail
-rev=HEAD boost=0 cxx=clang++
-while getopts "r:bc:" opt; do
+rev=HEAD boost=0 cxx=clang++ points=5
+while getopts "r:bc:p:" opt; do
     case $opt in
         r) rev=$OPTARG ;;
         b) boost=1 ;;
         c) cxx=$OPTARG ;;
+        p) points=$OPTARG ;;
         *) exit 1 ;;
     esac
 done
 shift $((OPTIND - 1))
-[ $# -ge 1 ] || { sed -n '2,12p' "$0"; exit 1; }
+[ $# -ge 1 ] || { sed -n '2,18p' "$0"; exit 1; }
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 build=${AB_BUILD:-$(mktemp -d)}
 mkdir -p "$build"
@@ -50,4 +57,4 @@ flags+=(${AB_EXTRA_FLAGS:-})
 [ -f "$build/nanobench_$cxx.o" ] || (cd "$build" && printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > nb.cpp && "$cxx" "${flags[@]}" -c nb.cpp -o "nanobench_$cxx.o")
 "$cxx" "${flags[@]}" "$root/scripts/ab/ab.cpp" "$build/nanobench_$cxx.o" -o "$build/$exe"
 echo "baseline $rev vs working tree, $cxx, in $build" >&2
-"$build/$exe" "$1" "${2:-12}" "$boost"
+"$build/$exe" "$1" "${2:-12}" "$boost" "$points"

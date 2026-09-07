@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Turn one ab run's output into a markdown table.
 
-The harness prints a nanobench table per workload with a `base` row, a `cand` row and optionally a
-`boost` row. What a reader wants from a run is the ratio per workload and the geometric means, so
-this reads the ns/op column back out and prints exactly that. Ratios are the other map's time over
-the candidate's, so above 1.00 always means the working tree is faster, whichever column it is.
+The harness measures each size-sensitive workload at several sizes across one octave and prints a
+`#ratio <workload> <base/cand> <boost/cand> <points>` line per workload carrying the geometric mean
+of those. That line is what this reads. Ratios are the other map's time over the candidate's, so
+above 1.00 always means the working tree is faster, whichever column it is.
+
+Runs made before 2026-09-07 have no `#ratio` lines, only nanobench's own tables at one size per
+workload; those are still parsed, so an old log still summarises. They are not comparable with a
+swept run, and the output says which it read.
 """
 import math
 import re
@@ -24,7 +28,23 @@ GROUPS = [("score, 15 workloads", SCORED),
 
 
 def parse(text):
-    """{workload: {'base': ns, 'cand': ns, 'boost': ns}} from the harness's tables."""
+    """{workload: {'vs_base': r, 'vs_boost': r, 'points': n}} from the harness's #ratio lines."""
+    out = {}
+    for line in text.splitlines():
+        if not line.startswith("#ratio "):
+            continue
+        parts = line.split()
+        if len(parts) != 5:
+            continue
+        try:
+            out[parts[1]] = {"vs_base": float(parts[2]), "vs_boost": float(parts[3]), "points": int(parts[4])}
+        except ValueError:
+            pass
+    return out
+
+
+def parse_legacy(text):
+    """The same, from nanobench's tables, for a log made before the harness swept sizes."""
     out, name = {}, None
     for line in text.splitlines():
         if line.startswith("| relative"):
@@ -40,6 +60,18 @@ def parse(text):
     return out
 
 
+def to_ratios(ns):
+    """nanobench ns/op per alternative -> the ratios the tables are built from."""
+    out = {}
+    for w, row in ns.items():
+        if "base" not in row or "cand" not in row:
+            continue
+        out[w] = {"vs_base": row["base"] / row["cand"], "points": 1}
+        if "boost" in row:
+            out[w]["vs_boost"] = row["boost"] / row["cand"]
+    return out
+
+
 def geomean(xs):
     return math.exp(sum(math.log(x) for x in xs) / len(xs)) if xs else float("nan")
 
@@ -47,19 +79,22 @@ def geomean(xs):
 def main():
     text = open(sys.argv[1]).read() if len(sys.argv) > 1 else sys.stdin.read()
     res = parse(text)
-    have = [w for w in SCORED + EXTRA if w in res and "cand" in res[w] and "base" in res[w]]
+    if not res:
+        res = to_ratios(parse_legacy(text))
+    have = [w for w in SCORED + EXTRA if w in res]
     if not have:
         print("no complete workload found: the run produced nothing to compare")
         return 1
-    with_boost = all("boost" in res[w] for w in have)
+    with_boost = all("vs_boost" in res[w] for w in have)
+    swept = [res[w]["points"] for w in have if res[w]["points"] > 1]
 
-    print("| workload | vs main |" + (" vs boost |" if with_boost else ""))
-    print("|---|---|" + ("---|" if with_boost else ""))
+    print("| workload | vs main |" + (" vs boost |" if with_boost else "") + " sizes |")
+    print("|---|---|" + ("---|" if with_boost else "") + "---|")
     for w in have:
-        row = f"| {w} | {res[w]['base'] / res[w]['cand']:.2f} |"
+        row = f"| {w} | {res[w]['vs_base']:.2f} |"
         if with_boost:
-            row += f" {res[w]['boost'] / res[w]['cand']:.2f} |"
-        print(row)
+            row += f" {res[w]['vs_boost']:.2f} |"
+        print(row + f" {res[w]['points']} |")
 
     print()
     print("| geomean | vs main |" + (" vs boost |" if with_boost else ""))
@@ -68,12 +103,20 @@ def main():
         ws = [w for w in workloads if w in have]
         if not ws:
             continue
-        row = f"| {label} | **{geomean([res[w]['base'] / res[w]['cand'] for w in ws]):.3f}** |"
+        row = f"| {label} | **{geomean([res[w]['vs_base'] for w in ws]):.3f}** |"
         if with_boost:
-            row += f" **{geomean([res[w]['boost'] / res[w]['cand'] for w in ws]):.3f}** |"
+            row += f" **{geomean([res[w]['vs_boost'] for w in ws]):.3f}** |"
         print(row)
     print()
     print(f"_{len(have)} workloads; above 1.00 means this branch is faster._")
+    if swept:
+        lo, hi = min(swept), max(swept)
+        span = str(lo) if lo == hi else f"{lo}-{hi}"
+        print(f"_Each ratio is the geometric mean over {span} sizes spanning one octave. Iteration and "
+              "hashstr are measured at one size: neither has a bucket array whose load factor sweeps._")
+    else:
+        print("_One size per workload, so each ratio is a single point on each map's load-factor "
+              "sawtooth and is comparable only with other single-size runs._")
     return 0
 
 
