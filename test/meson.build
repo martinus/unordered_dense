@@ -43,6 +43,7 @@ test_sources = [
     'unit/move_home.cpp',
     'unit/erase_range.cpp',
     'unit/erase_throwing_move.cpp',
+    'unit/erase_uncounts.cpp',
     'unit/erase.cpp',
     'unit/explicit.cpp',
     'unit/extract.cpp',

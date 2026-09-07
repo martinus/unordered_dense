@@ -72,18 +72,25 @@
 >>>
 
 # an erase undoes the counters from the group the entry landed in rather than from its home
-# The walk has to retrace exactly the groups the insert passed. Starting it at the end retraces
-# nothing, so the counters only ever grow. Before the probe was bounded this hung -- every group
-# left with a stale count for a class, and a miss with nothing to stop at -- so the sibling bug in
-# bugs/erase-path.txt was caught as a hang. The bound stops the miss at the end of the array
-# instead, so this now SURVIVES: the counters being too high only lengthens probes, which no answer
-# shows. It is the shape of bug the suite is least able to see, kept as a named reminder of that.
+# The walk has to retrace exactly the groups the insert passed. Starting it at the group the entry
+# landed in retraces nothing, so the counters only ever grow. Before the probe was bounded this
+# hung -- every group left with a stale count for a class, and a miss with nothing to stop at -- so
+# the sibling bug in bugs/erase-path.txt was caught as a hang. The bound stops the miss at the end
+# of the array instead, which made this SURVIVE for a while: counters that are too high only
+# lengthen probes, and no answer shows that.
+#
+# It is caught again since erase_uncounts.cpp, which measures the lengthening instead of an answer
+# -- it counts how often a miss asks KeyEqual and requires a table that reached its contents by
+# erasing to compare exactly as often as one built from the survivors directly. That is the way to
+# test anything in this family, and this block is the reason the test exists.
 <<<
-        auto group_idx = group_idx_from_hash(mh);
-        if (group_idx != found_in) {
+        auto const home_idx = group_idx_from_hash(mh);
+        auto const counter = fingerprint_word(mh) & 7U;
+        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
 ===
-        auto group_idx = found_in;
-        if (group_idx != found_in) {
+        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
+        auto const home_idx = found_in;
+        auto const counter = fingerprint_word(mh) & 7U;
 >>>
 
 # the erase clears the fingerprint of the wrong slot in the group
@@ -100,12 +107,13 @@
 # One byte of hash matches by accident once in 256, so this is wrong from the first collision and
 # not before: a lookup for an absent key comes back with somebody else's value.
 <<<
-                auto const value_idx = index[slot];
+                auto const value_idx = group.m_index[lane];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
                     return {slot, value_idx, true};
                 }
 ===
-                auto const value_idx = index[slot];
+                auto const value_idx = group.m_index[lane];
+                static_cast<void>(key);
                 if (true) {
                     return {slot, value_idx, true};
                 }
@@ -129,13 +137,12 @@
 # The fingerprint narrows the candidates; only the index identifies the one. Without that check the
 # first key sharing a fingerprint is repointed instead, which corrupts two entries at once.
 <<<
-                if (index[slot] == value_idx) {
+                if (group.m_index[lane] == value_idx) {
                     return slot;
                 }
 ===
-                if (true) {
-                    return slot;
-                }
+                static_cast<void>(value_idx);
+                return slot;
 >>>
 
 # ---------------------------------------------------------------- growth and load factor
@@ -293,17 +300,19 @@
 # the value had before the pop. Popping first is a search for something that is no longer there,
 # which does not terminate.
 <<<
-            m_buckets.index()[slot_of_value(mh, values_idx_back)] = value_idx_to_remove;
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
+            auto const mh = mixed_hash(get_key(val));
+            m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
         }
         m_values.pop_back();
 ===
+            m_values.pop_back();
+            auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
+            auto const mh = mixed_hash(get_key(val));
+            m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
+            return;
         }
         m_values.pop_back();
-        if (value_idx_to_remove != m_values.size()) {
-            auto const mh2 = mixed_hash(get_key(m_values[value_idx_to_remove]));
-            auto const back2 = static_cast<value_idx_type>(m_values.size());
-            m_buckets.index()[slot_of_value(mh2, back2)] = value_idx_to_remove;
-        }
 >>>
 
 # emplace leaves the duplicate it speculatively constructed in m_values
@@ -312,9 +321,9 @@
 # iteration yields it, and find() cannot see it.
 <<<
             m_values.pop_back(); // value was already there, so get rid of it
-            return {begin() + static_cast<difference_type>(r.value_idx), false};
+            move_home(r.slot, mh);
 ===
-            return {begin() + static_cast<difference_type>(r.value_idx), false};
+            move_home(r.slot, mh);
 >>>
 
 # ---------------------------------------------------------------- copying, moving, assignment
