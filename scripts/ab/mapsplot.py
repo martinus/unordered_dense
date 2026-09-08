@@ -17,6 +17,7 @@ Stdlib only.
     scripts/ab/mapsplot.py memory <csv> <key> <base> <out.svg>
     scripts/ab/mapsplot.py octave <maps.txt> <key> <base> <workload> <out.svg> <map>...
     scripts/ab/mapsplot.py table  <csv> <key> <base>            markdown, ratios to the group index
+    scripts/ab/mapsplot.py htmltable <csv> <key> <base>         the same, tinted by distance from parity
     scripts/ab/mapsplot.py swing  <maps.txt> <key> <base> <workload>   dearest / cheapest point
     scripts/ab/mapsplot.py merge  <out.csv> <csv>...   geometric mean of independent runs
 """
@@ -351,6 +352,63 @@ def cmd_table(argv):
         print(f"| {PRETTY.get(m, m)} | " + " | ".join(cells) + " |")
 
 
+# Cell tints for the HTML tables: a diverging ramp around parity, four steps either side, and every
+# one of them light enough that the ink on top stays above 4.5:1 -- measured 7.4 to 13.1:1 for
+# #1f2937, which is the constraint that decides how dark the ramp may get. Blue for faster than the
+# reference and amber for slower, because that pair survives every kind of colour blindness where
+# red/green does not; the two sides separate by 25 to 130 units under deuteranopia, protanopia and
+# tritanopia alike. Lightness carries the magnitude, hue carries the direction, and the number is in
+# the cell -- so nothing here is encoded by colour alone.
+TINT_FAST = ["f1", "f2", "f3", "f4"]
+TINT_SLOW = ["s1", "s2", "s3", "s4"]
+# |log2(ratio)| band edges: within 5% of parity is untinted, then 16%, 41%, 2x, beyond.
+TINT_EDGES = [0.07, 0.22, 0.5, 1.0]
+
+
+def tint(v):
+    if v is None:
+        return ""
+    d = abs(math.log2(v)) if v > 0 else 0.0
+    if d < TINT_EDGES[0]:
+        return ""
+    ramp = TINT_FAST if v < 1.0 else TINT_SLOW
+    for i, e in enumerate(TINT_EDGES[1:]):
+        if d < e:
+            return ramp[i]
+    return ramp[-1]
+
+
+def cmd_htmltable(argv):
+    """The same grid as an HTML table, each cell tinted by how far it is from parity."""
+    csvp, key, base = argv[0], argv[1], int(argv[2])
+    rows = read(csvp)
+    vals = {}
+    present = []
+    for r in rows:
+        if r["key"] == key and r["base"] == base and r["work"] != "memory":
+            vals[(r["map"], r["work"])] = r["b"]
+            if r["map"] not in present:
+                present.append(r["map"])
+    best = {w: min((vals[(m, w)] for m in present if (m, w) in vals), default=None)
+            for w, _ in WORKS}
+    out = ['<table class="grid">', '<thead><tr><th scope="col">map</th>']
+    out += [f'<th scope="col">{esc(t)}</th>' for _, t in WORKS]
+    out += ["</tr></thead>", "<tbody>"]
+    for m in present:
+        out.append(f'<tr><th scope="row">{esc(PRETTY.get(m, m))}</th>')
+        for w, _ in WORKS:
+            v = vals.get((m, w))
+            if v is None:
+                out.append('<td class="na">--</td>')
+                continue
+            cls = tint(v)
+            body = f"<b>{v:.2f}</b>" if best[w] is not None and v <= best[w] else f"{v:.2f}"
+            out.append(f'<td{f' class="{cls}"' if cls else ""}>{body}</td>')
+        out.append("</tr>")
+    out += ["</tbody>", "</table>"]
+    print("\n".join(out))
+
+
 def cmd_swing(argv):
     """Dearest point of an octave over its cheapest: the amplitude of the load-factor sawtooth."""
     txt, key, base, work = argv[0], argv[1], int(argv[2]), argv[3]
@@ -371,4 +429,5 @@ def cmd_swing(argv):
 
 if __name__ == "__main__":
     {"bars": cmd_bars, "memory": cmd_memory, "octave": cmd_octave, "table": cmd_table,
+     "htmltable": cmd_htmltable,
      "swing": cmd_swing, "merge": cmd_merge}[sys.argv[1]](sys.argv[2:])
