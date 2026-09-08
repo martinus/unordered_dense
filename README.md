@@ -40,6 +40,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
     - [3.5.2. `ankerl::unordered_dense::bucket_type::group_big`](#352-ankerlunordered_densebucket_typegroup_big)
   - [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe)
+  - [3.7. LLDB Data Formatters](#37-lldb-data-formatters)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
 - [5. Design](#5-design)
   - [5.1. Inserts](#51-inserts)
@@ -430,6 +431,40 @@ All three compare the same sixteen bytes and differ only in how they report whic
 translation units that disagree about these macros still agree about every byte of the index they
 share. On x86-64 the word-at-a-time fallback is within a few percent of SSE2 on the benchmark's
 workloads; on AArch64 it is not, which is why the NEON path exists.
+
+### 3.7. LLDB Data Formatters
+
+The repository ships a formatter script for LLDB in [`lldb/unordered_dense.py`](lldb/unordered_dense.py). It makes
+`map`, `set`, `segmented_map`, `segmented_set` (including the `pmr::` variants) and `segmented_vector` print like
+regular containers instead of raw internals, across `map`'s every flavor with one provider:
+
+```
+(lldb) frame variable word_count
+(ankerl::unordered_dense::map<std::string, int> &) word_count = size=3 bucket_count=4 {
+  ["alpha"] = (first = "alpha", second = 1)
+  ["beta"] = (first = "beta", second = 2)
+  ["gamma"] = (first = "gamma", second = 3)
+}
+```
+
+Load it with
+
+```
+command script import /path/to/unordered_dense/lldb/unordered_dense.py
+```
+
+or put that line into `~/.lldbinit` to always have it. Elements are the densely stored values in the container's
+iteration order — insertion order until something is erased — and children are named after their key when the key
+renders as a short scalar or string (`v map[2]` works by index regardless). The script only reads memory, so it is
+safe on core dumps, and `frame variable -R <var>` still shows the raw members whenever they are wanted. Naming
+children by key can be turned off with
+
+```
+script unordered_dense.NAME_CHILDREN_BY_KEY = False
+```
+
+Custom value containers (see [3.4](#34-custom-container-types)) fall back to whatever LLDB itself can display for
+them.
 
 ## 4. `segmented_map` and `segmented_set`
 
