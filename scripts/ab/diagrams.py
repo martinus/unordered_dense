@@ -496,13 +496,15 @@ def families():
 
 def lookup_touches():
     """One hit, per design: the chain of loads, and which of them land in a line already fetched."""
-    # kind "same" = the load lands in the line the previous one already brought in, which is what a
-    # merged block buys and what makes the dense family's extra hop cheaper than it looks.
+    # kind "same" = the load lands inside the block the metadata came from, so it is usually already
+    # in cache. That is true of exactly two designs here, and it is what a merged block buys. It is
+    # *not* true of a flat map's key: the control bytes and the slots are different regions of the
+    # allocation, and at any real size they are different lines.
     fams = [
         ("keys in the slots", [
             ("abseil, boost, emilib, indivi, F14Value",
-             [("metadata", "new"), ("key, in the slot", "same")], ""),
-            ("Verstable", [("16 bit word", "new"), ("key, in the bucket", "same")], "+1 per chain step"),
+             [("metadata", "new"), ("the key", "new")], ""),
+            ("Verstable", [("16 bit word", "new"), ("the key", "new")], "+1 per chain step"),
         ]),
         ("keys in a vector", [
             ("unordered_dense 5.0",
@@ -514,22 +516,27 @@ def lookup_touches():
         ]),
         ("keys behind a pointer", [
             ("boost, abseil, F14 node",
-             [("metadata", "new"), ("pointer, in the slot", "same"), ("node", "new")], ""),
+             [("metadata", "new"), ("the pointer", "new"), ("node", "new")], ""),
             ("std::unordered_map", [("bucket pointer", "new"), ("node", "new")], "+1 per chain step"),
         ]),
     ]
     WW, x0, hw, bw, gap = 880, 236, 50, 124, 12
     b = text(20, 22, "one hit: what it has to wait for, in order", "hd")
     b += text(20, 40, "the hash is arithmetic; every box after it is a load whose address the box "
-                      "before it produced, so none of them can start early", "muted")
-    y = 58
-    b += f'  <rect x="{x0}" y="{y}" width="{hw}" height="18" class="cell dist"/>\n'
-    b += text(x0 + hw / 2, y + 13, "hash", "mono", "middle", )
-    b += f'  <rect x="{x0 + hw + gap}" y="{y}" width="{bw}" height="18" class="cell fp"/>\n'
-    b += text(x0 + hw + gap + bw / 2, y + 13, "a new line", "mono", "middle")
-    b += f'  <rect x="{x0 + hw + bw + 2 * gap}" y="{y}" width="{bw}" height="18" class="cell idx"/>\n'
-    b += text(x0 + hw + bw + 2 * gap + bw / 2, y + 13, "already here", "mono", "middle")
-    y += 36
+                      "before it produced, so none of them can start early.", "muted")
+    b += text(20, 56, "the amber one is the exception: it lands in a block already fetched, which is "
+                      "what a merged block buys.", "muted")
+    y = 76
+    lx = 20
+    b += f'  <rect x="{lx}" y="{y}" width="30" height="18" class="cell dist"/>\n'
+    b += text(lx + 38, y + 13, "arithmetic, not a load", "muted")
+    lx += 190
+    b += f'  <rect x="{lx}" y="{y}" width="30" height="18" class="cell fp"/>\n'
+    b += text(lx + 38, y + 13, "a load that goes to memory", "muted")
+    lx += 220
+    b += f'  <rect x="{lx}" y="{y}" width="30" height="18" class="cell idx"/>\n'
+    b += text(lx + 38, y + 13, "a load inside the metadata's own block", "muted")
+    y += 40
 
     for fam, rows in fams:
         b += text(20, y + 12, fam, "hd")
