@@ -495,38 +495,69 @@ def families():
 
 
 def lookup_touches():
-    """One hit, per design: what is on the dependent chain of loads."""
-    steps = [
-        ("robin hood (4.11.0)", ["hash", "bucket word", "value"], ""),
-        ("SwissTable, boost, F14", ["hash", "control bytes", "key in the slot"], ""),
-        ("indivi, emilib", ["hash", "metadata group", "key in the slot"], ""),
-        ("group index (5.0)", ["hash", "16 fingerprints", "index, same block", "value"], ""),
-        ("ihtab", ["hash", "8 tags", "index, same group", "element"], ""),
-        ("emhash8", ["hash", "index word", "value"], "+1 per chain step"),
-        ("Verstable", ["hash", "16 bit word", "key in the bucket"], "+1 per chain step"),
-        ("std::unordered_map", ["hash", "bucket pointer", "node"], "+1 per chain step"),
+    """One hit, per design: the chain of loads, and which of them land in a line already fetched."""
+    # kind "same" = the load lands in the line the previous one already brought in, which is what a
+    # merged block buys and what makes the dense family's extra hop cheaper than it looks.
+    fams = [
+        ("keys in the slots", [
+            ("abseil, boost, emilib, indivi, F14Value",
+             [("metadata", "new"), ("key, in the slot", "same")], ""),
+            ("Verstable", [("16 bit word", "new"), ("key, in the bucket", "same")], "+1 per chain step"),
+        ]),
+        ("keys in a vector", [
+            ("unordered_dense 5.0",
+             [("16 fingerprints", "new"), ("index", "same"), ("value", "new")], ""),
+            ("ihtab", [("8 tags", "new"), ("index", "same"), ("element", "new")], ""),
+            ("F14Vector", [("14 tags", "new"), ("index", "new"), ("value", "new")], ""),
+            ("unordered_dense 4.11.0", [("bucket word", "new"), ("value", "new")], ""),
+            ("emhash8", [("index word", "new"), ("value", "new")], "+1 per chain step"),
+        ]),
+        ("keys behind a pointer", [
+            ("boost, abseil, F14 node",
+             [("metadata", "new"), ("pointer, in the slot", "same"), ("node", "new")], ""),
+            ("std::unordered_map", [("bucket pointer", "new"), ("node", "new")], "+1 per chain step"),
+        ]),
     ]
-    b = text(20, 24, "what a hit waits for: the chain of loads, left to right", "hd")
-    y = 48
-    x0 = 176
-    bw = 116
-    for name, chain, extra in steps:
-        b += text(x0 - 12, y + 20, name, "lbl", "end")
-        x = x0
-        for i, s2 in enumerate(chain):
-            cls = "dist" if i == 0 else ("fp" if i == 1 else
-                                         ("idx" if i < len(chain) - 1 else "payload"))
-            b += f'  <rect x="{x}" y="{y}" width="{bw}" height="{ROW}" class="cell {cls}"/>\n'
-            size = 11 if len(s2) * 6.6 < bw else (9 if len(s2) * 5.6 < bw else 8)
-            b += (f'  <text x="{x + bw / 2}" y="{y + 20}" class="mono" text-anchor="middle" '
-                  f'font-size="{size}">{esc(s2)}</text>\n')
-            if i + 1 < len(chain):
-                b += f'  <path d="M{x + bw},{y + ROW / 2} L{x + bw + 12},{y + ROW / 2}" class="arrow"/>\n'
-            x += bw + 12
-        if extra:
-            b += text(x + 4, y + 20, extra, "muted")
-        y += ROW + 14
-    return svg(y + 96, b)
+    WW, x0, hw, bw, gap = 880, 236, 50, 124, 12
+    b = text(20, 22, "one hit: what it has to wait for, in order", "hd")
+    b += text(20, 40, "the hash is arithmetic; every box after it is a load whose address the box "
+                      "before it produced, so none of them can start early", "muted")
+    y = 58
+    b += f'  <rect x="{x0}" y="{y}" width="{hw}" height="18" class="cell dist"/>\n'
+    b += text(x0 + hw / 2, y + 13, "hash", "mono", "middle", )
+    b += f'  <rect x="{x0 + hw + gap}" y="{y}" width="{bw}" height="18" class="cell fp"/>\n'
+    b += text(x0 + hw + gap + bw / 2, y + 13, "a new line", "mono", "middle")
+    b += f'  <rect x="{x0 + hw + bw + 2 * gap}" y="{y}" width="{bw}" height="18" class="cell idx"/>\n'
+    b += text(x0 + hw + bw + 2 * gap + bw / 2, y + 13, "already here", "mono", "middle")
+    y += 36
+
+    for fam, rows in fams:
+        b += text(20, y + 12, fam, "hd")
+        y += 22
+        for name, chain, note in rows:
+            b += text(x0 - 12, y + 20, name, "lbl", "end")
+            b += f'  <rect x="{x0}" y="{y}" width="{hw}" height="{ROW}" class="cell dist"/>\n'
+            b += text(x0 + hw / 2, y + 20, "hash", "mono", "middle")
+            x = x0 + hw
+            for txt, kind in chain:
+                b += f'  <path d="M{x},{y + ROW / 2} L{x + gap - 1},{y + ROW / 2}" class="arrow"/>\n'
+                x += gap
+                b += (f'  <rect x="{x}" y="{y}" width="{bw}" height="{ROW}" '
+                      f'class="cell {"idx" if kind == "same" else "fp"}"/>\n')
+                # style= rather than font-size=: `.mono` is a CSS rule and beats a presentation
+                # attribute, so the attribute form silently does nothing.
+                b += (f'  <text x="{x + bw / 2}" y="{y + 20}" class="mono" text-anchor="middle" '
+                      f'style="font-size:{10 if len(txt) * 6.3 < bw else 8}px">{esc(txt)}</text>\n')
+                x += bw
+            if note:
+                b += text(x + 10, y + 20, note, "muted")
+            y += ROW + 10
+        y += 14
+    b += text(20, y + 4, "A flat map waits for two loads and a dense one for three -- unless its "
+                         "metadata word already carries the index, which is what", "muted")
+    b += text(20, y + 19, "unordered_dense 4.11.0 and emhash8 do, and what they pay for elsewhere.",
+              "muted")
+    return svg(y + 40, b, width=WW)
 
 
 def wmap_window():
