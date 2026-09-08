@@ -145,7 +145,19 @@ class table {
         for (std::size_t delta = 1;; ++delta) {
             auto const avail = match_avail(window(at));
             if (avail != 0) {
+#if LANE_ROTATE
+                // Each key starts its search for a free lane at a hash-derived offset instead of at
+                // lane 0. In a grouped design lane 0 is probed first by all sixteen of that group's
+                // homes, so it is the lane that gets tombstoned and reused constantly while fresh
+                // slots further along are consumed; a per-key start spreads that. Costs a rotate and
+                // an and, and nothing at lookup time, because the group is compared whole either way.
+                auto const start = static_cast<unsigned>((h >> 8U) & 15U);
+                auto const rot = ((avail >> start) | (avail << (16U - start))) & 0xFFFFU;
+                auto const lane = (static_cast<unsigned>(__builtin_ctz(rot)) + start) & 15U;
+                auto const slot = slot_of(at, lane);
+#else
                 auto const slot = slot_of(at, static_cast<unsigned>(__builtin_ctz(avail)));
+#endif
                 if (m_fp[slot] == empty_fp) {
                     ++m_used;
                     ++m_on_empty;

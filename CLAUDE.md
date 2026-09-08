@@ -558,6 +558,37 @@ taking a worse churn with it, is the wrong trade. What is worth keeping from the
 mechanism: **the win is branch misses, not cache lines**, and an aligned group's lane 0 being
 contended by all sixteen of its homes is a real effect that no probe-length simulation shows.
 
+**The lane-contention mechanism, confirmed by transplant, and it runs the other way from the guess**
+(2026-09-08, `scripts/ab/window.cpp` with `-DLANE_ROTATE`). The window recycles tombstones at half
+the grouped rate, and the reason offered was that `ctz` takes the lowest free lane -- which for a
+window is the home slot, different for every key, and for a group is lane 0, shared by all sixteen
+of that group's homes. The test is to transplant *only* that property: give the grouped variant a
+per-key starting lane from bits 8-11 of the hash, rotate the available mask by it, and change
+nothing else. Placement cost is a rotate and an and; no lookup is affected at all, because a group
+is compared whole either way.
+
+**It reproduces the window's behaviour precisely.** At a million entries, churn, grouped against
+grouped-with-a-per-key-start: tombstones recycled **33.8% against 16.3%** (the window: 15.8%), slots
+after the run **2097152 against 4194304** (the window: 4194304), churn **67.2 ns against 87.5**,
+three runs each with no overlap. One property moved and the whole behaviour moved with it.
+
+**So the direction is the opposite of what I wrote when I proposed the experiment.** Spreading the
+preferred lane does not improve recycling, it destroys it -- and *contending on one lane is the
+feature*. A tombstone is created wherever a key was; if every key prefers lane 0 then lane 0 is
+where the keys are, so lane 0 is where the tombstones are, so the next placement lands on one
+instead of consuming a fresh slot. Concentration is what makes a tombstone design recycle. That is
+worth knowing about `absl::flat_hash_map` and `emilib`, which both take the lowest lane and should
+keep doing so; it is an argument *against* any per-key lane spreading in a tombstone design; and it
+is the reason a sliding window, whose first lane is the home slot by construction, cannot recycle
+well.
+
+**And it cannot apply to this map at all, which is the part I got wrong twice.** `erase_group_slot`
+writes a fingerprint of **0** -- a genuinely empty slot, not a tombstone -- so there is nothing to
+recycle, and lane position within a group does not affect any lookup, because `match_fingerprint`
+compares all sixteen in one instruction. Rotating the preferred lane here is a no-op by
+construction, and proposing it was a mistake made by carrying a finding across a design boundary
+without checking which side of it the finding lived on.
+
 **A dense map on flat_wmap's structure, measured against the shipped one, and the comparison is not
 what it looks like** (asked as "basically indivi map with the uint32 values"). Variant 1 already *is*
 that map -- sliding window, one metadata byte per slot, a `uint32` index, a dense value vector -- so
