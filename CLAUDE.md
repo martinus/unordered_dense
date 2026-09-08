@@ -506,6 +506,17 @@ sizes per octave, every adapter checked against this map over 400000 mixed opera
 again under ASan/UBSan. **Two independent runs agree: 372 of 378 integer ratios within 5%, worst
 1.12 on `iterate` at a thousand entries.**
 
+**An SVG in an `<img>` follows the reader's colour scheme, not the page's** (2026-09-08). The blog
+charts carried a `@media (prefers-color-scheme: dark)` block, and the page they sit on is a blog
+whose background is hard-coded `#FFFFFF` -- so a reader whose OS is set to dark got the title at
+`#f9fafb` on white, **1.05:1**, and every label at `#9ca3af`, 2.54:1. It is invisible, and no
+light-mode contrast check can see it, which is how it survived the audit that fixed the entry below.
+Verified both ways with `google-chrome --headless --blink-settings=preferredColorScheme=0|1` and a
+one-line HTML that embeds the SVG, which is the cheap way to test this class of thing. The block is
+gone from `mapsplot.py`; put one back only alongside a surface rect that switches with it, or a page
+that does. `doc/`'s charts from `plot.py` keep theirs, because GitHub's own dark mode darkens the
+page underneath them.
+
 **A value label never goes inside its bar** (2026-09-08). `mapsplot.py` used to draw the value in
 white inside the bar whenever it would have overflowed the panel, which is 6 to 11 labels per chart
 -- and white on a bar drawn at `opacity="0.8"` composites to 3.0-4.1:1 against the page, under the

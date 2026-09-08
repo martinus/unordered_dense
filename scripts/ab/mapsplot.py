@@ -73,11 +73,17 @@ def head(w, h):
             '    .m{fill:#4b5563;font-size:11.5px}\n'
             '    .hd{fill:#111827;font-weight:600;font-size:13.5px}\n'
             '    .sub{fill:#4b5563;font-size:12px}\n'
-            '    @media (prefers-color-scheme: dark){\n'
-            '      .t{fill:#e5e7eb} .m{fill:#9ca3af} .hd{fill:#f9fafb} .sub{fill:#9ca3af}\n'
-            '      .ax{stroke:#374151} .base{stroke:#6b7280} .ref{stroke:#9ca3af}\n'
-            '    }\n'
             '  </style>\n')
+
+
+# These charts carried a `@media (prefers-color-scheme: dark)` block until 2026-09-08, and it made
+# them unreadable for anyone whose OS is set to dark. An SVG referenced from an <img> follows the
+# *reader's* colour scheme, not the surrounding page's, and the page these go on is a blog whose
+# background is hard-coded #FFFFFF -- so in dark mode the title rendered #f9fafb on white, which is
+# 1.05:1, and the labels #9ca3af, which is 2.54:1. Verified both ways with
+# `--blink-settings=preferredColorScheme=0|1`. Put the block back only alongside a surface rect that
+# switches with it, or a page that does. doc/'s charts keep theirs, because GitHub's own dark mode
+# darkens the page underneath them.
 
 
 def bar(x, y, w, h, r=2.5):
