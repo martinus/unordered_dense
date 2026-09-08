@@ -1596,8 +1596,22 @@ clang, with `build64` 1.56 and `buildbig` 1.84. `scripts/ab/run.sh -c g++` repro
 What was tried for clang, all measured paired on the score:
 
 - **Forcing `do_place_element` and `place_group` inline** (`always_inline`): applied in 2026-09 on a
-  paired geomean of **1.012** with every interval excluding 100%, and **reverted on 2026-09-08**,
-  both for the same reason -- the paired harness cannot see this class of change. The attribute did
+  paired geomean of **1.012**, removed on 2026-09-08, and **put back the same day**, which is the
+  part worth keeping. The removal rested on the scored suite built one header per binary (1.7%
+  faster under clang, 3.9% under gcc) -- and that binary is ~90 translation units of test suite,
+  whose inlining budget is exhausted, so an `always_inline` there displaces something else. In a
+  unit holding **one** map, which is what a caller compiles, building from empty is **14 to 20%
+  slower without the attribute at every size**: 251633 ns against 287833 at 32000 entries, 1749840
+  against 2087600 at 200000, 13064800 against 15670600 at a million. The instruction counts settle
+  it, since neither layout nor drift moves them -- 5.08M against 5.98M, 28.09M against 33.71M,
+  162.3M against 190.4M, **17 to 20% more work retired without it**. `maps.cpp` (eighteen maps in
+  one unit) agrees: build 17% slower at 32000. **The rule is narrower than "one header per
+  binary": the translation unit's *size* decides what an `always_inline` is worth, a benchmark
+  binary is the largest unit anyone compiles this into, and an instruction count is the only
+  number none of that moves.** What the attribute costs is real and unchanged -- `operator[]` on a
+  present key pays the placement code's register pressure on a path that never places (clang 73.2
+  instructions against 48.4) -- it is simply smaller than 17% of a build. The paired harness cannot
+  see this class of change at all. The attribute did
   what the entry then said (miss path 128 to 100 instructions, `build64` 1.070; `ie64` 0.967, because
   the merged function pays the placement code's register pressure on the path that never places).
   Three things landed on `do_place_element` since -- the merged block, `move_home`, the pipelined

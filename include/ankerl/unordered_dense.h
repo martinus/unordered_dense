@@ -1656,7 +1656,7 @@ private:
 
     // The first free slot on the key's probe sequence takes it; every full group on the way
     // counts it.
-    void place_group(std::uint64_t mh, value_idx_type value_idx) {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void place_group(std::uint64_t mh, value_idx_type value_idx) {
         auto const word = fingerprint_word(mh);
         auto const counter = word & 7U;
         auto group_idx = group_idx_from_hash(mh);
@@ -2173,29 +2173,34 @@ private:
     // Appends the value and points a slot at it. What it needs to know is the key's hash: the
     // probe that found the key absent left nothing an insert could reuse.
     //
-    // Deliberately *not* force-inlined, reversing an earlier decision, and the way that decision
-    // came to be wrong is worth more than the change. It carried ANKERL_UNORDERED_DENSE_FORCEINLINE
-    // because clang prices this function at 480 against an inlining threshold of 250 and so calls it
-    // out of line, costing every insert a call and a six register prologue; merged, builds and churn
-    // measured 6-7% faster and the paired score 1.012. The merged block, move_home and the pipelined
-    // rehash have all landed on this function since, and the inlined body now costs more register
-    // pressure on every path that does *not* place than the call boundary costs on the one that
-    // does. Per operation at 50000 entries, forced against not: a reserved insert is clang 97.8
-    // instructions and 31.3 cycles against 106.8 and 27.2, gcc 124.9 and 38.0 against 68.9 and 23.9;
-    // a try_emplace on a key already present is clang 73.2 and 16.8 against 48.4 and 11.5. So it is
-    // fewer cycles on both paths and both compilers, and it stopped being the no-op for gcc that it
-    // was when it went in.
+    // Forced inline, and the reason is a trade worth knowing. clang prices this function at 480
+    // against an inlining threshold of 250 (vector::emplace_back with piecewise_construct is 225
+    // of it) and so calls it out of line from do_try_emplace, which costs every insert a call, a
+    // six register prologue and epilogue: 28 of the 128 instructions an insert took, measured
+    // net of the benchmark loop. Handing the probe's fingerprint to the callee, returning the
+    // index in a register, and moving increase_size() out of line were each measured and each
+    // changed nothing: the cost is the boundary itself.
     //
-    // The paired harness says the opposite and is wrong here -- see the entry in CLAUDE.md. It
-    // compiles both headers into one translation unit, which is the condition that makes a compiler
-    // run out of inlining budget, so a change that shrinks one header changes what is inlined in
-    // both. Scored one header per binary, which is what a caller's build looks like, removing this
-    // is 1.7% faster under clang and 3.9% under gcc.
+    // Removed on 2026-09-08 and put back the same day, which is the part worth keeping. The
+    // removal rested on the scored suite built one header per binary, where it reads 1.7% faster
+    // under clang and 3.9% under gcc. That binary is ~90 translation units of test suite and its
+    // inlining budget is exhausted, so an always_inline there displaces something else; a caller's
+    // is not. Measured in a translation unit holding one map, which is what a caller has, building
+    // from empty, with the attribute against without -- 251633 ns against 287833 at 32000 entries,
+    // 1749840 against 2087600 at 200000, 13064800 against 15670600 at a million, so 14 to 20%
+    // slower without it at every size. The instruction counts are what settle it, because neither
+    // code layout nor drift can move them: 5.08M against 5.98M, 28.09M against 33.71M, 162.3M
+    // against 190.4M, i.e. 17 to 20% more work retired without the attribute. Two other harnesses
+    // agree (maps.cpp, eighteen maps in one unit: build 17% slower at 32000).
     //
-    // Handing the probe's fingerprint to the callee, returning the index in a register, and moving
-    // increase_size() out of line were each measured and each changed nothing.
+    // So the rule this leaves is narrower than "one header per binary": the *size* of the
+    // translation unit decides what an always_inline is worth, a benchmark binary is the largest
+    // unit anyone compiles this into, and an instruction count is the only number in the argument
+    // that none of that moves. What the attribute costs is real and stays true -- operator[] on a
+    // key already present pays for the placement code's register pressure on a path that never
+    // places (clang 73.2 instructions against 48.4) -- it is simply smaller than 17% of a build.
     template <typename... Args>
-    auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::forward<Args>(args)...);
 
