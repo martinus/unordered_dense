@@ -506,6 +506,45 @@ sizes per octave, every adapter checked against this map over 400000 mixed opera
 again under ASan/UBSan. **Two independent runs agree: 372 of 378 integer ratios within 5%, worst
 1.12 on `iterate` at a thousand entries.**
 
+**The sliding window, built and measured rather than simulated** (2026-09-08,
+`scripts/ab/window.{cpp,sh}`, asked as "I also want to try to completely switch the group index to
+this layout"). The entry below rejected `indivi::flat_wmap`'s ungrouped window on a *placement*
+simulation -- windows visited per placement, 1.0481 bucketized against 1.0396 sliding at load 0.799,
+a fifth of an excess already under 5%. That simulation could not see a time, and the time is bigger
+than it implied. Two index layouts over one implementation sharing the value vector, the hash, the
+fingerprint encoding, the load factor, tombstones, growth, the dense erase and the SSE2 helpers, and
+differing in the home unit and the probe step and nothing else; one variant per binary; both
+cross-checked against `std::unordered_map` over a mixed stream first.
+
+**The window wins the lookup, and it wins it at the branch predictor.** Per operation at 200000
+entries, grouped against window: a hit 71.9 instructions, 56.8 cycles, 0.198 branch misses and 4.615
+L1 misses against **70.5, 53.6, 0.167 and 4.852**; a miss 70.1, 47.9, 0.518 and 2.810 against
+**67.4, 44.0, 0.436 and 3.018**. So 16% fewer branch misses on both, three to four fewer cycles, one
+to three fewer instructions -- and *more* L1 misses, because an unaligned sixteen byte load straddles
+two cache lines where an aligned one does not. Timed over three sizes and three runs: hits 1-5%
+faster, misses 0.5% slower at 32000, **13% faster at 200000** and 4% at a million, builds and memory
+a wash.
+
+**And it loses churn for a reason worth having, which is that it recycles tombstones half as well.**
+At a million entries the window variant ends a churn run with **4194304 slots against 2097152** --
+one extra doubling -- and 24% slower churn. Counting where placements land says why: 33.8% of the
+grouped variant's placements reuse a tombstone against **15.8%** of the window's, and at 200000 it is
+71.2% against 69.3%. The mechanism is that `ctz` takes the lowest available lane, which for a window
+is the home slot itself and for a group is the group's lane 0 -- a fixed position that all sixteen
+homes in that group probe first, so it is tombstoned and reused constantly, where a window's first
+lane is different for every home and is more often a slot that has never been used. Burning fresh
+slots is what drives a load factor that counts live plus tombstones, so it buys an extra growth.
+
+**So the answer to "switch the group index to this layout" is no, and the chain is what makes it
+no.** The window means no per-group counters (there is no group to hang them on), which means the
+miss stops on an empty slot, which means tombstones -- and this map is tombstone-free, which is the
+property `churn` exists to protect. It also means giving up the merged 88 byte block, worth 7% of a
+lookup's instructions and 28% of its dTLB misses at 4M, since sixteen fingerprints starting at an
+arbitrary slot are not contiguous in it. Paying all of that for 13% of a miss at one size, and
+taking a worse churn with it, is the wrong trade. What is worth keeping from the experiment is the
+mechanism: **the win is branch misses, not cache lines**, and an aligned group's lane 0 being
+contended by all sixteen of its homes is a real effect that no probe-length simulation shows.
+
 **Hoisting the moved element's hash out of `finish_erase`, so its latency overlaps the erase's own
 work** (2026-09-08, asked as "calculate the hash of the last element early but use the result as late
 as possible"). The premise is right and worth keeping even though the change is not: `finish_erase`
