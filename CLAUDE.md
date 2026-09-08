@@ -525,6 +525,19 @@ two cache lines where an aligned one does not. Timed over three sizes and three 
 faster, misses 0.5% slower at 32000, **13% faster at 200000** and 4% at a million, builds and memory
 a wash.
 
+**The miss result is against the wrong baseline, and the probe lengths say so.** Both variants stop
+a miss on an *empty slot*, because a per-class counter has no group to hang on in the ungrouped one
+-- so the grouped variant here is not the shipped index, it is the shipped index with its counters
+removed. Windows visited per miss, measured over the timed region only: at 200000 entries (load
+0.763) **1.2962 grouped against 1.2246 window**, and at a million (load 0.477) 1.0060 against
+1.0027. The shipped index, which stops on a counter at home, visits **1.046** on a fresh miss at any
+load. So the 13% is the window leaving the first window slightly less often *when the miss test is
+an empty slot*, and it evaporates where a miss stops at home anyway: at a million entries the window
+is 2% slower on a miss, not faster. Against the real counter-based miss there is close to nothing
+here. The hit advantage is smaller and more robust -- 1 to 5%, and still 7% at a million where both
+variants visit 1.000 windows, so that part is addressing and instructions (the grouped home costs a
+multiply by sixteen) rather than probe length.
+
 **And it loses churn for a reason worth having, which is that it recycles tombstones half as well.**
 At a million entries the window variant ends a churn run with **4194304 slots against 2097152** --
 one extra doubling -- and 24% slower churn. Counting where placements land says why: 33.8% of the
@@ -544,6 +557,16 @@ arbitrary slot are not contiguous in it. Paying all of that for 13% of a miss at
 taking a worse churn with it, is the wrong trade. What is worth keeping from the experiment is the
 mechanism: **the win is branch misses, not cache lines**, and an aligned group's lane 0 being
 contended by all sixteen of its homes is a real effect that no probe-length simulation shows.
+
+**And what the prototype cannot answer, which is why `indivi::flat_wmap` is fast in absolute terms.**
+Both of its variants are dense, with a value index between the metadata and the key, and identical
+metadata width; `flat_wmap` is *flat*, with the key in the slot the window found, and carries one
+metadata byte per slot against this map's 5.5. Those are the differences the eighteen-map comparison
+already attributes it to -- 48.0 instructions per hit against `flat_umap`'s 54.3 and this map's 60.5
+-- and the prototype holds both of them fixed on purpose, because the question it was built for was
+"is the window worth anything, all else equal". The answer to that is a few percent. The answer to
+"why is that map fast" is the flat family and one byte of metadata, and the window is the smallest
+of the three.
 
 **Hoisting the moved element's hash out of `finish_erase`, so its latency overlaps the erase's own
 work** (2026-09-08, asked as "calculate the hash of the last element early but use the result as late

@@ -61,6 +61,8 @@ class table {
     std::size_t m_rehashes = 0;
     mutable std::size_t m_on_empty = 0;
     mutable std::size_t m_on_tomb = 0;
+    mutable std::size_t m_probe_windows = 0;
+    mutable std::size_t m_probes = 0;
     ankerl::unordered_dense::hash<Key> m_hash{};
 
     [[nodiscard]] static auto match(__m128i w, std::uint32_t word) -> unsigned {
@@ -157,6 +159,12 @@ public:
     [[nodiscard]] auto values() const -> std::vector<value_type> const& {
         return m_values;
     }
+    [[nodiscard]] auto probes() const -> std::size_t {
+        return m_probes;
+    }
+    [[nodiscard]] auto probe_windows() const -> std::size_t {
+        return m_probe_windows;
+    }
     [[nodiscard]] auto on_empty() const -> std::size_t {
         return m_on_empty;
     }
@@ -180,7 +188,9 @@ public:
         auto const h = m_hash(key);
         auto const word = fp_words[h & 0xFFU];
         auto at = home(h);
+        ++m_probes;
         for (std::size_t delta = 1;; ++delta) {
+            ++m_probe_windows;
             auto const w = window(at);
             auto lanes = match(w, word);
             while (lanes != 0) {
@@ -379,12 +389,16 @@ void run(std::string const& what, std::size_t n, std::size_t reps) {
                             / static_cast<double>(t.on_empty() + t.on_tomb()));
         } else {
             auto const& keys = (what == "hit") ? present : absent;
+            auto const p0 = t.probes();
+            auto const w0 = t.probe_windows();
             auto ns = timed(reps, [&] {
                 for (std::size_t i = 0; i < reps; ++i) {
                     acc += t.contains(keys[(rng() >> 32U) * keys.size() >> 32U]) ? 1U : 0U;
                 }
             });
-            std::printf("%-6s %8.2f ns/op\n", what.c_str(), ns);
+            std::printf("%-6s %8.2f ns/op  windows visited per lookup %.4f\n", what.c_str(), ns,
+                        static_cast<double>(t.probe_windows() - w0)
+                            / static_cast<double>(t.probes() - p0));
         }
     }
     ankerl::nanobench::doNotOptimizeAway(acc);
