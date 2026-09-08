@@ -558,6 +558,38 @@ taking a worse churn with it, is the wrong trade. What is worth keeping from the
 mechanism: **the win is branch misses, not cache lines**, and an aligned group's lane 0 being
 contended by all sixteen of its homes is a real effect that no probe-length simulation shows.
 
+**A dense map on flat_wmap's structure, measured against the shipped one, and the comparison is not
+what it looks like** (asked as "basically indivi map with the uint32 values"). Variant 1 already *is*
+that map -- sliding window, one metadata byte per slot, a `uint32` index, a dense value vector -- so
+a third variant was added that is `ankerl::unordered_dense` itself behind the same interface, and
+all three run the identical workload code one binary each. Variant 2 reproduces the production
+harness to within 1% (build at 200000: 8.87 ns per element here, 8.77 from `maps_one.sh`), which is
+the check that the workloads are honest.
+
+| per op, median of three | grouped+tombstones | window+dense | shipped |
+|---|---|---|---|
+| build, 200000 | 16.69 | 16.66 | **9.10** |
+| hit, 200000 | 8.62 | 7.74 | **6.77** |
+| miss, 200000 | 7.76 | 6.65 | **4.72** |
+| churn, 1M | 65.71 | 83.87 | **62.01** |
+| bytes/entry, 1M | 27.26 | **27.26** | 28.31 |
+
+**Read that as a prototype against a tuned library, not as a design comparison.** The build gap is
+83-143% and almost none of it is the index: the shipped map has the pipelined rehash, and the
+prototype rebuilds one element at a time. The lookup gap is the merged block and the prefetches. The
+design question is answered by variant 0 against variant 1 -- same author, same afternoon, same
+quality -- and that says the window is worth 1-5% on a hit, nothing on a miss once the baseline has
+counters, and costs 24% of churn at a million entries.
+
+**So: not worth adapting, and the reason is structural rather than a number.** A sliding window
+forecloses *both* of the things the shipped index is built on -- there is no group to hang a
+per-class counter on, so the miss falls back to stopping on an empty slot and the map acquires
+tombstones; and sixteen fingerprints from an arbitrary slot are not contiguous, so the merged block
+goes too. The counters are worth 1.4-1.7x of a miss against an otherwise identical SwissTable and the
+merged block 7% of a lookup's instructions and 28% of its dTLB misses at 4M. The window is worth a
+few percent of a hit and 2-4% of memory. It is the wrong side of that trade by an order of
+magnitude, and no amount of tuning the prototype changes which side it is on.
+
 **And what the prototype cannot answer, which is why `indivi::flat_wmap` is fast in absolute terms.**
 Both of its variants are dense, with a value index between the metadata and the key, and identical
 metadata width; `flat_wmap` is *flat*, with the key in the slot the window found, and carries one

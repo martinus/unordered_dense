@@ -9,8 +9,16 @@
 // tombstone policy, the growth policy and the erase, and differ in the home unit and the probe step
 // and nothing else.
 //
-//   VARIANT=0  aligned groups of sixteen, home is a group, probe steps one group      (this map)
+//   VARIANT=0  aligned groups of sixteen, home is a group, probe steps one group
 //   VARIANT=1  a sliding window of sixteen, home is a slot, probe steps sixteen slots (flat_wmap)
+//   VARIANT=2  ankerl::unordered_dense itself, through the same workload code
+//
+// 0 against 1 isolates the window. 1 against 2 is the question that follows from it: is a dense map
+// built on flat_wmap's structure -- a sliding window, one metadata byte per slot, a uint32 index --
+// better than the shipped group index? That comparison is not like-for-like by construction and
+// cannot be: a window has no group to hang an overflow counter on, so variant 1 stops a miss on an
+// empty slot and has tombstones, where the shipped index stops on a counter and has none. Those
+// come as a pair, and the pair is what is being compared.
 //
 // One variant per binary, because a binary holding both has a code layout that moves when either
 // changes -- see CLAUDE.md. Build with scripts/ab/window.sh.
@@ -258,6 +266,50 @@ public:
     }
 };
 
+#if VARIANT == 2
+// The shipped map, wearing the same interface, so the workloads below cannot tell them apart.
+template <typename Key, typename Value>
+class udm_table {
+    ankerl::unordered_dense::map<Key, Value> m_map{};
+
+public:
+    [[nodiscard]] auto size() const -> std::size_t {
+        return m_map.size();
+    }
+    [[nodiscard]] auto contains(Key const& key) const -> bool {
+        return m_map.contains(key);
+    }
+    auto emplace(Key const& key, Value const& value) -> bool {
+        return m_map.try_emplace(key, value).second;
+    }
+    auto erase(Key const& key) -> bool {
+        return m_map.erase(key) != 0;
+    }
+    [[nodiscard]] auto slots() const -> std::size_t {
+        return m_map.bucket_count();
+    }
+    [[nodiscard]] auto rehashes() const -> std::size_t {
+        return 0;
+    }
+    [[nodiscard]] auto on_empty() const -> std::size_t {
+        return 0;
+    }
+    [[nodiscard]] auto on_tomb() const -> std::size_t {
+        return 0;
+    }
+    [[nodiscard]] auto probes() const -> std::size_t {
+        return 0;
+    }
+    [[nodiscard]] auto probe_windows() const -> std::size_t {
+        return 0;
+    }
+    [[nodiscard]] auto footprint() const -> std::size_t {
+        // 88 bytes of merged block per sixteen slots, plus the value vector
+        return m_map.values().capacity() * sizeof(std::pair<Key, Value>) + m_map.bucket_count() / 16U * 88U;
+    }
+};
+#endif
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -289,9 +341,17 @@ auto pool(std::size_t n, std::uint64_t seed) -> std::vector<Key> {
 
 // A cross-check against std::unordered_map over a mixed stream, so that a fast wrong answer is
 // caught before anything is timed.
+#if VARIANT == 2
+template <typename K, typename V>
+using map_type = udm_table<K, V>;
+#else
+template <typename K, typename V>
+using map_type = table<K, V>;
+#endif
+
 template <typename Key>
 void check(std::size_t n) {
-    auto t = table<Key, std::size_t>();
+    auto t = map_type<Key, std::size_t>();
     auto ref = std::unordered_map<Key, std::size_t>();
     auto rng = ankerl::nanobench::Rng(99);
     auto keys = pool<Key>(n, 12345);
@@ -345,7 +405,7 @@ void run(std::string const& what, std::size_t n, std::size_t reps) {
     if (what == "build") {
         auto ns = 0.0;
         for (std::size_t r = 0; r < reps; ++r) {
-            auto t = table<Key, std::size_t>();
+            auto t = map_type<Key, std::size_t>();
             ns += timed(n, [&] {
                 for (std::size_t i = 0; i < n; ++i) {
                     t.emplace(present[i], i);
@@ -355,7 +415,7 @@ void run(std::string const& what, std::size_t n, std::size_t reps) {
         }
         std::printf("%-6s %8.2f ns/op\n", what.c_str(), ns / static_cast<double>(reps));
     } else {
-        auto t = table<Key, std::size_t>();
+        auto t = map_type<Key, std::size_t>();
         for (std::size_t i = 0; i < n; ++i) {
             t.emplace(present[i], i);
         }
