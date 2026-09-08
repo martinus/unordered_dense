@@ -136,15 +136,17 @@ build=${AB_BUILD:-$(mktemp -d)}
 mkdir -p "$build"
 
 # The sweep asks nanobench for a precision rather than a round count, which needs
-# Bench::targetIntervalWidth and render(CompareResult) -- martinus/nanobench#189, not in the vendored
-# 4.6.0. Say so here rather than let the compiler say it in three hundred lines.
+# Bench::targetIntervalWidth and render(CompareResult). That is in the vendored copy since
+# martinus/nanobench#189 landed upstream; the check stays because NANOBENCH_INCLUDE can still point
+# somewhere older, and the compiler would say so in three hundred lines.
 nb=${NANOBENCH_INCLUDE:-$root/test}
 if ! grep -q targetIntervalWidth "$nb/third-party/nanobench.h" 2>/dev/null; then
     cat >&2 <<MSG
 error: the nanobench at $nb/third-party/nanobench.h has no targetIntervalWidth().
 
   The sweep chooses its round count by asking for an interval width, which needs
-  martinus/nanobench#189. Until that lands, point at a checkout of it:
+  martinus/nanobench#189. The vendored copy has it; unset NANOBENCH_INCLUDE, or point
+  it at a checkout new enough:
 
       NANOBENCH_INCLUDE=/path/to/nanobench/src scripts/ab/regen.sh
 
