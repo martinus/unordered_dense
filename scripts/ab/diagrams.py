@@ -546,6 +546,53 @@ FIGURES = {
 }
 
 
+# The post's cover and social card. Every design's metadata for one group, as that design defines a
+# group, at one byte per cell and nothing else -- no keys, no value indices -- so the rows are
+# comparable and the picture is the title: what each map puts in front of its keys. Dark, because
+# the blog paints the title over it in white; the header variant drops the labels and dims the
+# fills, since it is read through that type, and the social card keeps them, since it is not.
+COVER_GROUND = "#080c14"
+COVER_FP, COVER_CNT, COVER_DIST, COVER_OTH = "#0f766e", "#5b21b6", "#1e40af", "#3f4c5f"
+COVER_ROWS = [
+    ("Verstable", "1 bucket", [(2, COVER_OTH)]),
+    ("unordered_dense 4.11.0", "1 slot", [(3, COVER_DIST), (1, COVER_FP)]),
+    ("emhash8", "1 bucket", [(7, COVER_OTH), (1, COVER_FP)]),
+    ("ihtab", "8 slots", [(8, COVER_FP)]),
+    ("abseil flat_hash_map", "16 slots", [(16, COVER_FP)]),
+    ("emilib", "16 slots", [(16, COVER_FP)]),
+    ("boost unordered_flat_map", "15 slots", [(15, COVER_FP), (1, COVER_CNT)]),
+    ("folly F14", "14 slots", [(14, COVER_FP), (2, COVER_CNT)]),
+    ("unordered_dense 5.0", "16 slots", [(16, COVER_FP), (8, COVER_CNT)]),
+    ("indivi flat_umap", "16 slots", [(16, COVER_FP), (8, COVER_CNT), (8, COVER_OTH)]),
+]
+
+
+def cover(path, w, h, byte, gap, pitch, cellh, label_w, f1, f2, pad, labels=True, alpha=0.72):
+    wide = max(sum(n for n, _ in r[2]) for r in COVER_ROWS) * (byte + gap) - gap
+    x0 = (w - (label_w + pad + wide)) // 2
+    sx = x0 + label_w + pad
+    y0 = (h - len(COVER_ROWS) * pitch) // 2 + int(cellh * 0.15)
+    s = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+         'font-family="Inter, system-ui, sans-serif">',
+         f'<rect width="{w}" height="{h}" fill="{COVER_GROUND}"/>']
+    for i, (label, slots, parts) in enumerate(COVER_ROWS):
+        y = y0 + i * pitch
+        if labels:
+            s.append(f'<text x="{sx - pad}" y="{y + cellh * 0.62:.0f}" text-anchor="end" '
+                     f'font-size="{f1}" fill="#6d7d92">{label}</text>')
+            s.append(f'<text x="{sx - pad}" y="{y + cellh * 1.09:.0f}" text-anchor="end" '
+                     f'font-size="{f2}" fill="#3d4d61">{slots}</text>')
+        x = sx
+        for n, fill in parts:
+            for _ in range(n):
+                s.append(f'<rect x="{x:.0f}" y="{y}" width="{byte}" height="{cellh}" '
+                         f'rx="{max(2, byte // 16)}" fill="{fill}" fill-opacity="{alpha}"/>')
+                x += byte + gap
+    s.append("</svg>")
+    open(path, "w").write("\n".join(s))
+    print(path)
+
+
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else "doc/hashmap-index"
     os.makedirs(outdir, exist_ok=True)
@@ -554,6 +601,10 @@ def main():
         with open(path, "w") as f:
             f.write(fn())
         print(path)
+    # The header is read through the title, so no labels and dimmer fills; the social card is not.
+    cover(os.path.join(outdir, "cover.svg"), 2400, 780, 44, 3, 66, 44, 0, 0, 0, 0,
+          labels=False, alpha=0.5)
+    cover(os.path.join(outdir, "share.svg"), 1200, 630, 25, 2, 47, 27, 250, 16, 10, 18)
 
 
 if __name__ == "__main__":
