@@ -506,6 +506,34 @@ sizes per octave, every adapter checked against this map over 400000 mixed opera
 again under ASan/UBSan. **Two independent runs agree: 372 of 378 integer ratios within 5%, worst
 1.12 on `iterate` at a thousand entries.**
 
+**Hoisting the moved element's hash out of `finish_erase`, so its latency overlaps the erase's own
+work** (2026-09-08, asked as "calculate the hash of the last element early but use the result as late
+as possible"). The premise is right and worth keeping even though the change is not: `finish_erase`
+computes `mixed_hash(get_key(val))` *after* `val = std::move(m_values.back())`, and that store is one
+no compiler can prove does not alias the key it would then load, so the hash cannot start until the
+move retires. It is the `fill_buckets_from_values` shape again, and unlike that one it cannot be
+fixed by reading through an iterator -- only by computing the hash in the caller and passing it in.
+
+Three placements, one map per binary at 200000 entries, three repetitions each: before the counter
+walk with a guard for the no-move case, before it without the guard, and after it. **All three are
+instruction-neutral where it matters and none is a time win.** The guarded version costs 9
+instructions on an integer erase and 32 on a string one -- the branch, plus `back_mh` living across
+the callback -- and reads 10% slower on `churn64`. Unguarded that falls to +4 instructions and still
+reads 12% slower on integers, because the hash's load chain is issued *in front of* the erase's own
+probe, which is the latency that actually matters. Placed after the counter walk it is free
+instruction-wise (299.5 against 299.5) and the medians are a wash: `churn64` 32.19 ns against 32.16,
+`churnstr` 279.3 against 270.0.
+
+**And the measurement is the lesson.** A single first run showed `churnstr` 265.0 against 270.0 and
+looked like the predicted 1.8% win; the next two read 288.3 and 279.3 against 273.6 and 267.4. Three
+runs of `churnstr` at 200000 spread **8.8%**, so nothing of this size is resolvable there however
+many placements are tried. The instruction counts, which spread 0.4%, are what say the change is
+neutral. This reproduces two older entries -- the robin hood era's "computing the moved element's
+hash early: out-of-order execution already hides these latencies", and the erase-side
+`prefetch_key` at 1-2% in cache and nothing out of it -- and the reason is the same: `do_erase`
+already prefetches `m_values.back()` before the counter walk, and the walk is short enough that the
+out-of-order window covers the rest.
+
 **An SVG in an `<img>` follows the reader's colour scheme, not the page's** (2026-09-08). The blog
 charts carried a `@media (prefers-color-scheme: dark)` block, and the page they sit on is a blog
 whose background is hard-coded `#FFFFFF` -- so a reader whose OS is set to dark got the title at
