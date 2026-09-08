@@ -73,6 +73,17 @@ Benchmarking practices:
 - Don't compare runs made at different times — even a desktop drifts by a few percent over minutes. `scripts/ab/run.sh` runs baseline (any git revision) and candidate (the working tree) interleaved in one process, on the benchmark's own workloads, and reports a confidence interval for the ratio; believe a change when the interval excludes 100%.
 - **A ratio at one table size is a ratio at one point of a sawtooth.** A table doubles its bucket array at one size and not at another, so its load factor sweeps from about a half to the maximum and back, and two indexes with different slots per group double at *different* sizes. `scripts/ab/run.sh` therefore measures every size-sensitive workload at five sizes across one octave and reports the geometric mean; `-p 1` restores the old single size. Measured on an eleven-slot group against the shipped sixteen-slot one, `rmiss64` read 1.384 at one size and 1.039 over the octave, and `churn64` read 1.199 and **0.974** — the sign reversed. Point-to-point the range was 0.79 to 1.33, and the boost column swings 1.9x across an octave with the header untouched.
 - **A churn loop that recycles its insert keys from a small spare pool under-reports the drift by half.** Measured 2026-09-07 while instrumenting the probe: the same table at the same load after the same number of turnovers reads 1.09 groups per miss when each insert is drawn from a 4096 key pool that the erases feed back into, and **1.27** when every insert is a key the map has never held. A key that comes back soon tends to land in the home it just left. The scored `churn` in `test/bench/workloads.h` is safe, since it draws `next++`; this is a warning for any harness written beside it, and one such harness had it.
+- **The paired harness cannot measure a change that alters inlining, and gets the sign wrong.** It
+  compiles the baseline header and the candidate into one translation unit, which is exactly the
+  condition under which a compiler exhausts its inlining budget -- so a change that shrinks one
+  header changes what is inlined in *both*, and the ratio measures that instead of the change.
+  Measured 2026-09-08 removing `do_place_element`'s force-inline: paired, clang read **0.979**
+  (`build64` 0.860) and gcc 0.995 with a clean 1.001 control; the same benchmark built one header per
+  binary and alternated reads **1.7% faster under clang and 3.9% under gcc**, three rounds each, 0.1%
+  spread. A sign reversal on both compilers, with gcc's control saying the run was clean. For
+  anything that touches an `always_inline`, a function's size or a template's instantiation boundary,
+  build the score twice as two single-header binaries and alternate the runs -- which is what a
+  caller's translation unit looks like anyway.
 - Beware code-layout luck: any edit (even to never-executed code) can shift alignment and move individual sub-benchmarks by ±3%. Judge micro-optimizations by mechanism plus a focused microbenchmark, and confirm on the paired geomean, not on a single sub-benchmark delta.
 - nanobench prints per-benchmark `err%`; rerun if it's high (> ~3%). A warning about CPU governor/turbo is normal on non-tuned machines — it just means more noise.
 - Other useful benchmarks in `test/bench/` (e.g. `bench_copy`, `bench_game_of_life`, find variants) can be run the same way via `-tc=<name>`; run all with `-ns -ts=bench`. List all test cases with `-ltc`.
@@ -175,6 +186,200 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**A growth factor below 2, and the premise that suggested it was wrong** (2026-09-08, asked as
+"should we benchmark folly's 1.406"). **Folly doubles.** Printing `bucket_count()` after every insert
+for five maps: F14Value goes 24, 48, 96, 192, 384; F14Vector 20, 40, 80, 160; boost, abseil and this
+map likewise exactly 2x from the third step on. The `minGrowth` of `origCapacity * 1.406` in
+`reserveForInsertImpl` only binds on an explicit `reserve(n)`, never on growth by insertion, so there
+is no shipped sub-2x design in the field to copy -- the recommendation to test it came out of reading
+one line of folly rather than running it.
+
+The question survives for **the value vector**, which is where this map's memory actually goes and is
+a `std::vector` doubling on its own cadence. The index cannot change: a power-of-two group count is
+what `hash >> m_shifts`, the mask and the triangular probe's reaches-every-group property all rest
+on. The vector is a template parameter, so a different factor needs no header change --
+`grow_vec<T, A, NUM, DEN>` deriving from `std::vector` and reserving `capacity * NUM / DEN` in
+`emplace_back`, passed as `AllocatorOrContainer`. Octave geomean, twelve points, heap counted by a
+replaced global `operator new` (`/tmp/gf.cpp`):
+
+| factor | build ns/el | steady B/el | peak B/el | 64 B value: build / steady | string: build / steady |
+|---|---|---|---|---|---|
+| 2.00, shipped | 9.94 | 33.16 | 43.55 | 13.18 / 113.34 | 24.43 / 116.09 |
+| 1.50 | 11.34 (+14%) | **29.80 (-10%)** | 40.35 (-7%) | 15.63 (+19%) / **98.88 (-13%)** | 26.72 (+9%) / **107.71 (-7%)** |
+| 1.25 | 11.37 (+14%) | **27.95 (-16%)** | 40.63 (-7%) | 19.19 (+46%) / 90.55 (-20%) | -- |
+| 1.125 | 13.95 (+40%) | 27.09 (-18%) | 41.19 (-5%) | -- | -- |
+
+Reproduced on a second octave from 200000 to within 1% on every memory figure. So **1.5x buys 7-13%
+of steady memory for 9-19% of a build**, and the peak barely moves, because at the growth peak the
+index doubling is alive too.
+
+**Not worth changing the default, and worth documenting as a knob.** Building is this map's strongest
+column -- 1.66x ahead of boost and 1.61x of abseil at an 8 byte value -- and memory its weakest, at
+32.6 bytes per entry against boost's 29.2 and abseil's 27.0. Spending 14% of the former to gain 10%
+of the latter lands exactly level with boost on memory while giving up the lead that pays for the
+dense layout in the first place. A caller who is memory-bound rather than build-bound can have it
+today with six lines and no fork, which is the right place for a trade that depends on which of the
+two is scarce.
+
+**The pipelined rehash does not transfer to `boost::unordered_flat_map`, and no other map has one**
+(2026-09-08, asked as "does any other map use a pipelined rehash" and "would it transfer to boost").
+Read every rehash loop in the field: folly's `prefetchBeforeRehash` prefetches the *source* values
+of the chunk about to be hashed and places synchronously; abseil's `GrowToNextCapacity` is a
+different idea, two passes with the elements that would probe encoded as `(h2, source_offset, h1)`
+into a stack buffer and placed second, so nothing is hashed twice and most elements never probe;
+boost, indivi, emhash8, emilib, Verstable and ihtab hash and place one element at a time with no
+prefetch at all. So the hash-sixteen-ahead loop is this map's alone.
+
+Ported to boost in a copy of `core.hpp` (`unchecked_rehash` with a sixteen-entry ring of element
+pointer and hash, prefetching the destination group and, in the second variant, all four cache
+lines of the group's fifteen slots), isolated `rehash()` to double the bucket count and back, ns
+per element, `/tmp/brh.cpp` against `/tmp/boostpf`:
+
+| | u64 200K | u64 1M | str 200K | str 1M |
+|---|---|---|---|---|
+| clang, boost as shipped | 6.5 | 10.6 | 19.0-19.5 | 77.4 |
+| clang, pipelined, four slot lines | 7.0-7.2 | 11.1-11.3 | 17.9-18.7 | 80-82 |
+| gcc, as shipped | **10.2-10.5** | 10.4-11.5 | 17.1-17.8 | 71-73 |
+| gcc, pipelined, four slot lines | **7.0** | 10.2-10.5 | 16.7-17.2 | 73-77 |
+
+A wash to a loss under clang, and under gcc a 1.5x gain at 200K integers that is a codegen fix
+rather than a memory one: gcc's straight loop is 1.5x slower than clang's on the same source and
+the restructured loop takes it to clang's floor, which is the compiler serialising something the
+other compiler does not, the same shape as this map's own `fill_buckets_from_values` story with the
+compilers swapped. Prefetching only the first slot line (the first attempt) was a loss everywhere,
+because boost's fifteen 16-byte slots span four lines and fill from lane 0, so late placements land
+on lines never asked for.
+
+**Why, measured rather than argued** (`/tmp/rhperf.cpp`, nothing but rehashes so `perf stat` counts
+the loop): per element rehashed at a million `uint64_t` entries, **boost 97.5 instructions and 110.9
+cycles against this map's 51.9 and 46.7**, on the same L1 load misses (3.81 against 3.73) and with
+dTLB load misses *lower* for boost (0.051 against 0.628). So it is not the TLB and not a load a
+prefetch could have hidden -- the first draft of this entry asserted both and had measured neither.
+A flat map's rehash moves the `value_type` into a hash-scattered slot, which is where the extra
+instructions go, and the random writes that follow are write-allocate misses that an
+`__builtin_prefetch` of the destination does not cover. A lookahead hides a load's latency behind a
+hash chain, and this loop is not waiting on a load.
+
+**What that says about boost's build, which is its weakest column** (`/tmp/bsplit2.cpp`, build from
+empty against a reserved build, ns per element): boost's *insert path is faster than this map's* --
+3.53 against 7.48 at 200K u64, 5.97 against 8.62 at 1M -- and its growth costs 7.7 and 17.9 ns per
+element against 0.94 and 3.43, so **68-75% of a boost build is growth against 11-28% here**. abseil,
+whose two-pass encoder is the cleverest rehash in the field, measures 7.11 and 20.60: 8% better than
+boost at 200K and *worse* at 1M. So the encoder is not the fix either, and the cost is the family's
+-- a flat map moves every value on every doubling, a dense one moves four byte indices and leaves
+the values in place. The same split with a 64 byte value: boost 18.2 and 59.9 ns of growth per
+element against this map's 4.3 and 23.6.
+
+**And the radix partition does not rescue it either, which was the one idea left** (2026-09-08,
+asked as "give 2 a try and measure it"). Since growth is 68-75% of a boost build against 11-28% of
+one here, the partition that measured end-to-end neutral for this map has five times as much to gain
+there. Ported into `unchecked_rehash` -- hash every element and histogram the partition of the new
+group array it lands in, scatter `(element*, hash)` into partition order, then place -- at 16, 64 and
+256 partitions it is **1.7-2x slower at every size and on both compilers**, because the scratch is 32
+bytes per element faulted fresh on every growth. That is the same failure this map's own version had,
+and it is worth separating from the idea: keeping the scratch in a `static thread_local` across
+rehashes turns the isolated 4M integer rehash into a **19% win** (21.3 to 17.2 ns per element, three
+rounds, both compilers), and
+
+- the win is a bump, not a trend: at 8M the same code is **25% slower** (21.2 to 26.5), the scratch
+  having grown to 256 MB and its own scatter pass become the cost;
+- and it does not survive end to end. A build from empty at 4M is **43.0 to 47.7 ns per element under
+  clang and 42.1 to 44.8 under gcc** -- slower, because a build doubles twenty-odd times and the
+  scratch grows with it, so the pages the isolated harness faults once are faulted again at every
+  doubling;
+- strings lose throughout (80.8 to 85.1 at 4M), the scatter of a 40 byte `value_type` costing more
+  than the locality buys.
+
+So the answer to "what could help boost's build" is: not a better rehash loop. Its insert path is
+already twice this map's; what it pays is moving every value on every doubling, which is what the
+flat layout *is*. The levers left are a growth factor below 2x (folly's 1.406, untested here) and not
+being flat.
+
+**Seven ideas from reading folly F14 and from the F14Vector string gap, all measured on 2026-09-07,
+none kept** (asked as "where does our map differ from indivi", "how can F14Vector beat us at string",
+"read folly for tricks", "try the 12 fingerprint layout", "find more ideas"). The method throughout
+is the one the file already prescribes for anything under 10%: one map per binary, `perf stat`, and
+instruction counts as the number that cannot be argued with. `scripts/ab/maps_one.sh -k str` is the
+harness; the minimal single-map binaries were `/tmp/hb.cpp` (lookups), `/tmp/rh.cpp` (`rehash(0)`
+on a built map) and `/tmp/ins.cpp` (reserved inserts).
+
+**Where the F14Vector string gap actually is.** Paired octave geomeans had F14VectorMap 6-12% ahead
+on string lookups and us 1.27x ahead overall on integers. At 32000 entries, one map per binary, the
+hit is a 2% tie (137.2 against 134.4 cycles) and the **miss is 9.5%** (103.8 against 94.8), while the
+same binaries on `uint64_t` keys have us 17% ahead on the miss. The hash is provably not it: the
+harness hands F14 our wyhash, and `perf record` puts the identical `wyhash::hash` symbol at 44.2%
+and 44.6% of the two binaries. Nor is it the load factor (both have 4096 groups holding 7.8
+entries each at that size -- F14's `bucket_count()` of 40960 is `chunkCount * capacityScale`, not
+slots). Nor the value indirection, which F14Vector has too. It is **clang leaving `do_find_hashed`
+out of line for `std::string` keys** and inlining it for `uint64_t` (`nm` on the two binaries), plus
+our two index prefetches, which on a miss with no fingerprint match are pure waste (1.1 of the 1.3
+extra L1 fills per miss). Force-inlining it: 103.8 to 99.1 cycles at an *identical* instruction
+count, half the gap; the prefetch removal adds nothing on top of that. The remaining 4.5% is eight
+instructions of ordinary difference between two probe loops.
+
+**Force-inlining `do_find_hashed`, paired on the score: not kept.** clang 0.9975 with `rmissstr`
+1.022 and `rmiss64` 1.016 in a run whose `hashstr` control read 1.106; **gcc 0.9946 with `rmiss64`
+0.844 and `rhit64` 0.948 against a clean control of 1.001**. gcc was inlining it already, so the
+attribute can only have moved the inlining of what surrounds it in that translation unit, and it
+moved it the wrong way by more than the clang gain. A `#if defined(__clang__)` would take the 4.5%
+on string misses; not done, because a compiler-conditional inlining attribute on the lookup is the
+kind of thing the next compiler release silently reverses.
+
+**Splitting the hash into an inlinable short path and an out-of-line tail** (`hash()` for
+`len <= 16`, `hash_long()` `noinline` for the rest, `secret` hoisted, values identical by checksum
+over lengths 0-1200): **a loss under clang in every configuration, including all-short keys**, where
+it removes the call outright -- 43.9 to 45.6 cycles and +6 instructions on an 8-16 byte miss, 103.4
+to 108.8 and +18.6 instructions on the scored lengths; gcc −4% on all-short misses and 0 to +2%
+otherwise. The 24 instructions of the short path inlined into a caller that has the probe's state
+live cost spills, which is the `do_place_element` mechanism again. The earlier "force-inlining the
+hash: nothing or slightly worse" line above was a paired run that could not resolve it; this can,
+and the sign is the same. And since both binaries in the F14 comparison call the identical
+out-of-line hash, nothing done to the hash could have moved that ratio anyway.
+
+**folly's `fullness[]` byte array in the rehash** (`allocateTag`: one occupancy byte per chunk on
+the stack, so placement never loads the destination chunk's tags): isolated `rehash(0)`, ns per
+element, u64/str at 200K, 1M, 4M: clang 1.66/3.92, 1.73/4.19, 6.60/8.97 as shipped against
+1.72/4.06, **1.89/4.91**, 6.54/9.48 with it; gcc 1.85/4.48, 1.81/4.63, 6.46/8.93 against 1.92/4.36,
+**2.21/5.40**, 6.71/**10.37**. A 3-20% loss on the loop. It trades a random load that the
+sixteen-ahead prefetch already hides for a random load nothing prefetches, plus a store the next
+element to the same group has to forward from. F14 needs it because its rehash is not pipelined.
+
+**The 12-slot, 64 byte, cache-line-aligned block** (F14VectorMap's `kCapacity = 12` for 4 byte
+items: 12 fingerprints + 4 counters + 12 x 4 byte indices, `alignas(64)`, counter class `& 3`, the
+top four lanes of the compare masked off, no index prefetch). It does exactly what the L1 counters
+predicted and nothing else: 1.4 fewer L1 misses per string lookup (5.27 to 3.89 on a miss, 8.35 to
+6.95 on a hit) and **cycles unchanged to the tenth** (103.3 to 102.5, 135.1 to 135.7) -- the lines it
+saves were being prefetched, so they were never on the critical path. Paired on the score **0.9888**:
+lookups +1-2% (`find64` 1.024, `rhit64` 1.014, `findstr` 1.011), churn and insert-erase −5-7%
+(`churn64` 0.925, `churnbig` 0.936, `ie64` 0.955), because a 12-slot group is full more often at the
+same load and four classes filter a churned miss worse than eight. Also found: 12 slots make the group
+count non-power-of-two for a one byte value index (256 / 12 = 21 groups), which is heap corruption
+via `hash >> shifts` and an endless `calc_shifts_for_size`; `bucket.cpp`'s `group_micro` cases are
+what caught it. Not fixed, since the layout is rejected.
+
+**Prefetching the back element's string body before an erase's probe**, so the hash of the moved
+key overlaps the probe instead of following it (a `prefetch_key` hook, a no-op except for
+`std::basic_string`): string churn 436.7 to 429.1 cycles and insert-erase 680 to 674 at 32000,
+nothing at 200000 (1565 to 1577, 2502 to 2526). 1-2% in cache, nothing out of it -- the same shape as
+the erase-side pull-back. Not kept.
+
+**Fusing the insert's probe with its placement** (`probe_for_insert` also returns the home group's
+empty-lane mask, so a miss whose home has room places without the second walk, and no counter can
+have moved because no full group was passed; anything else falls back to `place_group`): **more
+instructions, not fewer** -- reserved u64 inserts clang 97.8 to 101.0, gcc 65.9 to 70.0, gcc cycles
+16.4 to 17.7. The `match_empty` on home is paid on every insert probe and the two extra live values
+cost spills, while the second walk it removes was an L1 hit on a line just loaded.
+
+**The one fact left standing is the clang/gcc gap itself**, and it is not inlining: a reserved
+`uint64_t` insert is **97.8 instructions under clang and 65.9 under gcc**, a string miss 142 against
+110, an 8-16 byte string miss 115 against 79, on identical source, and force-inlining
+`do_try_emplace` or `do_find_hashed` leaves clang's count exactly where it was (97.8, 143.2). The
+disassembly says what it is: clang spills the loop state at function entry (six pushes, the
+broadcast, counter, mask, delta, `this`, the groups pointer) where gcc sinks the same spills into
+the fingerprint-match branch that a miss never takes. That is a register allocator's choice and not
+something a source change has been found to steer; every attempt above that moved code into a
+caller made it worse.
+
 **What `move_home` is actually worth, re-measured** (2026-09-07, `scripts/ab/move_home.{cpp,sh}`,
 asked as "I am now sceptical this is of any use" -- reasonably, since the drift entry it was
 justified by does not reproduce). One map per binary, the same header with `move_home` turned into a
@@ -451,10 +656,11 @@ removed the worst case.
 measurements, the SVGs and the page -- and it is the only way to get them, since none of its output
 is tracked. `--redraw` does the drawing half alone in a fifth of a second, which is what to use after touching `plot.py` or `dashboard.py`, since it reproduces every
 SVG byte for byte from unchanged CSVs. `--quick` runs the whole pipeline coarsely in ten minutes,
-which is how to find out that a tool no longer compiles without spending four hours. It refuses to
-start against a nanobench without `targetIntervalWidth()` and says to point `NANOBENCH_INCLUDE` at a
-checkout of martinus/nanobench#189: the sweep asks for a precision instead of naming a round count,
-and the vendored 4.6.0 cannot do that. Nothing else in the repository depends on the branch.
+which is how to find out that a tool no longer compiles without spending four hours.
+The sweep asks nanobench for a precision instead of naming a round count, which needs
+`targetIntervalWidth()` and `render(CompareResult)`; that landed upstream as martinus/nanobench#189
+and has been in the vendored copy since 2026-09-08, so `NANOBENCH_INCLUDE` no longer has to point
+anywhere. The guard in `regen.sh` stays, because that variable can still name something older.
 
 **The same-hash convention was flattering boost on every string chart, and the control found it**
 (2026-09-06). Handing every alternative this map's hash is the right way to compare *indexes*, and it
@@ -1376,15 +1582,21 @@ clang, with `build64` 1.56 and `buildbig` 1.84. `scripts/ab/run.sh -c g++` repro
 
 What was tried for clang, all measured paired on the score:
 
-- **Forcing `do_place_element` and `place_group` inline** (`always_inline`): the miss path drops
-  from 128 to 100 instructions and 39 to 32 cycles, `build64` 1.070, `churn64` 1.061, `churnbig`
-  1.067, `buildbig` 1.041 -- and `operator[]` on a *present* key rises from 74 to 88 instructions,
-  because the merged function pays the placement code's register pressure on the path that never
-  places, so `ie64` 0.967, `iestr` 0.965, `iebig` 0.972, where half the inserts are hits. Geomean
-  **1.012**, every interval excluding 100%. A no-op for gcc. Forcing everything into the caller as
-  well gives the same numbers, so the hit-path cost is not about the caller's loop. **Applied**: by this file's own
-  rule an interval that excludes 100% on the score is a change to believe, and the trade is written
-  above the attribute in the header so it can be reversed knowingly.
+- **Forcing `do_place_element` and `place_group` inline** (`always_inline`): applied in 2026-09 on a
+  paired geomean of **1.012** with every interval excluding 100%, and **reverted on 2026-09-08**,
+  both for the same reason -- the paired harness cannot see this class of change. The attribute did
+  what the entry then said (miss path 128 to 100 instructions, `build64` 1.070; `ie64` 0.967, because
+  the merged function pays the placement code's register pressure on the path that never places).
+  Three things landed on `do_place_element` since -- the merged block, `move_home`, the pipelined
+  rehash -- so the inlined body is bigger and that pressure is worse. One map per binary at 50000
+  entries, forced against not: a reserved insert is clang 97.8 instructions and 31.3 cycles against
+  106.8 and **27.2**, gcc 124.9 and 38.0 against **68.9 and 23.9**; a `try_emplace` on a key already
+  present is clang 73.2 and 16.8 against **48.4 and 11.5**. It is also no longer the no-op for gcc it
+  was described as. The scored benchmark built one header per binary and alternated, three rounds,
+  0.1% spread: **clang 0.017720 to 0.017416 and gcc 0.018664 to 0.017940**, 1.7% and 3.9% faster
+  without it -- against a paired run reading 0.979 and 0.995. Removing `probe`'s attribute as well is
+  the worst of the three (gcc 0.019078, 2.2% *worse* than shipped), which is the control saying this
+  is about one function and not about `always_inline` in general.
 - **Handing the probe's fingerprint word and home group to an out-of-line `do_place_element`**, so
   the insert derives nothing twice: 141.7 to 143.7, i.e. nothing. **Returning the value index in a
   register** instead of a `pair<iterator, bool>`: 141.7 to 141.7, clang already returns that pair
