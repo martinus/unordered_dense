@@ -122,7 +122,11 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True):
         x0 = LABEL + ci * (pw + GAP)
         vmax = max(vals.get((m, ck), 0.0) for m in order) * 1.02
         tk = ticks(vmax)
-        scale = pw / max(tk[-1], 1e-9)
+        # Room for the widest value label, so that no label ever has to be drawn inside its bar:
+        # white on a bar is 3.0 to 4.1:1 against the page and unreadable at 11px, and there is no
+        # ink dark enough for the inside of a mid-tone bar either. ~6.4px per glyph at 11.5px Inter.
+        lblw = max(len(f"{vals.get((m, ck), 0.0):.2f}") for m in order) * 6.4 + 6
+        scale = (pw - lblw) / max(tk[-1], 1e-9)
         s += f'  <text x="{x0:.0f}" y="{top - 30:.0f}" class="t" font-weight="600">{esc(ch)}</text>\n'
         for t in tk:
             x = x0 + t * scale
@@ -144,13 +148,8 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True):
             fill = FAMILY[OF[m]][0]
             s += (f'  <path d="{bar(x0, y, v * scale, ROWH - 5)}" fill="{fill}"'
                   f' opacity="{0.95 if m == REF else 0.8}"/>\n')
-            # the value sits beside the bar, or inside it in white when there is no room
-            lx = x0 + v * scale + 4
-            anchor, tx, extra = "start", lx, 'class="m"'
-            if lx + 28 > x0 + pw:
-                anchor, tx, extra = "end", x0 + v * scale - 5, 'fill="#ffffff" font-size="11"'
-            s += (f'  <text x="{tx:.1f}" y="{y + ROWH - 9:.0f}" {extra} '
-                  f'text-anchor="{anchor}">{v:.2f}</text>\n')
+            s += (f'  <text x="{x0 + v * scale + 4:.1f}" y="{y + ROWH - 9:.0f}" class="m" '
+                  f'text-anchor="start">{v:.2f}</text>\n')
     for i, m in enumerate(order):
         y = top + i * ROWH + ROWH - 7
         s += (f'  <text x="{LABEL - 8}" y="{y:.0f}" class="t" text-anchor="end"'
@@ -288,7 +287,9 @@ def cmd_octave(argv):
     for y, x, col, label in ends:
         y = max(y, last + 16)
         last = y
-        s += f'  <text x="{x + 10:.1f}" y="{y + 4:.1f}" class="m" fill="{col}">{esc(label)}</text>\n'
+        s += (f'  <line x1="{x + 8:.1f}" y1="{y:.1f}" x2="{x + 22:.1f}" y2="{y:.1f}" '
+              f'stroke="{col}" stroke-width="2.4" stroke-linecap="round"/>\n')
+        s += f'  <text x="{x + 28:.1f}" y="{y + 4:.1f}" class="m">{esc(label)}</text>\n'
     s += "</svg>\n"
     open(out, "w").write(s)
     print(out)
