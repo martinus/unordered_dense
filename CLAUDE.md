@@ -506,6 +506,19 @@ sizes per octave, every adapter checked against this map over 400000 mixed opera
 again under ASan/UBSan. **Two independent runs agree: 372 of 378 integer ratios within 5%, worst
 1.12 on `iterate` at a thousand entries.**
 
+**A value label never goes inside its bar** (2026-09-08). `mapsplot.py` used to draw the value in
+white inside the bar whenever it would have overflowed the panel, which is 6 to 11 labels per chart
+-- and white on a bar drawn at `opacity="0.8"` composites to 3.0-4.1:1 against the page, under the
+4.5 an 11px label needs, worst on the dense green. There is no ink dark enough for the inside of a
+mid-tone bar either (#1f2937 on the full-strength green is 3.4), so the fix is room rather than
+colour: the panel now reserves the widest label's width and the scale shrinks to fit, which costs
+the longest bar 23% of its length and makes every label the same colour in the same place. The
+sawtooth's direct labels were tinted with their series colour for the same reason and had the same
+problem; they carry a swatch of the line beside them now and wear the ordinary label ink. **Do not
+fix this class of thing by darkening the palette** -- every green that clears 4.5:1 as text drops
+the palette's tritanopia separation from 6.5 to 4.3, and the colour is a *mark*, which needs 3:1
+and has it.
+
 The whole table is in the post; four results are worth having here.
 
 **A miss is where the counter earns its keep, and abseil is the control that proves it.** At the
