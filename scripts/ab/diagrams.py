@@ -529,6 +529,44 @@ def lookup_touches():
     return svg(y + 96, b)
 
 
+def wmap_window():
+    """indivi flat_wmap: one byte per slot, and the window read unaligned at the home slot."""
+    n, home = 21, 5
+    frag = ["4E", "--", "B7", "4E", "--", "9C", "22", "--", "F1", "6D", "--",
+            "8E", "9C", "--", "07", "5A", "B3", "--", "41", "--", "C4"]
+    b = anatomy("indivi flat_wmap: 1 metadata byte per slot, and no group at all",
+                [("hfrags", "fp", 16)])
+    y = ANATOMY_H + 26
+    b += row(LEFT, y, [(f, "fp", 1) for f in frag[:n]])
+    b += text(LEFT - 12, y + 20, "hfrags", "muted", "end")
+
+    # the home slot, and the window that starts there
+    hx = LEFT + home * BYTE
+    b += (f'  <path d="M{hx + BYTE / 2:.0f},{y - 34:.0f} L{hx + BYTE / 2:.0f},{y - 6:.0f}" '
+          'class="arrow"/>\n')
+    b += text(hx + BYTE / 2, y - 42, "home = hash >> shift, a slot", "muted", "middle")
+    b += brace(hx, hx + 16 * BYTE, y + ROW,
+               "the sixteen bytes it compares, loaded unaligned: home is lane 0")
+
+    # what a grouped map would have read instead
+    y2 = y + 74
+    b += row(LEFT, y2, [(f, "fp", 1) for f in frag[:n]])
+    b += text(LEFT - 12, y2 + 20, "hfrags", "muted", "end")
+    b += brace(LEFT, LEFT + 16 * BYTE, y2 + ROW,
+               "the aligned group a grouped map reads: home is lane 5, and five lanes sit behind it",
+               )
+    b += (f'  <rect x="{hx:.0f}" y="{y2 - 3:.0f}" width="{BYTE:.0f}" height="{ROW + 6:.0f}" '
+          'fill="none" stroke="#0f766e" stroke-width="2"/>\n')
+
+    # the duplicated tail that makes the unaligned load legal
+    y3 = y2 + 84
+    b += row(LEFT, y3, [("", "fp", 1)] * 12 + [("", "sent", 1)] * 5)
+    b += text(LEFT - 12, y3 + 20, "end of array", "muted", "end")
+    b += brace(LEFT + 12 * BYTE, LEFT + 17 * BYTE, y3 + ROW,
+               "16 bytes duplicating the first group, so a window at the last slot is still one load")
+    return svg(y3 + ROW + 44, b)
+
+
 FIGURES = {
     "hashmap-basics": hashmap_basics,
     "rh-bucket": rh_bucket,
@@ -538,6 +576,7 @@ FIGURES = {
     "emhash8-index": emhash8_index,
     "emilib-state": emilib_state,
     "indivi-metagroup": indivi_metagroup,
+    "wmap-window": wmap_window,
     "group-block": group_block,
     "verstable-word": verstable_word,
     "ihtab-group": ihtab_group,
