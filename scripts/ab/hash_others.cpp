@@ -37,6 +37,7 @@
 #include <bench/workloads.h>
 #include <third-party/nanobench.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -141,7 +142,17 @@ auto measure(std::vector<std::string>& keys, double width) -> std::map<std::stri
     auto const& ck = keys;
     auto bench = [&] {
         auto b = ankerl::nanobench::Bench();
-        b.batch(static_cast<double>(num_keys)).performanceCounters(false).output(nullptr).targetIntervalWidth(width).maxEpochs(200);
+        // A long warm-up and a minimum epoch of a millisecond: the first iterations of a length
+        // pay for a cold key buffer and a clock that has not ramped, and an epoch shorter than a
+        // scheduler tick measures the scheduler. targetIntervalWidth asks for a precision rather
+        // than naming a round count, so a noisy length simply runs longer than a quiet one.
+        b.batch(static_cast<double>(num_keys))
+            .performanceCounters(false)
+            .output(nullptr)
+            .warmup(200)
+            .minEpochTime(std::chrono::milliseconds(1))
+            .targetIntervalWidth(width)
+            .maxEpochs(500);
         return b;
     };
     auto out = std::map<std::string, row>();

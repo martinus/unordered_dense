@@ -249,8 +249,6 @@ def cmd_octave(argv):
     vmax = max(v for s in series.values() for _, v in s) * 1.06
     tk = ticks(vmax)
     s = head(W2, H2)
-    s += (f'  <clipPath id="plot"><rect x="{L}" y="{T}" width="{W2 - R - L}" '
-          f'height="{H2 - T - B}"/></clipPath>\n')
     s += (f'  <text x="8" y="22" class="hd">{esc(work)} against table size, across one doubling and '
           f'a little past it, {key} keys</text>\n')
     s += (f'  <text x="8" y="42" class="sub">the same {len(xs)} sizes for every map, {lo:,} to '
@@ -346,12 +344,15 @@ def cmd_hashlat(argv):
         # stretched by 5% for two points nobody reads a length off.
         tk = [tv for tv in tk if tv <= ymax] or tk
     s = head(W2, H2)
+    # The two slowest hashes cross a named ceiling in the last few dozen bytes; without this they
+    # would be drawn straight through the axis and out over the legend.
+    s += (f'  <clipPath id="plot"><rect x="{L}" y="{T}" width="{W2 - R - L}" '
+          f'height="{H2 - T - B}"/></clipPath>\n')
     s += '  <text x="8" y="22" class="hd">What a string hash costs a lookup, by key length</text>\n'
     s += ('  <text x="8" y="42" class="sub">nanoseconds per hash, each one waiting on the one '
           'before it, which is the order a map pays them in</text>\n')
-    s += ('  <text x="8" y="60" class="sub">every hash interleaved in one process, on a '
-          'logarithmic length axis; about 1.5 ns of every line is the chain\'s own store and '
-          'load</text>\n')
+    s += ('  <text x="8" y="60" class="sub">median of three runs, every hash interleaved in one '
+          'process; about 1.5 ns of every line is the chain\'s own store and load</text>\n')
 
     def px(n):
         return L + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * (W2 - L - R)
