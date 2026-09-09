@@ -1,0 +1,192 @@
+// What the string hash of every map in the comparison costs, in latency and in throughput.
+//
+// scripts/ab/hash.cpp charts this library's hash against its own older versions over a length axis.
+// This one asks the other question: against the hash each *other* library ships, at the lengths the
+// scored suite uses. The two costs are measured separately and they order the candidates
+// differently, which is the whole point:
+//
+//   throughput -- independent keys, as many in flight as the machine has multipliers. What a loop
+//                 that hashes a column of data pays, and what a hash benchmark usually reports.
+//   latency    -- one chain: a byte of each answer is written into the next key before it is
+//                 hashed, so no two hashes overlap. What a *map lookup* pays, since the hash's
+//                 result is the address of the group to probe and nothing after it can start.
+//
+// A "floor" row hashes nothing -- it xors the size with the first byte -- so it measures what the
+// chain itself costs: the store into the key, the load back, and the loop. Every row carries that
+// constant, so the differences between rows are the honest part and the absolute numbers are not.
+//
+// The chain is built by writing into the key rather than by choosing the next key with the answer
+// (`x = hash(keys[x & mask])`), which is the obvious way and is wrong: it puts the key's *length*
+// and *address* on the dependency chain, which a real lookup does not have -- the caller already
+// holds the key. That harness reported a 1.40x for a change worth nothing in the map.
+//
+//   scripts/ab/hash_others.sh [-c compiler]
+#include <ankerl/unordered_dense.h>
+#ifdef UDM_AB_HAVE_BASE
+#    include <base.h>
+#endif
+#ifdef UDM_AB_HAVE_BOOST
+#    include <boost/container_hash/hash.hpp>
+#endif
+#ifdef UDM_AB_HAVE_ABSL
+#    include <absl/hash/hash.h>
+#endif
+#ifdef UDM_AB_HAVE_FOLLY
+#    include <folly/hash/Hash.h>
+#endif
+#include <bench/workloads.h>
+#include <third-party/nanobench.h>
+
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr std::size_t num_keys = 256;
+
+// Fixed-length keys, for the shape, and the scored suite's own mix, which is what the map
+// benchmarks in this post actually hash: 8 to 135 bytes, skewed towards short, so the length
+// dispatch is unpredictable the way it is in a real table.
+auto keys_of_length(std::size_t len) -> std::vector<std::string> {
+    auto out = std::vector<std::string>();
+    out.reserve(num_keys);
+    auto rng = ankerl::nanobench::Rng(len * 2654435761U + 1U);
+    for (std::size_t i = 0; i < num_keys; ++i) {
+        auto s = std::string(len, '\0');
+        for (std::size_t j = 0; j < len; j += 8) {
+            auto const v = rng();
+            std::memcpy(s.data() + j, &v, (std::min)(std::size_t{8}, len - j));
+        }
+        out.push_back(std::move(s));
+    }
+    return out;
+}
+
+auto scored_keys() -> std::vector<std::string> {
+    auto out = std::vector<std::string>();
+    out.reserve(num_keys);
+    auto rng = ankerl::nanobench::Rng(1234);
+    for (std::size_t i = 0; i < num_keys; ++i) {
+        out.push_back(workloads::key_source<std::string>::get(rng()));
+    }
+    return out;
+}
+
+template <typename Hash>
+auto throughput(std::vector<std::string> const& keys, Hash&& h) -> std::uint64_t {
+    auto acc = std::uint64_t{};
+    for (auto const& k : keys) {
+        acc += h(k);
+    }
+    return acc;
+}
+
+template <typename Hash>
+auto latency(std::vector<std::string>& keys, Hash&& h) -> std::uint64_t {
+    auto x = std::uint64_t{};
+    for (auto& k : keys) {
+        k[0] = static_cast<char>(x);
+        x = h(k);
+    }
+    return x;
+}
+
+struct row {
+    double thr;
+    double lat;
+};
+
+// Every hasher interleaved round by round in one process, so machine drift cancels out of the
+// comparison instead of landing on whichever ran first.
+#define UDM_EACH_HASH(WRAP)                                                                                            \
+    "udm5",                                                                                                            \
+        WRAP(ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size())),                                       \
+        "floor", WRAP(static_cast<std::uint64_t>(s.size()) ^ static_cast<std::uint64_t>(s[0]))                          \
+        UDM_BASE(WRAP) UDM_BOOST(WRAP) UDM_ABSL(WRAP) UDM_FOLLY(WRAP)
+
+#ifdef UDM_AB_HAVE_BASE
+#    define UDM_BASE(WRAP) , "udm4", WRAP(udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size()))
+#else
+#    define UDM_BASE(WRAP)
+#endif
+#ifdef UDM_AB_HAVE_BOOST
+#    define UDM_BOOST(WRAP) , "boost", WRAP(boost::hash<std::string>{}(s))
+#else
+#    define UDM_BOOST(WRAP)
+#endif
+#ifdef UDM_AB_HAVE_ABSL
+#    define UDM_ABSL(WRAP) , "absl", WRAP(absl::Hash<std::string>{}(s))
+#else
+#    define UDM_ABSL(WRAP)
+#endif
+#ifdef UDM_AB_HAVE_FOLLY
+#    define UDM_FOLLY(WRAP) , "folly", WRAP(folly::hasher<std::string>{}(s))
+#else
+#    define UDM_FOLLY(WRAP)
+#endif
+
+#define UDM_THROUGHPUT(EXPR)                                                                                           \
+    [&] {                                                                                                              \
+        ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) { return EXPR; }));                \
+    }
+#define UDM_LATENCY(EXPR)                                                                                              \
+    [&] {                                                                                                              \
+        ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) { return EXPR; }));                 \
+    }
+
+auto measure(std::vector<std::string>& keys, double width) -> std::map<std::string, row> {
+    auto const& ck = keys;
+    auto bench = [&] {
+        auto b = ankerl::nanobench::Bench();
+        b.batch(static_cast<double>(num_keys)).performanceCounters(false).output(nullptr).targetIntervalWidth(width).maxEpochs(200);
+        return b;
+    };
+    auto out = std::map<std::string, row>();
+    auto collect = [&](auto const& res, bool is_latency) {
+        for (std::size_t a = 0; a < res.size(); ++a) {
+            auto const& r = res[a].result;
+            auto const ns = r.median(ankerl::nanobench::Result::Measure::elapsed) * 1e9 / static_cast<double>(num_keys);
+            auto& slot = out[r.config().mBenchmarkName];
+            (is_latency ? slot.lat : slot.thr) = ns;
+        }
+    };
+    auto bt = bench();
+    collect(bt.compare(UDM_EACH_HASH(UDM_THROUGHPUT)), false);
+    auto bl = bench();
+    collect(bl.compare(UDM_EACH_HASH(UDM_LATENCY)), true);
+    return out;
+}
+
+void report(char const* label, std::vector<std::string>& keys, double width, bool emit) {
+    auto const r = measure(keys, width);
+    if (!emit) {
+        return; // warm-up: the first measurement of a process pays for cold caches and a cold clock
+    }
+    for (auto const& [name, v] : r) {
+        std::printf("%s,%s,%.3f,%.3f\n", label, name.c_str(), v.thr, v.lat);
+    }
+    std::fflush(stdout);
+}
+
+} // namespace
+
+auto main(int argc, char** argv) -> int {
+    workloads::tame_allocator();
+    auto const width = argc > 1 ? std::atof(argv[1]) : 0.02;
+    std::printf("keys,hash,throughput_ns,latency_ns\n");
+
+    auto warm = keys_of_length(32);
+    report("warmup", warm, width, false);
+
+    for (auto len : {8U, 16U, 32U, 64U, 128U, 256U}) {
+        auto keys = keys_of_length(len);
+        auto label = std::to_string(len) + "B";
+        report(label.c_str(), keys, width, true);
+    }
+    auto mix = scored_keys();
+    report("mix", mix, width, true);
+    return 0;
+}
