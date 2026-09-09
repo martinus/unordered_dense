@@ -1248,11 +1248,11 @@ noise of the score. The hash is not where the remaining time is.
 own older versions; this one puts it beside `boost::hash`, `absl::Hash` and `folly::hasher` at 8, 16,
 32, 64, 128 and 256 bytes and on the scored mix, latency and throughput separately, all interleaved
 in one process. Latency net of the chain (a row that hashes nothing prices the chain at ~1.5 ns),
-ns per hash, on the mix: **this 4.8, absl 4.9, 4.11.0 5.4, boost 8.0, folly 14.1**. Throughput on
-the same keys: 2.21, 2.26, 2.38, 4.50, 8.83 -- same ordering, wider margins.
+ns per hash, on the mix: **this 4.8, absl 4.8, 4.11.0 5.4, boost 8.0, folly 14.0**. Throughput on
+the same keys: 2.22, 2.25, 2.37, 4.48, 8.80 -- same ordering, wider margins.
 
-**`absl::Hash` is the one to beat and nothing here says otherwise**: 9 to 21% *lower* latency than
-this hash at 8, 16 and 32 bytes and 11 to 24% higher at 64, 128 and 256, so on a mix that is mostly
+**`absl::Hash` is the one to beat and nothing here says otherwise**: 9 to 22% *lower* latency than
+this hash at 8, 16 and 32 bytes and 12 to 23% higher at 64, 128 and 256, so on a mix that is mostly
 short keys the two are level. That is the mechanism behind the own-hash control rows in `maps.sh`,
 which had only ever been observed from the outside -- abseil loses 1-4% to its own hash, boost loses
 31% on a string hit -- and it says the control is measuring the hash rather than any interaction with
@@ -1260,9 +1260,19 @@ the index. `folly::hasher<std::string>` is `SpookyHashV2` and is the slowest her
 2.9x on the mix, which is worth knowing because it is what `F14FastMap<std::string, V>` uses unless
 the caller says otherwise.
 
-Against 4.11.0 the independent-block rewrite reads 14% at 32 bytes, 20% at 128, **12% on the mix**,
-0% below 17 bytes and at 256 (unchanged code, which is the control), and **-3% at 64 bytes**. Two
-runs agreed to 0.5% on every cell.
+Against 4.11.0 the independent-block rewrite reads 17% at 32 bytes, 23% at 128, **12% on the mix**,
+0% below 17 bytes and at 256 (unchanged code, which is the control), and **-3% at 64 bytes**.
+
+**Three process-level repetitions are what make those digits mean anything, and `-n` does it.** A
+within-run interval says how well one process resolved its own median and nothing about what changed
+between one process and the next, which on a machine that is not idle is the larger of the two. The
+first set of numbers here was taken with a browser and a jekyll watcher running and read 0.5 to 1.5%
+high across the board; with those paused, `-n 3` merging by median per point, `warmup(200)` and
+`minEpochTime(1ms)`, the three runs agree to **0.9% on every hash cell**. The one row that does not
+is the do-nothing floor at 1.5 ns, where a 6% spread is timer granularity and not the machine.
+**And do not edit a shell script while it is running**: bash re-reads the file at its old byte
+offset, so a sweep that was already running re-executed its last line and appended a second run's
+output to the first one's file, which is what a doubled header in a CSV means.
 
 **Latency is what a map pays, tested rather than argued** (2026-09-07). The AES-NI rejection above
 was reasoning -- a quarter faster in throughput, half again slower in latency, so it should lose in

@@ -11,11 +11,12 @@
 # system. The baseline revision supplies unordered_dense's older hash under its own namespace.
 set -euo pipefail
 export LC_ALL=C
-cxx=clang++ rev=v4.11.0
-while getopts "c:r:" opt; do
+cxx=clang++ rev=v4.11.0 runs=1
+while getopts "c:r:n:" opt; do
     case $opt in
         c) cxx=$OPTARG ;;
         r) rev=$OPTARG ;;
+        n) runs=$OPTARG ;;
         *) exit 1 ;;
     esac
 done
@@ -60,4 +61,40 @@ nbo="$build/nb_$(basename "$cxx").o"
 
 echo "hashes: ${have[*]} | missing: ${missing[*]:-none} | $cxx" >&2
 "$cxx" "${flags[@]}" "$root/scripts/ab/hash_others.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$build/hash_others"
-taskset -c "${AB_CORE:-2}" "$build/hash_others" "$mode" "$width"
+if [ "$runs" -le 1 ]; then
+    exec taskset -c "${AB_CORE:-2}" "$build/hash_others" "$mode" "$width"
+fi
+
+# -n runs the whole thing several times in fresh processes and reports the median of each point,
+# with the worst spread on stderr. A within-run interval says how well one process resolved its own
+# median; it says nothing about what changed between one process and the next, which on a machine
+# that is not idle is the larger of the two.
+out=$(mktemp -d)
+for i in $(seq 1 "$runs"); do
+    echo "  run $i of $runs ..." >&2
+    taskset -c "${AB_CORE:-2}" "$build/hash_others" "$mode" "$width" > "$out/r$i.csv"
+done
+python3 - "$out"/r*.csv <<'PY'
+import csv, statistics, sys
+from collections import defaultdict
+runs = [list(csv.DictReader(open(f))) for f in sys.argv[1:]]
+label = list(runs[0][0].keys())[0]
+vals = defaultdict(lambda: defaultdict(list))
+for r in runs:
+    for row in r:
+        for col in ("throughput_ns", "latency_ns"):
+            vals[(row[label], row["hash"])][col].append(float(row[col]))
+w = csv.writer(sys.stdout, lineterminator="\n")
+w.writerow([label, "hash", "throughput_ns", "latency_ns"])
+worst = (0.0, "")
+for key, cols in vals.items():
+    row = [key[0], key[1]]
+    for col in ("throughput_ns", "latency_ns"):
+        xs = cols[col]
+        row.append(f"{statistics.median(xs):.3f}")
+        spread = (max(xs) - min(xs)) / statistics.median(xs)
+        if col == "latency_ns" and spread > worst[0]:
+            worst = (spread, f"{key[1]} at {key[0]}")
+    w.writerow(row)
+print(f"worst spread between runs: {worst[0] * 100:.1f}% ({worst[1]})", file=sys.stderr)
+PY
