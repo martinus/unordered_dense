@@ -1243,6 +1243,27 @@ second one cannot go, since dropping it fails avalanche outright. One multiply i
 about a third of a string lookup, which is ~1.5% of a lookup even if it were free -- under the
 noise of the score. The hash is not where the remaining time is.
 
+**The hash measured against the ones the other libraries ship** (2026-09-09,
+`scripts/ab/hash_others.{cpp,sh}`, asked for the blog post). `hash.cpp` charts this hash against its
+own older versions; this one puts it beside `boost::hash`, `absl::Hash` and `folly::hasher` at 8, 16,
+32, 64, 128 and 256 bytes and on the scored mix, latency and throughput separately, all interleaved
+in one process. Latency net of the chain (a row that hashes nothing prices the chain at ~1.5 ns),
+ns per hash, on the mix: **this 4.8, absl 4.9, 4.11.0 5.4, boost 8.0, folly 14.1**. Throughput on
+the same keys: 2.21, 2.26, 2.38, 4.50, 8.83 -- same ordering, wider margins.
+
+**`absl::Hash` is the one to beat and nothing here says otherwise**: 9 to 21% *lower* latency than
+this hash at 8, 16 and 32 bytes and 11 to 24% higher at 64, 128 and 256, so on a mix that is mostly
+short keys the two are level. That is the mechanism behind the own-hash control rows in `maps.sh`,
+which had only ever been observed from the outside -- abseil loses 1-4% to its own hash, boost loses
+31% on a string hit -- and it says the control is measuring the hash rather than any interaction with
+the index. `folly::hasher<std::string>` is `SpookyHashV2` and is the slowest here at every length,
+2.9x on the mix, which is worth knowing because it is what `F14FastMap<std::string, V>` uses unless
+the caller says otherwise.
+
+Against 4.11.0 the independent-block rewrite reads 14% at 32 bytes, 20% at 128, **12% on the mix**,
+0% below 17 bytes and at 256 (unchanged code, which is the control), and **-3% at 64 bytes**. Two
+runs agreed to 0.5% on every cell.
+
 **Latency is what a map pays, tested rather than argued** (2026-09-07). The AES-NI rejection above
 was reasoning -- a quarter faster in throughput, half again slower in latency, so it should lose in
 a map -- and reasoning is not a measurement. Measured: the same `map<std::string, size_t>`, the
