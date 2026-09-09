@@ -81,6 +81,16 @@ hides completely.
 several maps has a code layout that moves by more than a 3% question every time any of them
 changes. Anything under about 10% is decided there, with counters, and not by the paired harness.
 
+`scripts/ab/hash_others.sh` is the same idea for the *hash* rather than the index: this library's
+wyhash, its own older version, `boost::hash`, `absl::Hash` and `folly::hasher` over six key lengths
+and the scored suite's own mix, in one process, reporting **latency and throughput separately**
+because they order the candidates differently -- a map pays latency, since the hash's result is the
+address of the group to probe. The chain is built by writing a byte of each answer into the *next
+key*, not by choosing the next key with it: choosing puts the key's length and address on the chain,
+which a real lookup does not have, and a harness that did read a 1.40x for a change worth nothing.
+A row that hashes nothing (`size ^ first byte`) measures what the chain itself costs, ~1.5 ns, which
+is in every number and is not part of anybody's hash.
+
 Two smaller tools answer questions the harnesses cannot. `scripts/ab/probe_length.sh` patches a
 counter into a copy of the probe and reports **groups visited per lookup**, fresh and after churn,
 with an argument for how many writing lookups each churn round does -- which is the only path
