@@ -16,6 +16,7 @@ Stdlib only.
     scripts/ab/mapsplot.py bars   <csv> <key> <base> <out.svg> <workload[:title]>...
     scripts/ab/mapsplot.py memory <csv> <key> <base> <out.svg>
     scripts/ab/mapsplot.py octave <maps.txt> <key> <base> <workload> <out.svg> <map>...
+    scripts/ab/mapsplot.py hashlat <hash_others-sweep.csv> <out.svg>
     scripts/ab/mapsplot.py table  <csv> <key> <base>            markdown, ratios to the group index
     scripts/ab/mapsplot.py htmltable <csv> <key> <base>         the same, tinted by distance from parity
     scripts/ab/mapsplot.py swing  <maps.txt> <key> <base> <workload>   dearest / cheapest point
@@ -302,6 +303,97 @@ def cmd_octave(argv):
     print(out)
 
 
+def cmd_hashlat(argv):
+    """Latency against key length, for every string hash in the comparison.
+
+    A hash dispatches on length, so its cost is a staircase and one number over a mix of lengths
+    hides the shape. Latency rather than throughput because that is what a *map* pays: the hash's
+    result is the address of the group to probe, so nothing after it can start.
+
+    The two unordered_dense versions share a hue and differ by dash -- colour for the library,
+    style for the version, the same convention the size charts use for boost's two hashes -- which
+    keeps the categorical set at the four validated hues.
+    """
+    src, out = argv[0], argv[1]
+    series = defaultdict(list)
+    for r in csv.DictReader(open(src)):
+        series[r["hash"]].append((int(r["bytes"]), float(r["latency_ns"])))
+    order = ["udm5", "udm4", "absl", "boost", "folly"]
+    style = {
+        "udm5": (FAMILY["dense"][0], "none", "unordered_dense 5.0"),
+        "udm4": (FAMILY["dense"][0], "6 4", "unordered_dense 4.11.0"),
+        "absl": (LINE[0], "none", "absl::Hash"),
+        "boost": (LINE[2], "none", "boost::hash"),
+        "folly": (LINE[3], "none", "folly::hasher"),
+    }
+    W2, H2 = 920, 470
+    L, R, T, B = 58, 178, 96, 62
+    lo, hi = 4, 1024
+    # The x axis is logarithmic, because a key length is exponential over the useful range. The y
+    # axis is linear and starts at zero, so that a distance on it is a number of nanoseconds rather
+    # than a ratio -- which costs some resolution among the short keys, where three of the five
+    # lines are within a nanosecond of each other, and the table beside this chart is where those
+    # are read off.
+    vals = [v for m in order for _, v in series.get(m, [])]
+    tk = ticks(max(vals) * 1.04)
+    s = head(W2, H2)
+    s += '  <text x="8" y="22" class="hd">What a string hash costs a lookup, by key length</text>\n'
+    s += ('  <text x="8" y="42" class="sub">nanoseconds per hash, each one waiting on the one '
+          'before it, which is the order a map pays them in</text>\n')
+    s += ('  <text x="8" y="60" class="sub">every hash interleaved in one process, on a '
+          'logarithmic length axis; about 1.5 ns of every line is the chain\'s own store and '
+          'load</text>\n')
+
+    def px(n):
+        return L + (math.log2(n) - math.log2(lo)) / (math.log2(hi) - math.log2(lo)) * (W2 - L - R)
+
+    def py(v):
+        return T + (1 - v / tk[-1]) * (H2 - T - B)
+
+    axis_y = py(0)
+    s += (f'  <rect x="{px(8):.1f}" y="{T:.0f}" width="{px(135) - px(8):.1f}" '
+          f'height="{py(0) - T:.1f}" fill="#f1f5f9"/>\n')
+    s += (f'  <text x="{(px(8) + px(135)) / 2:.0f}" y="{T + 14:.0f}" class="m" '
+          f'text-anchor="middle">the lengths this post\'s string keys use</text>\n')
+    for tv in tk:
+        s += f'  <line x1="{L}" y1="{py(tv):.1f}" x2="{W2 - R}" y2="{py(tv):.1f}" class="ax"/>\n'
+        s += f'  <text x="{L - 8}" y="{py(tv) + 4:.1f}" class="m" text-anchor="end">{tv:g}</text>\n'
+    s += f'  <line x1="{L}" y1="{axis_y:.1f}" x2="{W2 - R}" y2="{axis_y:.1f}" class="base"/>\n'
+    s += f'  <text x="{L}" y="{T - 14}" class="m">nanoseconds per hash, chained</text>\n'
+    for n in (4, 8, 16, 32, 64, 128, 256, 512, 1024):
+        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 18:.0f}" class="m" text-anchor="middle">'
+              f'{n}</text>\n')
+        s += (f'  <line x1="{px(n):.1f}" y1="{axis_y:.1f}" x2="{px(n):.1f}" y2="{axis_y + 4:.1f}" '
+              f'class="base"/>\n')
+    s += (f'  <text x="{(L + W2 - R) / 2:.0f}" y="{H2 - 14}" class="m" text-anchor="middle">'
+          f'key length in bytes</text>\n')
+
+    ends = []
+    for m in order:
+        pts = sorted(series.get(m, []))
+        if not pts:
+            continue
+        col, dash, label = style[m]
+        d = " ".join(("M" if i == 0 else "L") + f"{px(n):.1f},{py(v):.1f}"
+                     for i, (n, v) in enumerate(pts))
+        da = "" if dash == "none" else f' stroke-dasharray="{dash}"'
+        s += (f'  <path d="{d}" fill="none" stroke="{col}" stroke-width="1.9" '
+              f'stroke-linejoin="round"{da}/>\n')
+        ends.append((py(pts[-1][1]), px(pts[-1][0]), col, dash, label))
+    ends.sort()
+    last = -1e9
+    for y, x, col, dash, label in ends:
+        y = max(y, last + 17)
+        last = y
+        da = "" if dash == "none" else f' stroke-dasharray="4 3"'
+        s += (f'  <line x1="{x + 8:.1f}" y1="{y:.1f}" x2="{x + 24:.1f}" y2="{y:.1f}" '
+              f'stroke="{col}" stroke-width="2.4" stroke-linecap="round"{da}/>\n')
+        s += f'  <text x="{x + 30:.1f}" y="{y + 4:.1f}" class="m">{esc(label)}</text>\n'
+    s += "</svg>\n"
+    open(out, "w").write(s)
+    print(out)
+
+
 def cmd_merge(argv):
     """Combine independent runs point by point, and say how far apart the worst of them was.
 
@@ -430,4 +522,5 @@ def cmd_swing(argv):
 if __name__ == "__main__":
     {"bars": cmd_bars, "memory": cmd_memory, "octave": cmd_octave, "table": cmd_table,
      "htmltable": cmd_htmltable,
+     "hashlat": cmd_hashlat,
      "swing": cmd_swing, "merge": cmd_merge}[sys.argv[1]](sys.argv[2:])

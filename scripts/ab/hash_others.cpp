@@ -171,20 +171,51 @@ void report(char const* label, std::vector<std::string>& keys, double width, boo
     std::fflush(stdout);
 }
 
+// The lengths the sweep samples: every byte through the short path and the first independent
+// blocks, where each change of strategy is one step, then coarsening, since past 160 bytes the
+// chained lanes make every curve a straight line on a log axis.
+auto sweep_lengths() -> std::vector<std::size_t> {
+    auto out = std::vector<std::size_t>();
+    for (std::size_t n = 4; n <= 72; ++n) {
+        out.push_back(n);
+    }
+    for (std::size_t n = 76; n <= 160; n += 4) {
+        out.push_back(n);
+    }
+    for (std::size_t n = 176; n <= 320; n += 16) {
+        out.push_back(n);
+    }
+    for (std::size_t n = 352; n <= 1024; n += 32) {
+        out.push_back(n);
+    }
+    return out;
+}
+
 } // namespace
 
 auto main(int argc, char** argv) -> int {
     workloads::tame_allocator();
-    auto const width = argc > 1 ? std::atof(argv[1]) : 0.02;
-    std::printf("keys,hash,throughput_ns,latency_ns\n");
+    auto const mode = std::string(argc > 1 ? argv[1] : "table");
+    auto const width = argc > 2 ? std::atof(argv[2]) : 0.02;
 
     auto warm = keys_of_length(32);
     report("warmup", warm, width, false);
 
+    if (mode == "sweep") {
+        // One line per length per hash, for the latency chart. Throughput is measured anyway --
+        // the two share a set of keys and the second measurement is the cheaper half of the run.
+        std::printf("bytes,hash,throughput_ns,latency_ns\n");
+        for (auto len : sweep_lengths()) {
+            auto keys = keys_of_length(len);
+            report(std::to_string(len).c_str(), keys, width, true);
+        }
+        return 0;
+    }
+
+    std::printf("keys,hash,throughput_ns,latency_ns\n");
     for (auto len : {8U, 16U, 32U, 64U, 128U, 256U}) {
         auto keys = keys_of_length(len);
-        auto label = std::to_string(len) + "B";
-        report(label.c_str(), keys, width, true);
+        report((std::to_string(len) + "B").c_str(), keys, width, true);
     }
     auto mix = scored_keys();
     report("mix", mix, width, true);
