@@ -34,6 +34,19 @@
 #ifdef UDM_AB_HAVE_FOLLY
 #    include <folly/hash/Hash.h>
 #endif
+#ifdef UDM_AB_HAVE_RAPIDHASH
+#    include <rapidhash.h>
+#endif
+#ifdef UDM_AB_HAVE_KOMIHASH
+#    include <komihash.h>
+#endif
+#ifdef UDM_AB_HAVE_POLYMUR
+#    include <polymur-hash.h>
+#endif
+#ifdef UDM_AB_HAVE_AQUAHASH
+#    include <aquahash.h>
+#endif
+#include "hash_ports.h"
 #include <bench/workloads.h>
 #include <third-party/nanobench.h>
 
@@ -106,7 +119,10 @@ struct row {
     "udm5",                                                                                                            \
         WRAP(ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size())),                                       \
         "floor", WRAP(static_cast<std::uint64_t>(s.size()) ^ static_cast<std::uint64_t>(s[0]))                          \
-        UDM_BASE(WRAP) UDM_BOOST(WRAP) UDM_ABSL(WRAP) UDM_FOLLY(WRAP)
+        UDM_BASE(WRAP) UDM_BOOST(WRAP) UDM_ABSL(WRAP) UDM_FOLLY(WRAP)                                                  \
+        , "foldhash", WRAP(udm_ab::foldhash::fast(s.data(), s.size()))                                                 \
+        , "foldhash-q", WRAP(udm_ab::foldhash::quality(s.data(), s.size()))                                            \
+        UDM_RAPID(WRAP) UDM_KOMI(WRAP) UDM_POLYMUR(WRAP) UDM_AQUA(WRAP) UDM_GX(WRAP)
 
 #ifdef UDM_AB_HAVE_BASE
 #    define UDM_BASE(WRAP) , "udm4", WRAP(udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size()))
@@ -127,6 +143,43 @@ struct row {
 #    define UDM_FOLLY(WRAP) , "folly", WRAP(folly::hasher<std::string>{}(s))
 #else
 #    define UDM_FOLLY(WRAP)
+#endif
+#ifdef UDM_AB_HAVE_RAPIDHASH
+#    define UDM_RAPID(WRAP) , "rapidNano", WRAP(rapidhashNano(s.data(), s.size()))
+#else
+#    define UDM_RAPID(WRAP)
+#endif
+#ifdef UDM_AB_HAVE_KOMIHASH
+#    define UDM_KOMI(WRAP) , "komihash", WRAP(komihash(s.data(), s.size(), UINT64_C(0x1234567890abcdef)))
+#else
+#    define UDM_KOMI(WRAP)
+#endif
+#ifdef UDM_AB_HAVE_POLYMUR
+// polymur derives a key schedule from a seed once, so the params are a translation-unit constant
+// rather than something the hashed expression builds.
+inline auto const polymur_params = [] {
+    auto p = PolymurHashParams();
+    polymur_init_params_from_seed(&p, UINT64_C(0xfedcba9876543210));
+    return p;
+}();
+#    define UDM_POLYMUR(WRAP)                                                                                          \
+        , "polymur",                                                                                                   \
+            WRAP(polymur_hash(reinterpret_cast<std::uint8_t const*>(s.data()), s.size(), &polymur_params, 0))
+#else
+#    define UDM_POLYMUR(WRAP)
+#endif
+#if defined(UDM_AB_HAVE_AQUAHASH) && defined(__AES__)
+#    define UDM_AQUA(WRAP)                                                                                             \
+        , "AquaHash",                                                                                                  \
+            WRAP(static_cast<std::uint64_t>(                                                                           \
+                _mm_cvtsi128_si64(AquaHash::Hash(reinterpret_cast<std::uint8_t const*>(s.data()), s.size()))))
+#else
+#    define UDM_AQUA(WRAP)
+#endif
+#if defined(__AES__)
+#    define UDM_GX(WRAP) , "gxhash", WRAP(udm_ab::gxhash::hash(s.data(), s.size()))
+#else
+#    define UDM_GX(WRAP)
 #endif
 
 #define UDM_THROUGHPUT(EXPR)                                                                                           \

@@ -1193,6 +1193,78 @@ Three cycles off the hash's chain does not show in a lookup at all. Not adopted,
 ties the stronger finalizer is the one to keep for everyone who uses `hash<std::string>` outside
 the map.
 
+**Six more hashes tried, none adopted, and the pair of columns says why** (2026-09-09, asked as
+"give these hashes a try as well" -- rapidhashNano, foldhash, komihash, polymur-hash, AquaHash and
+gxhash). All six are in `scripts/ab/hash_others.{cpp,sh}` now, so the table below re-runs. Two of
+them ship as Rust crates and are ported in `scripts/ab/hash_ports.h`; both ports are checked rather
+than trusted. **gxhash reproduces the three `is_stable` vectors from its own test module**, and
+**foldhash is bit-identical to the crate** at eleven lengths from 0 to 300 bytes for both variants,
+against a `cargo run` of the real thing.
+
+**Strict avalanche first, because it decides which rows are even candidates.** Worst and mean
+|P(output bit flips) - 1/2| over every (input bit, output bit) pair, 12000 samples, noise floor
+0.014. Seven of the nine are clean at every length: udm5, rapidhashNano, foldhash-*quality*,
+komihash, polymur, AquaHash and gxhash all read 0.015 to 0.022. Two are not:
+
+| key bytes | `absl::Hash` | foldhash-fast |
+|---|---|---|
+| 4, 8, 12 | 0.495 to 0.500 | 0.497 to 0.500 |
+| 16 | 0.078 | 0.074 |
+| 17 | 0.067 | **0.500** |
+| 48 | 0.076 | 0.179 |
+| 128 | 0.079 | 0.072 |
+
+foldhash says so itself: the fast variant "is optimized purely for speed in hash tables and has
+known statistical imperfections", and `foldhash::quality` is the same hash with one more folded
+multiply, which is exactly what repairs it.
+
+**Then the two time columns, and they order the field oppositely.** Median of three processes, the
+scored key mix (8 to 135 bytes skewed short), latency net of the chain floor, relative to this hash:
+
+| hash | latency | throughput | avalanche |
+|---|---|---|---|
+| foldhash-fast | **0.98x** | 0.87x | fails |
+| **udm5** | **1.00x** | 1.00x | clean |
+| `absl::Hash` | 1.01x | 1.03x | fails |
+| udm4 (4.11.0) | 1.14x | 1.08x | clean |
+| foldhash-quality | 1.15x | **0.98x** | clean |
+| rapidhashNano | 1.22x | **0.95x** | clean |
+| komihash | 1.37x | 1.38x | clean |
+| AquaHash | 1.55x | 1.14x | clean |
+| gxhash | 1.67x | **0.76x** | clean |
+| `boost::hash` | 1.68x | 2.17x | -- |
+| polymur-hash | 1.95x | 3.53x | clean |
+| `folly::hasher` | 2.98x | 4.12x | -- |
+
+**On latency, which is what a map lookup pays, nothing clean is faster than what unordered_dense
+already ships.** The one hash ahead of it is foldhash-fast, by 2%, and it buys that the same way
+abseil does, with one folded multiply where this hash has two. **On throughput, which is what a
+hashing loop pays, this hash is fifth of twelve**, and the two AES designs are exactly where the
+earlier gxhash port said they would be: gxhash is the fastest of all twelve in a loop (0.76x) and
+third from last on latency (1.67x), and AquaHash is 2.2x ahead of this hash at 256 bytes in
+throughput (3.33 ns against 7.24) while being 1.55x behind on latency. Two AES hashes, measured
+independently, saying what one of them said in July. They also need `-maes`, which a header cannot
+assume.
+
+Three things worth keeping beyond the verdict.
+
+**rapidhashNano ties this hash exactly at 8 and 16 bytes** (4.12 and 4.11 ns against 4.11 and 4.11)
+and loses from 32 up (5.27 against 4.52, 10.71 against 8.02 at 256). That is the same code at the
+short end, since the two-overlapping-reads trick came from rapidhash in the first place, and the
+independent-block change measured against the design it was derived from at the long end.
+
+**polymur-hash is not slow by accident.** It is the only hash here with a provable universality
+bound, a Carter-Wegman construction over a Mersenne prime field, and 1.95x latency is what that
+costs. A different goal, priced.
+
+**And a throughput number taken through a function pointer is not a throughput number.** The first
+version of this harness dispatched every hash through a `uint64_t (*)(void const*, size_t)`, which
+prices the call rather than the hash and hurts a big function most: gxhash read **1.33x** that way
+and **0.76x** when the expression is inlined into the loop the way `hash_others.cpp` has always done
+it. The latency column barely moved (every ratio within 0.03 of the inlined one, on all nine
+hashes), because a call is a constant added to a chain. So the two harnesses agree on latency and
+disagree on throughput by 1.75x, and only one of them is measuring what a caller sees.
+
 **Why `absl::Hash` is faster below 32 bytes, and what taking it would cost** (2026-09-09, asked as
 "figure out why abseil's hash is faster up to 32 byte, can we learn something from them"). The
 own-hash control rows put `absl::Hash` 9 to 22% below this hash at 8, 16 and 32 bytes and 12 to 23%
