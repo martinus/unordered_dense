@@ -37,7 +37,8 @@ libs=() srcs=() have=(udm5 "udm4($rev)") missing=()
 try() { # name, define, test-include, flags...
     local name=$1 def=$2 header=$3
     shift 3
-    if printf '#include <%s>\nint main() {}\n' "$header" | "$cxx" -x c++ -std=c++20 -fsyntax-only "$@" - 2>/dev/null; then
+    if printf '#include <cstdint>\n#include <cstddef>\n#include <%s>\nint main() {}\n' "$header" |
+        "$cxx" -x c++ -std=c++20 -maes -fsyntax-only "$@" - 2>/dev/null; then
         flags+=("$@" "-D$def")
         have+=("$name")
         return 0
@@ -50,6 +51,19 @@ absl=${ABSL_ROOT:-/home/martinus/gra/abseil-install}
 if try absl UDM_AB_HAVE_ABSL absl/hash/hash.h -I"$absl/include"; then
     libs+=(-Wl,--start-group "$absl"/lib64/libabsl_*.a -Wl,--end-group)
 fi
+for spec in "rapidhash:UDM_AB_HAVE_RAPIDHASH:rapidhash.h:RAPIDHASH_INCLUDE:/home/martinus/gra/rapidhash" \
+            "komihash:UDM_AB_HAVE_KOMIHASH:komihash.h:KOMIHASH_INCLUDE:/home/martinus/gra/komihash" \
+            "polymur:UDM_AB_HAVE_POLYMUR:polymur-hash.h:POLYMUR_INCLUDE:/home/martinus/gra/polymur-hash" \
+            "AquaHash:UDM_AB_HAVE_AQUAHASH:aquahash.h:AQUAHASH_INCLUDE:/home/martinus/gra/AquaHash"; do
+    IFS=: read -r nm def hdr var dfl <<<"$spec"
+    dir=${!var:-$dfl}
+    try "$nm" "$def" "$hdr" -I"$dir" || true
+done
+# AquaHash and gxhash are AES-NI, which is not in the baseline ISA. -maes enables the intrinsics
+# without touching anything else, which is checked: the non-AES rows read the same with and without.
+flags+=(-maes)
+have+=(foldhash foldhash-q gxhash)
+
 folly=${FOLLY_ROOT:-/home/martinus/gra/folly}
 follycfg=${FOLLY_CONFIG:-/home/martinus/gra/folly-config}
 # SpookyHashV2, which is what folly::hasher<std::string> is, lives in a .cpp.
