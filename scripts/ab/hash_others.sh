@@ -1,7 +1,10 @@
 #!/bin/bash
 # Latency and throughput of every string hash in the map comparison, in one process.
 #
-#   scripts/ab/hash_others.sh [-c compiler] [-r baseline-revision] [interval-width]
+#   scripts/ab/hash_others.sh [-c compiler] [-r baseline-revision] [table|sweep] [interval-width]
+#
+# `table` is the six lengths and the scored mix that the blog post quotes; `sweep` walks 4 to 1024
+# bytes for the latency chart.
 #
 # Optional dependencies are found the way maps.sh finds them, and anything missing is left out of
 # the table rather than failing the run: ABSL_ROOT, FOLLY_ROOT and FOLLY_CONFIG, boost from the
@@ -17,7 +20,8 @@ while getopts "c:r:" opt; do
     esac
 done
 shift $((OPTIND - 1))
-width=${1:-0.02}
+mode=${1:-table}
+width=${2:-0.02}
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 build=${AB_BUILD:-$(mktemp -d)}
 mkdir -p "$build"
@@ -56,4 +60,4 @@ nbo="$build/nb_$(basename "$cxx").o"
 
 echo "hashes: ${have[*]} | missing: ${missing[*]:-none} | $cxx" >&2
 "$cxx" "${flags[@]}" "$root/scripts/ab/hash_others.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$build/hash_others"
-taskset -c "${AB_CORE:-2}" "$build/hash_others" "$width"
+taskset -c "${AB_CORE:-2}" "$build/hash_others" "$mode" "$width"
