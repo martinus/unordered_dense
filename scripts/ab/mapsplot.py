@@ -16,7 +16,7 @@ Stdlib only.
     scripts/ab/mapsplot.py bars   <csv> <key> <base> <out.svg> <workload[:title]>...
     scripts/ab/mapsplot.py memory <csv> <key> <base> <out.svg>
     scripts/ab/mapsplot.py octave <maps.txt> <key> <base> <workload> <out.svg> <map>...
-    scripts/ab/mapsplot.py hashlat <hash_others-sweep.csv> <out.svg>
+    scripts/ab/mapsplot.py hashlat <hash_others-sweep.csv> <out.svg> [y-max]
     scripts/ab/mapsplot.py table  <csv> <key> <base>            markdown, ratios to the group index
     scripts/ab/mapsplot.py htmltable <csv> <key> <base>         the same, tinted by distance from parity
     scripts/ab/mapsplot.py swing  <maps.txt> <key> <base> <workload>   dearest / cheapest point
@@ -249,6 +249,8 @@ def cmd_octave(argv):
     vmax = max(v for s in series.values() for _, v in s) * 1.06
     tk = ticks(vmax)
     s = head(W2, H2)
+    s += (f'  <clipPath id="plot"><rect x="{L}" y="{T}" width="{W2 - R - L}" '
+          f'height="{H2 - T - B}"/></clipPath>\n')
     s += (f'  <text x="8" y="22" class="hd">{esc(work)} against table size, across one doubling and '
           f'a little past it, {key} keys</text>\n')
     s += (f'  <text x="8" y="42" class="sub">the same {len(xs)} sizes for every map, {lo:,} to '
@@ -315,6 +317,7 @@ def cmd_hashlat(argv):
     keeps the categorical set at the four validated hues.
     """
     src, out = argv[0], argv[1]
+    ymax = float(argv[2]) if len(argv) > 2 else 0.0
     series = defaultdict(list)
     for r in csv.DictReader(open(src)):
         series[r["hash"]].append((int(r["bytes"]), float(r["latency_ns"])))
@@ -335,7 +338,13 @@ def cmd_hashlat(argv):
     # lines are within a nanosecond of each other, and the table beside this chart is where those
     # are read off.
     vals = [v for m in order for _, v in series.get(m, [])]
-    tk = ticks(max(vals) * 1.04)
+    tk = ticks(ymax if ymax else max(vals) * 1.04)
+    if ymax:
+        # A named ceiling rather than the data's own, so that the axis ends on a round number. The
+        # two slowest hashes cross it in the last few dozen bytes -- boost reaches 62.8 ns at a
+        # kilobyte and folly 61.1 -- and are clipped to the frame there rather than the axis being
+        # stretched by 5% for two points nobody reads a length off.
+        tk = [tv for tv in tk if tv <= ymax] or tk
     s = head(W2, H2)
     s += '  <text x="8" y="22" class="hd">What a string hash costs a lookup, by key length</text>\n'
     s += ('  <text x="8" y="42" class="sub">nanoseconds per hash, each one waiting on the one '
@@ -378,8 +387,8 @@ def cmd_hashlat(argv):
                      for i, (n, v) in enumerate(pts))
         da = "" if dash == "none" else f' stroke-dasharray="{dash}"'
         s += (f'  <path d="{d}" fill="none" stroke="{col}" stroke-width="1.9" '
-              f'stroke-linejoin="round"{da}/>\n')
-        ends.append((py(pts[-1][1]), px(pts[-1][0]), col, dash, label))
+              f'stroke-linejoin="round" clip-path="url(#plot)"{da}/>\n')
+        ends.append((max(py(pts[-1][1]), T), px(pts[-1][0]), col, dash, label))
     ends.sort()
     last = -1e9
     for y, x, col, dash, label in ends:
