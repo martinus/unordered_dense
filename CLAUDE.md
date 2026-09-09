@@ -1176,7 +1176,9 @@ avalanche of the fold *without* its finalizer says those are exactly the weak pl
 |p - 1/2| 0.076 in bits 0-7 and 0.074 in bits 36-63, 0.024 in between. So the question was whether
 something cheaper than a 128-bit multiply repairs them. Two things do, at every boundary length from
 17 to 300 and under two seeds: **`x * C`** (one `imul`, 3 cycles, a bijection) and **`x ^ rotl(x,
-32)`** (2 cycles), both at the 0.02 noise floor everywhere the current finalizer is. `hi64(x * C)`
+32)`** (2 cycles), both at the 0.02 noise floor everywhere the current finalizer is. (Not
+everywhere: boundary lengths are the ones that cannot see this shape fail, and the entry above
+sweeps every length and finds it failing at `len % 16 == 2`.) `hi64(x * C)`
 does not (0.041 in the top bits: the high half of a product by a constant is weak at the top). And
 neither works on the short path: at 8 bytes the two reads are the same bytes and at 9-15 they
 overlap, the inner multiply's operands are correlated, and only a real second multiply repairs
@@ -1190,6 +1192,68 @@ reading 0.996-1.008: block-range `imul` `rhitstr` 1.006, `findstr` 1.009, `churn
 Three cycles off the hash's chain does not show in a lookup at all. Not adopted, since when speed
 ties the stronger finalizer is the one to keep for everyone who uses `hash<std::string>` outside
 the map.
+
+**Why `absl::Hash` is faster below 32 bytes, and what taking it would cost** (2026-09-09, asked as
+"figure out why abseil's hash is faster up to 32 byte, can we learn something from them"). The
+own-hash control rows put `absl::Hash` 9 to 22% below this hash at 8, 16 and 32 bytes and 12 to 23%
+above it at 64, 128 and 256. The mechanism is one number: **abseil is one 128-bit multiply deep at
+every length up to 32, where this hash is two.** At 8 bytes and below it is `Mix(state ^ v, kMul)`,
+one operand a compile-time constant; at 9 to 16 `Mix(state ^ first8, kMul ^ last8)`; at 17 to 32 two
+*parallel* mixes of overlapping 16 byte ranges xored together. None of the three has a finalizer,
+because the length is mixed in at the *start* instead: `PrecombineLengthMix` xors an unaligned load
+from a 40 byte constant table indexed by `len`, which issues immediately since the caller knows the
+length. Past 32 bytes it calls an out-of-line function, and that is the 12 to 23% it gives back.
+
+**What it costs, measured rather than assumed.** Strict avalanche, worst and mean |P(output bit
+flips) - 1/2| over every (input bit, output bit) pair, 20000 samples, noise floor 0.011:
+
+| key bytes | this hash | `absl::Hash` |
+|---|---|---|
+| 8 | 0.0149 / 0.0028 | **0.5000** / 0.2557 |
+| 12 | 0.0164 / 0.0028 | **0.4981** / 0.0314 |
+| 15 | 0.0141 / 0.0028 | **0.4923** / 0.0041 |
+| 16 | 0.0139 / 0.0028 | 0.0710 / 0.0030 |
+| 17 to 64 | 0.014 to 0.017 | 0.064 to 0.081 |
+
+A worst of 0.50 is a pair that is deterministic, and the one at 8 bytes is easy to name: the fold is
+`hi ^ lo` of `x * K`, and flipping x's top bit changes `hi` by `K >> 1` plus a carry, which cannot
+reach bit 63, while `lo`'s bit 63 always flips. Measured directly, **flipping input bit 63 flips
+output bit 63 in 1,000,000 of 1,000,000 cases**. That is a linear relation in the bits this map uses
+for the group. So the speed is bought with avalanche, and abseil's header says as much in its own
+way, worrying only about a zero operand.
+
+**The idea does transfer to the block range, and the earlier test of it above is wrong.** The entry
+above says `x * C` and `x ^ rotl(x, 32)` sit at the noise floor "at every boundary length from 17 to
+300". Boundary lengths are exactly the lengths that cannot see the failure. Swept over *every*
+length from 17 to 144, the single-multiply block range fails at **len % 16 == 2** and nowhere else:
+worst 0.055 to 0.073 at 18, 34, 50, 66, 82, 98, 114 and 130, against 0.009 to 0.012 for the shipped
+hash, on two seeds at 6000 and 40000 samples. The tail block is then a two byte shift of the last
+front block, and one fold cannot separate two near-duplicates.
+
+**One rotate repairs it exactly.** Rotating the tail block's product by 27 before the xor breaks the
+shift symmetry: worst 0.0345 / mean 0.0053 over 17 to 144 against the shipped 0.0368 / 0.0052, no bad
+lengths, and no equal-content length collisions. The length then needs no finalizer either, and
+abseil's table is not needed for it: a plain `^ len` into the first block's second operand measures
+the same as the table lookup and is two instructions cheaper. Standalone that whole shape is
+**1.14x at 17 to 32 bytes, 1.12x on the scored mix net of the harness's chain**, and identical below
+17 bytes where nothing changed.
+
+**And in the map it is worth nothing, again.** One map per binary, `map<std::string, size_t>`, 20M
+lookups, three rounds, patched header against shipped: **+1.75 instructions per lookup** at every
+size and both outcomes, and cycles inside the noise on all four of hit and miss at 32,000 and
+200,000. Measured twice over, once with independent lookups and once with the next key drawn from
+the previous answer so that nothing overlaps, and the dependent version does not favour it either.
+Two cycles off a chain of 180 is 1%, which this instrument cannot resolve and a user cannot feel.
+Not adopted, and the reason is now the quality one rather than an unresolved tie: the shipped
+finalizer is worth keeping for `hash<std::string>` outside the map.
+
+**What cannot be taken at all is the short path.** Below 12 bytes the two 8 byte reads overlap by
+five bytes or more, and at exactly 8 they are the same word, so one product has correlated operands.
+Six one-multiply shapes were tried there -- one mul alone, plus `x * C`, plus `x ^ rotl(x, 32)`, two
+parallel muls with swapped operands, the same with a rotate, and abseil's constant-operand form --
+and every one of them reads 0.16 to 0.50 worst at 8 to 11 bytes. From 12 bytes up one multiply plus
+`x ^ rotl(x, 32)` is clean, but 12 to 16 bytes is only 8.6% of the scored key mix, so there is
+nothing there to chase either.
 
 Taken together with the entry below, the picture is now complete enough to stop: the hash's serial
 chain is two multiplies, removing one is invisible, a length-branch structure that removes
