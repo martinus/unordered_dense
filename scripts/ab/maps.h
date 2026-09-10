@@ -103,7 +103,14 @@ namespace udm_maps {
 
 template <typename Map>
 struct stl_like {
+    // Whether reserve() below really reserves. A map that cannot be told its size in advance would
+    // otherwise measure its own growth in a workload whose whole point is that growth is out of it.
+    static constexpr bool reserves = true;
+
     Map m{};
+    void reserve(std::size_t n) {
+        m.reserve(n);
+    }
     template <typename K>
     void insert(K const& k, std::size_t v) {
         m.try_emplace(k, v);
@@ -188,6 +195,11 @@ struct a_verstable {
     a_verstable(a_verstable const&) = delete;
     auto operator=(a_verstable const&) -> a_verstable& = delete;
 
+    static constexpr bool reserves = true;
+    void reserve(std::size_t n) {
+        vtab_reserve(&t, n);
+    }
+
     // _insert replaces an existing value, like insert_or_assign; the honest counterpart of
     // try_emplace is _get_or_insert.
     void insert(std::uint64_t k, std::size_t v) {
@@ -239,6 +251,11 @@ struct a_ihtab {
                   "fixed by the macro template it wraps: only the uint64_t key and the 8 byte value");
     static constexpr char const* name = "ihtab";
     iht::ihtab<iht_entry, iht_hash, iht_eq> t{8};
+
+    // Sized at construction and never afterwards, so this cannot honour the request. Said out loud
+    // rather than silently ignored: `reserves` is what makes the harness print the difference.
+    static constexpr bool reserves = false;
+    void reserve(std::size_t /*n*/) {}
 
     void insert(std::uint64_t k, std::size_t v) {
         auto e = iht_entry{k, v};
@@ -410,6 +427,21 @@ auto build(pools<Key> const& p) -> std::size_t {
     return m.size();
 }
 
+// The same build with the size known in advance, which takes growth and the rehash out of it and
+// leaves the pure insert path: a probe that misses, a value appended, a slot pointed at it. That is
+// the thing this map is slowest at relative to a flat one -- 97.8 instructions under clang against
+// boost's 64 on 2026-09-08 -- and there was no tool in the repository that measured it on its own.
+//
+// A map that cannot reserve (Map::reserves is false) measures its own growth here instead, which is
+// a different quantity; maps_one.cpp prints which it was.
+template <typename Map, typename Key>
+auto build_reserved(pools<Key> const& p) -> std::size_t {
+    auto m = Map();
+    m.reserve(p.present.size());
+    fill(m, p);
+    return m.size();
+}
+
 // The rngs outlive the epochs on purpose. A benchmark whose per-epoch batch is small enough to
 // memorise must advance its own randomness, or a TAGE-style predictor learns the sequence of hits
 // and misses and flatters whichever probe has the most branches in it -- measured at 2.7x once.
@@ -427,6 +459,23 @@ auto lookups(Map& m, pools<Key> const& p, lookup_state& st, asking what, std::si
         auto const at = static_cast<std::size_t>(((st.rng() >> 32U) * p.present.size()) >> 32U);
         auto const hit = what == asking::hits || (what == asking::half && (st.coin() & 1U) != 0);
         acc += m.count(hit ? p.present[at] : p.absent[at]);
+    }
+    return acc;
+}
+
+// ++m[k] on a key that is already there: the writing lookup, which finds the key, does not place
+// anything, and on this map also gets move_home(). It is the commonest map operation there is and
+// it is where an always_inline placement path is paid for without being used (clang 73.2
+// instructions against 48.4 without it), so it is measured on its own rather than inside churn.
+//
+// Draws its keys the way lookups() does, from a state that outlives the epoch: a batch small enough
+// to memorise, replayed, is learned by the branch predictor.
+template <typename Map, typename Key>
+auto bump_present(Map& m, pools<Key> const& p, lookup_state& st, std::size_t n) -> std::size_t {
+    auto acc = std::size_t{0};
+    for (std::size_t i = 0; i < n; ++i) {
+        auto const at = static_cast<std::size_t>(((st.rng() >> 32U) * p.present.size()) >> 32U);
+        acc += m.bump(p.present[at]);
     }
     return acc;
 }
