@@ -81,6 +81,8 @@ class timeline {
     std::chrono::steady_clock::time_point m_start{};
     std::size_t m_live = 0;
     std::size_t m_peak = 0;
+    std::size_t m_fill_bytes = 0;
+    double m_fill_seconds = 0.0;
 
 public:
     timeline() = default;
@@ -95,6 +97,8 @@ public:
         m_size = 0;
         m_live = 0;
         m_peak = 0;
+        m_fill_bytes = 0;
+        m_fill_seconds = 0.0;
         m_start = std::chrono::steady_clock::now();
     }
 
@@ -122,6 +126,15 @@ public:
         m_events[m_size++] = event{std::chrono::duration<double>(elapsed).count(), m_live};
     }
 
+    // A sample with no change in it. Without one, a line ends at the last *allocation*, and a map
+    // that finished resizing early and then coasted to the end of the fill looks like it stopped
+    // there -- which is a picture of nothing, since it was still inserting.
+    void mark() {
+        note(0, false);
+        m_fill_seconds = m_events[m_size - 1].seconds;
+        m_fill_bytes = m_live;
+    }
+
     [[nodiscard]] auto peak() const -> std::size_t {
         return m_peak;
     }
@@ -130,12 +143,16 @@ public:
         return m_live;
     }
 
-    [[nodiscard]] auto count() const -> std::size_t {
-        return m_size;
+    [[nodiscard]] auto fill_bytes() const -> std::size_t {
+        return m_fill_bytes;
     }
 
-    [[nodiscard]] auto seconds() const -> double {
-        return m_size == 0 ? 0.0 : m_events[m_size - 1].seconds;
+    [[nodiscard]] auto fill_seconds() const -> double {
+        return m_fill_seconds;
+    }
+
+    [[nodiscard]] auto count() const -> std::size_t {
+        return m_size;
     }
 
     void save(char const* path) const {
@@ -209,20 +226,23 @@ void measure(char const* name, char const* path) {
         for (std::size_t i = 0; i < num_elements; ++i) {
             map[r()] = i;
         }
-        g_recording = nullptr;
+        t.mark();
         if (map.size() != num_elements) {
             std::fprintf(stderr, "%s: %zu elements, expected %zu\n", name, map.size(), num_elements);
             std::exit(1);
         }
-        // The map is still alive here on purpose: the last row of the chart is the steady state,
-        // not the cliff of a destructor.
-        t.save(path);
+        // Recording continues over the destructor, so each line ends where the map handed its
+        // memory back rather than in mid-air. It is the one part of the picture that is free to
+        // measure and impossible to infer: a map of two blocks drops to zero at once, and one of
+        // forty thousand segments walks down.
     }
-    std::printf("%-46s %7.1f MB steady  %7.1f MB peak  %6.3f s  %zu allocations\n",
+    g_recording = nullptr;
+    t.save(path);
+    std::printf("%-46s %7.1f MB steady  %7.1f MB peak  filled in %6.3f s  %zu allocations\n",
                 name,
-                static_cast<double>(t.live()) / 1e6,
+                static_cast<double>(t.fill_bytes()) / 1e6,
                 static_cast<double>(t.peak()) / 1e6,
-                t.seconds(),
+                t.fill_seconds(),
                 t.count());
     std::fflush(stdout);
 }

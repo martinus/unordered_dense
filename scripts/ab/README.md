@@ -95,6 +95,13 @@ is trying to measure. And it stamps each change with `std::chrono::steady_clock`
 so the x axis is elapsed time rather than a reconstruction, on a clock nothing can step underneath
 it.
 
+Two events are recorded that are not allocations, because without them the chart lies. One at the
+end of the fill: a line otherwise ends at the last *allocation*, so a map that finished resizing
+early and coasted to the end looks like it stopped there -- boost's line ended at 0.34 s when its
+fill ran to 0.41. And the teardown, so each line drops to zero where the map actually handed its
+memory back, which for a dense map is two steps and for `segmented_map` is a walk down through its
+segments.
+
 `doc/allocated_memory.png` and `doc/allocated_memory.gnuplot` are the only things under `doc/` that
 are committed, because that chart is the one the top-level README embeds. The CSVs behind it are not.
 boost and abseil are drawn if they are installed and quietly left off if they are not.
