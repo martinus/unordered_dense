@@ -13,7 +13,6 @@ test_sources = [
     'bench/precomputed_hash.cpp',
     'bench/quick_overall_map.cpp',
     'bench/replace_key.cpp',
-    'bench/show_allocations.cpp',
     'bench/swap.cpp',
 
     'fuzz/run.cpp',

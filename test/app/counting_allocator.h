@@ -1,76 +1,27 @@
 #pragma once
 
-#include <fmt/ostream.h>
-
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <limits>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
-// Source: https://github.com/bitcoin/bitcoin/blob/master/src/memusage.h#L41-L61
-static inline auto malloc_usage(size_t alloc) -> size_t {
-    static_assert(sizeof(void*) == 8 || sizeof(void*) == 4);
-
-    // Measured on libc6 2.19 on Linux.
-    if constexpr (sizeof(void*) == 8U) {
-        return ((alloc + 31U) >> 4U) << 4U;
-    } else {
-        return ((alloc + 15U) >> 3U) << 3U;
-    }
-}
-
+// How many times a container asked its allocator for memory, or handed it back.
+//
+// This is a *count*, for tests that assert a container allocates once per segment or not at all on
+// a swap. It is deliberately not a memory measurement: what a request really costs is what the
+// allocator rounded it up to, which only the allocator can say, and a container's own allocator
+// never sees what a value type allocates for itself. scripts/ab/alloc_timeline.cpp measures memory,
+// by replacing global operator new and asking malloc_usable_size.
 class counts_for_allocator {
-    struct measurement_internal {
-        std::chrono::steady_clock::time_point m_tp{};
-        size_t m_diff{};
-    };
-
-    struct measurement {
-        std::chrono::steady_clock::duration m_duration{};
-        size_t m_num_bytes_allocated{};
-    };
-
-    std::vector<measurement_internal> m_measurements{};
-    std::chrono::steady_clock::time_point m_start = std::chrono::steady_clock::now();
-
-    template <typename Op>
-    void each_measurement(Op op) const {
-        auto total_bytes = size_t();
-        auto const start_time = m_start;
-        for (auto const& m : m_measurements) {
-            bool is_add = true;
-            size_t bytes = m.m_diff;
-            if (bytes > (0U - bytes)) {
-                // negative number
-                is_add = false;
-                bytes = 0U - bytes;
-            }
-
-            if (is_add) {
-                total_bytes += malloc_usage(bytes);
-            } else {
-                total_bytes -= malloc_usage(bytes);
-            }
-            op(measurement{m.m_tp - start_time, total_bytes});
-        }
-    }
+    std::vector<std::size_t> m_measurements{};
 
 public:
     void add(size_t count) {
-        m_measurements.emplace_back(measurement_internal{std::chrono::steady_clock::now(), count});
+        m_measurements.emplace_back(count);
     }
 
     void sub(size_t count) {
         // overflow, but it's ok
-        m_measurements.emplace_back(measurement_internal{std::chrono::steady_clock::now(), 0U - count});
-    }
-
-    void save(std::filesystem::path const& filename) const {
-        auto fout = std::ofstream(filename);
-        each_measurement([&](measurement m) {
-            fmt::print(fout, "{}; {}\n", std::chrono::duration<double>(m.m_duration).count(), m.m_num_bytes_allocated);
-        });
+        m_measurements.emplace_back(0U - count);
     }
 
     [[nodiscard]] auto size() const -> size_t {
@@ -79,7 +30,6 @@ public:
 
     void reset() {
         m_measurements.clear();
-        m_start = std::chrono::steady_clock::now();
     }
 };
 

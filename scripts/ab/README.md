@@ -73,6 +73,32 @@ NANOBENCH_INCLUDE=/path/to/nanobench/src scripts/ab/regen.sh
 Nothing else in the repository depends on that -- the header, the tests and the scored benchmark all
 build against the vendored nanobench as they always did.
 
+## Memory against time, the one chart the README embeds
+
+```sh
+scripts/ab/alloc_timeline.sh          # measures, then draws doc/allocated_memory.png
+```
+
+`memory.cpp` above answers "how much does this map hold", one number per size. This one answers
+"what does it hold *while it fills*", which is a different question and the one `segmented_map`
+exists for: the transient at a doubling is memory a caller has to have room for and that no steady
+figure reports.
+
+Three things it does that an allocator-based count cannot, and the chart is wrong without any of
+them. It counts **every** allocation the process makes, by replacing global `operator new` -- a
+container's own allocator never sees what a value type allocates for itself, and cannot be handed to
+a map whose allocator is not a reachable template parameter. It charges each allocation what the
+allocator **really** gave away, `malloc_usable_size` plus glibc's 8 byte chunk header, so the
+rounding up to a 16 byte chunk is counted rather than estimated by a formula that has to guess the
+allocator's version -- and a size prefix of one's own is not a way out, since it changes the chunk it
+is trying to measure. And it stamps each change with `std::chrono::steady_clock` **as it happens**,
+so the x axis is elapsed time rather than a reconstruction, on a clock nothing can step underneath
+it.
+
+`doc/allocated_memory.png` and `doc/allocated_memory.gnuplot` are the only things under `doc/` that
+are committed, because that chart is the one the top-level README embeds. The CSVs behind it are not.
+boost and abseil are drawn if they are installed and quietly left off if they are not.
+
 ## The charts, interactively
 
 Nothing under `doc/` is tracked except the two `allocated_memory` files. The CSVs are
