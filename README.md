@@ -39,7 +39,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
     - [3.5.2. `ankerl::unordered_dense::bucket_type::group_big`](#352-ankerlunordered_densebucket_typegroup_big)
-  - [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe)
+  - [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
 - [5. Design](#5-design)
   - [5.1. Inserts](#51-inserts)
@@ -62,7 +62,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
 The chosen design has a few advantages over `std::unordered_map`: 
 
 * Perfect iteration speed - Data is stored in a `std::vector`, all data is contiguous!
-* Very fast insertion & lookup speed, in the same ballpark as [`absl::flat_hash_map`](https://abseil.io/docs/cpp/guides/container`)
+* Very fast insertion & lookup speed, in the same ballpark as [`absl::flat_hash_map`](https://abseil.io/docs/cpp/guides/container)
 * Low memory usage
 * Full support for `std::allocators`, and [polymorphic allocators](https://en.cppreference.com/w/cpp/memory/polymorphic_allocator). There are `ankerl::unordered_dense::pmr` typedefs available
 * Customizable storage type: with a template parameter you can e.g. switch from `std::vector` to `boost::interprocess::vector` or any other compatible random-access container.
@@ -129,7 +129,7 @@ clang++ -std=c++20 -fprebuilt-module-path=. ankerl.unordered_dense.o module_test
 
 A simple demo script can be found in `test/modules`.
 
-The module compares fingerprints without SSE2, see [3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe). If you
+The module compares fingerprints without SSE2, see [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe). If you
 wrap the header in a module of your own and build it with gcc, you need to do the same.
 
 ### 3.2. Hash
@@ -403,12 +403,12 @@ works.
 #### 3.5.1. `ankerl::unordered_dense::bucket_type::group`
 
 * Up to 2^32 = 4.29 billion elements.
-* 5.5 bytes overhead per slot: 24 bytes per group of sixteen, and a 4 byte value index per slot.
+* 5.5 bytes overhead per slot: one 88 byte block per group of sixteen slots, holding the sixteen fingerprints, the group's eight overflow counters and sixteen 4 byte value indices.
 
 #### 3.5.2. `ankerl::unordered_dense::bucket_type::group_big`
 
 * Up to 2^63 = 9,223,372,036,854,775,808 elements.
-* 9.5 bytes overhead per slot: an 8 byte value index instead of a 4 byte one.
+* 9.5 bytes overhead per slot: the same block with 8 byte value indices instead of 4 byte ones, so 152 bytes per group.
 
 ### 3.6. Disabling the Vector Probe
 
@@ -440,22 +440,31 @@ workloads; on AArch64 it is not, which is why the NEON path exists.
 * Faster insertion because elements never need to be moved to newly allocated blocks
 * Slightly slower indexing compared to `std::vector` because an additional indirection is needed.
 
-Here is a comparison against `absl::flat_hash_map` and `ankerl::unordered_dense::map` when inserting 10 million entries:
+Here is what each of four maps holds while 10 million `uint64_t -> uint64_t` pairs are inserted into it:
 ![allocated memory](doc/allocated_memory.png)
 
-Abseil is fastest for this simple insertion test, taking a bit over 0.8 seconds. Its peak memory usage is about 430 MB. Note how the memory usage goes down after the last peak; when it goes down to ~290MB it has finished rehashing and could free the previously used memory block.
+| inserting 10M pairs | held at the end | peak while filling |
+|---|---|---|
+| `ankerl::unordered_dense::map` | 361 MB | 495 MB |
+| `ankerl::unordered_dense::segmented_map` | **253 MB** | **253 MB** |
+| `boost::unordered_flat_map` | 268 MB | 403 MB |
+| `absl::flat_hash_map` | 285 MB | 428 MB |
 
-`ankerl::unordered_dense::segmented_map` doesn't have these peaks, and instead has a smooth increase in memory usage. Note there are still sudden drops & increases in memory because the indexing data structure still needs to increase by a fixed factor.
+Every flat and dense map in that chart has the same sawtooth, and for the same reason: growing means allocating the new array before releasing the old one, so the transient is what a caller has to have room for even though nothing ever reports it. `ankerl::unordered_dense::map` has the tallest one, because a dense map grows a vector of values as well as an index.
 
-The segmenting is about the values: it is those that grow smoothly and whose references stay valid. The index is two plain contiguous arrays either way, and growing it still allocates the new one beside the old, so the index alone keeps a doubling spike that `segmented_map` does not remove. Since 5.0.0 that is a change from before, when the index was segmented too.
+`segmented_map` is the line without a sawtooth. Its values live in fixed-size segments, so growing adds a segment instead of copying everything into a bigger block, and the memory it holds only ever goes up. The one step still visible in that line is the index doubling, which segmenting does not remove -- but it happens while the values are still small, so on this run it never rises above where the map ends up, and the peak and the steady state are the same number.
 
-How much it matters depends on the size of your value. The index is 5.5 bytes per slot, so at the moment it doubles it needs about 16.5 bytes per slot transiently, against `sizeof(value_type)` bytes per element for the values. For `map<uint64_t, uint64_t>` that spike is roughly two thirds of the value storage; for a map with a large value it is a rounding error; for a `set<uint64_t>` it is larger than the values. If you need the index to grow smoothly as well, `reserve()` up front avoids the doubling entirely, which is worth doing for a large map whatever container it uses.
+The segmenting is about the values: it is those that grow smoothly and whose references stay valid. The index is one plain contiguous array either way, and growing it still allocates the new one beside the old. Since 5.0.0 that is a change from before, when the index was segmented too.
+
+The chart is drawn by `scripts/ab/alloc_timeline.sh`, which counts *every* allocation the process makes by replacing global `operator new` -- an allocator handed to a container sees only what that container asks for through it -- charges each one what the allocator really gave away (`malloc_usable_size` plus glibc's chunk header, so the rounding up is counted rather than guessed at), and takes a `std::chrono::steady_clock` reading at each change. The runtimes on the x axis are from one machine and one run; the byte counts are exact.
+
+How much the remaining index spike matters depends on the size of your value. The index is 5.5 bytes per slot, so at the moment it doubles it needs about 16.5 bytes per slot transiently, against `sizeof(value_type)` bytes per element for the values. For `map<uint64_t, uint64_t>` that spike is roughly two thirds of the value storage; for a map with a large value it is a rounding error; for a `set<uint64_t>` it is larger than the values. If you need the index to grow smoothly as well, `reserve()` up front avoids the doubling entirely, which is worth doing for a large map whatever container it uses.
 
 ## 5. Design
 
 The map/set has two data structures:
 * `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
-* An indexing structure, which is a flat array of groups of sixteen slots, and the value index of each slot beside it.
+* An indexing structure, which is a flat array of blocks. Each block is one group of sixteen slots: their fingerprints, the group's overflow counters, and the sixteen value indices, all in the same 88 bytes.
 
 ### 5.1. Inserts
 
@@ -463,11 +472,11 @@ Whenever an element is added, it is `emplace_back`ed to the vector. The key is h
 records where the value went. The index is groups of sixteen slots:
 
 ```cpp
-struct group {
-    uint8_t m_fingerprints[16]; // the low byte of the hash, 0 means empty
-    uint8_t m_overflows[8];     // how many entries with (fingerprint & 7) == i probed past this group
-};
-uint32_t value_index[16 * groups]; // one per slot, beside the groups
+struct block {
+    uint8_t  m_fingerprints[16]; // the low byte of the hash, 0 means empty
+    uint8_t  m_overflows[8];     // how many entries with (fingerprint & 7) == i probed past this group
+    uint32_t m_index[16];        // where in the value vector each occupied slot's element is
+};                               // 88 bytes, one per group, in a single array
 ```
 
 The top bits of the hash pick the group, the low byte is the fingerprint, with 0 mapped to 8 so
@@ -488,18 +497,27 @@ overflowed past its group on *their* probe sequences, so with a hash the caller 
 group's counter can be left positive by a handful of keys, and a miss would then have nothing on
 its sequence to stop at.
 
-The value indices of a group have an address that depends only on the group, so they are prefetched
-while the fingerprints are still on their way.
+A slot's value index sits at a fixed offset from the fingerprints it belongs to rather than in a
+second array at a second address, so a lookup touches one region instead of two and the line the
+index is on is prefetched while the fingerprints are still on their way.
 
 An element that arrived while its home group was full sits in a later group, and it stays there
 even after the home group empties again. So a long-churned table probes a little further than one
-built from the same contents: at a load of 0.76, 1.14 groups per hit against 1.03, and 1.27 per
-miss against 1.05. It settles there after about a dozen turnovers instead of growing, which is the
-difference from a design that leaves tombstones behind and has to rehash them away; `rehash()`
-rebuilds the index if you want the difference back.
+built from the same contents, and not by much: at a load of 0.76, after 200 full turnovers, 1.036
+groups per hit against a fresh 1.031, and 1.061 per miss against 1.052. At a load of 0.79 it is
+1.058 against 1.037 and 1.109 against 1.077. It settles there rather than growing, which is the
+difference from a design that leaves tombstones behind and has to rehash them away.
 
-Without SSE2 the same sixteen bytes are compared eight at a time with ordinary arithmetic, see
-[3.6. Disabling the SSE2 Probe](#36-disabling-the-sse2-probe).
+A lookup that *finds* something inside an operation that writes -- `operator[]`, `try_emplace`,
+`insert` -- puts that element back in its home group if there is room, which costs a load and two
+stores and needs no second hash, since the probe just computed the home. That takes the drift back
+and then some: one such lookup per erase-and-insert round leaves the churned table at 1.023 groups
+per hit and 1.036 per miss, *better* than freshly built, because it also pulls home the elements the
+original build left away from home. A workload that only reads gets none of this, and `rehash()`
+rebuilds the index if you want the difference back that way.
+
+Without a vector compare the same sixteen bytes are compared eight at a time with ordinary
+arithmetic, see [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe).
 
 ### 5.3. Removals
 
