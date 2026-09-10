@@ -64,6 +64,12 @@ namespace {
 // the iteration where the counter lands exactly on the bound, so there are lengths here that leave
 // it at 17 after the 48-byte loop (65) and at 96 after the 96-byte one (288, 289).
 //
+// 161 and 209 are the same idea for the *long* path's 16-byte loop, and they were missing: past
+// 144 bytes the counter is reduced by 96 and then by 48, so `while (i > 16)` is only distinguished
+// from `> 17` where that leaves exactly 17. 161 gets there through the 48-byte loop (161 - 96 = 65,
+// then 65 - 48 = 17) and 209 through the 96-byte one twice (209 - 96 - 96 = 17). Without them the
+// bound could be moved with the whole suite green -- found by a mutation sweep on 2026-09-10.
+//
 // The values from 17 to 144 changed on 2026-09-06, when that range became independent blocks;
 // everything shorter and everything longer hashes exactly as it did.
 TEST_CASE("wyhash_golden_values_by_length") {
@@ -85,6 +91,7 @@ TEST_CASE("wyhash_golden_values_by_length") {
         {144, UINT64_C(0x05009220cd4747f6)}, {145, UINT64_C(0x9214c954a67e0c14)}, {192, UINT64_C(0xbc152e7c1f5e9c40)},
         {193, UINT64_C(0x11ff8ae436691f52)}, {200, UINT64_C(0xc0895d26f8d2d90f)}, {288, UINT64_C(0x17e4aa47a185f12c)},
         {289, UINT64_C(0xede2975ce774d7e7)}, {300, UINT64_C(0xb8446c7b09ba427b)}, {512, UINT64_C(0x2c274db7d27dc42b)},
+        {161, UINT64_C(0xc3b8477018e0a5dc)}, {209, UINT64_C(0x391a4915c98fd37c)},
     };
 
     auto const data = pattern(512);

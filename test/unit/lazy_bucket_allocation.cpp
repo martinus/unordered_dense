@@ -403,6 +403,28 @@ TEST_CASE_MAP("reserve_sizes_the_buckets_not_just_the_values", int, int) {
 // to carry that over -- the copy must also start from the smallest array, not from the source's
 // grown shift. Only visible when the copy already has buckets of its own, i.e. copy-assignment
 // into a grown target, since a fresh target is at the initial shift anyway.
+// rehash() and reserve() take the same decision -- "is the array I have already the right one" --
+// and answer it differently on a table that has no array at all. rehash() is allowed to leave it
+// that way, because a caller who rehashes an empty map has asked for nothing; reserve() is not,
+// because the whole point of it is to have the room before the inserts arrive. Both arms of that
+// were unasserted: a mutation sweep on 2026-09-10 could delete rehash()'s early return, and turn
+// reserve()'s `0 == bucket_count()` into `1 == bucket_count()` -- which is never true, since a
+// table has either no buckets or at least sixty-four -- with the whole suite green.
+TEST_CASE_MAP("rehash_on_an_empty_table_allocates_nothing_and_reserve_allocates", uint64_t, uint64_t) {
+    auto map = map_t();
+    REQUIRE(map.bucket_count() == 0);
+
+    map.rehash(0);
+    REQUIRE(map.bucket_count() == 0); // still nothing: an empty map has nothing to index
+
+    map.reserve(0);
+    REQUIRE(map.bucket_count() > 0); // but reserve() is a request for room, even for none of it
+
+    auto fresh = map_t();
+    fresh.rehash(100);
+    REQUIRE(fresh.bucket_count() >= 100);
+}
+
 TEST_CASE_MAP("copying_an_emptied_table_starts_from_the_smallest_array", uint64_t, uint64_t) {
     auto source = map_t();
     for (uint64_t i = 0; i < 1000; ++i) {

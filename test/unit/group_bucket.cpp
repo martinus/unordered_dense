@@ -125,6 +125,39 @@ using u64_map = ankerl::unordered_dense::map<uint64_t,
 
 } // namespace
 
+// The bucket count reserve() picks is the *smallest* power of two that holds the request at the
+// maximum load factor, and where the boundary falls is decided by one comparison in
+// calc_shifts_for_size(). Nothing pinned it: turning that `<` into `<=` moves every exact boundary
+// by one element and doubles the array a step early, which costs memory on every table built with
+// reserve() and which a mutation sweep on 2026-09-10 found nothing noticed.
+//
+// So this checks both sides: the count is enough, and half of it would not have been. The listed
+// sizes are the exact boundaries at a load factor of 0.8 -- 64 slots hold 51, 128 hold 102, and so
+// on -- because a size in the middle of a range is satisfied by both answers.
+TEST_CASE("reserve_picks_the_smallest_array_that_holds_the_request") {
+    using sized_map_t = ankerl::unordered_dense::map<uint64_t, uint64_t>;
+
+    for (auto n : {size_t{1}, size_t{51}, size_t{52}, size_t{102}, size_t{103}, size_t{204}, size_t{205}, size_t{1000}}) {
+        auto map = sized_map_t();
+        map.reserve(n);
+        auto const count = map.bucket_count();
+        INFO("reserve(", n, ") gave ", count, " buckets");
+
+        // enough for the request ...
+        REQUIRE(static_cast<double>(count) * static_cast<double>(map.max_load_factor()) >= static_cast<double>(n));
+        // ... and the next size down would not have been, unless we are already at the smallest
+        if (count > 64) {
+            REQUIRE(static_cast<double>(count / 2) * static_cast<double>(map.max_load_factor()) < static_cast<double>(n));
+        }
+
+        // and it really is room rather than a number: filling to the request must not grow it
+        for (uint64_t i = 0; i < n; ++i) {
+            map[i] = i;
+        }
+        REQUIRE(map.bucket_count() == count);
+    }
+}
+
 TEST_CASE("group_index_against_reference") {
     run_against_reference<u64_map<ankerl::unordered_dense::bucket_type::group>>(1, 10, 20000, false);
     run_against_reference<u64_map<ankerl::unordered_dense::bucket_type::group>>(2, 3000, 200000, false);

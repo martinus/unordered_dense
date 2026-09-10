@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 // An erase takes its entry back out of every overflow counter its insert put it into, and until
 // this test nothing checked that. Deleting the decrement outright leaves the whole suite green --
@@ -108,6 +110,47 @@ auto build(overflow mode) -> uncount_map_t {
 }
 
 } // namespace
+
+// The other half of the erase path: finish_erase() moves m_values.back() into the hole the erased
+// element left, and then has to find the slot that pointed at it, which slot_of_value() does by
+// walking that element's own quadratic sequence from its home group.
+//
+// Every erase elsewhere in the suite moves an element that is still sitting in its home group, so
+// the walk never takes a second step. This one arranges for the moved element to be one that
+// overflowed: the last key inserted is homed in a group that was already full, so it lives in the
+// next group and is at the back of the value vector, and erasing a different key moves it.
+//
+// What this does *not* do is pin the walk's step. Starting its delta at 1 instead of 0 leaves the
+// suite green, and a mutation sweep on 2026-09-10 said so -- correctly, because slot_of_value has
+// no stopping condition except finding the value, and the value is definitely there. A different
+// step reaches it in a different order and a few groups later, which is slower and never wrong. So
+// that mutant is equivalent rather than a hole, and this case is here for the path rather than for
+// the constant.
+TEST_CASE("finish_erase_finds_a_moved_element_outside_its_home_group") {
+    auto map = build(overflow::live);
+    auto const key = uncount_keys(map);
+
+    // The overflowers went in last, so the final one is m_values.back() -- which is what an erase
+    // of anything else will move.
+    auto const displaced = key(uncount_home, 200 + uncount_overflowers - 1, uncount_fp);
+    REQUIRE(map.values().back().first == displaced);
+
+    auto const before = std::vector<std::pair<std::uint64_t, std::uint64_t>>(map.values().begin(), map.values().end());
+    auto const victim = key(uncount_home, 0, uncount_fp);
+    REQUIRE(victim != displaced);
+    REQUIRE(map.erase(victim) == 1U);
+
+    REQUIRE(map.size() == before.size() - 1);
+    for (auto const& entry : before) {
+        auto it = map.find(entry.first);
+        if (entry.first == victim) {
+            REQUIRE(it == map.end());
+        } else {
+            REQUIRE(it != map.end());
+            REQUIRE(it->second == entry.second);
+        }
+    }
+}
 
 TEST_CASE("erase_takes_its_entry_back_out_of_the_overflow_counters") {
     auto const fresh = build(overflow::none);

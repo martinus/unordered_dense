@@ -4,8 +4,11 @@
 
 #include <third-party/nanobench.h> // for Rng, doNotOptimizeAway, Bench
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 
 TEST_CASE("tuple_hash") {
     auto m = ankerl::unordered_dense::map<std::pair<int, std::string>, int>();
@@ -15,6 +18,31 @@ TEST_CASE("tuple_hash") {
     m.try_emplace({1, "a"}, 23);
     m.try_emplace({1, "b"}, 42);
     REQUIRE(m.size() == 2U);
+}
+
+// What hashing a tuple actually computes, pinned.
+//
+// Every other case in this file asks whether *different* tuples hash differently, and they do
+// whatever `to64` does with each element -- so the one decision in it is invisible to all of them.
+// That decision is `if constexpr (is_integral_v<Arg> || is_enum_v<Arg>)`: an integral or an enum is
+// cast straight to 64 bits and the map's own mixing does the rest, anything else is hashed first.
+// Turning that `||` into `&&` sends every integer through `hash<Arg>{}` instead, changing the hash
+// of every tuple in every program -- and a mutation sweep on 2026-09-10 found nothing noticed.
+//
+// As with hash_golden.cpp this is not a promise the values never change. It is a promise that
+// changing them is a decision. The single-element rows are the sharpest: a one element tuple of an
+// integer is that integer, unmixed, which is exactly the property the `||` branch exists for.
+TEST_CASE("tuple_hash_golden_values") {
+    enum class colour : std::uint8_t { red = 1, green = 2 };
+    using ankerl::unordered_dense::hash;
+
+    REQUIRE(hash<std::tuple<>>{}({}) == UINT64_C(0x0000000000000000));
+    REQUIRE(hash<std::tuple<std::uint64_t>>{}({UINT64_MAX}) == UINT64_C(0xffffffffffffffff));
+    REQUIRE(hash<std::pair<int, int>>{}({1, 2}) == UINT64_C(0x0008a6bc006f6e06));
+    REQUIRE(hash<std::pair<int, int>>{}({2, 1}) == UINT64_C(0xa2312f5f36a55294));
+    REQUIRE(hash<std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>>{}({1, 2, 3}) == UINT64_C(0xd34d2e086bbe0e77));
+    REQUIRE(hash<std::tuple<int, std::string>>{}({7, "hello"}) == UINT64_C(0x1140b91276c83448));
+    REQUIRE(hash<std::tuple<colour, int>>{}({colour::green, 5}) == UINT64_C(0xdab19772c384ecfa));
 }
 
 TEST_CASE("good_tuple_hash") {
