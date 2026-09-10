@@ -260,6 +260,16 @@ test(
     timeout: 600,
     verbose: true)
 
+# The LLDB formatter check. The script builds its own -O0 -g fixture and holds the
+# formatter's answers against ground truth that fixture prints itself. No workflow
+# installs a debugger, so it exits 77 -- meson's skip -- everywhere in CI until one
+# does; on a machine with lldb on PATH it runs for real.
+test(
+    'lldb_formatters',
+    find_program(meson.current_source_dir() / '..' / 'scripts' / 'test_lldb_formatters.py'),
+    timeout: 600,
+    verbose: true)
+
 # libFuzzer targets. The unit suite replays data/fuzz/<name> on every build, which by construction
 # only finds what has already been found; these are the binaries that go looking. They are clang
 # only (-fsanitize=fuzzer), and not built by default because nothing in a normal build or test run
