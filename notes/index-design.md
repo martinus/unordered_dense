@@ -32,6 +32,15 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- The F14Vector string miss, re-measured, and the old explanation of it is wrong
+- Where they are, from `perf annotate`
+- Splitting the probe so the miss path stops paying for it
+- And a measurement trap that cost most of a session
+- Eleven slots and twenty-four slots, and why sixteen is where it stops
+- What eleven adds that twelve could not say
+- And the reason is the counters, in the direction opposite to the prediction
+- So sixteen is a local optimum on three axes at once
+- Why none of them could have won, which is the part worth keeping
 - A growth factor below 2, and the premise that suggested it was wrong
 - Not worth changing the default, and worth documenting as a knob
 - The pipelined rehash does not transfer to `boost::unordered_flat_map`, and no other map has one
@@ -277,6 +286,119 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**The F14Vector string miss, re-measured, and the old explanation of it is wrong** (2026-09-10,
+asked as "is my map the fastest dense map"). The paired octave still has F14VectorMap ahead on
+string lookups -- miss 1.06 at the 1000 octave and 1.09 at 32000, hit 1.02-1.03, half 1.04-1.06 --
+and per size across the 32000 octave the miss ratio runs 1.072, 0.990, 1.125, 1.145, 1.118. One map
+per binary, 30M lookups, three runs agreeing to 0.5%, per lookup at 32000:
+
+| | ns | instructions | cycles | branch misses | L1 misses |
+|---|---|---|---|---|---|
+| str miss, this map | 18.99 | 138.4 | 100.0 | **1.046** | 5.19 |
+| str miss, F14Vector | **17.20** | **130.5** | **90.7** | 1.13 | **3.91** |
+| str hit, this map | 24.9 | **166.2** | 131.7 | 1.068 | 8.36 |
+| str hit, F14Vector | 25.0 | 170.8 | 132.4 | 1.079 | **7.72** |
+| u64 miss, this map | **3.24** | **55.8** | **16.8** | **0.038** | 3.26 |
+| u64 miss, F14Vector | 3.67 | 61.2 | 19.0 | 0.103 | **1.99** |
+
+So the string **hit** is a tie on time with fewer instructions here, the integer miss is **27% ours**,
+and the one loss is the string miss: **+8 instructions and +1.3 L1 fills**, while winning on branch
+misses. The L1 column is a constant of the design -- we take ~1.3 more fills per lookup on every
+workload, and win the other two anyway.
+
+**The entry above that blames clang for leaving `do_find_hashed` out of line no longer applies.**
+`nm` on today's binaries: the only out-of-line probe symbols in the sixteen-map binary belong to the
+**4.11.0 baseline copy** (`udmbase::...::v4_11_0`), and the current map's probe is inlined in both
+the one-map and the sixteen-map binary. Whatever that diagnosis was true of, it is not true of this
+header, and the +8 instructions have to be explained some other way.
+
+**Where they are, from `perf annotate`.** `do_find` for a `std::string` key opens with six
+callee-saved pushes, a 72 byte frame and six spills -- the counter, `this`, the group mask, the
+delta, the hash, and `movdqa %xmm0, 0x30(%rsp)`, the broadcast fingerprint itself -- **all before the
+first group is compared**. The broadcast is spilled because `m_equal` is a call and xmm registers
+are caller-saved, so a vector spill is paid on every lookup to survive a `memcmp` that a miss
+reaches about 2.5% of the time.
+
+**Splitting the probe so the miss path stops paying for it: measured, and it costs more than it
+saves.** Everything past the home group moved into a `noinline` continuation taking the word, the
+counter and the group index, leaving the fast path to compare one group and stop. It does exactly
+what it was meant to on the string miss -- **138.3 to 126.5 instructions**, 99.4 to 95.8 cycles,
+2.8% faster -- and wrecks the integer paths: `u64 miss` 55.8 to 65.9 instructions (+18%), `u64 hit`
+at a million 69.1 to 85.0 and 31.13 to 39.66 ns (+27%). Introducing a call into a lookup that was
+fully inlined makes the register allocator treat the caller-saved registers as clobbered, so the
+spills reappear around the call site. `[[gnu::cold]]` on the continuation plus marking the branch
+likely changed nothing: the fast path still has to be able to make the call. Reverted. It buys 8% of
+the one workload we lose and spends 20% of the ones we lead by most.
+
+**And a measurement trap that cost most of a session.** `scripts/ab/maps_one.sh`'s third argument is
+the **number of lookups** and its default is 30,000,000. Passing 20, and then 400, measures 20 and
+400 lookups: three runs of the *unmodified* header then spanned 417500 to 491000 ns, a **16% spread**,
+and a "removing the prefetches is worth 16%" conclusion was built on two samples inside it. At 30M
+the same comparison resolves to 0.5% and the true figure is 1.8%. Instruction counts were stable to
+0.7% throughout and would have caught it immediately, which is the rule this file already states and
+which was not followed.
+
+**Eleven slots and twenty-four slots, and why sixteen is where it stops** (2026-09-10, asked as
+"how about doing only 11 lanes", "12 fingerprints, 4 counters, 12 indices" and "how about going
+bigger"). Three block sizes were proposed in one sitting and all three are answered. The 12-slot one
+is the entry further down, measured 2026-09-07 at 0.9888. The other two were built today.
+
+**Eleven slots: 11 fingerprints, 8 counters, 11 four-byte indices, one pad byte, `alignas(64)`.**
+Exactly one cache line with *full* `uint32` indices, so unlike the 3-byte-index prototype it caps
+nothing, and the block address becomes `shl $6` instead of the `imulq $0x58` that sits on the
+address path of every lookup. Paired octave against the shipped sixteen, above 1.00 meaning eleven
+is faster: `rmiss64` **1.037**, `rmissstr` 1.012, `findstr` 1.010, `rhit64` 1.007, `find64` 1.000,
+`build64` 0.981, `ie64` **0.963**, `churnbig` 0.946, `churn64` **0.944**; control `hashstr` 0.893.
+Misses 1-4% better, churn and insert-erase 4-6% worse, net below 1.00. The `rmiss64` figure
+reproduces the 1.039 this file already recorded for an eleven-slot group as an aside about octave
+measurement, so that footnote and this are the same design.
+
+**What eleven adds that twelve could not say.** The 12-slot layout changed two things at once -- a
+shorter group *and* four counter classes instead of eight -- and lost churn 7%. Eleven keeps all
+eight classes and still loses churn 5.6%, which separates them: **the counters were not the problem,
+the group length was.** At load 0.8 a group of sixteen holds 12.8 and overflows at 2.0 standard
+deviations; a group of eleven holds 8.8 and overflows at 1.65. Shorter groups fill more often, more
+entries land away from home, and every insert and erase then walks and updates more counters.
+
+**Twenty-four slots: 24 fingerprints, 8 counters, 24 indices, exactly 128 bytes**, 5.33 bytes per
+slot -- slightly *less* than the shipped 5.5. The trade was supposed to invert: a group of 24
+overflows at 2.45 standard deviations, so churn should have come back. **It is the worst of the
+three and it loses everywhere.** `rmiss64` **0.853**, `churn64` 0.863, `churnbig` 0.870, `find64`
+0.919, `ie64` 0.923, `iebig` 0.927, `findbig` 0.933, `it64` 0.935, `rhit64` 0.949, `rmissstr` 0.967,
+`findstr` 0.972, `build64` 0.977, `rhitstr` 0.987, `churnstr` 0.992, `buildstr` 1.001, `buildbig`
+1.005; control `hashstr` 1.114. Nineteen of nineteen scored workloads at or below 1.005.
+
+**And the reason is the counters, in the direction opposite to the prediction.** The largest single
+loss is the *miss*, which is what the counters exist to stop. There are still only eight classes, so
+a group of 24 puts **three slots in each class instead of two**: any given class holds more entries,
+its counter is nonzero more often, and a miss continues past home more often. Enlarging the group
+without enlarging the counter array dilutes the filter. That is the counter-width axis reached from
+the other end -- one class scored 0.959, sixteen nibbles filtered better but cost arithmetic -- and
+it says the eight counters and the sixteen slots are not two choices but one.
+
+**So sixteen is a local optimum on three axes at once**, and moving either way breaks one of them:
+
+| | 11 slots | 16 slots, shipped | 24 slots |
+|---|---|---|---|
+| overflow frequency | worse (1.65 sd) | 2.0 sd | better (2.45 sd) |
+| slots per counter class | 1.4 | **2** | 3, and the miss pays for it |
+| the compare | one SSE2 load | **one SSE2 load** | two |
+| paired octave | below 1.00 | -- | 0.85 to 1.00 everywhere |
+
+Both prototypes needed the same two fixes before they were correct, and either is a trap for the
+next attempt: the group count must be rounded down to a power of two, because
+`max_bucket_count() / slots_per_group` is not one when the slot count is not, and `max_size()` has
+to follow it. Without the first, `bucket.cpp`'s one-byte-index `group_micro` corrupts the heap --
+the same failure the 12-slot entry records -- and without the second it segfaults instead.
+
+**Why none of them could have won, which is the part worth keeping.** All three shrink or align the
+block to remove L1 fills, and **the fills are not on the critical path**. The 12-slot entry said it
+first (1.4 fewer L1 misses per string lookup, cycles unchanged to the tenth) and today's prefetch
+experiment says it independently: removing both index prefetches removes **1.08 L1 fills per string
+miss** -- taking us from 5.19 to 4.11, against F14Vector's 3.91 -- and buys **1.8% of time**. A
+prefetch is asynchronous by construction, so the counter moves and the clock does not. Any future
+idea justified by "it touches fewer cache lines" has to answer that first.
+
 **A growth factor below 2, and the premise that suggested it was wrong** (2026-09-08, asked as
 "should we benchmark folly's 1.406"). **Folly doubles.** Printing `bucket_count()` after every insert
 for five maps: F14Value goes 24, 48, 96, 192, 384; F14Vector 20, 40, 80, 160; boost, abseil and this
