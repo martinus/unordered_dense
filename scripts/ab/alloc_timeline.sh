@@ -1,7 +1,13 @@
 #!/bin/bash
 # Draws doc/allocated_memory.png: bytes held against time while four maps are filled.
 #
-#   scripts/ab/alloc_timeline.sh [-c compiler] [output-dir]
+#   scripts/ab/alloc_timeline.sh [-c compiler] [-l max-load-factor] [-n entries] [output-dir]
+#
+# -l applies to this library's maps only, since boost's setter is a no-op and abseil has none. It is
+# a step function of the entry count rather than a dial: the bucket array is a power of two, so
+# raising it saves an array only for the entry counts it moves across a power of two, and elsewhere
+# it changes nothing but delays the doubling until the values are bigger, which makes the peak
+# taller.
 #
 # Unlike everything else in this directory this one is *not* a timing benchmark -- what it plots is
 # a byte count, which is exact -- but it is on the same clock, so run it on a quiet machine anyway:
@@ -12,10 +18,12 @@
 # doc/ that is committed, because it is the one chart the README embeds.
 set -euo pipefail
 export LC_ALL=C
-cxx=clang++
-while getopts "c:" opt; do
+cxx=clang++ load=0 entries=10000000
+while getopts "c:l:n:" opt; do
     case $opt in
         c) cxx=$OPTARG ;;
+        l) load=$OPTARG ;;
+        n) entries=$OPTARG ;;
         *) exit 1 ;;
     esac
 done
@@ -37,7 +45,7 @@ fi
 # A series left over from an earlier run on a machine that had boost would otherwise be replotted
 # beside today's measurements.
 rm -f "$out"/allocated_memory_*.csv
-"$build/alloc_timeline" "$out"
+"$build/alloc_timeline" "$out" "$load" "$entries"
 
 # Only the series that were actually produced go to gnuplot, so a machine without boost or abseil
 # gets a chart of what it could measure rather than an error about a missing file.
