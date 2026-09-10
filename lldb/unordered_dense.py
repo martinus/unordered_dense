@@ -8,15 +8,15 @@ every variant, because the public aliases all resolve to
 
 The table stores all elements densely in `m_values` -- a `std::vector` for
 map/set, a `segmented_vector` for segmented_map/segmented_set -- so the
-formatter walks that container directly and never has to decode the robin-hood
-bucket array. Elements come out in the container's iteration order (which is
-insertion order until something is erased).
+formatter walks that container directly and never has to decode the
+fingerprint-group index. Elements come out in the container's iteration
+order (which is insertion order until something is erased).
 
     (lldb) frame variable word_count
-    (unordered_dense::map<std::string, int>) word_count = size=3 bucket_count=4 {
-      ["alpha"] = first="alpha", second=1
-      ["beta"] = first="beta", second=2
-      ["gamma"] = first="gamma", second=3
+    (unordered_dense::map<std::string, int>) word_count = size=3 bucket_count=64 {
+      [alpha] = (first = "alpha", second = 1)
+      [beta] = (first = "beta", second = 2)
+      [gamma] = (first = "gamma", second = 3)
     }
 
 Load it in LLDB with
@@ -52,6 +52,10 @@ _MAX_KEY_NAME_LEN = 36
 _DEFAULT_SEGMENT_BYTES = 4096
 
 _UINT_FAIL = 0xFFFFFFFFFFFFFFFF
+
+# Slots per group in the index; the header static_asserts this is 16 for every
+# bucket type, and bucket_count() counts slots, not groups.
+_SLOTS_PER_GROUP = 16
 
 # ankerl::unordered_dense has an inline version namespace (v4_11_0 and
 # friends) that shows up in canonical type names; tolerate it. LLDB matches
@@ -451,18 +455,26 @@ class SegmentedVectorProvider(object):
 
 
 def _bucket_count(valobj, size):
-    """0 when no buckets are allocated, else m_bucket_mask + 1 -- what
-    table::bucket_count() reports. An unparseable bucket container (custom,
-    or fancy-pointer) is answered from the mask instead of assumed empty,
-    so None means even the mask is unreadable. With the member itself
-    unreadable and no values, 0 -- the never-reserve()d default."""
+    """bucket_count() in slots: 0 with no groups allocated, else
+    (m_group_mask + 1) * 16. The index is a detail::group_storage, which
+    holds its groups in m_blocks -- a std::vector -- while a segmented
+    values container has an m_size beside its own m_blocks, which is how the
+    two are told apart. An unparseable index is answered from the mask
+    instead of assumed empty, so None means even the mask is unreadable.
+    With the member itself unreadable and no values, 0 -- the
+    never-reserve()d default."""
     buckets = _member(valobj, "m_buckets")
     allocated = None
     if _valid(buckets):
-        if _valid(_member(buckets, "m_blocks")):
+        blocks = _member(buckets, "m_blocks")
+        if _valid(blocks):
             seg_size = _uint(_member(buckets, "m_size"))
             if seg_size is not None:
                 allocated = seg_size > 0
+            else:
+                layout = _vector_begin_end(blocks)
+                if layout is not None:
+                    allocated = layout[1] != layout[0]
         else:
             layout = _vector_begin_end(buckets)
             if layout is not None:
@@ -471,8 +483,8 @@ def _bucket_count(valobj, size):
             return 0
     elif not size:
         return 0
-    mask = _uint(_member(valobj, "m_bucket_mask"))
-    return None if mask is None else mask + 1
+    mask = _uint(_member(valobj, "m_group_mask"))
+    return None if mask is None else (mask + 1) * _SLOTS_PER_GROUP
 
 
 def table_summary(valobj, internal_dict):
