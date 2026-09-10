@@ -80,6 +80,18 @@ hides completely.
 `maps_one.sh` builds **one map per binary** and runs it under `perf stat`, because a binary holding
 several maps has a code layout that moves by more than a 3% question every time any of them
 changes. Anything under about 10% is decided there, with counters, and not by the paired harness.
+Its third argument is a count of operations and its default is 30000000; passing a small number
+measures the machine's noise floor rather than the map. `AB_CORE` pins the measured binary to one
+core, which the cycle columns want and the instruction counts do not need.
+
+Two of its workloads are the insert path taken apart, because that is where this map is furthest
+behind a flat one and nothing measured it on its own. `insert` builds a map that was told its size
+first, so growth and the rehash are out of it and what is left is a probe that misses, a value
+appended and a slot pointed at it; `bump` is `++m[k]` on a key that is already there, which places
+nothing and is the commonest map operation there is. Both count `reps` in operations, so every
+column is per insert and per bump, and both put their round in a `noinline` function so that
+`objdump -d` has a symbol -- which is the whole point of them, since the question is which
+instructions are in it.
 
 `scripts/ab/hash_others.sh` is the same idea for the *hash* rather than the index: this library's
 wyhash, its own older version, `boost::hash`, `absl::Hash` and `folly::hasher` over six key lengths

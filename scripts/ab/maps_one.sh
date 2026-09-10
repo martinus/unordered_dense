@@ -5,6 +5,11 @@
 #   scripts/ab/maps_one.sh [-c COMPILER] [-k u64|str|big] <workload> <entries> <reps> [map...]
 #
 # With no map named it does all of them. Netting out the loop is what the `none` workload is for.
+# `reps` is a count of operations and its default in the binary is 30000000; a small value measures
+# noise rather than the map.
+#
+# AB_CORE pins the measured binary to one core. Unset it and nothing is pinned, which is what this
+# always did -- instruction counts do not need it and cycles do.
 set -euo pipefail
 export LC_ALL=C # a German locale prints 1,23 and every awk over perf output then reads 1
 cxx=clang++ keys=u64
@@ -56,8 +61,10 @@ for i in "${!names[@]}"; do
     "$cxx" "${flags[@]}" -DUDM_ONE_MAP="$i" "$root/scripts/ab/maps_one.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$bin"
     # task-clock rather than an external timer: `/usr/bin/time -f %e` has 10 ms of resolution,
     # which over a run of a fifth of a second quantises ns/op into visible steps.
+    pin=()
+    [ -n "${AB_CORE:-}" ] && pin=(taskset -c "$AB_CORE")
     out=$(perf stat -x, -e task-clock,cycles,instructions,branch-misses,L1-dcache-load-misses,dTLB-load-misses \
-              "$bin" "$work" "$n" "$reps" 2>&1)
+              "${pin[@]}" "$bin" "$work" "$n" "$reps" 2>&1)
     get() { echo "$out" | awk -F, -v e="$1" '$3==e {print $1}'; }
     awk -v name="$name" -v reps="$reps" -v ms="$(get task-clock)" -v c="$(get cycles)" \
         -v ins="$(get instructions)" -v bm="$(get branch-misses)" \
