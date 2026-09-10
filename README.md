@@ -440,10 +440,10 @@ regular containers instead of raw internals, across `map`'s every flavor with on
 
 ```
 (lldb) frame variable word_count
-(ankerl::unordered_dense::map<std::string, int> &) word_count = size=3 bucket_count=4 {
-  ["alpha"] = (first = "alpha", second = 1)
-  ["beta"] = (first = "beta", second = 2)
-  ["gamma"] = (first = "gamma", second = 3)
+(ankerl::unordered_dense::map<std::string, int> &) word_count = size=3 bucket_count=64 {
+  [alpha] = (first = "alpha", second = 1)
+  [beta] = (first = "beta", second = 2)
+  [gamma] = (first = "gamma", second = 3)
 }
 ```
 
