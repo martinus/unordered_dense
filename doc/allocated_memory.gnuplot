@@ -44,4 +44,8 @@ set title "Inserting 10 million uint64_t -> uint64_t pairs, every allocation cou
 
 # steps, not lines: memory changes at an instant and holds until the next allocation, so an
 # interpolated slope between two points would be a picture of something that never happened.
-plot for [i=1:words(files)] word(files, i) using 1:($2/1e6) with steps ls i lw 2 title word(titles, i)
+# The two maps this repository ships are drawn heavier than the maps they are being compared
+# against, so the eye lands on them first. Keyed off the name rather than the position, so adding
+# or dropping a series cannot silently emphasise the wrong one.
+plot for [i=1:words(files)] word(files, i) using 1:($2/1e6) \
+    with steps ls i lw (strstrt(word(titles, i), "ankerl") > 0 ? 3.5 : 1.5) title word(titles, i)
