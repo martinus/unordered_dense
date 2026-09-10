@@ -394,6 +394,33 @@ right about the mechanism and wrong about the remedy.** A profile steers it comp
 here recommends shipping a PGO build -- a header library cannot -- but it does say where the next
 attempt should not go: not at the probe's register allocation, which was never the problem.
 
+**And the one candidate the list suggested is dead too, which is the useful half of it.** The table
+above says `always_inline` on `do_place_element` makes `do_try_emplace` too big for its caller, so
+every writing lookup buys a call boundary; the obvious answer is to move the attribute. Five
+variants, one map per binary, instructions per operation (per element for `build`), both compilers:
+
+| | clang insert | clang bump | clang build | gcc insert | gcc bump | gcc build |
+|---|---|---|---|---|---|---|
+| **A, shipped** (placement `always_inline`) | **96.4** | 84.7 | **140.4** | **67.6** | 90.9 | **123.3** |
+| B, placement plain | 124.4 | 83.7 | 168.5 | 65.5 | 90.9 | 125.2 |
+| C, placement `noinline` | 124.4 | 83.7 | 168.5 | 144.4 | **72.8** | 198.0 |
+| D, placement **and** `do_try_emplace` `always_inline` | **96.4** | 84.7 | **140.4** | **67.6** | 90.9 | **123.3** |
+| E, C plus `do_try_emplace` `always_inline` | 124.4 | 83.8 | 168.5 | 144.4 | **72.8** | 198.0 |
+
+**D is identical to A in every column** -- not close, identical -- and the binaries differ. In A the
+out-of-line symbol is `do_try_emplace`; in D that symbol is gone and **`try_emplace` is out of line
+instead**. Forcing the inner function into its caller moves the boundary outward by one level and
+changes nothing at all, because the outermost function that does not carry the attribute is the one
+that pays, and there is always one. You cannot inline your way to the caller's loop from inside a
+header. That is why PGO was the only thing that removed it: it inlines the whole chain into the loop
+that calls it.
+
+**C is the trade named out loud and it is a bad one**: 20% off a gcc `++m[k]` (90.9 to 72.8) for
+**61% onto a gcc build** (123.3 to 198.0) and 20% onto a clang one. B reproduces this file's own
+17-20% build regression exactly, now as an instruction count rather than a time: clang build 140.4
+to 168.5. So `always_inline` on `do_place_element` stays, for the third time, and the call boundary
+on `operator[]` is its price, which nothing in the source can refuse.
+
 **The F14Vector string miss, re-measured, and the old explanation of it is wrong** (2026-09-10,
 asked as "is my map the fastest dense map"). The paired octave still has F14VectorMap ahead on
 string lookups -- miss 1.06 at the 1000 octave and 1.09 at 32000, hit 1.02-1.03, half 1.04-1.06 --
