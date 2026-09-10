@@ -45,16 +45,21 @@ using ankerl::unordered_dense::detail::key_compare_is_call_v;
 static_assert(!key_compare_is_call_v<std::uint64_t>);
 static_assert(!key_compare_is_call_v<int>);
 static_assert(!key_compare_is_call_v<pod_key>);
-// `std::pair` and `std::tuple` write their own copy *assignment*, so they are not trivially
-// copyable even when their members are. Keying the trait on `is_trivially_copyable` rather than on
-// `is_trivially_copy_constructible` split them and cost 40%; this is that bug, pinned.
+// A pair and a tuple are asked about their elements. Two bugs are pinned here at once: keying the
+// trait on `is_trivially_copyable` rather than on `is_trivially_copy_constructible` split both of
+// these and cost 40%, and asking either about *itself* splits a tuple on MSVC and not elsewhere,
+// because MSVC's std::tuple is not trivially copy-constructible where libstdc++'s and libc++'s is.
 static_assert(!key_compare_is_call_v<std::pair<std::uint64_t, std::uint64_t>>);
 static_assert(!key_compare_is_call_v<std::tuple<int, int>>);
+static_assert(!key_compare_is_call_v<std::tuple<>>);
+static_assert(!key_compare_is_call_v<std::pair<int, std::pair<int, char>>>);
 
 // Compared through a call: the probe splits.
 static_assert(key_compare_is_call_v<std::string>);
 static_assert(key_compare_is_call_v<owning_key>);
 static_assert(key_compare_is_call_v<std::pair<int, std::string>>);
+static_assert(key_compare_is_call_v<std::tuple<int, int, std::string>>);
+static_assert(key_compare_is_call_v<std::pair<int, std::pair<int, std::string>>>);
 // Trivially copyable, and still a call, which is why it is named rather than deduced.
 static_assert(key_compare_is_call_v<std::string_view>);
 static_assert(key_compare_is_call_v<std::wstring_view>);

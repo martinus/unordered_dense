@@ -328,7 +328,13 @@ libc++ report `is_trivially_copyable_v<std::pair<std::uint64_t, std::uint64_t>>`
 first version of this keyed on that, and split one of the commonest key types after string and
 integer. `std::string_view` is the other way round -- trivially copyable and still a call -- and no
 trait separates it from `pair<uint64_t, uint64_t>`, since both are sixteen bytes and hold no
-indirection the language can see. It is named explicitly. A user type that is trivially
+indirection the language can see. It is named explicitly.
+
+A pair and a tuple are then asked about their *elements* rather than about themselves, which CI
+found rather than reasoning: **MSVC's `std::tuple<int, int>` is not trivially copy-constructible
+where libstdc++'s and libc++'s is**, so asking the aggregate gave a tuple key a different probe on
+Windows than everywhere else, and all four Windows legs went red on the `static_assert` that pins
+it. Recursing is also simply what comparing a pair does. A user type that is trivially
 copy-constructible and still compares through a call is treated as cheap and loses the ~2% in the
 last row, which is the harmless direction to be wrong in.
 

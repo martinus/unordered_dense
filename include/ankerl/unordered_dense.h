@@ -742,6 +742,11 @@ inline constexpr std::array<std::uint32_t, 256> fingerprint_words = make_fingerp
 // report `is_trivially_copyable_v<std::pair<std::uint64_t, std::uint64_t>>` as false. Keying on
 // that would have split one of the commonest key types after string and integer and cost it 40%.
 //
+// A pair and a tuple are asked about their elements rather than about themselves, because that is
+// what comparing one does -- and because the answer for the aggregate is not portable: MSVC's
+// `std::tuple<int, int>` is not trivially copy-constructible where libstdc++'s and libc++'s is, so
+// without this a tuple key would take a different probe on Windows than everywhere else.
+//
 // A user type that is trivially copy-constructible and still compares through a call (a large byte
 // array) is treated as cheap and does not get the split. Measured, that costs it about 2%, and the
 // heuristic never misfires in the expensive direction.
@@ -750,6 +755,13 @@ struct key_compare_is_call : std::bool_constant<!std::is_trivially_copy_construc
 
 template <typename CharT, typename Traits>
 struct key_compare_is_call<std::basic_string_view<CharT, Traits>> : std::true_type {};
+
+template <typename A, typename B>
+struct key_compare_is_call<std::pair<A, B>>
+    : std::bool_constant<key_compare_is_call<A>::value || key_compare_is_call<B>::value> {};
+
+template <typename... Ts>
+struct key_compare_is_call<std::tuple<Ts...>> : std::bool_constant<(key_compare_is_call<Ts>::value || ...)> {};
 
 template <typename Key>
 constexpr bool key_compare_is_call_v = key_compare_is_call<Key>::value;
