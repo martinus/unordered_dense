@@ -232,8 +232,12 @@ key compare.
 
 *Compilers.* `always_inline` on `probe` and `do_place_element`: **both kept**, worth 1.244 vs 1.149
 under gcc and 17–20% of a build in a caller's translation unit. clang splits the insert path and
-gcc does not, which is most of the build difference between them; no source change has been found
-that steers it.
+gcc does not, which is most of the build difference between them: measured exactly with callgrind,
+the split costs **15 instructions of prologue and epilogue per insert** and clang pays the same 15
+on boost, so it is the call boundary and not this map's register allocation. **PGO removes all of
+it** (96.4 to 69.3 instructions, 34.0 to 17.5 cycles) on both maps. No source change steers it, and
+six have been tried; what is left against boost once the boundary is gone is eleven instructions,
+and at 4M entries the two are level.
 
 *Still open.* Huge pages (22% of a large lookup, nothing asks for them). ARM prefetch tuning.
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.

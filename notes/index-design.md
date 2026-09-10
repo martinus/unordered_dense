@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary
 - The F14Vector string miss, re-measured, and the old explanation of it is wrong
 - Where they are, from `perf annotate`
 - Splitting the probe so the miss path stops paying for it
@@ -286,6 +287,113 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary, and
+PGO removes all of it** (2026-09-10, issue #234 step 1, asked as "with which issue would you
+start"). This file has said since 2026-09-08 that "a reserved `uint64_t` insert is 97.8
+instructions under clang and 65.9 under gcc, on identical source", and explained the difference as
+clang spilling the probe's loop state at function entry where gcc sinks it into a branch a miss
+never takes -- "a register allocator's choice and not something a source change has been found to
+steer". Nobody had ever listed the instructions. They are listed now and the explanation was wrong.
+
+**First, the tool.** The `/tmp/ins.cpp` that produced those numbers went with `/tmp`, so the
+measurement could not be repeated at all. It is now `insert` and `bump` in
+`scripts/ab/maps_one.{cpp,sh}`: a *reserved* build, so no growth and no rehash is in it, and
+`++m[k]` on a key already present, both counting `reps` in operations so every column is per
+operation, both with the round in a `noinline` function so `objdump` has a symbol.
+
+**Reproduction, n = 50000, per insert, three runs agreeing on instructions to 0.1%:**
+
+| | this map | boost | notes' 2026-09-08 figure |
+|---|---|---|---|
+| clang 22.1.8 | **96.4** instr, 33.8 cyc, 6.4 ns | 82.9, 21.3, 4.1 | this map 97.8 -- reproduces |
+| gcc 16.2.1 | **67.5**, 25.0, 4.7 | 57.0, 16.9, 3.2 | this map 65.9 -- reproduces |
+
+Both of this map's figures reproduce. **Boost's does not**: this file records boost at 64
+instructions under clang and it is 82.9. That figure comes from the 2026-09-05 table, taken with
+the lost tool and before the merged block; the 2026-09-08 entry that restates this map's numbers
+never restated boost's. So the headline "39% behind boost under clang on the insert path" was
+comparing two different measurements. It is **16%** on instructions.
+
+**Second, exact instruction counts, by category.** Sampling cannot answer this -- `perf record -e
+instructions` skids, and attributed 8.4 prefetches per insert to a path that issues 2. What can is
+`valgrind --tool=callgrind --dump-instr=yes`, which counts every instruction exactly. It agrees
+with `perf stat` to 0.5% once the once-per-process key generation is subtracted. Per insert, in
+each binary's own code:
+
+| category | gcc, this map | clang, this map | gcc, boost | clang, boost |
+|---|---|---|---|---|
+| **prologue/epilogue** | **1.00** | **15.00** | **0.00** | **15.00** |
+| call | 0.00 | 1.00 | 0.00 | 1.00 |
+| move/load/store | 16.94 | 30.56 | 14.77 | 26.50 |
+| arithmetic/address | 16.21 | 20.15 | 19.51 | 19.43 |
+| compare/branch | 13.57 | 18.19 | 9.42 | 9.15 |
+| fingerprint compare (SSE2) | 10.89 | 9.92 | 9.24 | 9.19 |
+| spill + reload + frame | 11.53 | 4.20 | 8.69 | 7.29 |
+| prefetch | 2.01 | 2.01 | 0.00 | 0.00 |
+| **total** | **67.1** | **96.0** | **56.5** | **82.5** |
+
+Read the first row. Clang pays **fifteen instructions of prologue and epilogue per insert** -- six
+pushes, six pops, a frame adjust either side, a `ret` -- plus the call. gcc pays one. And **clang
+pays the same fifteen on boost**, which is what settles what this is: not a register allocator
+mishandling this map's probe, but *the function-call boundary*, paid because clang leaves the
+operation out of line and gcc inlines it into the caller. The spill and reload columns, which the
+old diagnosis named, go the other way: gcc spills more than clang does, 11.53 against 4.20.
+
+**Third, PGO, and it is decisive.** Hot/cold outlining and inlining are profile decisions, so the
+question was whether clang can do it when told. Instrument, run, rebuild:
+
+| | instructions | cycles |
+|---|---|---|
+| clang, this map, plain | 96.4 | 34.0 |
+| clang, this map, **PGO** | **69.3** | **17.5** |
+| clang, boost, plain | 82.9 | 23.7 |
+| clang, boost, **PGO** | **57.8** | **14.2** |
+| gcc, this map, plain | 67.6 | 31.2 |
+| gcc, this map, PGO | 69.5 | 25.8 |
+
+**PGO removes 27 instructions from clang and halves its cycles, on both maps.** After it, clang and
+gcc retire the same work on this map (69.3 against 67.6) and clang's code is much the faster of the
+two. gcc gains nothing on instructions because it had already inlined. So the clang/gcc instruction
+gap is a missing profile and nothing else, and no source shuffle was ever going to close it -- which
+is why the six that were tried did not.
+
+**What is left, once the boundary is out of the way, is about eleven instructions.** This map
+against boost, PGO to PGO under clang, 69.3 against 57.8; under gcc 67.6 against 57.0. By category
+under gcc the difference is +4.2 compare/branch, +3.8 frame accesses, +2.2 move, +2.0 prefetch (the
+probe's two `prefetch_index`, which boost does not issue on an insert), +1.7 on the vector compare
+and -3.3 arithmetic. That is the real design difference and it is roughly the second walk: this map
+probes to find the key absent and then walks again in `place_group`, where boost's probe returns the
+position it will insert at. Eleven instructions, not thirty-four.
+
+**And it is an in-cache statement only.** The same measurement at four million entries:
+
+| n | clang, this map | clang, boost | gcc, this map | gcc, boost |
+|---|---|---|---|---|
+| 50000 | 6.4 ns | 4.1 | 4.7 | 3.2 |
+| 200000 | 6.9 | 5.6 | 6.3 | 3.9 |
+| **4000000** | **35.6** | **34.6** | **28.7** | **28.3** |
+
+At four million they are level -- within 3% on both compilers -- and this map takes **0.80 dTLB
+misses per insert against boost's 1.37** and 1.07 branch misses against 1.26. Whatever the insert
+path costs, it stops mattering exactly where the table stops fitting in cache.
+
+**The other two workloads, for the record.** `++m[k]` on a key already present, n = 50000: this map
+84.7 instructions under clang and 90.9 under gcc, boost 80.9 and 57.1. Here *both* compilers leave
+this map's `do_try_emplace` out of line (15.4 instructions of prologue in both) while gcc inlines
+boost's, which is 15 of the 34 that separate them under gcc. That path is also where
+`always_inline` on `do_place_element` is paid without being used, and the callgrind table says what
+it costs: the placement code makes `do_try_emplace` too big for the caller, so every `operator[]`
+buys a call boundary. That is the trade the entry below on `always_inline` describes from the other
+side, now with a number on it. A **string** insert reverses the whole picture: 491 instructions
+under clang against boost's 454, and **27.3 ns against 34.9** -- 21% *faster* on 8% more
+instructions, on 7.2 L1 misses against 11.2 and 1.45 branch misses against 2.16.
+
+**So the standing sentence in `CLAUDE.md`, "clang splits the insert path and gcc does not, which is
+most of the build difference between them; no source change has been found that steers it", is
+right about the mechanism and wrong about the remedy.** A profile steers it completely. Nothing
+here recommends shipping a PGO build -- a header library cannot -- but it does say where the next
+attempt should not go: not at the probe's register allocation, which was never the problem.
+
 **The F14Vector string miss, re-measured, and the old explanation of it is wrong** (2026-09-10,
 asked as "is my map the fastest dense map"). The paired octave still has F14VectorMap ahead on
 string lookups -- miss 1.06 at the 1000 octave and 1.09 at 32000, hit 1.02-1.03, half 1.04-1.06 --
