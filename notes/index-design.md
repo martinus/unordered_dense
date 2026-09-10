@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- Splitting the probe past the home group: kept, for keys whose compare is a call
 - The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary
 - The F14Vector string miss, re-measured, and the old explanation of it is wrong
 - Where they are, from `perf annotate`
@@ -287,6 +288,77 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Splitting the probe past the home group: kept, for keys whose compare is a call** (2026-09-10,
+issue #233). The entry below records this being tried on 2026-09-10 and reverted -- string miss
+138.3 to 126.5 instructions, integer miss 55.8 to 65.9 and integer hit 69.1 to 85.0, "it buys 8% of
+the one workload we lose and spends 20% of the ones we lead by most". Both halves of that reproduce
+exactly. What was missing is that the two halves are selected by the **key type**, and can be had
+separately.
+
+**Why the frame is there.** For a `std::string` key the probe builds a frame and spills the loop
+state -- the counter, `this`, the mask, the delta, the hash and the broadcast fingerprint -- before
+the first group is compared, because the key compare is a `memcmp` call and everything the loop
+keeps live has to survive it. Only about 3% of lookups leave the home group, and the delta and the
+mask are the only things the rest of the walk needs, so the frame is paid by every lookup for a path
+almost none of them take. Where the compare is a register compare there is no call, nothing has to
+survive anything, and splitting only adds a call.
+
+**Measured per key type**, one map per binary, instructions per lookup, clang 22 (miss):
+
+| key | shipped | split | |
+|---|---|---|---|
+| `std::string` | 140.6 | **128.8** | **-8.4%**, and 19.65 ns to 17.85 |
+| `std::string_view` | 134.2 | **122.4** | **-8.8%** |
+| `std::uint64_t` | 56.1 | 67.1 | +20% |
+| `std::pair<std::uint64_t, std::uint64_t>` | 50.2 | 70.2 | **+40%** |
+| 64 byte POD, `memcmp` compare | 111.4 | 109.4 | -1.8% |
+
+So the split is gated on `detail::key_compare_is_call<Key>`, and **integer codegen is byte-identical
+to the shipped header** on both compilers -- 56.1 / 59.9 / 70.0 under clang and 58.1 / 57.0 / 68.6
+under gcc, before and after, on miss, hit and half. The `map<uint64_t, big_value>` workloads are
+identical to the tenth as well. Strings gain everywhere: clang miss -8.2%, half -4.3%, hit -1.7%,
+insert -3.2%; gcc miss -4.0%, half -2.3%, hit -1.4%, insert -3.0%; churn and insert-erase -1 to
+-2%; the one loss is `++m[k]` on a present string key, +2.2% under clang and +0.3% under gcc.
+Timings, three runs each, medians: clang string miss **19.65 to 17.85 ns**, hit 25.00 to 24.55, half
+24.60 to 24.00; gcc 16.15 to 15.80, 22.95 to 22.65, 22.45 to 22.35. Every cell improves.
+
+**The trait is `is_trivially_copy_constructible`, and the difference from `is_trivially_copyable` is
+a 40% bug.** `std::pair` and `std::tuple` write their own copy *assignment*, so both libstdc++ and
+libc++ report `is_trivially_copyable_v<std::pair<std::uint64_t, std::uint64_t>>` as **false**. The
+first version of this keyed on that, and split one of the commonest key types after string and
+integer. `std::string_view` is the other way round -- trivially copyable and still a call -- and no
+trait separates it from `pair<uint64_t, uint64_t>`, since both are sixteen bytes and hold no
+indirection the language can see. It is named explicitly. A user type that is trivially
+copy-constructible and still compares through a call is treated as cheap and loses the ~2% in the
+last row, which is the harmless direction to be wrong in.
+
+**And the shape of the code is load-bearing.** Factoring the per-group compare into a helper
+returning a `probe_result`, so that the split and unsplit paths share it, is tidier and costs **gcc
+26% of an integer hit** (57.0 to 72.0) and clang 6.7%, fully inlined, purely from returning a
+twelve-byte struct through an inner function. The loop is written out instead, and the unsplit path
+is the shipped loop unchanged, which is what makes the integer columns identical rather than merely
+close.
+
+**Mutation swept, and the one hole it found is closed.** The split duplicates the probe's
+"did anything of this class overflow past me" test into an inline home-group check, and turning that
+`== 0` into `== 1` was **caught by nothing** -- it stops a probe at home whenever exactly one entry
+of the key's class went past, so that entry becomes unfindable. Reaching it by chance needs a string
+whose home counter happens to be one; `test/unit/probe_split.cpp` reaches it on purpose, with
+`fuzz_group_index`'s construction -- an identity hash and a key type whose copy constructor is user
+provided, so the key names its group and its fingerprint class *and* takes the split path. Fill
+group 0, send one key of class 3 past it, look that key up. Of the other survivors, all are
+performance-only (dropping the `!` on the gate, deleting a prefetch, `||` to `&&`, deleting an early
+return) or write to `slot` and `value_idx` in a result whose `found` is false, which the type
+documents as meaningless; and `m_group_mask == 0` is equivalent, since the smallest array is four
+groups and the disjunct never fires either way.
+
+**What this does not claim.** The scored benchmark's string workloads are a third of it, so the
+score moves by about 1%; that is not the argument. The argument is the instruction counts, which
+neither code layout nor drift can move, and the rule that a paired A/B cannot measure a change that
+moves an inlining boundary. Against F14VectorMap, the one lookup this map lost, the string miss goes
+from 140.6 instructions to 128.8 against its 131.4 -- ahead on instructions, still 2.3% behind on
+time.
+
 **The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary, and
 PGO removes all of it** (2026-09-10, issue #234 step 1, asked as "with which issue would you
 start"). This file has said since 2026-09-08 that "a reserved `uint64_t` insert is 97.8

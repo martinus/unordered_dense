@@ -721,6 +721,39 @@ namespace detail {
 }
 inline constexpr std::array<std::uint32_t, 256> fingerprint_words = make_fingerprint_words();
 
+// Whether comparing two keys of this type is a *call*, which decides how the probe is shaped.
+//
+// A probe that leaves its home group needs the delta and the group mask, and about 3% of lookups
+// leave it. When the key compare is a register compare, those two values live in registers and cost
+// nothing; when it is a call -- a `memcmp` for a string -- everything the loop keeps live has to
+// survive the call, and the compiler builds a frame and spills them before the *first* group is
+// even compared. Splitting the rare part out of line then removes the frame from the common path,
+// and that is worth 8-9% of a string lookup and costs an integer one 20-40% (measured 2026-09-10,
+// `notes/index-design.md`), so it has to be decided per key type.
+//
+// No trait separates the two cases -- `std::string_view` and `std::pair<std::uint64_t,
+// std::uint64_t>` are both sixteen bytes and both trivially copyable, and they want opposite
+// answers -- so this is a heuristic plus the one exception the standard library provides. A type
+// whose copy constructor is trivial holds no indirection, and so is compared field by field unless
+// it is a view; `basic_string_view` is the view the library knows about.
+//
+// **Trivially copy-constructible, not trivially copyable**, and the difference is not pedantry:
+// `std::pair` and `std::tuple` write their own copy *assignment*, so both libstdc++ and libc++
+// report `is_trivially_copyable_v<std::pair<std::uint64_t, std::uint64_t>>` as false. Keying on
+// that would have split one of the commonest key types after string and integer and cost it 40%.
+//
+// A user type that is trivially copy-constructible and still compares through a call (a large byte
+// array) is treated as cheap and does not get the split. Measured, that costs it about 2%, and the
+// heuristic never misfires in the expensive direction.
+template <typename Key>
+struct key_compare_is_call : std::bool_constant<!std::is_trivially_copy_constructible_v<Key>> {};
+
+template <typename CharT, typename Traits>
+struct key_compare_is_call<std::basic_string_view<CharT, Traits>> : std::true_type {};
+
+template <typename Key>
+constexpr bool key_compare_is_call_v = key_compare_is_call<Key>::value;
+
 template <typename T>
 using detect_is_transparent = typename T::is_transparent;
 
@@ -1625,13 +1658,15 @@ private:
     // measured 0.66 of the robin hood index, and forcing it took them to 1.23; with SSE2 the same
     // change was churn 1.32, string hits 1.22 and the integer build 1.42 against the commit before.
     // clang inlined it already and measures 1.00 everywhere.
+    // The probe's loop, from a group and the distance already walked. Written out rather than built
+    // from a per-group helper: returning a probe_result from an inner function costs gcc 26% of an
+    // integer hit even fully inlined, and this path must stay exactly what it was for a key whose
+    // compare is cheap.
     template <typename K>
-    ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
-        auto const word = fingerprint_word(mh);
-        auto const counter = word & 7U;
-        auto group_idx = group_idx_from_hash(mh);
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+    probe_from(K const& key, std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type delta) const
+        -> probe_result {
         auto const* groups = m_buckets.data();
-        value_idx_type delta = 0;
         while (true) {
             prefetch_index(groups, group_idx);
             auto const& group = groups[group_idx];
@@ -1651,6 +1686,52 @@ private:
                 return {0, 0, false};
             }
             group_idx = next_group(group_idx, delta);
+        }
+    }
+
+    // Everything past the home group, out of line, for a key whose compare is a call. See
+    // detail::key_compare_is_call for what that buys and what it would cost the other kind of key.
+    // Entered by a tail call, so the caller keeps nothing live across it.
+    template <typename K>
+    ANKERL_UNORDERED_DENSE_NOINLINE auto
+    probe_past_home(K const& key, std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type delta) const
+        -> probe_result {
+        return probe_from(key, word, counter, group_idx, delta);
+    }
+
+    template <typename K>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
+        auto const word = fingerprint_word(mh);
+        auto const counter = word & 7U;
+        auto const home_idx = group_idx_from_hash(mh);
+        if constexpr (!detail::key_compare_is_call_v<Key>) {
+            return probe_from(key, word, counter, home_idx, 0);
+        } else {
+            // The home group inline and the rest behind a call, which is where the frame goes.
+            auto const* groups = m_buckets.data();
+            prefetch_index(groups, home_idx);
+            auto const& home = groups[home_idx];
+            auto lanes = match_fingerprint(home, word);
+            while (lanes != 0) {
+                auto const lane = first_lane(lanes);
+                auto const slot = static_cast<value_idx_type>(std::size_t{home_idx} * slots_per_group + lane);
+                auto const value_idx = home.m_index[lane];
+                if (m_equal(key, get_key(m_values[value_idx]))) {
+                    return {slot, value_idx, true};
+                }
+                lanes &= lanes - 1;
+            }
+            // The loop's two stopping conditions at delta 0: nothing of this class ever overflowed
+            // past home, or there is nowhere else to look. The second is `delta == m_group_mask`
+            // with delta zero, and it cannot fire while the smallest array is four groups -- it is
+            // kept because it is what the loop tests, not because it is reachable, so a mutation
+            // survivor on it is expected rather than a hole.
+            if (home.m_overflows[counter] == 0 || m_group_mask == 0) {
+                return {0, 0, false};
+            }
+            value_idx_type delta = 0;
+            auto const next = next_group(home_idx, delta);
+            return probe_past_home(key, word, counter, next, delta);
         }
     }
 
