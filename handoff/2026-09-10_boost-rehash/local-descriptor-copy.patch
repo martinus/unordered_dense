@@ -1,0 +1,15 @@
+--- /tmp/claude-0/-home-user-unordered-dense/f02be569-65e1-5194-bb7e-43354abc17f5/scratchpad/boost/boost_1_92_0/boost/unordered/detail/foa/core.hpp	2026-08-05 17:09:15.000000000 +0000
++++ /tmp/claude-0/-home-user-unordered-dense/f02be569-65e1-5194-bb7e-43354abc17f5/scratchpad/bpatch/boost/unordered/detail/foa/core.hpp	2026-09-10 12:11:02.707707996 +0000
+@@ -2288,8 +2288,11 @@
+   {
+     std::size_t num_destroyed=0;
+     BOOST_TRY{
++      /* PATCH: local copy so the metadata byte store cannot alias the
++       * descriptor and force a reload of its fields every element. */
++      const arrays_type ar=new_arrays_;
+       for_all_elements([&,this](element_type* p){
+-        nosize_transfer_element(p,new_arrays_,num_destroyed);
++        nosize_transfer_element(p,ar,num_destroyed);
+       });
+     }
+     BOOST_CATCH(...){

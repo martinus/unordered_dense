@@ -38,6 +38,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Why, measured rather than argued
 - What that says about boost's build, which is its weakest column
 - And the radix partition does not rescue it either, which was the one idea left
+- The gcc/clang gap in boost's rehash loop is not 1.5x, and the protocol that found it could not have told
 - Where the F14Vector string gap actually is
 - Force-inlining `do_find_hashed`, paired on the score: not kept
 - Splitting the hash into an inlinable short path and an out-of-line tail
@@ -333,11 +334,14 @@ per element, `/tmp/brh.cpp` against `/tmp/boostpf`:
 | gcc, as shipped | **10.2-10.5** | 10.4-11.5 | 17.1-17.8 | 71-73 |
 | gcc, pipelined, four slot lines | **7.0** | 10.2-10.5 | 16.7-17.2 | 73-77 |
 
-A wash to a loss under clang, and under gcc a 1.5x gain at 200K integers that is a codegen fix
-rather than a memory one: gcc's straight loop is 1.5x slower than clang's on the same source and
-the restructured loop takes it to clang's floor, which is the compiler serialising something the
-other compiler does not, the same shape as this map's own `fill_buckets_from_values` story with the
-compilers swapped. Prefetching only the first slot line (the first attempt) was a loss everywhere,
+A wash to a loss under clang, and under gcc a 1.5x gain at 200K integers that was read at the time
+as a codegen fix rather than a memory one: gcc's straight loop 1.5x slower than clang's on the same
+source, the restructured loop taking it to clang's floor, the compiler serialising something the
+other does not, the same shape as this map's own `fill_buckets_from_values` story with the compilers
+swapped. **The 1.5x does not reproduce and the reading was wrong** -- see "The gcc/clang gap in
+boost's rehash loop is not 1.5x" below, which re-measured it on four gcc releases against
+byte-identical boost source. The rest of the table stands; only the bolded gcc column is in
+question. Prefetching only the first slot line (the first attempt) was a loss everywhere,
 because boost's fifteen 16-byte slots span four lines and fill from lane 0, so late placements land
 on lines never asked for.
 
@@ -385,6 +389,88 @@ So the answer to "what could help boost's build" is: not a better rehash loop. I
 already twice this map's; what it pays is moving every value on every doubling, which is what the
 flat layout *is*. The levers left are a growth factor below 2x (folly's 1.406, untested here) and not
 being flat.
+
+**The gcc/clang gap in boost's rehash loop is not 1.5x, and the protocol that found it could not
+have told** (2026-09-10, asked as "reproduce it, find the instruction that causes it, and decide
+whether it is a gcc bug or a source change for Boost.Unordered";
+`handoff/2026-09-10_boost-rehash/`, which keeps the harnesses this time instead of leaving them in
+`/tmp` to be cleared). The 2026-09-08 table above has boost's shipped `unchecked_rehash` at 6.5 ns
+per element under clang and 10.2-10.5 under gcc, at 200K `uint64_t` keys. **Re-measured, the gap is 1.03-1.20x and never 1.5x.**
+
+Boost is not a variable: `detail/foa/core.hpp` is byte-identical between 1.90 and 1.92 apart from a
+copyright line and one unrelated trait, so 1.92 measures the same loop the original did. The
+compiler is not a variable either -- gcc 13.3, 14.2, 15.2 and 16 trunk were all built against it.
+Grow and shrink rehashes were timed separately, in case the original's min over both directions hid
+a grow-only effect; they measure the same.
+
+Isolated grow `rehash()`, ns per element, minimum of six interleaved rounds, boost 1.92 as shipped:
+
+| entries | clang 18 | gcc 15 | gcc 16 | gcc 15 / clang |
+|---|---|---|---|---|
+| 50000 | 8.33 | 10.03 | 9.61 | 1.204 |
+| 100000 | 8.64 | 9.52 | 9.96 | 1.102 |
+| 200000 | 9.80 | 10.34 | 10.30 | 1.055 |
+| 400000 | 9.79 | 10.17 | 10.29 | 1.039 |
+| 1000000 | 30.94 | 31.89 | 31.84 | 1.031 |
+
+The *shape* of the original claim survives -- gcc is consistently a little behind, most so at the
+smallest sizes, converging as the table leaves cache -- but the magnitude does not.
+
+**gcc is not doing more work, which the file's own rule says to establish before reading any
+disassembly.** Per element per rehash, counted under callgrind and cachegrind so neither code layout
+nor drift can move them: gcc retires **42.2 instructions and 7.03 data reads** against clang's
+**43.1 and 8.24**. gcc retires fewer of both and takes a few percent longer, so what little gap
+exists is a stall and not extra work -- but a 1.5x stall on strictly less work is not what the
+counters or the loop show.
+
+**The instruction the handoff went looking for is there, and it is not worth 1.5x.** The transfer
+loop reads `groups_size_index`, `groups_size_mask`, `groups()` and `elements()` through a
+`const arrays_type&`, and places each element with `pg->set(n,hash)` -- an `unsigned char` store,
+which under the aliasing rules may write anything, the descriptor included. So gcc reloads the
+descriptor after it. In the shipped loop that is `add 0x18(%r12),%rdx` -- `elements()` fetched again
+for every element -- plus `and 0x8(%r12),%r8`, the mask, fetched again for every probe step. Four
+gcc releases do it. That is the `fill_buckets_from_values` pattern the handoff predicted, and
+finding it is the only part of the prediction that held.
+
+Taking a local copy of the descriptor in `unchecked_rehash`
+(`handoff/2026-09-10_boost-rehash/local-descriptor-copy.patch`, four lines: `const arrays_type ar=
+new_arrays_;` and hand the lambda `ar`) removes the reloads -- the same instruction becomes
+`add %r12,%rdx`, out of a register hoisted before the loop -- and with them **1.24 data reads per
+element on gcc 13 and 0.40-0.52 on gcc 14, 15 and 16**. It changes clang's hot loop not at all
+(43.14 instructions and 8.24 reads either way).
+
+**It buys no measurable time, and the reason is where the reload sits.** gcc's reloaded
+`elements()` feeds a *store* address, which retires into the store buffer and stalls nothing. Clang
+hoists that field but reloads `groups_size_index` per element instead, and that one feeds the
+`movdqa` that reads the destination group -- a *load* address, the chain that can stall -- and clang
+still wins. Neither compiler is serialising the loop; they reload different fields, in different
+places, to the same small effect.
+
+**So: no gcc bug, and no patch worth sending to Boost.** gcc's reload is required by the standard,
+not a defect -- an `unsigned char` store may alias the descriptor and gcc must assume it does. It is
+a missed optimization at most, it is stable across four releases, and it costs less than this
+machine can measure. The boost-side change is real, free and provable in the counters, but a patch
+whose only evidence is half a load per element is not a performance fix; if it is ever sent, it
+should be sent as a tidy-up and not as a 1.5x claim.
+
+**What most likely produced the original number.** The handoff's own repro protocol runs one clang
+binary and then one gcc binary, back to back, once -- which is the thing `CLAUDE.md` forbids in as
+many words. Running exactly that sequence six times on the same two binaries gives gcc/clang ratios
+of **0.905, 0.924, 1.021, 1.048, 1.053 and 1.274**: a 40 point swing, either sign, from a protocol
+that reports whichever one it drew. A repeated clang measurement of identical work spans 9.13 to
+11.83 ns per element here, so the resolution floor of a single such pair is worse than the effect it
+was asked to detect. Minima are the estimator to trust, because timing noise is one-sided -- nothing
+makes a run faster than unimpeded -- and across ten interleaved rounds every compiler's minimum
+lands between 9.48 and 10.32. A real 1.5x would have put gcc near 14 against clang's 9.5.
+
+Two caveats, so the negative is not read wider than it is. This ran on a shared Xeon with a 260 MB
+L3 and **no hardware performance counters exposed**, so there are no cycles or IPC here, only wall
+clock, callgrind and the disassembly. And that huge L3 keeps every size up to 2M cache-resident,
+which *exposes* a latency-bound dependency chain rather than hiding it -- the original entry's own
+argument for why the effect showed at 200K and not at 1M -- so the machine is not the reason the
+1.5x is absent. What cannot be ruled out is that it reproduces on the desktop it was first seen on.
+Boost's source and gcc's output are the same there; the measurement protocol is the part that
+was not.
 
 **Seven ideas from reading folly F14 and from the F14Vector string gap, all measured on 2026-09-07,
 none kept** (asked as "where does our map differ from indivi", "how can F14Vector beat us at string",
