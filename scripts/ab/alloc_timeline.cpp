@@ -213,13 +213,23 @@ struct rng {
     }
 };
 
-constexpr auto num_elements = std::size_t{10'000'000};
+std::size_t num_elements = 10'000'000;
+
+// Applied only where it is asked for, which is this library's own maps: boost's setter is a no-op
+// and abseil has none, so a chart that claimed to have moved their load factor would be lying.
+template <typename Map>
+void set_max_load_factor(Map& map, float lf) {
+    if (lf > 0.0F) {
+        map.max_load_factor(lf);
+    }
+}
 
 template <typename Map>
-void measure(char const* name, char const* path) {
+void measure(char const* name, char const* path, float lf = 0.0F) {
     auto t = timeline();
     {
         auto map = Map();
+        set_max_load_factor(map, lf);
         auto r = rng();
         t.restart();
         g_recording = &t;
@@ -344,18 +354,28 @@ void operator delete[](void* p, std::align_val_t /*a*/, std::nothrow_t const& /*
 
 auto main(int argc, char** argv) -> int {
     auto const* dir = argc > 1 ? argv[1] : "doc";
+    // An explicit maximum load factor for this library's maps, so the memory the index costs can be
+    // traded against the probe lengths it buys. 0 leaves the default of 0.8.
+    auto const lf = argc > 2 ? static_cast<float>(std::atof(argv[2])) : 0.0F;
+    if (argc > 3) {
+        num_elements = std::strtoull(argv[3], nullptr, 10);
+    }
     auto path = [&](char const* name) {
         static char buffer[1024];
         std::snprintf(buffer, sizeof(buffer), "%s/allocated_memory_%s.csv", dir, name);
         return buffer;
     };
 
-    std::printf("filling each map with %zu uint64_t -> uint64_t pairs\n", num_elements);
+    std::printf("filling each map with %zu uint64_t -> uint64_t pairs", num_elements);
+    if (lf > 0.0F) {
+        std::printf(", unordered_dense at max_load_factor %.3f", static_cast<double>(lf));
+    }
+    std::printf("\n");
 
     measure<ankerl::unordered_dense::map<std::uint64_t, std::uint64_t, hash_t, eq_t>>(
-        "ankerl::unordered_dense::map", path("map"));
+        "ankerl::unordered_dense::map", path("map"), lf);
     measure<ankerl::unordered_dense::segmented_map<std::uint64_t, std::uint64_t, hash_t, eq_t>>(
-        "ankerl::unordered_dense::segmented_map", path("segmented_map"));
+        "ankerl::unordered_dense::segmented_map", path("segmented_map"), lf);
 #ifdef UDM_HAVE_BOOST
     measure<boost::unordered_flat_map<std::uint64_t, std::uint64_t, hash_t, eq_t>>("boost::unordered_flat_map",
                                                                                   path("boost_flat_map"));
