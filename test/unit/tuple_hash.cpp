@@ -40,7 +40,10 @@ TEST_CASE("tuple_hash_golden_values") {
     REQUIRE(hash<std::tuple<std::uint64_t>>{}({UINT64_MAX}) == UINT64_C(0xffffffffffffffff));
     REQUIRE(hash<std::pair<int, int>>{}({1, 2}) == UINT64_C(0x0008a6bc006f6e06));
     REQUIRE(hash<std::pair<int, int>>{}({2, 1}) == UINT64_C(0xa2312f5f36a55294));
-    REQUIRE(hash<std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>>{}({1, 2, 3}) == UINT64_C(0xd34d2e086bbe0e77));
+    // Written out rather than braced from integer literals: MSVC warns C4244 for the int -> uint8_t
+    // narrowing from inside <tuple>, where gcc and clang keep quiet because it is a system header.
+    auto const bytes = std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>{std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}};
+    REQUIRE(hash<std::tuple<std::uint8_t, std::uint8_t, std::uint8_t>>{}(bytes) == UINT64_C(0xd34d2e086bbe0e77));
     REQUIRE(hash<std::tuple<int, std::string>>{}({7, "hello"}) == UINT64_C(0x1140b91276c83448));
     REQUIRE(hash<std::tuple<colour, int>>{}({colour::green, 5}) == UINT64_C(0xdab19772c384ecfa));
 }
