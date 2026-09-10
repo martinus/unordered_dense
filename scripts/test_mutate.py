@@ -1691,6 +1691,38 @@ class TestMemorySizes(unittest.TestCase):
         self.assertEqual(mutate.build_memory_limit(0, jobs=32), 0)
 
 
+class TestWorkdirOwnership(unittest.TestCase):
+    """What a run may delete in a workdir it was pointed at. It owns `lane0`, `lane1`, ... and
+    nothing else -- because the obvious things to put beside the lanes are the run's own log and
+    its --json report, and it used to destroy both: the log before a line of it was written, the
+    report between being written and being read."""
+
+    def test_lane_directories_are_cleared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("lane0", "lane1", "lane17"):
+                os.makedirs(os.path.join(tmp, name, "builddir"))
+            mutate.clear_lanes(tmp)
+            self.assertEqual(sorted(os.listdir(tmp)), [])
+
+    def test_everything_else_in_the_workdir_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "lane0"))
+            for name in ("sweep.log", "result.json", "lanes.txt", "lane"):
+                open(os.path.join(tmp, name), "w").write("keep me")
+            os.makedirs(os.path.join(tmp, "lanelike"))
+            mutate.clear_lanes(tmp)
+            self.assertEqual(sorted(os.listdir(tmp)),
+                             ["lane", "lanelike", "lanes.txt", "result.json", "sweep.log"])
+
+    def test_a_partly_numbered_name_is_not_a_lane(self):
+        # "lane0" is this tool's; "lane0.bak" and "mylane0" are somebody else's.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("lane0.bak", "mylane0", "lane0_old"):
+                os.makedirs(os.path.join(tmp, name))
+            mutate.clear_lanes(tmp)
+            self.assertEqual(len(os.listdir(tmp)), 3)
+
+
 class TestLaneRoom(unittest.TestCase):
     """A lane is a copy of the tree plus a build directory, and the count of them comes off the
     core count without anyone being asked. Where that lands is usually /tmp, which is usually a

@@ -148,7 +148,9 @@ The lanes themselves are the other half of that: a copy of the tree each, in a
 workdir that defaults to /tmp, which on most current distributions is a tmpfs -
 so `--lanes` buys memory as much as it buys parallelism. The run says how much
 room it is about to take and whether that room is RAM, and refuses before
-copying rather than half way through. Core dumps are turned off for the same
+copying rather than half way through. In a workdir you name, `lane0`, `lane1`, ...
+are this tool's and everything else is yours: put the run's log and its `--json`
+report there if you like, they are not touched. Core dumps are turned off for the same
 reason: a crashing mutant is an ordinary verdict here, and each one would
 otherwise leave ~30 MB in a lane that is about to be deleted.
 """
@@ -2384,18 +2386,45 @@ def check_room_for(project, workdir, new_lanes, log):
                " - and it is a tmpfs, so that room is memory" if in_ram else ""))
 
 
+LANE_DIR = re.compile(r"^lane\d+$")
+
+
+def clear_lanes(workdir):
+    """Delete this tool's lane directories, and nothing else in the workdir.
+
+    It used to `rmtree` the whole workdir, at the start of a run and again in the
+    `finally` at the end. That is fine for a workdir it made itself with
+    `mkdtemp`, and wrong for one `--workdir` named: it is an ordinary directory
+    the caller chose, and the obvious things to put beside the lanes are a
+    `--json` report and the run's own stdout. Both were silently destroyed --
+    the log before a single line reached it, the report between being written
+    and being read.
+
+    So the rule is that this owns `lane0`, `lane1`, ... and has no opinion about
+    anything else it finds. A workdir it created itself is still removed whole,
+    because nothing else can be in it.
+    """
+    for name in os.listdir(workdir):
+        if LANE_DIR.match(name):
+            shutil.rmtree(os.path.join(workdir, name), ignore_errors=True)
+
+
 @contextlib.contextmanager
 def lanes_for(project, args, wanted, log):
     """Copied trees, configured and baselined, cleaned up whatever happens."""
+    # `ours` is whether this made the directory up: only then may it delete the
+    # directory itself rather than just the lanes inside it.
+    ours = args.workdir is None
     if args.reuse:
         workdir = args.workdir or os.path.join(tempfile.gettempdir(),
                                                "%s-mutate-reuse" % project.slug)
         os.makedirs(workdir, exist_ok=True)
+    elif ours:
+        workdir = tempfile.mkdtemp(prefix="%s-mutate-" % project.slug)
     else:
-        workdir = args.workdir or tempfile.mkdtemp(prefix="%s-mutate-" % project.slug)
-        if args.workdir:
-            shutil.rmtree(workdir, ignore_errors=True)
-            os.makedirs(workdir)
+        workdir = args.workdir
+        os.makedirs(workdir, exist_ok=True)
+        clear_lanes(workdir)
     try:
         count = args.lanes  # settled by plan(), along with jobs and memory
         lanes = [Lane(workdir, i, args, project) for i in range(count)]
@@ -2419,7 +2448,9 @@ def lanes_for(project, args, wanted, log):
         yield lanes
     finally:
         if not args.reuse:
-            shutil.rmtree(workdir, ignore_errors=True)
+            clear_lanes(workdir)
+            if ours:
+                shutil.rmtree(workdir, ignore_errors=True)
 
 
 def drop_uncompiled(lane, mutants, args, log):
@@ -2624,7 +2655,10 @@ def build_parser(project, doc):
                         "--file)")
     p.add_argument("--dry-run", action="store_true",
                    help="list the mutants and the likely runtime, then stop")
-    p.add_argument("--workdir", default=None, help="where lanes are copied")
+    p.add_argument("--workdir", default=None,
+                   help="where lanes are copied. Only lane0, lane1, ... in it are "
+                        "this tool's; anything else you keep there, a log or a "
+                        "--json report, is left alone")
     p.add_argument("--reuse", action="store_true",
                    help="keep the lanes afterwards and reuse them next time, "
                         "syncing only what changed. Uses a fixed workdir unless "
