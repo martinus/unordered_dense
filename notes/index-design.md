@@ -333,10 +333,33 @@ all hits and -4.8% at half hits**, so it is not in the shipped version: an absen
 fetch, and a present one is already covered by the out-of-order window once the passes are separated.
 **The gain is the separation, not the fetch.** #229's conclusion stands and this does not reopen it.
 
-Three passes rather than a ring is also a correctness choice. A ring has to be read before the slot
-it frees is refilled -- `ring[i % depth]` is the slot `i + depth` writes -- and getting that backwards
-returns a wrong answer rather than crashing. It was got backwards twice while this was being built,
-once in a test and once in a README example, and only the test caught it.
+**Three passes rather than a sliding ring, and the ring is the one that loses** (asked 2026-09-11 as
+"would a streaming approach perform better, I guess not because this can unroll"). Built both:
+`map<uint64_t, size_t>`, medians of three, ns per lookup.
+
+| | 200000 hit | 4M hit | 16M hit | 4M half | 16M half |
+|---|---|---|---|---|---|
+| three passes | **6.94** | **26.63** | **30.35** | **28.27** | **31.67** |
+| sliding ring | 7.53 | 31.64 | 34.72 | 29.28 | 32.05 |
+
+**And it is not code generation**, which was the reason offered for expecting it: both retire
+**224.5 instructions per lookup**, identical to the tenth, and the ring spends **15% more cycles**
+(339.0 against 294.5 at four million, all hits). Same work, more waiting.
+
+The split between the columns says what it is waiting for. The gap is 15% on all hits and 6% at half
+hits, and **a miss reads no value at all** -- so what the ring gives up is the *value* loads. The
+third pass issues sixteen of them back to back, and nothing else creates that parallelism, because
+the value is the one access that is not prefetched (see above: prefetching it is a net loss). The
+ring issues one per iteration and leaves the overlap to the out-of-order window.
+
+What makes that conclusion clean is that the ring has the *better* block prefetch: every element
+gets a full depth of real work between its prefetch and its use, where a chunk gives its last element
+less than its first. It wins that axis and still loses by 19%.
+
+A ring is also the shape that has to be read before the slot it frees is refilled -- `ring[i % depth]`
+is the slot `i + depth` writes -- and getting that backwards returns a wrong answer rather than
+crashing. It was got backwards twice while this was being built, once in a test and once in a README
+example, and only the test caught it. So the chunk is both faster and harder to get wrong.
 
 **A chunk of 16 is not load-bearing**: 8 through 32 measured within 2%. Sixteen is what boost uses.
 
