@@ -3222,10 +3222,10 @@ public:
     //   2. match the fingerprints, by which time the blocks have arrived
     //   3. compare the keys and call f
     //
-    // Measured against the same batch looked up one key at a time with find(), map<uint64_t,
-    // size_t>, ns per lookup: at four million entries 33.4 to 28.8 on all hits and 34.8 to 30.7 at
-    // half, at sixteen million 36.6 to 32.7 and 38.0 to 34.0. About 1.15x, and it needs a table past
-    // the cache to be worth anything.
+    // Measured against the same batch looked up one key at a time with find(), a map of eight byte
+    // keys to eight byte values, ns per lookup: at four million entries 33.4 to 29.4 on all hits and
+    // 35.2 to 32.3 at half, at sixteen million 36.6 to 33.3 and 38.1 to 35.7. About 1.1x, and it
+    // needs a table past the cache to be worth anything.
     //
     // Two things this deliberately does not do. It does not prefetch the *value* in pass 2, which is
     // what boost::concurrent_flat_map's bulk visit does and what this was built to try: the address
@@ -3247,7 +3247,9 @@ public:
         return const_cast<table*>(this)->do_visit( // NOLINT(cppcoreguidelines-pro-type-const-cast)
             first,
             last,
-            [&f](value_type& v) { f(std::as_const(v)); });
+            [&f](value_type& v) {
+                f(std::as_const(v));
+            });
     }
 
     auto find(Key const& key, precomputed_hash ph) -> iterator {
