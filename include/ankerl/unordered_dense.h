@@ -2165,8 +2165,14 @@ private:
         // them is read through `this`, which the fingerprint store may alias too.
         //
         // The loop hashes sixteen elements ahead of the one it places and prefetches the group
-        // each will land in. Below cache that is worth 1.26x on the loop (2.05 to 1.63 ns per
-        // element at 200000 entries) for the pipelining alone: the hash, which is a chain, is
+        // each will land in. A sliding ring rather than the bulk visit's chunks, and measured
+        // against it: chunking this loop is 5-17% slower, worst for a string key, for the same
+        // instructions and 12.5% more cycles. An element here has one dependent random access --
+        // the block it is placed in -- where a visit has two, so there is no second batch to issue
+        // concurrently and the only thing that matters is how much time separates a prefetch from
+        // its use. A ring gives every element a full sixteen placements of that; a chunk gives its
+        // first elements only the rest of the hashing pass, which is far cheaper than placing. Below cache that is worth 1.26x
+        // on the loop (2.05 to 1.63 ns per element at 200000 entries) for the pipelining alone: the hash, which is a chain, is
         // decoupled from the placement, which is a random access, so neither waits for the other.
         // Above cache the prefetch is what matters for a key whose hash has work to hide a miss
         // behind -- a string rehash at four million entries goes 30.6 to 12.4 ns per element -- and

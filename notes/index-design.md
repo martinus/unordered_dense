@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- Chunks or a sliding ring: the rehash and the bulk visit want opposite answers
 - A bulk `visit()`, and the `prefetch(key)` API it replaced
 - Tiny pointers, and the bound insertion order puts on the value index
 - Splitting the probe past the home group: kept, for keys whose compare is a call
@@ -290,6 +291,43 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Chunks or a sliding ring: the rehash and the bulk visit want opposite answers, and the reason
+generalises** (2026-09-11, asked as "would a streaming approach perform better" and then "but doesn't
+resize use that streaming too, it looks like it would be better with chunking"). Both shapes were
+built for both loops. Each loop is faster in the shape it already had, and the principle that decides
+it is worth more than either result.
+
+**The bulk visit wants chunks.** Three passes against a sliding ring, `map<uint64_t, size_t>`, ns per
+lookup: 26.6 against 31.6 at four million all hits, 30.4 against 34.7 at sixteen million. Both retire
+**224.5 instructions per lookup, identical to the tenth**; the ring spends 15% more cycles. The gap is
+15% on all hits and 6% at half hits, and a miss reads no value, so what the ring loses is the *value*
+loads -- the third pass issues sixteen back to back and nothing else creates that parallelism.
+
+**The rehash wants the ring.** Chunked against the shipped streaming version, ns per element:
+
+| | 200000 | 1000000 | 4000000 |
+|---|---|---|---|
+| `uint64_t`, streaming | **2.24** | **6.16** | **17.19** |
+| `uint64_t`, chunked | 2.42 | 6.89 | 18.03 |
+| string, streaming | **7.70** | **10.73** | **20.68** |
+| string, chunked | 8.25 | 12.57 | 22.91 |
+
+Same signature, other direction: for a string key both retire ~137 instructions per element and the
+chunked one spends **12.5% more cycles** (99.1 against 88.1).
+
+**What decides it is how many dependent random accesses an element has.** A visit has two -- the
+group's block, then the value the slot points at. Separating them into passes lets the second batch
+issue sixteen at once, which is the only parallelism available on an access that is not prefetched. A
+rehash has **one**: it reads the block and writes into it, and the value is already where it belongs.
+With nothing to batch, the only thing that matters is how much time sits between a prefetch and its
+use -- and a ring maximises exactly that, giving every element a full sixteen *placements* of cover.
+A chunk gives the first elements of each chunk only the rest of pass one, and pass one is hashing,
+which is far cheaper than placing. So the chunk's early elements stall.
+
+So: **chunk when an element has two dependent accesses, stream when it has one.** Predicting from the
+shape of the loop rather than from the code, and the string column is the check -- it is the case with
+the most work per element and it moves the most, in both loops, in opposite directions.
+
 **A bulk `visit()`, and the `prefetch(key)` API it replaced -- which was measured against the wrong
 baseline** (2026-09-11, issue #232, asked as "would it make sense to have a bulk api"). `prefetch(key)`
 shipped documented at 1.5x and was reverted the same day. Both halves are worth keeping, because the
