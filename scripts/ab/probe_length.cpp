@@ -89,7 +89,9 @@ int main(int argc, char** argv) {
 
     std::printf("load %.3f, %llu turnovers, %llu writing hits/round, %zu entries in %zu slots\n",
                 static_cast<double>(m.size()) / static_cast<double>(m.bucket_count()),
-                static_cast<unsigned long long>(turnovers), static_cast<unsigned long long>(hits), m.size(),
+                static_cast<unsigned long long>(turnovers),
+                static_cast<unsigned long long>(hits),
+                m.size(),
                 m.bucket_count());
     std::printf("  groups per hit   fresh %.4f   churned %.4f\n", fresh_hit, churn_hit);
     std::printf("  groups per miss  fresh %.4f   churned %.4f\n", fresh_miss, churn_miss);

@@ -119,25 +119,36 @@ void one_size(std::size_t n, double targetWidth) {
     auto const& keys = keys_for<this_map>(n);
     auto const per = static_cast<double>(n);
 
-    emit(Bytes,
-         "build",
-         per,
-         targetWidth,
-         "main",
-         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<main_map>(keys).size()); },
-         "this",
-         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<this_map>(keys).size()); }
+    emit(
+        Bytes,
+        "build",
+        per,
+        targetWidth,
+        "main",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(build_map<main_map>(keys).size());
+        },
+        "this",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(build_map<this_map>(keys).size());
+        }
 #ifdef UDM_AB_HAVE_JAN
-         ,
-         "jan",
-         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<jan_map>(keys).size()); }
+        ,
+        "jan",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(build_map<jan_map>(keys).size());
+        }
 #endif
 #ifdef UDM_AB_HAVE_BOOST
-         ,
-         "boost",
-         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<boost_map>(keys).size()); },
-         "boostdef",
-         [&] { ankerl::nanobench::doNotOptimizeAway(build_map<boostdef_map>(keys).size()); }
+        ,
+        "boost",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(build_map<boost_map>(keys).size());
+        },
+        "boostdef",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(build_map<boostdef_map>(keys).size());
+        }
 #endif
     );
 
@@ -152,25 +163,36 @@ void one_size(std::size_t n, double targetWidth) {
     auto m2 = build_map<boost_map>(keys);
     auto m4 = build_map<boostdef_map>(keys);
 #endif
-    emit(Bytes,
-         "iterate",
-         per,
-         targetWidth,
-         "main",
-         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m0)); },
-         "this",
-         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m1)); }
+    emit(
+        Bytes,
+        "iterate",
+        per,
+        targetWidth,
+        "main",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(iterate(m0));
+        },
+        "this",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(iterate(m1));
+        }
 #ifdef UDM_AB_HAVE_JAN
-         ,
-         "jan",
-         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m3)); }
+        ,
+        "jan",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(iterate(m3));
+        }
 #endif
 #ifdef UDM_AB_HAVE_BOOST
-         ,
-         "boost",
-         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m2)); },
-         "boostdef",
-         [&] { ankerl::nanobench::doNotOptimizeAway(iterate(m4)); }
+        ,
+        "boost",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(iterate(m2));
+        },
+        "boostdef",
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(iterate(m4));
+        }
 #endif
     );
 }

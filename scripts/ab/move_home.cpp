@@ -103,8 +103,12 @@ int main(int argc, char** argv) {
         }
     }
     auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
-    std::printf("%-5s n=%-8llu turn=%-4llu hits=%llu  %8.2f ns/op   load=%.3f acc=%zu\n", what.c_str(),
-                static_cast<unsigned long long>(n), static_cast<unsigned long long>(turnovers),
-                static_cast<unsigned long long>(hits), ns / static_cast<double>(reps),
-                static_cast<double>(m.size()) / static_cast<double>(m.bucket_count()), acc);
+    std::printf("%-5s n=%-8llu turn=%-4llu hits=%llu  %8.2f ns/op   load=%.3f acc=%zu\n",
+                what.c_str(),
+                static_cast<unsigned long long>(n),
+                static_cast<unsigned long long>(turnovers),
+                static_cast<unsigned long long>(hits),
+                ns / static_cast<double>(reps),
+                static_cast<double>(m.size()) / static_cast<double>(m.bucket_count()),
+                acc);
 }

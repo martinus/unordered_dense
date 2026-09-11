@@ -65,15 +65,20 @@ int main(int argc, char** argv) {
         source.emplace_back(workloads::key_for<map_t>(v), i);
     }
 
+    // The per-round copy of `source` is outside the timed region. It looks like noise for a small
+    // mapped type and swamps everything for a large one -- at 1032 bytes a value it is 66 MiB of
+    // memcpy per round against a call that takes milliseconds, which quietly pulled every ratio
+    // towards 1.0 the first time this was used to compare two value sizes.
     auto acc = std::size_t{0};
-    auto const t0 = std::chrono::steady_clock::now();
+    auto el = std::chrono::steady_clock::duration{};
     for (std::size_t round = 0; round < rounds; ++round) {
         auto container = container_t(source);
         auto map = map_t();
+        auto const t0 = std::chrono::steady_clock::now();
         map.replace(std::move(container));
+        el += std::chrono::steady_clock::now() - t0;
         acc += map.size();
     }
-    auto const el = std::chrono::steady_clock::now() - t0;
     std::printf("%.3f ns/element  n=%zu rounds=%zu dup=%zu%% unique=%zu acc=%zu\n",
                 std::chrono::duration<double, std::nano>(el).count() / static_cast<double>(n * rounds),
                 n,

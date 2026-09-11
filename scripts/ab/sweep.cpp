@@ -24,17 +24,17 @@
 #include <bench/workloads.h>
 #include <third-party/nanobench.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <vector>
 
 namespace {
@@ -191,7 +191,7 @@ auto insert_erase_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < ops; ++i) {
         auto const a = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
-        map[present[a]] = 1; // present: operator[] that finds
+        map[present[a]] = 1;  // present: operator[] that finds
         map.erase(absent[a]); // absent: erase that finds nothing
         // Erase before inserting, so the size never rises above n. The other order crosses the
         // growth threshold and one operation pays for rehashing the whole table -- real, but it
@@ -199,8 +199,8 @@ auto insert_erase_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
         // else: 1219 ns per operation at 64M entries against the 20 the steady state costs.
         auto const b = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
         auto const j = i % spare.size();
-        map.erase(present[b]);  // erase that removes
-        map[spare[j]] = 1;      // operator[] that inserts
+        map.erase(present[b]); // erase that removes
+        map[spare[j]] = 1;     // operator[] that inserts
         std::swap(present[b], spare[j]);
     }
     auto const ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
@@ -221,8 +221,8 @@ auto insert_erase_ns(Map& map, state<Map>& st, std::size_t ops) -> double {
 // complexityN, which is the config field meant for exactly that, so every row says which table it
 // came from.
 template <typename... Alternatives>
-void measure_point(std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, bool emit,
-                   Alternatives&&... alternatives) {
+void measure_point(
+    std::size_t n, std::size_t buckets, std::size_t batch, double targetWidth, bool emit, Alternatives&&... alternatives) {
     auto bench = ankerl::nanobench::Bench();
     bench.batch(static_cast<double>(batch))
         .complexityN(static_cast<double>(n))
@@ -409,26 +409,37 @@ void sweep(unsigned max_shift, unsigned per_octave, std::size_t batch, int mode,
         // one alternative. So the first point is measured twice and the first answer thrown away.
         auto const passes = n == first ? 2 : 1;
         for (auto pass = 0; pass < passes; ++pass) {
-            measure_point(n,
-                          m1.bucket_count(),
-                          batch,
-                          targetWidth,
-                          pass + 1 == passes,
-                          "main",
-                          [&] { run(m0, s0); },
-                          "this",
-                          [&] { run(m1, s1); }
+            measure_point(
+                n,
+                m1.bucket_count(),
+                batch,
+                targetWidth,
+                pass + 1 == passes,
+                "main",
+                [&] {
+                    run(m0, s0);
+                },
+                "this",
+                [&] {
+                    run(m1, s1);
+                }
 #ifdef UDM_AB_HAVE_JAN
-                          ,
-                          "jan",
-                          [&] { run(m3, s3); }
+                ,
+                "jan",
+                [&] {
+                    run(m3, s3);
+                }
 #endif
 #ifdef UDM_AB_HAVE_BOOST
-                          ,
-                          "boost",
-                          [&] { run(m2, s2); },
-                          "boostdef",
-                          [&] { run(m4, s4); }
+                ,
+                "boost",
+                [&] {
+                    run(m2, s2);
+                },
+                "boostdef",
+                [&] {
+                    run(m4, s4);
+                }
 #endif
             );
         }
