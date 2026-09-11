@@ -394,8 +394,61 @@ all on the footprint arithmetic, the threshold and the two prefetches. A mutant 
 answer -- so the number to read is that no survivor is in the loop body. Do not chase it by
 loosening the tests.
 
-`do_insert_range` and `do_visit` have the same ring and no such gate; whether they have the same
-cliff is not measured, and is issue material rather than a claim.
+`do_insert_range` and `do_visit` have the same ring and no such gate. Measured on 2026-09-11, and
+**neither needs one** -- see the next entry.
+
+**The other two pipelines do not want the cache gate, and the instruction premium does not predict
+which does** (2026-09-11, issue #247, opened by the `replace()` result above). Each loop was built
+twice into its own binary, once as shipped and once with the ring taken out and the body written as
+a plain per-element loop -- same checksums, so the only difference is the pipeline -- and the two
+alternated.
+
+The instruction premium is large in all three and says nothing about where the crossover is:
+
+| loop | plain | pipelined | premium |
+|---|---|---|---|
+| `replace()` dedup | 73.4 | 86.6 | +13.2 |
+| `do_visit` (hit) | 70.3 | 86.0 | +15.7 |
+| `do_insert_range` (reserved) | 81.0 | 97.9 | +16.9 |
+
+Flat across sizes in each case, to 0.2 instructions. Yet the time ratios are not the same shape at
+all. Medians of five to seven interleaved repeats, pipelined over plain:
+
+| n | `replace()` | `do_visit` hit | `do_visit` half | `do_insert_range` |
+|---|---|---|---|---|
+| 1024 | -- | 1.08 | 0.91 | 1.02 |
+| 4096 | -- | 1.05 | 0.89 | 1.01 |
+| 16384 | -- | 1.01 | 0.88 | 0.75 |
+| 32768 | 1.20 | | | 0.65 |
+| 65536 | 1.03 | | | 0.66 |
+| 131072 | | 0.90 | 0.84 | |
+| 262144 | 0.90 | | | 0.48 |
+| 4000000 | 0.74 | 0.83 | | 0.54 |
+
+**The range insert never loses**, at any size, despite carrying the largest premium of the three. It
+is neutral at a thousand elements and already 1.33x at sixteen thousand. No gate.
+
+**The bulk visit loses only for a caller whose keys all hit a map smaller than about sixteen
+thousand** -- 1.08 at a thousand, gone by sixteen thousand. At the same sizes with half the keys
+missing it *wins* 0.88-0.91, which settles it: a footprint gate would give up an 11% win to avoid an
+8% loss, and the map cannot see the caller's hit rate, which is the axis that actually decides. No
+gate.
+
+A hypothesis for why, offered as one rather than a conclusion: the explicit ring only pays where the
+out-of-order window cannot already find the independent work. The two loops that lose at small sizes
+-- `replace()` and the visit -- have short bodies over a sequentially read container, so the hardware
+already overlaps three or four elements without being told to. The range insert's body carries the
+placement *and* a vector append with its capacity branch, so fewer iterations fit the window and the
+ring adds parallelism that was not otherwise there. That would also explain why the loss is 1.20 for
+`replace()` and only 1.08 for the visit: the visit's body has the callback in it.
+
+Two measurement notes. The first comparison tried was `insert(first, last)` against a caller's own
+`for` loop of single inserts, which is the wrong control -- it includes ~15 instructions of call
+boundary per element (see the clang/gcc entry) and shows the range winning at every size, hiding any
+pipeline penalty underneath. The control has to be the same entry point with the ring removed. And
+the range insert's small sizes are bimodal between repeats -- 0.46 and 1.52 both appear at n=4096 --
+because the round rebuilds the map and the allocator does not do the same thing every time; that is
+why the numbers above are medians of seven and not of three.
 
 **Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it** (2026-09-11,
 issue #244, from four cleanup reviews of the range insert). Three of the four items were measured;

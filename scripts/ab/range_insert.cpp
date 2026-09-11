@@ -11,6 +11,12 @@
 //
 //   argv: <loop|range> <n> [rounds] [reserved|grow]
 //
+// `loop` is the right control for "what does the range overload buy a caller" and the wrong one for
+// "does the ring inside it pay": it also carries ~15 instructions of call boundary per element, so
+// it shows the range winning at every size and hides any pipeline penalty underneath. For the
+// second question build the header twice, once with the ring taken out of do_insert_range, and run
+// `range` against `range`.
+//
 // Built by hand; -DUDM_RI_STR swaps the key for a std::string, which is the shape where the hash
 // being pipelined is worth the most.
 #include <ankerl/unordered_dense.h>
