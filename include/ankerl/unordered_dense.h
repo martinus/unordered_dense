@@ -2452,7 +2452,9 @@ private:
             // backwards returns a wrong answer rather than crashing, and it has been got backwards
             // twice. fill_buckets_from_values has the same ordering for the same reason.
             //
-            // The two are deliberately not one shared loop. Extracting the ring into a helper taking
+            // The three rings in this file -- here, fill_buckets_from_values and
+            // do_replace_pipelined -- are deliberately not one shared loop. Extracting the ring into
+            // a helper taking
             // both halves as callables was built and measured on 2026-09-11: it costs the rehash
             // **1.9 instructions per element**, 45.7 to 47.6, and 1.3% of its time on six of six
             // interleaved pairs, because that loop wants its group pointer, mask and shift in locals
@@ -2466,6 +2468,60 @@ private:
                 ++lookahead;
             }
             do_insert_hashed(mh, *first);
+        }
+    }
+
+    // The pipelined part of replace()'s dedup walk; see there for why it is allowed to exist and
+    // where it has to stop. Advances value_idx to the first element it did not handle.
+    //
+    // The ring holds the hash already taken apart -- the fingerprint word, the home group and the
+    // block that group lives in -- rather than the mixed hash. Nothing here grows the index, so a
+    // block pointer stays valid, and holding it is the difference between forming an 88 byte block's
+    // address once per element and forming it again in the probe and a third time in the placement.
+    void do_replace_pipelined(std::size_t& value_idx) {
+        auto const* const groups = m_buckets.data();
+        auto ring_word = std::array<std::uint32_t, pipeline_depth>{};
+        auto ring_home = std::array<value_idx_type, pipeline_depth>{};
+        auto ring_block = std::array<typename bucket_container_type::block const*, pipeline_depth>{};
+
+        // Hashes and decomposes, but does not ask for the block: the caller decides that, because
+        // the one refill that happens on a duplicate is read by the very next iteration and has no
+        // distance to run.
+        auto fetch = [&](std::size_t slot, std::size_t at) {
+            auto const mh = mixed_hash(get_key(m_values[at]));
+            ring_word[slot] = fingerprint_word(mh);
+            ring_home[slot] = group_idx_from_hash(mh);
+            ring_block[slot] = groups + std::size_t{ring_home[slot]};
+        };
+
+        for (auto i = std::size_t{}; i < pipeline_depth; ++i) {
+            fetch(i, i);
+            prefetch_block(ring_block[i]);
+        }
+        while (m_values.size() > value_idx + pipeline_depth + 1) {
+            auto const slot = value_idx % pipeline_depth;
+            auto const word = ring_word[slot];
+            auto const counter = word & 7U;
+            auto const home_idx = ring_home[slot];
+            // The group is handed over rather than looked up: this loop asked for it
+            // pipeline_depth elements ago, so the probe must not ask again.
+            if (probe_at_home(get_key(m_values[value_idx]), word, counter, *ring_block[slot], home_idx).found) {
+                // The slot the duplicate vacated is refilled from the element that just moved into
+                // it -- read by the very next iteration, so there is no distance to prefetch over.
+                // value_idx is below the last element here, by the loop's own condition, so the
+                // plain loop's self-move guard cannot be needed.
+                m_values[value_idx] = std::move(m_values.back());
+                m_values.pop_back();
+                fetch(slot, value_idx);
+            } else {
+                place_group(word, counter, home_idx, static_cast<value_idx_type>(value_idx));
+                // The slot holding element value_idx is the one value_idx + pipeline_depth goes
+                // into, and the loop's own condition says that element exists. There is no separate
+                // lookahead cursor because it would never hold anything but this sum.
+                fetch(slot, value_idx + pipeline_depth);
+                prefetch_block(ring_block[slot]);
+                ++value_idx;
+            }
         }
     }
 
@@ -2998,42 +3054,30 @@ public:
         // iteration that could read a stale entry is the one after which the loop exits -- so the
         // boundary is not balanced on a knife edge in either direction.
         //
-        // The bucket array is sized once before this and never grows here, so it is held in a local
-        // for the reason fill_buckets_from_values holds its own: placing stores a std::uint8_t
-        // fingerprint, which may alias the container's data pointer, so reading it through `this`
-        // would put a reload on every element's address chain.
-        if (m_values.size() > pipeline_depth + 1) {
-            auto* const groups = m_buckets.data();
-            auto ring = std::array<std::uint64_t, pipeline_depth>{};
-            auto hash_at = [this, groups](std::size_t at) -> std::uint64_t {
-                auto const mh = this->mixed_hash(get_key(m_values[at]));
-                prefetch_block(groups, std::size_t{group_idx_from_hash(mh)});
-                return mh;
-            };
-            for (auto i = std::size_t{}; i < pipeline_depth; ++i) {
-                ring[i] = hash_at(i);
-            }
-            auto lookahead = pipeline_depth;
-
-            while (m_values.size() > value_idx + pipeline_depth + 1) {
-                auto const slot = value_idx % pipeline_depth;
-                auto const mh = ring[slot];
-                auto const r = probe(get_key(m_values[value_idx]), mh);
-                if (r.found) {
-                    // value_idx is below the last element here, by the loop's own condition, so the
-                    // plain loop's self-move guard cannot be needed.
-                    m_values[value_idx] = std::move(m_values.back());
-                    m_values.pop_back();
-                    ring[slot] = hash_at(value_idx);
-                } else {
-                    place_group(mh, static_cast<value_idx_type>(value_idx));
-                    if (lookahead < m_values.size()) {
-                        ring[slot] = hash_at(lookahead);
-                        ++lookahead;
-                    }
-                    ++value_idx;
-                }
-            }
+        // The bucket array is sized once before this and never grows here, so the pipelined loop can
+        // hold its base in a local -- which is what lets the ring carry block pointers rather than
+        // group indices.
+        //
+        // And it only runs when the work does not fit in cache. The pipeline is not free: the ring
+        // round trip costs **13.6 instructions per element**, 73.4 against 86.6 at n = 1024, and a
+        // prefetch of a line already in L2 still occupies a load port. Measured against the
+        // unpipelined loop on 2026-09-11, at 0% duplicates, the ratio tracks the footprint against
+        // this machine's 1 MiB L2 and nothing else:
+        //
+        //     688 KiB (n=32768)   1.20x -- a fifth slower
+        //    1376 KiB (n=65536)   1.03x
+        //    2064 KiB (n=98304)   0.92x
+        //    5504 KiB (n=262144)  0.90x
+        //    22 MiB   (n=4000000) 0.74x
+        //
+        // So the gate is the footprint the loop streams -- the values plus the index -- against a
+        // conservative 1 MiB, which is the smallest L2 worth assuming. Getting it wrong in the safe
+        // direction (a machine with more L2) costs at most that 1.20x on one octave of sizes;
+        // omitting the gate costs it on every size below a quarter million.
+        auto const footprint = m_values.size() * sizeof(value_type) +
+                               (std::size_t{m_group_mask} + 1) * sizeof(typename bucket_container_type::block);
+        if (m_values.size() > pipeline_depth + 1 && footprint > (std::size_t{1} << 20U)) {
+            do_replace_pipelined(value_idx);
         }
 
         // loop until we reach the end of the container. duplicated entries will be replaced with back().
