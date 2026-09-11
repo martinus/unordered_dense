@@ -2324,8 +2324,11 @@ private:
     }
 
     // The engine behind visit(); see the comment there for what the three passes are for.
+    // f by value, the way the standard algorithms take a callable: it is invoked once per key that
+    // is found, so it cannot be forwarded -- forwarding it would move from the same object on every
+    // hit. The public overloads move into this parameter.
     template <typename FwdIt, typename F>
-    auto do_visit(FwdIt first, FwdIt last, F&& f) -> std::size_t {
+    auto do_visit(FwdIt first, FwdIt last, F f) -> std::size_t {
         auto found = std::size_t{0};
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty())) {
             return found;
@@ -3235,20 +3238,21 @@ public:
     // sliding ring, because a ring has to be read before the slot it frees is refilled, and getting
     // that backwards is a wrong answer rather than a crash.
     //
-    // f is called with value_type&, or value_type const& on a const map. Keys that are absent are
-    // not reported; the return value counts the ones that were found.
+    // f is taken by value, as the standard algorithms take a callable, and is called with
+    // value_type& -- or value_type const& on a const map. Keys that are absent are not reported; the
+    // return value counts the ones that were found.
     template <typename FwdIt, typename F>
-    auto visit(FwdIt first, FwdIt last, F&& f) -> std::size_t {
-        return do_visit(first, last, std::forward<F>(f));
+    auto visit(FwdIt first, FwdIt last, F f) -> std::size_t {
+        return do_visit(first, last, std::move(f));
     }
 
     template <typename FwdIt, typename F>
-    auto visit(FwdIt first, FwdIt last, F&& f) const -> std::size_t {
+    auto visit(FwdIt first, FwdIt last, F f) const -> std::size_t {
         return const_cast<table*>(this)->do_visit( // NOLINT(cppcoreguidelines-pro-type-const-cast)
             first,
             last,
             [&f](value_type& v) -> void {
-                std::forward<F>(f)(std::as_const(v));
+                f(std::as_const(v));
             });
     }
 
