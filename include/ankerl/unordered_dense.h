@@ -2323,6 +2323,75 @@ private:
                                 std::forward_as_tuple(std::forward<Args>(args)...));
     }
 
+    // The engine behind visit(); see the comment there for what the three passes are for.
+    template <typename FwdIt, typename F>
+    auto do_visit(FwdIt first, FwdIt last, F&& f) -> std::size_t {
+        auto found = std::size_t{0};
+        if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty())) {
+            return found;
+        }
+        // Sixteen, which is what boost's bulk visit uses. It is a count that has to fit inside the
+        // core's outstanding misses, and every size from 8 to 32 measured within 2% of it here.
+        constexpr auto bulk = std::size_t{16};
+        auto mh = std::array<std::uint64_t, bulk>{};
+        auto word = std::array<std::uint32_t, bulk>{};
+        auto home = std::array<value_idx_type, bulk>{};
+        auto lanes = std::array<lane_mask, bulk>{};
+        auto const* groups = m_buckets.data();
+
+        while (first != last) {
+            auto n = std::size_t{0};
+            auto it = first;
+            for (; n < bulk && it != last; ++n, ++it) {
+                mh[n] = mixed_hash(*it);
+                word[n] = fingerprint_word(mh[n]);
+                home[n] = group_idx_from_hash(mh[n]);
+                prefetch_block(groups, std::size_t{home[n]});
+            }
+            for (auto i = std::size_t{}; i < n; ++i) {
+                lanes[i] = match_fingerprint(groups[home[i]], word[i]);
+            }
+            for (auto i = std::size_t{}; i < n; ++i, ++first) {
+                auto const& group = groups[home[i]];
+                auto remaining = lanes[i];
+                auto hit = false;
+                while (remaining != 0) {
+                    auto const lane = first_lane(remaining);
+                    auto const value_idx = group.m_index[lane];
+                    if (m_equal(*first, get_key(m_values[value_idx]))) {
+                        f(m_values[value_idx]);
+                        ++found;
+                        hit = true;
+                        break;
+                    }
+                    remaining &= remaining - 1;
+                }
+                if (!hit) {
+                    // Not at home: the two stopping conditions probe() uses, then the same
+                    // out-of-line walk. About 5% of keys reach this and none of their work was
+                    // pipelined, which is what keeps the common path straight.
+                    //
+                    // `m_group_mask != 0` cannot fire while the smallest array is four groups; it is
+                    // here because it is what the loop tests, so a mutation survivor on it is
+                    // expected. What is *not* expected, and is covered by a steered test, is the
+                    // counter: turning the `!= 0` beside it into `!= 1` makes a key that overflowed
+                    // its home group with exactly one same-class neighbour unfindable.
+                    auto const counter = word[i] & 7U;
+                    if (group.m_overflows[counter] != 0 && m_group_mask != 0) {
+                        value_idx_type delta = 0;
+                        auto const next = next_group(home[i], delta);
+                        auto const r = probe_past_home(*first, word[i], counter, next, delta);
+                        if (r.found) {
+                            f(m_values[r.value_idx]);
+                            ++found;
+                        }
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
     template <typename K>
     auto do_find(K const& key) -> iterator {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty()))
@@ -3140,6 +3209,45 @@ public:
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
     [[nodiscard]] auto hash_for(K const& key) const -> precomputed_hash {
         return {mixed_hash(key)};
+    }
+
+    // Looks up a range of keys, calls f on each one that is there, and returns how many that was.
+    //
+    // A batch is worth having because a lookup here is two dependent memory accesses -- the group's
+    // block, then the value -- and a loop that does one lookup at a time can only overlap them as
+    // far as the core's out-of-order window reaches past a whole loop body. Splitting the batch into
+    // passes reaches further: every key's block is asked for before any key's block is waited on.
+    //
+    //   1. hash each key in the chunk and fetch the block it comes home to
+    //   2. match the fingerprints, by which time the blocks have arrived
+    //   3. compare the keys and call f
+    //
+    // Measured against the same batch looked up one key at a time with find(), map<uint64_t,
+    // size_t>, ns per lookup: at four million entries 33.4 to 28.8 on all hits and 34.8 to 30.7 at
+    // half, at sixteen million 36.6 to 32.7 and 38.0 to 34.0. About 1.15x, and it needs a table past
+    // the cache to be worth anything.
+    //
+    // Two things this deliberately does not do. It does not prefetch the *value* in pass 2, which is
+    // what boost::concurrent_flat_map's bulk visit does and what this was built to try: the address
+    // is known there, unlike in a single lookup, and it measured +3.8% on all hits and **-4.8% at
+    // half hits**, because an absent key has nothing to fetch and a present one is already covered
+    // once the passes are separated. And it is a fixed-size chunk with straight passes rather than a
+    // sliding ring, because a ring has to be read before the slot it frees is refilled, and getting
+    // that backwards is a wrong answer rather than a crash.
+    //
+    // f is called with value_type&, or value_type const& on a const map. Keys that are absent are
+    // not reported; the return value counts the ones that were found.
+    template <typename FwdIt, typename F>
+    auto visit(FwdIt first, FwdIt last, F&& f) -> std::size_t {
+        return do_visit(first, last, f);
+    }
+
+    template <typename FwdIt, typename F>
+    auto visit(FwdIt first, FwdIt last, F&& f) const -> std::size_t {
+        return const_cast<table*>(this)->do_visit( // NOLINT(cppcoreguidelines-pro-type-const-cast)
+            first,
+            last,
+            [&f](value_type& v) { f(std::as_const(v)); });
     }
 
     auto find(Key const& key, precomputed_hash ph) -> iterator {
