@@ -2424,7 +2424,17 @@ private:
         }
         for (auto i = std::size_t{}; first != last; ++first, ++i) {
             // This element's hash out of the ring before the slot it frees is refilled: the slot
-            // holding element i is the one element i + pipeline_depth goes into.
+            // holding element i is the one element i + pipeline_depth goes into. Getting that
+            // backwards returns a wrong answer rather than crashing, and it has been got backwards
+            // twice. fill_buckets_from_values has the same ordering for the same reason.
+            //
+            // The two are deliberately not one shared loop. Extracting the ring into a helper taking
+            // both halves as callables was built and measured on 2026-09-11: it costs the rehash
+            // **1.9 instructions per element**, 45.7 to 47.6, and 1.3% of its time on six of six
+            // interleaved pairs, because that loop wants its group pointer, mask and shift in locals
+            // and this one cannot have them -- growth moves them. Passing the element index through
+            // the callable did not recover it either. The duplication is real and measured to be
+            // cheaper than the fix.
             auto const slot = i % pipeline_depth;
             auto const mh = ring[slot];
             if (lookahead != last) {

@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- Taking the hash apart once per insert, and the shared pipeline that was not worth it
 - Chunks or a sliding ring: the rehash and the bulk visit want opposite answers
 - A bulk `visit()`, and the `prefetch(key)` API it replaced
 - Tiny pointers, and the bound insertion order puts on the value index
@@ -291,6 +292,48 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Taking the hash apart once per insert, and the shared pipeline that was not worth it** (2026-09-11,
+issue #244, from four cleanup reviews of the range insert). Three of the four items were measured;
+two are in and one is not.
+
+**In: an insert derived the same three things from its hash in three places.** The range insert's
+prefetch computed the group; `probe` computed the fingerprint word, the counter and the group again;
+`place_group` computed all three a third time. They sit in separate functions separated by a
+fingerprint store and a possible reallocation, so nothing is common-subexpression-eliminated across
+them. `probe`, `place_group` and `do_place_element` each gained a variant taking the pieces with the
+old signature as a thin wrapper. **That alone is 4% of a single clang insert -- 97.0 instructions to
+93.0 -- and 3% of a gcc `++m[k]`**, because `place_group` had been re-deriving the fingerprint word
+across an inline boundary from a caller that had just computed it.
+
+**In: the probe stops prefetching the home block for a caller that already asked for it.** A
+pipelined insert requested the whole block sixteen elements earlier. Another 3%.
+
+Together, ns per element rebuilding a map from a vector of pairs: 200000 reserved 5.42 to 5.08,
+growing 8.41 to 8.04; two million reserved 7.50 to 7.18, growing 26.48 to 26.08. Lookups byte
+identical on both compilers, which is the bar for touching the probe.
+
+**Out: one shared pipelining helper for the rehash and the range insert.** All four reviews raised
+the duplicated ring, and the concern is right -- the read-before-refill ordering is written twice and
+a drifted copy of it returns a wrong answer rather than crashing. Built anyway, as a helper taking
+the fetch and the per-element work as callables so each caller keeps its own hoisting. **It costs the
+rehash 1.9 instructions per element**, 45.7 to 47.6, and 1.3% of its time on **six of six**
+interleaved pairs; strings were neutral. Passing the element index through the callable, on the
+theory that a captured counter was the cost, recovered none of it -- the price is the indirection.
+
+The rehash wants `groups`, `mask` and `shifts` in locals, and that is load-bearing rather than
+stylistic: a fingerprint store is a `std::uint8_t` store that may alias the container's own data
+pointer, so reading them through `this` costs a reload on the address chain of every element. The
+range insert *cannot* hold them, because growth moves the array underneath it. So the two loops
+differ in exactly the part that matters, and what is left to share is the ordering -- which is now
+stated once, in a comment each site points at, at no cost. **The duplication is measured to be
+cheaper than the fix**, which is the kind of thing worth writing down so it is not re-proposed.
+
+**Not attempted: pipelining `replace()`.** It is the last bulk build path without a lookahead, and it
+is genuinely harder -- the loop swap-erases duplicates from the back, so `m_values.back()` moves
+under a lookahead and the index does not advance on a duplicate. The argument for doing it was that a
+shared helper would make it tractable; with that helper rejected on measurement, it would be a third
+hand-written ring for a path most callers never take. Left open.
+
 **Chunks or a sliding ring: the rehash and the bulk visit want opposite answers, and the reason
 generalises** (2026-09-11, asked as "would a streaming approach perform better" and then "but doesn't
 resize use that streaming too, it looks like it would be better with chunking"). Both shapes were
