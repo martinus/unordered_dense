@@ -286,9 +286,12 @@ time, past the cache. The larger effect is the caller's: **batching the keys at 
 *The five pipelines.* The rehash, the range insert, `replace()`'s dedup and `merge()` each have their
 own `pipeline_depth` ring, and the bulk visit has chunks instead (a ring there measured 15% worse);
 sharing them costs the rehash 1.9 instructions per element and was rejected. `replace()` and
-`merge()` are gated, on **index** bytes — counting the values too was measured wrong, and both
-crossovers land within a doubling of the same 256 KB, which is what says that number is the cache's
-and not either loop's. The range insert is slightly
+`merge()` are gated, on **index** bytes — counting the values too was measured wrong. The two
+thresholds are **not the same**: 256 KB and 1 MB. A gate's crossover is where the ring's fixed 13–17
+instructions per element stop being worth the misses they hide, so it moves with what the *rest* of
+the loop costs — writing merge's walk with iterators instead of indices made it 5–11% cheaper and
+pushed its crossover two doublings up. Re-fit the constant whenever the gated loop changes; a shared
+one costs 7–12% in an octave. The range insert is slightly
 negative below a few thousand elements and a clear win above; the visit loses 8% only when every key
 hits a map below ~16k, where the same map at a 50% hit rate wins 11%, so its axis is the caller's
 hit rate. The rehash is the one that has never been measured below cache. #247, #242.
@@ -297,4 +300,10 @@ hit rate. The rehash is the one that has never been measured below cache. #247, 
 first version read the gate per element; the ungated case then came back 10% slower than the same
 loop with the ring deleted, because a perfectly predicted branch is not free when a ring, a lambda
 and a live array hang off it. Two instantiations of one body (`walk(std::true_type{})`) get the
-plain loop back to within 1.5%.
+plain loop back.
+
+**Walk a value container with iterators, never with an index, in any loop that also places
+elements.** `fill_buckets_from_values` records why — a `uint8_t` fingerprint store may alias the
+container's data pointer, so an indexed read reloads it after every placement, and that is a store-
+to-load chain per element (10.43 → 2.74 ns/insert there). `merge()`'s walk was written with indices
+first and cost 0.89–0.95 for it; `do_insert_range` and the rehash were already iterator-based.
