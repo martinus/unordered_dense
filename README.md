@@ -35,6 +35,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
     - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
     - [3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#336-auto-hash_fork-const-key-const---precomputed_hash)
+    - [3.3.7. `auto prefetch(K const& key) const -> precomputed_hash`](#337-auto-prefetchk-const-key-const---precomputed_hash)
   - [3.4. Custom Container Types](#34-custom-container-types)
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
@@ -390,6 +391,60 @@ auto it = map.find("status"s, h);
 ```
 
 Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason — it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
+
+#### 3.3.7. `auto prefetch(K const& key) const -> precomputed_hash`
+
+A lookup on a table larger than the cache is two dependent memory accesses — the group's block, and then the value it points at — and nothing inside one lookup can overlap them. A caller with *many* keys to look up can overlap them across lookups: ask for the block of a key you will want shortly, then do the lookup whose block you asked for a while ago. No lookup gets faster; several misses are simply in flight at once.
+
+`prefetch()` hashes the key, starts fetching the block its home group lives in, and hands the hash back, so the lookup that follows does not hash it a second time:
+
+```cpp
+constexpr size_t depth = 8;
+std::array<map_t::precomputed_hash, depth> ring;
+for (size_t i = 0; i < depth; ++i) {
+    ring[i] = map.prefetch(keys[i]);
+}
+
+for (size_t i = 0; i < keys.size(); ++i) {
+    // take this key's hash out before refilling the slot: the slot holding key i is
+    // the one key i + depth goes into
+    auto const h = ring[i % depth];
+    if (i + depth < keys.size()) {
+        ring[i % depth] = map.prefetch(keys[i + depth]);
+    }
+    if (auto it = map.find(keys[i], h); it != map.end()) {
+        use(it->second);
+    }
+}
+```
+
+What it is worth, `map<uint64_t, size_t>`, clang 22 on a 7950X, ns per lookup. The middle column pipelines the key and its hash with `hash_for()` but fetches nothing, so the difference between the two right-hand columns is the prefetch itself:
+
+| entries | | plain | `hash_for` ahead | `prefetch` ahead | |
+| ------: | :--- | ----: | ---------------: | ---------------: | ---: |
+| 200 000 | all hits | 10.3 ns | 10.4 ns | 8.2 ns | 1.25x |
+| 4 000 000 | all hits | 58.4 ns | 64.4 ns | 38.5 ns | **1.52x** |
+| 16 000 000 | all hits | 65.6 ns | 73.1 ns | 42.5 ns | **1.54x** |
+| 4 000 000 | half hits | 55.1 ns | 48.3 ns | 38.1 ns | 1.45x |
+
+With `std::string` keys at four million entries it is 158 ns to 115 ns, 1.37x — and there the hash matters too, which is why the hash comes back rather than being thrown away: pipelining it alone is worth 6% and the prefetch adds the other 29%.
+
+Two things to know. **Depth is not free to increase**: eight was the best of 4, 8, 16 and 32 here, and 32 was *slower* than 8 at four million entries, because only so many misses can be outstanding at once. And **it only pays past the cache** — at 200 000 entries it is worth a quarter, at 4 million half, and on a table that fits in L2 it is a wasted instruction.
+
+The returned hash is not `[[nodiscard]]`: dropping it is the ordinary use of the plain form.
+
+```cpp
+map.prefetch(key); // fine, if you have nowhere to keep the hash
+```
+
+There is also an overload taking a `precomputed_hash`, for a caller that already has one:
+
+```cpp
+auto const h = map.hash_for("status");
+map.prefetch(h);
+```
+
+On a table that has never allocated buckets, `prefetch()` fetches nothing and still returns the hash, exactly as `hash_for()` does.
 
 ### 3.4. Custom Container Types
 
