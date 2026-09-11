@@ -2437,7 +2437,7 @@ private:
         allocate_buckets_if_none();
         auto ring = std::array<std::uint64_t, pipeline_depth>{};
         auto lookahead = first;
-        auto hash_and_prefetch = [this](auto const& value) {
+        auto hash_and_prefetch = [this](auto const& value) -> std::uint64_t {
             auto const mh = mixed_hash(get_key(value));
             prefetch_block(m_buckets.data(), std::size_t{group_idx_from_hash(mh)});
             return mh;
