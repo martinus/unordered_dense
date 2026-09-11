@@ -32,7 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
-- An unbounded probe that hangs, and the bound that made the erase path 10% cheaper
+- An unbounded probe that hangs -- and the 10% speedup that came with it is an inlining artifact
 - `replace()`'s gate was re-measured on a fixed harness and kept, and the harness is the finding
 - `replace()`'s two loops walk with cursors too, and one cursor too many is slower than none
 - `merge()`, and why it is not the loop the caller would write
@@ -301,8 +301,9 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
-**An unbounded probe that hangs, and the bound that made the erase path 10% cheaper** (2026-09-11,
-issue #254, Ryzen 9 7950X, clang 22, `perf stat`, two single-header binaries).
+**An unbounded probe that hangs -- and the 10% speedup that came with it is an inlining artifact**
+(2026-09-11, issue #254, Ryzen 9 7950X, clang 22 and gcc 16, `perf stat`, single-header binaries).
+**The performance half of this entry is a retraction of what it said when first written.**
 
 `slot_of_value()` -- "which slot points at this value", reached from `erase(it)`, `extract(it)`,
 `replace_key()` and `finish_erase` -- probed with `while (true)` and no stopping condition. Its
@@ -320,55 +321,52 @@ supported way to change a key -- but every other map in this class makes it impo
 this one makes it compile, and what it did then was spin rather than say anything. The same shape was
 fixed once before on the miss path, after a fuzz hang that "survived every other target and 767 unit
 tests". It was found here by a benchmark's own control loop hanging: `scripts/ab/merge.cpp` moved the
-key into the destination and then called `src.erase(it)`, which is the same violation by a different
-route. With a `uint64_t` key that loop is correct, so it ran for a long time before a `std::string`
-key turned it into a hang that took ten minutes of a benchmark run to notice.
+key into the destination and then called `src.erase(it)`, the same violation by a different route,
+correct for a `uint64_t` key and a hang for a `std::string` one.
 
-The bound is `delta == m_group_mask`, the same invariant `probe_from` already uses -- the triangular
-sequence has visited every group, so there is nowhere left -- and the exhausted path calls a new
-`on_error_key_changed()`, which throws or aborts. Returning "not found" is not available: every
-caller's contract says the element is there, and the return is a slot number.
+The bound is `delta == m_group_mask`, the same invariant `probe_from` uses, and the exhausted path
+calls `on_error_key_changed()`, which throws or aborts. Returning "not found" is not available: every
+caller's contract says the element is there, and the return is a slot number. **That is the whole
+justification, and it is enough.**
 
-*And it is 10% faster.* Instructions per erase, the erase path alone (a build-only mode subtracted),
-three repeats each, reproduced in two containers:
+*What was claimed, and why it was wrong.* The bound also measured 10% faster, and this entry
+originally explained why. Instructions per erase, the erase path alone, three repeats, reproduced in
+two containers:
 
-| variant | repeats |
+| variant | clang, as written |
 |---|---|
-| unbounded `while (true)`, as shipped until now | 132.99 / 132.98 / 132.97 |
-| **bounded, exhaustion is `[[noreturn]]`** | **119.63 / 119.65 / 119.50** |
+| unbounded `while (true)` | 132.99 / 132.98 / 132.97 |
+| bounded, exhaustion is `[[noreturn]]` | 119.63 / 119.65 / 119.50 |
 | bounded, exhaustion returns a `0` sentinel | 136.01 / 136.00 / 136.14 |
 
-Flat across n = 50000 / 200000 / 1000000 (132.88 to 119.92, 133.17 to 119.55, 131.35 to 117.69), with
-the build phase as a control that does not move (513.90M against 513.55M instructions -- the insert
-path is untouched). Time 0.946 and 0.937 in cache, 1.013 at a million where the loop is memory-bound.
+Those numbers are real and reproduce. The *explanation* attached to them -- that a loop with one
+value-producing exit and a dead end is cheaper than one the compiler cannot prove terminates -- was
+invented to fit them, and it does not survive its own first test: the unbounded version already had
+exactly one value-producing exit, so "fewer exits to merge" cannot separate it from the `[[noreturn]]`
+one. Two controls, neither of which was run before the claim went into `CLAUDE.md` as a rule:
 
-**It is not the bound, it is the `[[noreturn]]`**: the sentinel variant is *worse* than no bound at
-all. A loop with one value-producing exit and one dead end is cheaper than one with two exits whose
-values have to merge, and cheaper than one the compiler cannot prove terminates.
-
-*The finding does not generalise to the insert path, which is the half worth keeping.* The header has
-two more unbounded `while (true)` loops, both placement walks looking for the first free slot:
-`place_group`, which every insert reaches, and the copy written out inside
-`fill_buckets_from_values`. Both were given the same bound and the same `[[noreturn]]` exhaustion, and
-measured the same three ways. Instructions per insert, medians of three that agreed to 0.02:
-
-| | unbounded | bounded + `[[noreturn]]` | bounded + plain exit |
+| control | unbounded | `[[noreturn]]` | sentinel |
 |---|---|---|---|
-| reserved, n = 50000 | 125.27 | 125.35 | 125.36 |
-| reserved, n = 200000 | 125.39 | 125.46 | 125.46 |
-| reserved, n = 1000000 | 126.30 | 126.31 | 126.32 |
-| growing, n = 50000 | 169.20 | 169.40 | 169.40 |
-| growing, n = 200000 | 169.40 | 169.59 | 169.58 |
-| growing, n = 1000000 | 190.90 | 191.08 | 191.08 |
+| clang, as written | 132.95 | 119.54 | 136.11 |
+| clang, `slot_of_value` forced `noinline` | 137.05 | 138.10 | 137.05 |
+| gcc, normal inlining | 85.49 | 85.06 | 84.52 |
 
-The bounded versions are **very slightly worse at every size**, by the 0.1 to 0.2 instructions the
-added compare costs, and the `[[noreturn]]` and plain-exit columns are indistinguishable. Not shipped.
+**Pin the inlining and the effect disappears. Change compiler and it never existed.** All three
+variants are within one instruction of each other in both controls, and in both the `[[noreturn]]`
+version is the *worst* of the three by exactly the compare it adds. So the 10% is not a property of
+`[[noreturn]]`, or of bounded loops, or of anything transferable: adding the cold call changed what
+clang chose to inline around `slot_of_value`, and that landed better. Any unrelated edit to those
+functions can flip it back.
 
-The difference between the two paths says what the effect actually is. `slot_of_value` **returns a
-value** and its loop had exactly one exit producing it; `place_group` returns `void` and its loop
-already had a clean `return`. So the win is not "name the impossible path `[[noreturn]]`" -- it is
-"a value-returning loop the compiler cannot prove terminates pays for it, and a dead end is the
-cheapest way to give it an exit". Applying it anywhere else needs that shape, and a measurement.
+This also re-explains the insert-path result correctly. `place_group` and the rehash's placement loop
+were given the same bound and came back 0.1-0.2 instructions per insert *worse* at every size, and
+that was written up as "they return `void`, which is a different shape". It is simpler than that:
+bounding them did not move clang's inlining, so all that was left was the cost of the compare -- which
+is exactly what the two controls above show is the honest baseline everywhere.
+
+*The rule that came out of it*, now in `CLAUDE.md`: an instruction count is immune to code layout but
+**not** to inlining. Before believing one, force the function out of line and re-measure, and check a
+second compiler. Both take minutes, and either would have caught this.
 
 **`replace()`'s gate was re-measured on a fixed harness and kept, and the harness is the finding**
 (2026-09-11, issue #257, `scripts/ab/replace_bulk.cpp`, Ryzen 9 7950X, clang 22, medians of seven).
