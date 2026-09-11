@@ -1,0 +1,92 @@
+# Issue #228: should the index prefetch differ on ARM?
+#
+# Both index prefetches were tuned on one x86-64 desktop. Removing them there costs 1.8% of a
+# string miss -- small, and the direction is not obviously the same on a core with different
+# prefetchers, a different cache line count per block and a different memory system. Nobody working
+# on this owns an ARM machine, so the measurement happens here.
+#
+# The paired harness is what makes a shared runner usable: the baseline header is compiled into the
+# same binary under a second namespace and nanobench runs the two interleaved round by round, so a
+# noisy neighbour slows both sides of a round equally and cancels out of the ratio. Absolute times
+# from these machines mean nothing; only the ratios do.
+#
+# Four runs per machine. `3` is the shipped pair of prefetches, so that run compiles the candidate
+# and the baseline from identical source -- it is the control, and it says what this machine's noise
+# floor and code-layout luck amount to. Any variant whose interval overlaps the control's has not
+# been shown to do anything.
+#
+#   git push -f origin HEAD:armbench
+name: arm-prefetch
+
+on:
+  push:
+    branches: [armbench]
+
+jobs:
+  prefetch:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm gcc NEON
+            os: ubuntu-24.04-arm
+            cxx: g++
+          - name: arm clang NEON
+            os: ubuntu-24.04-arm
+            cxx: clang++
+            apt_extra: clang
+          # The control architecture: the same four runs where the answer is already known, so a
+          # result on ARM can be read against a machine whose behaviour is on record.
+          - name: x86 clang SSE2
+            os: ubuntu-latest
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: sudo apt-get update && sudo apt-get install -y libboost-dev ${{ matrix.apt_extra }}
+      - name: machine
+        run: |
+          uname -s -m
+          ${{ matrix.cxx }} --version | head -1
+          nproc || true
+          grep -m1 'model name' /proc/cpuinfo || grep -m1 'CPU part' /proc/cpuinfo || true
+          getconf LEVEL1_DCACHE_LINESIZE || true
+      - name: measure
+        shell: bash
+        run: |
+          set -o pipefail
+          # Only the candidate's macro is set. The baseline header lives in its own macro namespace
+          # (UDMBASE_), so it keeps the shipped pair of prefetches and every run is "this variant
+          # against what ships" -- including variant 3, which is therefore identical source.
+          for v in 3 2 1 0; do
+            echo "::group::ANKERL_UNORDERED_DENSE_INDEX_PREFETCH=$v"
+            AB_EXTRA_FLAGS="-DANKERL_UNORDERED_DENSE_INDEX_PREFETCH=$v" \
+              scripts/ab/run.sh -r origin/main -b -c ${{ matrix.cxx }} all 6 2>&1 | tee "bench-$v.txt"
+            echo "::endgroup::"
+          done
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ matrix.name }}"
+            echo
+            echo "\`3\` is both prefetches, which is what ships: that run compiles identical source"
+            echo "on both sides and is the noise floor. \`2\` is the block's last line only, \`1\` the"
+            echo "line at +64 only, \`0\` neither. Above 1.00 means the variant is faster than shipped."
+            for v in 3 2 1 0; do
+              echo
+              echo "### ANKERL_UNORDERED_DENSE_INDEX_PREFETCH=$v$([ "$v" = 3 ] && echo '  (control: identical source)')"
+              echo
+              python3 scripts/ab/summarize.py "bench-$v.txt" || echo "(no output)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arm-prefetch-${{ matrix.name }}
+          path: bench-*.txt

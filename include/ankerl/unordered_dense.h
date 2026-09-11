@@ -108,6 +108,11 @@
 // mandatory there, so this needs no runtime dispatch either. Restricted to little endian because
 // the mask below reads the comparison result as one 64 bit word, and to AArch64 because 32 bit ARM
 // lacks the horizontal ops -- both fall back to SWAR, which is correct everywhere.
+// EXPERIMENT ONLY -- not for main; see issue #228 and the note in prefetch_index.
+#if !defined(ANKERL_UNORDERED_DENSE_INDEX_PREFETCH)
+#    define ANKERL_UNORDERED_DENSE_INDEX_PREFETCH 3 // NOLINT(cppcoreguidelines-macro-usage)
+#endif
+
 #if !defined(ANKERL_UNORDERED_DENSE_HAS_NEON)
 #    if defined(__ARM_NEON) && defined(__aarch64__) && \
         (!defined(__BYTE_ORDER__) || !defined(__ORDER_BIG_ENDIAN__) || (__BYTE_ORDER__ != __ORDER_BIG_ENDIAN__))
@@ -1645,11 +1650,19 @@ private:
     // the block rather than a second array. One block is 88 bytes and unaligned, so it covers two or
     // three lines; the first is the one the fingerprints are already being read from.
     template <typename Block>
+    // EXPERIMENT ONLY -- not for main. Which of the two index prefetches are issued, so that one
+    // CI run can measure all four combinations on a machine nobody here owns. See issue #228.
+    // Bit 0 is the line at +64, bit 1 the line at the end of the block; 3 is what ships.
     static void prefetch_index(Block const* blocks, value_idx_type group_idx) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(blocks + std::size_t{group_idx});
+        static_cast<void>(p);
+#    if (ANKERL_UNORDERED_DENSE_INDEX_PREFETCH & 1) != 0
         ANKERL_UNORDERED_DENSE_PREFETCH(p + 64);
+#    endif
+#    if (ANKERL_UNORDERED_DENSE_INDEX_PREFETCH & 2) != 0
         ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
+#    endif
     }
 
     // Every line of a block, for a caller that has not touched the group at all. prefetch_index
