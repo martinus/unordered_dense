@@ -21,6 +21,12 @@
 // fills it with prefetch(). The difference between those two columns is the prefetch and nothing
 // else.
 //
+// The `hash` column is **not** a speedup to compare against depth 0; read it as the price of the
+// pipeline itself. Deferring a lookup costs a ring slot and a second key_for(), and buys nothing
+// unless something is fetched early -- so on an all-hits run it comes out *slower* than no
+// pipelining at all, by 7% here and considerably more on a Neoverse. That is the bar the prefetch
+// has to clear, which is why it is the column the prefetch is measured against.
+//
 //   argv: <hit|half> <depth> <n> [reps] [prefetch|hash]
 #include <ankerl/unordered_dense.h>
 
@@ -98,7 +104,12 @@ int main(int argc, char** argv) {
     // a branch predictor learns.
     // What goes into the ring: hash_for pipelines the key fetch and the hash and touches no map
     // memory, prefetch also fetches the block. The difference between the two is the prefetch.
-    auto const ahead = [&](key_type const& k) -> hash_t { return mode == "hash" ? map.hash_for(k) : map.prefetch(k); };
+    //
+    // Decided once rather than compared per iteration. A std::string compare in the inner loop is
+    // worth under a percent here and is not necessarily the same price on another core, which
+    // matters for a harness whose whole job is comparing cores.
+    auto const hash_only = mode == "hash";
+    auto const ahead = [&](key_type const& k) -> hash_t { return hash_only ? map.hash_for(k) : map.prefetch(k); };
 
     auto pick = rng(5);
     auto coin = rng(99);
