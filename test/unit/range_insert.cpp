@@ -155,3 +155,84 @@ TEST_CASE("range_insert_initializer_list_and_from_a_copy") {
     REQUIRE(map.size() == 3U);
     REQUIRE(map.at(3) == 30);
 }
+
+// Sizing the table from the range was measured and declined -- see notes/index-design.md, "sizes the
+// table from the range". These are what that work left behind: the lengths it would have split a
+// range at are still the lengths where a sixteen-deep lookahead has edges, and inserting into a
+// populated map was not covered before.
+
+namespace {
+
+auto range_insert_key(uint64_t i) -> uint64_t {
+    return i * UINT64_C(0x9E3779B97F4A7C15);
+}
+
+using range_insert_input = std::vector<std::pair<uint64_t, uint64_t>>;
+
+// len elements drawn from `distinct` keys, at random rather than in order.
+auto range_insert_input_of(size_t len, size_t distinct) -> range_insert_input {
+    auto input = range_insert_input();
+    auto s = uint64_t{12345};
+    for (size_t i = 0; i < len; ++i) {
+        s ^= s << 13U;
+        s ^= s >> 7U;
+        s ^= s << 17U;
+        input.emplace_back(range_insert_key(static_cast<size_t>(s % distinct)), static_cast<uint64_t>(i));
+    }
+    return input;
+}
+
+} // namespace
+
+TEST_CASE("range_insert_matches_a_loop_at_many_lengths_and_duplicate_rates") {
+    for (auto const len : {size_t{1},
+                           size_t{2},
+                           size_t{3},
+                           size_t{4095},
+                           size_t{4096},
+                           size_t{4097},
+                           size_t{8191},
+                           size_t{8192},
+                           size_t{8193},
+                           size_t{12289}}) {
+        for (auto const distinct : {size_t{7}, size_t{1000}}) {
+            auto const input = range_insert_input_of(len, distinct);
+
+            auto ranged = ankerl::unordered_dense::map<uint64_t, uint64_t>();
+            ranged.insert(input.begin(), input.end());
+            auto looped = ankerl::unordered_dense::map<uint64_t, uint64_t>();
+            for (auto const& kv : input) {
+                looped.insert(kv);
+            }
+
+            INFO("len=" << len << " distinct=" << distinct);
+            REQUIRE(ranged.size() == looped.size());
+            // same index, not merely the same contents: a range insert that sized the table
+            // differently from a loop would be a behaviour change, and is the thing #248 declined
+            REQUIRE(ranged.bucket_count() == looped.bucket_count());
+            for (auto const& [k, v] : looped) {
+                REQUIRE(ranged.at(k) == v);
+            }
+        }
+    }
+}
+
+TEST_CASE("range_insert_into_a_populated_map") {
+    auto map = ankerl::unordered_dense::map<uint64_t, uint64_t>();
+    for (uint64_t i = 0; i < 10000; ++i) {
+        map.insert({range_insert_key(i), i});
+    }
+    auto input = range_insert_input();
+    for (uint64_t i = 0; i < 10000; ++i) {
+        // half already present, half new
+        input.emplace_back(range_insert_key(i % 2 == 0 ? i : i + 100000), i);
+    }
+    map.insert(input.begin(), input.end());
+    REQUIRE(map.size() == 15000U);
+    for (uint64_t i = 0; i < 10000; ++i) {
+        REQUIRE(map.contains(range_insert_key(i)));
+    }
+    for (uint64_t i = 1; i < 10000; i += 2) {
+        REQUIRE(map.contains(range_insert_key(i + 100000)));
+    }
+}

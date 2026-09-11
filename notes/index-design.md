@@ -33,6 +33,8 @@ place rather than being deleted, because the retraction is usually the more usef
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
 - `replace()` hashes ahead too, once the reason it could not was looked at properly
+- `insert(first, last)` sizing the table from the range: built, measured, declined
+- The paired harness has a systematic bias on `rmissstr`, about 3.6%
 - A block's prefetches should step from its start, not jump to its end
 - The other two pipelines do not want the cache gate, and the gate's own footprint model was wrong
 - Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it
@@ -381,6 +383,75 @@ loosening the tests.
 
 `do_insert_range` and `do_visit` pipeline too and have no such gate. Measured, and neither needs
 one -- below.
+
+**`insert(first, last)` sizing the table from the range: built, measured, declined** (2026-09-11,
+issue #248, `scripts/ab/range_insert.cpp`, Ryzen 9 7950X, clang 22). Worth **2x** on the common case
+and not shipped, because every version that gets the 2x is a heuristic about data the map cannot see.
+Three attempts, each wrong in a way worth keeping.
+
+*First: `reserve(size() + std::distance(first, last))`, which is what the issue proposed.* A range is
+not its number of distinct keys. At a 99% duplicate rate it asks for **128 times** the index the map
+ends up needing -- 2097152 buckets for 9923 elements, kept for the map's lifetime -- and it is not
+even faster, because every probe then misses in a mostly empty table: **1.21** against growing.
+
+*Second: sample the head, extrapolate the fresh-key rate.* This is the one worth remembering, because
+it looked perfect. On `range_insert.cpp`'s own duplicate model it reproduced the growth bucket count
+**exactly** at every rate from 0% to 99% -- that model draws duplicates from a pool growing with the
+range, so the fresh rate is stationary. Real ranges are not. **2048 keys drawn from ten thousand come
+back 90% new**; that is the birthday bound, not a duplicate rate, and extrapolating it over a million
+elements predicts nine hundred thousand distinct keys instead of ten thousand. 64x. The unit tests
+caught it, the benchmark could not have, and the general lesson is in CLAUDE.md.
+
+*Third: read the sample as a capture-recapture.* Split the sample; if the range draws from `total`
+distinct keys and the first half caught `warmed` of them, the share of the second half that is a
+**repeat** estimates `warmed / total`, so `total = warmed * measured / again`. The statistic is the
+repeats, not the freshness, and it is informative exactly where the rate is not. At a million
+elements, buckets against the 16384 / 131072 / 1048576 actually needed:
+
+| distinct keys | first try | second try | capture-recapture |
+|---|---|---|---|
+| 10000 | 2097152 | 1048576 | **16384** |
+| 100000 | 2097152 | 2097152 | **131072** |
+| 500000 | 2097152 | 2097152 | **1048576** |
+
+0.51 of the time fully distinct, 0.48 at 70-90% distinct, neutral below half distinct, clamped so no
+estimate can exceed reserving the range's length. It works. **It was still declined**, because an
+ordered range -- every key once, then the set again -- defeats any prefix sample and no scheme fixes
+that; what is left is a hash map guessing at its caller's data with a 4x memory consequence when it
+guesses wrong. The 2x is not worth owning that.
+
+*And the mechanism is not the one the issue assumed.* The issue says growth is expensive because each
+doubling rehashes the index, and the pipelined loop also loses its sixteen in-flight prefetches.
+Neither is the cost. Reserving **only the value container** captures nearly all of the win, and
+reserving **only the buckets** is worse than not reserving at all. At a million distinct keys,
+ns per element:
+
+| | ns/element |
+|---|---|
+| no reserve | 19.6 |
+| values only | 10.4 |
+| values and buckets | 9.9 |
+| buckets only | 22.3 |
+
+So it is the value vector's geometric reallocation -- copying 16 MB repeatedly -- and the index
+rehash is nearly free beside it. That also rules out the cheap version of the idea: reserving just
+the values is *not* the safe half, since a value is 16 bytes against the index's 5.5 per slot, so
+guessing wrong there costs more, not less.
+
+*`std::distance` is only free on a random access iterator.* Over a `std::list` it walks the range a
+second time, a **1.20 loss** at a high duplicate rate. Any future attempt at this must exclude
+merely-forward ranges.
+
+What was kept: `range_insert.cpp` gained a duplicate rate, a `std::list` source and a bucket count in
+its output, which is what made all of the above visible.
+
+**The paired harness has a systematic bias on `rmissstr`, about 3.6%** (2026-09-11). It showed up as
+a 1.037-1.039 "win" in two consecutive PRs, against two different baselines, for changes whose
+mechanism could not reach a lookup at all. Running `scripts/ab/run.sh -r HEAD` on a clean tree --
+**the same header on both sides** -- reads `rmissstr` **1.036**, `buildbig` 0.983, `buildstr` 0.984
+and `hashstr` 0.872. So the candidate side of a paired run is systematically faster on those, and a
+single-digit-percent reading on them means nothing. The null run is the check, it costs one run, and
+it should be taken before believing any sub-benchmark delta under about 5%.
 
 **A block's prefetches should step from its start, not jump to its end** (2026-09-11, issue #250,
 `scripts/ab/prefetch_lines.cpp`, Ryzen 9 7950X, clang 22). Raised by a cleanup review as "a quarter
