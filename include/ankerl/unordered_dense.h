@@ -772,6 +772,19 @@ using detect_is_transparent = typename T::is_transparent;
 template <typename T>
 using detect_iterator = typename T::iterator;
 
+// Whether a range can be walked twice, which is what reading ahead of where you are writing needs.
+// Written as a trait rather than asked inline, because a type with no iterator_traits at all -- a
+// test's hand-rolled iterator, say -- has to answer "no" rather than fail to compile.
+template <typename T, typename = void>
+struct is_forward_iterator : std::false_type {};
+
+template <typename T>
+struct is_forward_iterator<T, std::void_t<typename std::iterator_traits<T>::iterator_category>>
+    : std::is_convertible<typename std::iterator_traits<T>::iterator_category, std::forward_iterator_tag> {};
+
+template <typename T>
+constexpr bool is_forward_iterator_v = is_forward_iterator<T>::value;
+
 template <typename T>
 using detect_reserve = decltype(std::declval<T&>().reserve(std::size_t{}));
 
@@ -2332,6 +2345,21 @@ private:
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
 
+    // An insert whose key has already been hashed, which is what lets a range insert hash ahead of
+    // where it is placing. Everything else about it is do_try_emplace's path.
+    //
+    // Returns nothing on purpose: the only caller is the range insert, which has nothing to do with
+    // an iterator to each element, and a returned pair nobody reads is surface no test can defend.
+    template <typename V>
+    void do_insert_hashed(std::uint64_t mh, V&& value) {
+        auto r = probe(get_key(value), mh);
+        if (r.found) {
+            move_home(r.slot, mh);
+            return;
+        }
+        do_place_element(mh, std::forward<V>(value));
+    }
+
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         allocate_buckets_if_none();
@@ -2739,10 +2767,56 @@ public:
     }
 
     template <class InputIt>
+    // Inserting a range hashes sixteen elements ahead of the one it is placing, and asks for the
+    // block each of those will come home to.
+    //
+    // A single insert cannot do this: the hash is the first thing it computes and the block is the
+    // next thing it needs, so there is nothing to put between them. Over a range there is -- the
+    // hash of a later element, which depends on nothing the table is doing. It is the same trick the
+    // growth rehash uses, where it is worth 1.26x on the loop below cache, and the machinery for it
+    // was already here.
+    //
+    // Only for an iterator that can be walked twice. An input iterator is single-pass, so reading
+    // ahead would mean buffering the elements, and those copies would cost more than the prefetch
+    // saves; such a range takes the plain loop.
+    //
+    // Growth during the loop is safe and not special-cased: it moves the array, so prefetches
+    // already in flight are aimed at the old one and simply do nothing, and the hashes stay valid
+    // because a hash does not depend on the table.
     void insert(InputIt first, InputIt last) {
-        while (first != last) {
-            insert(*first);
-            ++first;
+        if constexpr (detail::is_forward_iterator_v<InputIt>) {
+            if (first == last) {
+                return;
+            }
+            allocate_buckets_if_none();
+            constexpr auto ahead = std::size_t{16};
+            auto ring = std::array<std::uint64_t, ahead>{};
+            auto lookahead = first;
+            auto fetch = [&](std::size_t slot) -> void {
+                auto const mh = mixed_hash(get_key(*lookahead));
+                ++lookahead;
+                ring[slot] = mh;
+                // Read fresh rather than hoisted: a growth reallocates the array out from under it.
+                prefetch_block(m_buckets.data(), static_cast<std::size_t>(mh >> m_shifts));
+            };
+            for (auto i = std::size_t{}; i < ahead && lookahead != last; ++i) {
+                fetch(i);
+            }
+            for (auto i = std::size_t{}; first != last; ++first, ++i) {
+                // This element's hash out of the ring before the slot it frees is refilled: the slot
+                // holding element i is the one element i + ahead goes into.
+                auto const slot = i % ahead;
+                auto const mh = ring[slot];
+                if (lookahead != last) {
+                    fetch(slot);
+                }
+                do_insert_hashed(mh, *first);
+            }
+        } else {
+            while (first != last) {
+                insert(*first);
+                ++first;
+            }
         }
     }
 

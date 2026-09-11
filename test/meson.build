@@ -42,6 +42,7 @@ test_sources = [
     'unit/erase_churn.cpp',
     'unit/move_home.cpp',
     'unit/probe_split.cpp',
+    'unit/range_insert.cpp',
     'unit/erase_range.cpp',
     'unit/erase_throwing_move.cpp',
     'unit/erase_uncounts.cpp',
