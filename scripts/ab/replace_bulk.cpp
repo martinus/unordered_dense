@@ -9,11 +9,25 @@
 // Sweep `n` as well as `dup-percent`: the pipeline is gated on the container outgrowing cache, and
 // on both sides of that gate the answer is different. Build with -DUDM_RB_STR for string keys.
 //
-//   argv: <n> [rounds] [dup-percent]
+//   argv: <n> [rounds] [dup-percent] [warm|cold]
+//
+// `warm` -- the default -- replaces into the *same* map every round, after one untimed round that
+// allocates the index. Without it the timed region contains a fresh index allocation whose cost
+// depends on what the allocator did with the container copy just before it, and the result is bimodal
+// between repeats: at sixteen to a hundred thousand `uint64_t` elements the same binary reads 4.40,
+// 2.85, 2.88, 4.76, 5.19, 2.76 ns per element, which is wide enough to swamp the 5-10% questions this
+// is used to answer. `range_insert.cpp` records the same effect at n = 4096. `cold` restores the
+// old behaviour, which is the right one for "what does a caller pay end to end" and the wrong one for
+// "does the pipeline inside it pay".
+//
+// What is timed per round either way is `replace()` itself: the index memset, the values move-assign
+// and the dedup walk. The per-round **median** is reported, not the mean over rounds, so that one
+// round that faulted cannot carry the number.
 #include <ankerl/unordered_dense.h>
 
 #include <bench/workloads.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +63,7 @@ int main(int argc, char** argv) {
     auto const n = static_cast<std::size_t>(argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 1000000);
     auto const rounds = static_cast<std::size_t>(argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 10);
     auto const dup_pct = static_cast<std::size_t>(argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 0);
+    auto const warm = std::string(argc > 4 ? argv[4] : "warm") != "cold";
 
     // Built once: `dup_pct` percent of the entries repeat an earlier key, so the dedup path is
     // exercised at a chosen rate rather than never or always.
@@ -70,20 +85,37 @@ int main(int argc, char** argv) {
     // memcpy per round against a call that takes milliseconds, which quietly pulled every ratio
     // towards 1.0 the first time this was used to compare two value sizes.
     auto acc = std::size_t{0};
-    auto el = std::chrono::steady_clock::duration{};
+    auto per_round = std::vector<double>();
+    per_round.reserve(rounds);
+    auto warm_map = map_t();
+    if (warm) {
+        // Untimed, and the only round that allocates an index: every later replace() finds one of
+        // the right size already there and keeps it.
+        auto container = container_t(source);
+        warm_map.replace(std::move(container));
+    }
     for (std::size_t round = 0; round < rounds; ++round) {
         auto container = container_t(source);
-        auto map = map_t();
+        auto cold_map = map_t();
+        auto& map = warm ? warm_map : cold_map;
+        if (warm) {
+            map.clear(); // frees the values, keeps the index; outside the clock
+        }
         auto const t0 = std::chrono::steady_clock::now();
         map.replace(std::move(container));
-        el += std::chrono::steady_clock::now() - t0;
+        auto const elapsed = std::chrono::steady_clock::now() - t0;
+        per_round.push_back(std::chrono::duration<double, std::nano>(elapsed).count() / static_cast<double>(n));
         acc += map.size();
     }
-    std::printf("%.3f ns/element  n=%zu rounds=%zu dup=%zu%% unique=%zu acc=%zu\n",
-                std::chrono::duration<double, std::nano>(el).count() / static_cast<double>(n * rounds),
+    std::sort(per_round.begin(), per_round.end());
+    std::printf("%.3f ns/element  n=%zu rounds=%zu dup=%zu%% %s unique=%zu min=%.3f max=%.3f acc=%zu\n",
+                per_round[per_round.size() / 2],
                 n,
                 rounds,
                 dup_pct,
+                warm ? "warm" : "cold",
                 distinct.size(),
+                per_round.front(),
+                per_round.back(),
                 acc);
 }

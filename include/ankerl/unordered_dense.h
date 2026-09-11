@@ -1472,6 +1472,27 @@ private:
     // were measured against the same question and neither wants a gate at all; the visit's crossover
     // is set by the caller's hit rate, which the map does not know until it has already done a
     // chunk's worth of work. Issue #247.
+    //
+    // Re-measured on a fixed harness for #257 -- it was first fitted on `std::uint64_t` alone -- and
+    // kept. Ring over the same loop with the ring deleted, by how much index the array holds, for
+    // `std::uint64_t` and `std::string` keys at 0% and 25% duplicates:
+    //
+    //      88 KiB   1.265  1.225  1.006  1.037
+    //     176 KiB   0.833  1.194  1.156  1.033
+    //     352 KiB   0.667  1.163  1.064  1.002    <- the first size the gate opens at
+    //     704 KiB   0.632  0.999  1.039  0.987
+    //    1408 KiB   0.626  0.944  0.998  0.985
+    //    5632 KiB   0.537  0.912  0.950  0.944
+    //
+    // The four curves cross in four different places, because the ring's payoff depends on the
+    // **duplicate rate** as much as on the size: a duplicate refills its ring slot from the element
+    // that just moved into it, which is read by the very next iteration and has no distance to
+    // prefetch over. At 352 KiB the same gate is worth 1.5x to a `std::uint64_t` with no duplicates
+    // and costs 16% to one with a quarter of them, and the map cannot tell which it has until it has
+    // walked. So the constant is a compromise and is chosen as one: over all 28 cells the realised
+    // geometric mean is 0.9081 here, 0.9137 at 128 KiB, 0.9143 at 512 KiB and 0.9286 at a mebibyte.
+    // A threshold that never loses exists -- a mebibyte, worst cell 1.000 -- and costs two points of
+    // that mean. This one keeps the 1.5x and accepts a worst cell of 1.163.
     static constexpr std::size_t pipeline_min_index_bytes = std::size_t{256} << 10U;
 
     // merge()'s, and it is two doublings higher than replace()'s rather than the same number -- which
