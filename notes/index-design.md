@@ -32,7 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
-- Taking the hash apart once per insert, and the shared pipeline that was not worth it
+- Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it
 - Chunks or a sliding ring: the rehash and the bulk visit want opposite answers
 - A bulk `visit()`, and the `prefetch(key)` API it replaced
 - Tiny pointers, and the bound insertion order puts on the value index
@@ -292,21 +292,31 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
-**Taking the hash apart once per insert, and the shared pipeline that was not worth it** (2026-09-11,
+**Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it** (2026-09-11,
 issue #244, from four cleanup reviews of the range insert). Three of the four items were measured;
 two are in and one is not.
 
-**In: an insert derived the same three things from its hash in three places.** The range insert's
-prefetch computed the group; `probe` computed the fingerprint word, the counter and the group again;
-`place_group` computed all three a third time. They sit in separate functions separated by a
-fingerprint store and a possible reallocation, so nothing is common-subexpression-eliminated across
-them. `probe`, `place_group` and `do_place_element` each gained a variant taking the pieces with the
+**In: an insert derived the same three things from its hash twice.** `probe` computed the
+fingerprint word, the counter and the group; `place_group` computed all three again. They sit in
+separate functions separated by a fingerprint store and a possible reallocation, so for a key whose
+compare is a call -- where `m_equal` is opaque -- nothing is common-subexpression-eliminated across
+them. (The pipelined insert's lookahead derives a group too, but for the element *sixteen ahead*, so
+that one is not a duplicate and cannot be shared.) `probe`, `place_group` and `do_place_element` each gained a variant taking the pieces with the
 old signature as a thin wrapper. **That alone is 4% of a single clang insert -- 97.0 instructions to
 93.0 -- and 3% of a gcc `++m[k]`**, because `place_group` had been re-deriving the fingerprint word
 across an inline boundary from a caller that had just computed it.
 
-**In: the probe stops prefetching the home block for a caller that already asked for it.** A
-pipelined insert requested the whole block sixteen elements earlier. Another 3%.
+**In: the probe does not ask for a block the caller is already holding.** A pipelined insert formed
+the home group to prefetch against sixteen elements earlier, so it hands the group itself to
+`probe_at_home` rather than a number to find it by -- the prefetch is then skipped by construction,
+and skipped for exactly the one group the caller knows about. Another 3%.
+
+That started as a `template <bool Prefetch>` flag on the probe and the flag was wrong twice over,
+which four review passes caught and the measurement did not: it suppressed the prefetch for *every*
+group of the overflow walk, which nobody had asked for, and it kept suppressing it on the sixteen
+elements after a growth -- the ones whose earlier prefetch went to the array growth had just
+replaced. A compile-time flag was standing in for a run-time fact. Passing the group makes the fact
+true rather than asserted.
 
 Together, ns per element rebuilding a map from a vector of pairs: 200000 reserved 5.42 to 5.08,
 growing 8.41 to 8.04; two million reserved 7.50 to 7.18, growing 26.48 to 26.08. Lookups byte

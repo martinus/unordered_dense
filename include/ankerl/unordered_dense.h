@@ -1706,15 +1706,13 @@ private:
     // from a per-group helper: returning a probe_result from an inner function costs gcc 26% of an
     // integer hit even fully inlined, and this path must stay exactly what it was for a key whose
     // compare is cheap.
-    template <bool Prefetch = true, typename K>
+    template <typename K>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
     probe_from(K const& key, std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type delta) const
         -> probe_result {
         auto const* groups = m_buckets.data();
         while (true) {
-            if constexpr (Prefetch) {
-                prefetch_index(groups, group_idx);
-            }
+            prefetch_index(groups, group_idx);
             auto const& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
@@ -1777,23 +1775,48 @@ private:
     template <typename K>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
         auto const word = fingerprint_word(mh);
-        return probe_hashed(key, word, word & 7U, group_idx_from_hash(mh));
+        return probe(key, word, word & 7U, group_idx_from_hash(mh));
+    }
+
+    // The probe for a caller that is holding the home group already -- a pipelined insert formed it
+    // to prefetch against. It cannot prefetch, because it was handed the group rather than a number
+    // to find it by, which is the same shape probe_after_home has and the reason it is written this
+    // way rather than as a flag: "the caller already asked for this block" is then true by
+    // construction and scoped to exactly the one group the caller knows about. A flag was tried and
+    // is wrong twice over -- it suppressed the walk's prefetches too, for groups nobody had asked
+    // for, and it kept suppressing them on the sixteen elements after a growth, which are the ones
+    // whose earlier prefetch went to the array that growth replaced.
+    template <typename K>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe_at_home(K const& key,
+                                                          std::uint32_t word,
+                                                          unsigned counter,
+                                                          typename bucket_container_type::block const& home,
+                                                          value_idx_type home_idx) const -> probe_result {
+        auto lanes = match_fingerprint(home, word);
+        while (lanes != 0) {
+            auto const lane = first_lane(lanes);
+            auto const slot = static_cast<value_idx_type>(std::size_t{home_idx} * slots_per_group + lane);
+            auto const value_idx = home.m_index[lane];
+            if (m_equal(key, get_key(m_values[value_idx]))) {
+                return {slot, value_idx, true};
+            }
+            lanes &= lanes - 1;
+        }
+        return probe_after_home(key, word, counter, home, home_idx);
     }
 
     // The same probe for a caller that has already taken the hash apart. A pipelined insert has all
     // three in hand -- it derived the group to prefetch it -- and re-deriving them per element is a
     // table load, an and and a shift on the hot path of a loop that is doing nothing else.
-    template <bool Prefetch = true, typename K>
+    template <typename K>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
-    probe_hashed(K const& key, std::uint32_t word, unsigned counter, value_idx_type home_idx) const -> probe_result {
+    probe(K const& key, std::uint32_t word, unsigned counter, value_idx_type home_idx) const -> probe_result {
         if constexpr (!detail::key_compare_is_call_v<Key>) {
-            return probe_from<Prefetch>(key, word, counter, home_idx, 0);
+            return probe_from(key, word, counter, home_idx, 0);
         } else {
             // The home group inline and the rest behind a call, which is where the frame goes.
             auto const* groups = m_buckets.data();
-            if constexpr (Prefetch) {
-                prefetch_index(groups, home_idx);
-            }
+            prefetch_index(groups, home_idx);
             auto const& home = groups[home_idx];
             auto lanes = match_fingerprint(home, word);
             while (lanes != 0) {
@@ -1818,15 +1841,14 @@ private:
     // counts it.
     ANKERL_UNORDERED_DENSE_FORCEINLINE void place_group(std::uint64_t mh, value_idx_type value_idx) {
         auto const word = fingerprint_word(mh);
-        place_group_hashed(word, word & 7U, group_idx_from_hash(mh), value_idx);
+        place_group(word, word & 7U, group_idx_from_hash(mh), value_idx);
     }
 
     // The placement for a caller that has already taken the hash apart, and has just probed with
     // exactly these three -- so this is the second of the two walks an insert does, not a third
     // derivation of where to start it.
     ANKERL_UNORDERED_DENSE_FORCEINLINE void
-    place_group_hashed(std::uint32_t word, unsigned counter, value_idx_type home_idx, value_idx_type value_idx) {
-        auto group_idx = home_idx;
+    place_group(std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type value_idx) {
         auto* groups = m_buckets.data();
         value_idx_type delta = 0;
         while (true) {
@@ -2343,8 +2365,9 @@ private:
         return it_isinserted;
     }
 
-    // Appends the value and points a slot at it. What it needs to know is the key's hash: the
-    // probe that found the key absent left nothing an insert could reuse.
+    // Appends the value and points a slot at it. What it needs to know is where the key belongs;
+    // place_element below takes that from the probe that just missed, rather than deriving it
+    // again.
     //
     // Forced inline, and the reason is a trade worth knowing. clang prices this function at 480
     // against an inlining threshold of 250 (vector::emplace_back with piecewise_construct is 225
@@ -2375,7 +2398,7 @@ private:
     template <typename... Args>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
         auto const word = fingerprint_word(mh);
-        return place_element(word, word & 7U, group_idx_from_hash(mh), std::forward<Args>(args)...);
+        return place_element_at(word, word & 7U, group_idx_from_hash(mh), std::forward<Args>(args)...);
     }
 
     // As above for a caller holding the hash in pieces. The home group is only used on the branch
@@ -2383,7 +2406,8 @@ private:
     // a stale group index cannot escape it.
     template <typename... Args>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
-    place_element(std::uint32_t word, unsigned counter, value_idx_type home_idx, Args&&... args) -> std::pair<iterator, bool> {
+    place_element_at(std::uint32_t word, unsigned counter, value_idx_type home_idx, Args&&... args)
+        -> std::pair<iterator, bool> {
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::forward<Args>(args)...);
 
@@ -2393,7 +2417,7 @@ private:
                 increase_size(); // places every value, the new one included
             }
         else {
-            place_group_hashed(word, counter, home_idx, value_idx);
+            place_group(word, counter, home_idx, value_idx);
         }
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
@@ -2466,29 +2490,37 @@ private:
         // that starts from the same group with the same fingerprint, and deriving those twice is
         // work this loop is otherwise not doing.
         //
-        // The probe is told not to prefetch: the caller asked for this whole block sixteen elements
-        // ago, so the probe's own request is for a line already in flight or resident.
         auto const word = fingerprint_word(mh);
         auto const counter = word & 7U;
         auto const home_idx = group_idx_from_hash(mh);
-        auto r = probe_hashed<false>(get_key(value), word, counter, home_idx);
+        // The group is formed here and handed to the probe, which therefore does not ask for it a
+        // second time -- the pipelined caller asked for this block sixteen elements ago. Read from
+        // the current array, so a growth since then is simply a prefetch that did nothing.
+        auto r = probe_at_home(get_key(value), word, counter, m_buckets.data()[home_idx], home_idx);
         if (r.found) {
             move_home(r.slot, mh);
             return;
         }
-        place_element(word, counter, home_idx, std::forward<V>(value));
+        place_element_at(word, counter, home_idx, std::forward<V>(value));
     }
 
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         allocate_buckets_if_none();
         auto const mh = mixed_hash(key);
-        auto r = probe(key, mh);
+        // Taken apart once for both halves: a probe that misses is followed by a placement starting
+        // from the same group with the same fingerprint.
+        auto const word = fingerprint_word(mh);
+        auto const counter = word & 7U;
+        auto const home_idx = group_idx_from_hash(mh);
+        auto r = probe(key, word, counter, home_idx);
         if (r.found) {
             move_home(r.slot, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
-        return do_place_element(mh,
+        return place_element_at(word,
+                                counter,
+                                home_idx,
                                 std::piecewise_construct,
                                 std::forward_as_tuple(std::forward<K>(key)),
                                 std::forward_as_tuple(std::forward<Args>(args)...));
@@ -3045,7 +3077,7 @@ public:
                 increase_size();
             }
         else {
-            place_group(mh, static_cast<value_idx_type>(value_idx));
+            place_group(mh, value_idx);
         }
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
