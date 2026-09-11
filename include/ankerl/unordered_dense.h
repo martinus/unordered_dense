@@ -1694,21 +1694,29 @@ private:
     // prefetch_index skips the first line because the probe is about to read it anyway; a rehash is
     // about to write a group it has never read, so it wants that line too.
     //
-    // A quarter of blocks span *three* lines and this asks for two of them, which looks like a bug
-    // and is not one. `88 % 64 == 24` and `gcd(24, 64) == 8`, so `p % 64` walks the whole cycle
-    // whatever the array's alignment, and the two offsets above 40 put a third line in the middle --
-    // holding all eight counters and half the fingerprints. **The hardware fetches it anyway.**
-    // Asking for it explicitly is a consistent 2.5% *loss*: 12.47 ns per block against 12.78, five
-    // rounds of five, on a 176 MiB array walked at random with a sixteen-deep lookahead and a
-    // probe-shaped read. The same measurement says the second prefetch earns its keep -- one line
-    // alone is 13.19 -- so the shape here is the measured optimum and not an accident.
-    // scripts/ab/prefetch_lines.cpp, issue #250.
+    // Consecutive lines from the block's start -- *not* its first and its last, which is what this
+    // asked for until 2026-09-11 and is a line short. A block is 88 bytes with four byte alignment,
+    // `88 % 64 == 24` and `gcd(24, 64) == 8`, so `p % 64` walks the whole cycle whatever the array's
+    // alignment and a quarter of blocks span three lines. Asking for `p` and `p + 87` then covers
+    // the first and the *last*, leaving out the middle -- which holds all eight counters and half
+    // the fingerprints, the two things a probe reads first. Stepping by 64 instead covers the first
+    // two and leaves out the last, which holds only the top two index entries.
+    //
+    // Same instruction count, **3.3% faster**: 12.28 ns per block against 12.67, seven rounds of
+    // seven with no overlap, on a 176 MiB array walked at random with a sixteen-deep lookahead and a
+    // probe-shaped read. Adding a third prefetch to cover the tail as well is a loss (12.85) -- the
+    // hardware fetches what it can see coming, so the job here is to start it in the right place
+    // rather than to name every line. scripts/ab/prefetch_lines.cpp, issue #250.
+    //
+    // The loop is what makes it right for group_big too: 152 bytes spans up to four lines, and the
+    // old pair covered the first and the last of them.
     template <typename Block>
     static void prefetch_block(Block const* block) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(block);
-        ANKERL_UNORDERED_DENSE_PREFETCH(p);
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
+        for (std::size_t off = 0; off < sizeof(Block); off += 64) {
+            ANKERL_UNORDERED_DENSE_PREFETCH(p + off);
+        }
     }
 
     // The same for a caller holding a group number rather than a pointer. A block is 88 bytes, so

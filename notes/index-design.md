@@ -33,7 +33,7 @@ place rather than being deleted, because the retraction is usually the more usef
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
 - `replace()` hashes ahead too, once the reason it could not was looked at properly
-- A quarter of blocks span three cache lines and only two are prefetched; the hardware covers the third
+- A block's prefetches should step from its start, not jump to its end
 - The other two pipelines do not want the cache gate, and the gate's own footprint model was wrong
 - Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it
 - Chunks or a sliding ring: the rehash and the bulk visit want opposite answers
@@ -382,48 +382,68 @@ loosening the tests.
 `do_insert_range` and `do_visit` pipeline too and have no such gate. Measured, and neither needs
 one -- below.
 
-**A quarter of blocks span three cache lines and only two are prefetched; the hardware covers the
-third** (2026-09-11, issue #250, `scripts/ab/prefetch_lines.cpp`, Ryzen 9 7950X, clang 22). Raised
-as a bug by a cleanup review, and the geometry is real -- it is the conclusion that is wrong.
+**A block's prefetches should step from its start, not jump to its end** (2026-09-11, issue #250,
+`scripts/ab/prefetch_lines.cpp`, Ryzen 9 7950X, clang 22). Raised by a cleanup review as "a quarter
+of blocks span three cache lines and `prefetch_block` only asks for two". The geometry is right, the
+first fix for it was wrong, and the second is worth 3.3%.
 
 *The geometry.* A block is 88 bytes with `alignof == 4`, so blocks sit at `base + 88i`. `88 % 64` is
 24 and `gcd(24, 64)` is 8, so `p % 64` walks the entire cycle `{0, 24, 48, 8, 32, 56, 16, 40}` from
 any starting offset -- **no allocation avoids this, and over-aligning the array does nothing**. The
 two offsets above 40 make the block span three lines, so exactly 25% do, and for those the middle
 line begins at byte 8 or 16 *of the block*: it holds all eight overflow counters and half or more of
-the fingerprints, which is what the probe reads first. `prefetch_block` asks for `p` and `p + 87`, so
-that line is never requested. `prefetch_index` is fine -- `p + 64` and `p + 87` cover lines one and
-two, and it skips line zero deliberately because the probe is about to read it.
+the fingerprints, which is what the probe reads first.
 
-*The measurement says leave it alone.* An array of two million blocks -- 176 MiB, far past the last
-level cache -- walked in a materialised random order with the same sixteen-deep lookahead the
-pipelined loops use, reading sixteen fingerprints, one counter and one index at a lane derived from
-the fingerprints so the index read cannot start before the compare. Five interleaved rounds,
-ns per block:
+*The obvious fix is a loss.* `prefetch_block` asked for `p` and `p + 87` -- first line and last. Add
+a third at `p + 64` so all three are named, and it gets **slower**: 12.85 ns per block against 12.67.
+The hardware fetches what it can see coming, and the extra prefetch buys an instruction and a load
+port slot rather than a line.
 
-| prefetches | | median |
-|---|---|---|
-| none | | 44.9 |
-| `p` only | | 13.19 |
-| `p`, `p + 87` -- shipped | | **12.47** |
-| `p`, `p + 64`, `p + 87` | | 12.78 |
+*Stepping instead of spanning is the fix.* `p` and `p + 64` are always two consecutive lines. For
+the three quarters of blocks that span two lines that is exactly what `p` and `p + 87` already
+prefetched -- the two are identical there. For the other quarter it takes the middle line instead of
+the last, and the last holds only `m_index[14..15]`, read only when the matching lane is high. Same
+instruction count, and on an array of two million blocks -- 176 MiB, far past the last level cache --
+walked in a materialised random order with the same sixteen-deep lookahead the pipelined loops use,
+reading sixteen fingerprints, one counter and one index at a lane derived from the fingerprints so
+the index read cannot start before the compare:
 
-The third prefetch is a **2.5% loss**, 5 of 5 rounds, and the same numbers say the second one earns
-its keep. The middle line arrives without being asked for; what the extra prefetch buys is an
-instruction and a load port slot. Reading the block as a sequential sweep instead of a probe gives
-the same answer (13.57 against 13.75) -- the conclusion does not rest on the read shape.
+| prefetches | median ns/block |
+|---|---|
+| none | 44.9 |
+| `p` | 13.19 |
+| `p`, `p + 87` -- first and last, the old shape | 12.67 |
+| `p`, `p + 64`, `p + 87` -- all three | 12.85 |
+| **`p`, `p + 64` -- stepped, shipped** | **12.28** |
 
-*The trap this walked into.* The first numbers, taken on the three real harnesses, read -1.3% on the
-bulk visit and -2 to -3% on the range insert and looked like a win. Re-measured five rounds at each
-size they are 0.975 to 1.017 -- **all of it inside the +-3% layout luck**, and the L1 miss counts do
-not move either (44.6M against 44.9M at four million). A mechanism that is provably true does not
-make a delta of that size real, and the microbenchmark existed precisely because CLAUDE.md says to
-judge a micro-optimization by mechanism plus a focused benchmark rather than by a sub-benchmark
-delta. Both halves of that rule were needed: the mechanism to know what to build, the benchmark to
-find out the mechanism does not matter.
+Seven rounds of seven with no overlap between the stepped and the old distributions. It reproduces
+on the real harnesses at four million entries -- the bulk visit 0.971 and a reserved range insert
+0.952, five of five below 1.0 each -- and is smaller but the same sign at a quarter million and in
+grow mode.
 
-One machine. `prefetch_lines.cpp` is committed so that a CPU without an adjacent-line prefetcher can
-be asked the same question; that is the one thing that would change the answer.
+So `prefetch_block` is now a loop stepping by 64 to the end of the block, which both compilers fully
+unroll (two prefetches, no branch). **The loop is what makes it right for `group_big`**: 152 bytes
+spans up to four lines, and first-and-last covered two of them and skipped as many as two in the
+middle. Stepping gives it three.
+
+*What nearly went wrong.* The third-prefetch version measured on the three real harnesses first read
+-1.3% on the bulk visit and -2 to -3% on the range insert and looked like a win. Five rounds at each
+size put all of it between 0.975 and 1.017 -- **inside the +-3% layout luck** -- and the L1 miss
+counts did not move either (44.6M against 44.9M at four million). A mechanism that is provably true
+does not make a delta of that size real, and the microbenchmark is what separated the two candidate
+fixes: on the real harnesses they are both a smear, and the difference between them is 3.3%.
+
+*The score does not move and should not.* Paired against main, ten epochs, five points an octave:
+geomean **1.001** over nineteen workloads, everything inside 1.5% except `rmissstr` at 1.039. That
+one is **not attributable** -- a lookup's probe calls `prefetch_index`, which this did not touch, and
+`prefetch_block` is reached on the score only through the rehash inside `build` and `churn`. Two runs
+agreeing on it means nothing either, since they are the same two binaries and therefore the same code
+layout. It is the +-3% layout luck, measured slightly above its usual size. The change's actual
+subjects -- the bulk visit, the range insert, `replace()` -- are not in the score at all, which is
+why the microbenchmark carries this one.
+
+One machine. `prefetch_lines.cpp` is committed so that a CPU with different prefetchers can be asked
+the same question, which is the one thing that would change the answer.
 
 **The other two pipelines do not want the cache gate, and the gate's own footprint model was wrong**
 (2026-09-11, issue #247, `scripts/ab/{range_insert,bulk_visit,replace_bulk}.cpp`, Ryzen 9 7950X,
