@@ -36,6 +36,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
     - [3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#336-auto-hash_fork-const-key-const---precomputed_hash)
     - [3.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#337-auto-visitfwdit-first-fwdit-last-f-f---size_t)
+    - [3.3.8. `void merge(map& source)`](#338-void-mergemap-source)
   - [3.4. Custom Container Types](#34-custom-container-types)
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
@@ -430,6 +431,27 @@ for (auto const& k : batch) { auto it = map.find(k); }
 ```
 
 That is a property of loops and memory parallelism rather than of this map, and it is the larger of the two effects. `visit` is what is left on top once the loop is already shaped that way.
+
+#### 3.3.8. `void merge(map& source)`
+
+This is the standard container's `merge`, with the guarantees a container without nodes can give. Every element of `source` whose key is not here already moves over, and the rest stay behind. An element whose key is already here is **not** overwritten -- the value already in this map wins, as with `insert` and `try_emplace`. `source` may hash and compare differently; the keys that move are re-hashed with this map's hasher. Both an lvalue and an rvalue `source` are accepted, and an rvalue one is still only emptied of what moved.
+
+```cpp
+auto a = ankerl::unordered_dense::map<std::string, int>{{"x", 1}, {"y", 2}};
+auto b = ankerl::unordered_dense::map<std::string, int>{{"y", 20}, {"z", 30}};
+a.merge(b);
+// a is {"x", 1}, {"y", 2}, {"z", 30}   -- "y" was already in a, so a's value stayed
+// b is {"y", 20}                       -- and so did b's
+```
+
+Two things differ from `std::unordered_map::merge`, and both follow from the elements living in a vector rather than in nodes:
+
+* **Iterators and references into either container are invalidated.** A node-based merge splices nodes, so references to the elements that move stay valid. Here an element that moves is move-constructed into the destination's vector, which may reallocate.
+* **The source's order changes.** Every element taken out of the middle of it leaves a gap that the elements behind it close. `erase()` already reorders for the same reason.
+
+`a.merge(a)` has no effect. If an operation throws -- a hash, a key comparison, or an element's move -- both containers are left valid and usable, `source` keeps everything not yet taken, and the one element that was being moved at the time may be lost.
+
+`merge` is worth using over the loop it replaces: about **2x** when the two maps mostly do not overlap, which is what a merge is usually for.
 
 ### 3.4. Custom Container Types
 

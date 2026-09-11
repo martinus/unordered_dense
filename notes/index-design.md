@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `merge()`, and why it is not the loop the caller would write
 - `replace()` hashes ahead too, once the reason it could not was looked at properly
 - `insert(first, last)` sizing the table from the range: built, measured, declined
 - The paired harness has a systematic bias on `rmissstr`, about 3.6%
@@ -297,6 +298,112 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`merge()`, and why it is not the loop the caller would write** (2026-09-11, issue #242,
+`scripts/ab/merge.cpp`, Ryzen 9 7950X, clang 22, medians of five, both maps rebuilt from the same
+input every round and only the merge inside the clock).
+
+The standard specifies `merge` on nodes: it splices them, so references to the elements that move
+stay valid and nothing is copied. A dense map has no nodes, so every element that moves is
+move-constructed into the destination's vector and every element that leaves has to come out of one.
+What was left to decide is how the *source* is repaired, and the two candidates have opposite best
+cases.
+
+*The loop a caller writes* -- `try_emplace` here, `erase(it)` there -- repairs the source's index once
+per element taken. Each repair is a second hash of the key leaving and a third of whichever element
+the backfill drags into the hole, so it costs work per element that **goes**. It also cannot move the
+key out: `erase(it)` hashes the key to find the slot pointing at it, so a loop that moves the key into
+the destination first hands `erase()` a moved-from key, and that probe does not terminate (#254). The
+hand-written version therefore copies every key it takes.
+
+*What shipped* walks the source once, compacts the elements that stay behind down over the gaps the
+taken ones leave, and rebuilds the source's index once at the end. It costs work per element that
+**stays**.
+
+Ratios, shipped over the caller's loop, at overlaps 0 / 25 / 50 / 75 / 90 / 100%:
+
+| source | 0% | 25% | 50% | 75% | 90% | 100% |
+|---|---|---|---|---|---|---|
+| `uint64_t`, 4000 | 0.504 | 0.596 | 0.634 | 0.922 | **1.228** | 1.031 |
+| `uint64_t`, 64000 | 0.412 | 0.493 | 0.512 | 0.735 | 0.992 | 0.943 |
+| `uint64_t`, 1000000 | 0.511 | 0.575 | 0.510 | 0.604 | 0.750 | 0.749 |
+| `std::string`, 4000 | 0.464 | | 0.615 | | **1.113** | |
+| `std::string`, 64000 | 0.443 | | 0.542 | | 0.916 | |
+| `std::string`, 500000 | 0.551 | | 0.611 | | 0.826 | |
+
+So **2x to 2.4x where a merge normally is** -- two sets that mostly do not overlap -- and one corner
+where it loses: a small table whose source is nine tenths duplicates of it. That corner is exactly the
+backfill's best case and the compaction's worst, and it closes on its own as the map grows (1.23 at
+four thousand, 0.99 at sixty-four thousand, 0.75 at a million), because above cache the loop's second
+and third hash cost more than a rebuild does.
+
+It is not fixed, and the reason is worth keeping: choosing between the two strategies needs the
+overlap, and the overlap is not known until the probes that measure it have been paid. A pre-pass that
+probes without moving would have to carry every element's hash into the second pass to be worth
+anything -- eight bytes of scratch per source element -- or hash the taken elements twice, which is
+the common case paying for the rare one.
+
+*The ring.* The walk is the fifth `pipeline_depth` ring in the file, hashing sixteen elements ahead
+of the one it places, and it is gated on index bytes like `replace()`'s. Three binaries built from the
+same header -- ring deleted, ring always, ring gated -- alternated, medians of five, at overlaps
+0 / 50 / 90%:
+
+| source | ring / no ring | gated / no ring |
+|---|---|---|
+| 1000 | 1.09 / 1.10 / 1.14 | 1.05 / 0.96 / 1.00 |
+| 4000 | 1.07 / 1.11 / 1.11 | 1.02 / 1.01 / 0.99 |
+| 16000 | 1.01 / 1.05 / 1.06 | 0.98 / 1.03 / 1.03 |
+| 64000 | 0.91 / 0.94 / 0.97 | 0.89 / 0.91 / 0.95 |
+| 256000 | 0.83 / 0.82 / 0.89 | 0.83 / 0.81 / 0.88 |
+| 2000000 | 0.80 / 0.70 / 0.73 | 0.80 / 0.72 / 0.74 |
+
+The crossover is **within a doubling of the 256 KB of index `replace()` measured**, on a loop with a
+different body -- which is the evidence that the constant belongs to the cache and not to either loop.
+It is not exactly the same: the gate opens at sixteen thousand elements a side, where the ring is
+still 1 to 6% down, and does not pay until sixty-four thousand. That octave costs 2-3%, and a constant
+of `merge`'s own to recover it would be fitting one measurement at the resolution this file books as
+layout luck. The gate reads the index the destination will *end* with,
+`calc_shifts_for_size(size() + source.size())`, and not the one it has: the case the ring is most for
+is a large source going into a small map, where the index it has says nothing about the one the walk
+will run against.
+
+*The gate has to be two loops, not a branch.* Written the obvious way -- the gate read per element --
+the gated-off sizes came back at 4.80 ns against 4.53 for the same loop with the ring deleted, losing
+5 to 10% at every size below the crossover, which is most of what the gate was there to save. A
+perfectly predicted branch is not free when a ring, a lambda and an array hang off it and the loop has
+to keep them live. `walk(std::true_type{})` against `walk(std::false_type{})` is the column above,
+within 5% of the ringless loop and on both sides of it.
+
+*`reserve(size() + source.size())` was measured and declined*, which is #248's answer arrived at from
+the other direction. The bound is exact -- a merge cannot end up larger than that -- and it is still a
+guess, because what it is really predicting is the *overlap*. Reserved over not, at overlaps 0 / 50 /
+100%: 0.837 / 1.257 / 1.604 at sixty-four thousand `uint64_t`, 0.707 / 1.066 / 1.606 at half a
+million, 0.818 / 1.244 / 1.618 at sixty-four thousand strings and 0.870 / 1.103 / **2.629** at half a
+million strings. So it buys 13-30% in the case that needs it least and costs up to 2.6x in the case
+the map cannot tell apart from it, on top of holding an index and a value vector up to twice the size
+the map ended up needing. Growth doubling is the right answer here for the same reason it is in
+`insert(first, last)`.
+
+*Mutation.* 95 mutants over the diff, **87% killed**, 55 of them by a test. The first run killed only 62%
+and said why: nothing reached the pipelined half of the walk, because the whole test file was below
+the 256 KB gate -- `delete: walk(std::true_type{})` survived. A test whose *destination* carries the
+size and whose source is nought to forty elements long turns the ring on cheaply and puts an edge on
+the priming loop at the same time. The rest of the gap was the exception repair: a moved-from
+`merge_bomb` that keeps its value makes "the source kept a husk" invisible, so the bomb now marks what
+it moved from, and a throwing *key compare* was added because the move bomb can only ever produce the
+drop-it case and never the keep-it one. The twelve that survive are all one class -- behaviour-identical
+by construction, so no correctness test can see them: seven are the arithmetic of the two pipeline
+gates (`wants_pipeline` and its two callers), one is `move_home`, which only moves an element back
+towards its home group, one is the `-fno-exceptions` arm that the test build does not compile, and two
+are early exits whose only effect is to skip work that would have produced the same answer. The
+self-merge guard is one of those, and the reason is worth knowing: without it the walk finds every key
+in itself, keeps every element, and rebuilds nothing, so it is O(n) of wasted probing rather than a
+wrong answer.
+
+*What the source keeps.* References and iterators into either map are invalidated, and the source's
+order changes -- every element taken out of the middle leaves a gap the elements behind it close.
+Both are `erase()`'s existing behaviour and both are in `README.md` 3.3.8 rather than left to be
+discovered.
+
 **`replace()` hashes ahead too, once the reason it could not was looked at properly** (2026-09-11,
 issue #244 item 4, asked as "would it be simpler going from back to front"). It was the last bulk
 build path with no lookahead, and the obstacle looked structural: removing a duplicate pulls
