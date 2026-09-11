@@ -358,6 +358,19 @@ version is the *worst* of the three by exactly the compare it adds. So the 10% i
 clang chose to inline around `slot_of_value`, and that landed better. Any unrelated edit to those
 functions can flip it back.
 
+*What is retracted is the explanation, not the speedup.* The shipped binary really is faster than
+`origin/main` under clang -- 8.765 ns against 9.233 per erase at two hundred thousand elements and
+6.924 against 7.568 at fifty thousand, medians of nine, so **0.92 to 0.95** -- and a caller building
+with clang gets that today. What they do not get is a reason it will survive the next compiler
+release, and a gcc caller gets nothing at all (85.5 against 85.1 instructions is a wash). Bank the
+win, do not build a rule on it, and do not let it justify the change: the hang does that on its own.
+
+One more caution from the same table: **instructions and time come apart here.** The `noinline`
+controls retire 137.0 / 138.1 / 137.1 instructions and take 9.718 / 9.332 / 9.240 ns -- the variant
+retiring the *most* is the fastest of the three. The erase path is partly memory-bound, so an
+instruction count settles "did the compiler emit different work", not "is it faster"; the time still
+has to be measured separately.
+
 This also re-explains the insert-path result correctly. `place_group` and the rehash's placement loop
 were given the same bound and came back 0.1-0.2 instructions per insert *worse* at every size, and
 that was written up as "they return `void`, which is a different shape". It is simpler than that:
