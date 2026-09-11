@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `replace()`'s gate was re-measured on a fixed harness and kept, and the harness is the finding
 - `replace()`'s two loops walk with cursors too, and one cursor too many is slower than none
 - `merge()`, and why it is not the loop the caller would write
 - `replace()` hashes ahead too, once the reason it could not was looked at properly
@@ -299,6 +300,65 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`replace()`'s gate was re-measured on a fixed harness and kept, and the harness is the finding**
+(2026-09-11, issue #257, `scripts/ab/replace_bulk.cpp`, Ryzen 9 7950X, clang 22, medians of seven).
+
+`pipeline_min_index_bytes` was fitted in #249 on `map<uint64_t, size_t>` alone, and a sweep during
+#256 suggested it was too low for a string key. Re-fitting needs numbers, and the harness could not
+give them: at sixteen to a hundred thousand `uint64_t` elements the same binary read 4.40, 2.85, 2.88,
+4.76, 5.19, 2.76 ns per element between repeats.
+
+*The harness, first.* Two things caused it, and both are now fixed. The timed region contained a fresh
+index allocation, because every round built a new map -- so what the allocator had just done with the
+container copy decided what the allocation cost. And the reported number was the mean over rounds, so
+one round that faulted carried it. `replace_bulk.cpp` now replaces into the **same** map every round
+after one untimed round that allocates the index, and reports the **median round**. Four repeats of
+the same cell go from 3.32 / 3.33 / 3.31 / 3.27 with a max of 6.14 to **3.158 / 3.141 / 3.145 / 3.147**
+with a max of 3.92. `cold` restores the old behaviour, which is the right one for "what does a caller
+pay end to end" and the wrong one for "does the pipeline inside it pay".
+
+*The answer, with numbers that hold still.* Ring over the same loop with the ring deleted, by index
+size, for both key types at two duplicate rates:
+
+| index | `uint64_t` 0% | `uint64_t` 25% | `string` 0% | `string` 25% | geomean |
+|---|---|---|---|---|---|
+| 88 KiB | 1.265 | 1.225 | 1.006 | 1.037 | 1.128 |
+| 176 KiB | 0.833 | 1.194 | 1.156 | 1.033 | 1.044 |
+| **352 KiB** | **0.667** | **1.163** | **1.064** | **1.002** | **0.954** |
+| 704 KiB | 0.632 | 0.999 | 1.039 | 0.987 | 0.897 |
+| 1408 KiB | 0.626 | 0.944 | 0.998 | 0.985 | 0.873 |
+| 2816 KiB | 0.565 | 0.916 | 0.973 | 0.979 | 0.838 |
+| 5632 KiB | 0.537 | 0.912 | 0.950 | 0.944 | 0.814 |
+
+The four curves cross in four different places -- 176, 704, 1408 and 352 KiB -- and the reason is not
+the key type alone. **The ring's payoff depends on the duplicate rate**, because a duplicate refills
+its ring slot from the element that just moved into it, which the very next iteration reads: there is
+no distance to prefetch over. At 352 KiB the same gate is worth **1.5x** to a `uint64_t` with no
+duplicates and costs **16%** to one with a quarter of them. The map cannot know which it has until it
+has walked, which is the same wall #248 ran into from the other side.
+
+So the constant is a compromise and was chosen as one. Realised geometric mean over all 28 cells, and
+the worst single cell, for four candidate thresholds:
+
+| threshold | geomean | worst cell |
+|---|---|---|
+| 128 KiB | 0.9137 | 1.194 |
+| **256 KiB (kept)** | **0.9081** | 1.163 |
+| 512 KiB | 0.9143 | 1.039 |
+| 1 MiB | 0.9286 | 1.000 |
+
+**256 KiB is the best of the four on the mean**, and it is also where the combined per-size crossover
+sits: 1.044 at 176 KiB against 0.954 at 352 KiB, and the gate opens between them. A threshold that
+never loses does exist -- a mebibyte -- and costs two points of geometric mean to buy away a worst
+cell of 1.163. The issue's premise was half right: the constant *was* fitted on `uint64_t`, and the
+string loss it leaves is real, but it is one octave, at most 1.064, and it is paid for by a 1.5x on
+the neighbouring cell of the same octave.
+
+*What was considered and not built.* Making the walk count duplicates and abandon the ring when it
+sees too many. It is adaptive on data already in hand rather than a guess about data it has not seen,
+which is the distinction #248 turns on -- but it is still a threshold on the caller's data chosen by
+whoever fits it, and it would have to be fitted on the same sweep that produced the table above.
+
 **`replace()`'s two loops walk with cursors too, and one cursor too many is slower than none**
 (2026-09-11, issue #242's follow-up, `scripts/ab/replace_bulk.cpp`, Ryzen 9 7950X, clang 22, medians
 of seven, paired within each run).

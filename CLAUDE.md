@@ -121,6 +121,17 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
 - **A benchmark with a small per-epoch batch must advance its own randomness.** A replayed key
   sequence is learned by the branch predictor and flatters the branchiest probe by up to 2.7x. This
   mistake has been made twice, in two different tools.
+- **A benchmark that rebuilds its subject every round is measuring the allocator too, and bimodally.**
+  `replace_bulk.cpp` read 4.40, 2.85, 2.88, 4.76, 5.19, 2.76 ns/element for the *same* binary because
+  each round built a fresh map and the index allocation landed inside the clock. Replacing into the
+  same warmed map and reporting the **median round** rather than the mean took four repeats of one
+  cell from 3.32 / 3.33 / 3.31 / 3.27 (max 6.14) to 3.158 / 3.141 / 3.145 / 3.147 (max 3.92). Any
+  harness used to settle a 5–10% question needs both.
+- **A pipeline's payoff can depend on the caller's data, not only on the size.** `replace()`'s ring is
+  worth 1.5x to a `uint64_t` with no duplicates and costs 16% to one with a quarter of them, at the
+  *same* index size, because a duplicate refills its ring slot from the element read next and has no
+  distance to prefetch over. A single index threshold cannot serve both; pick it on the geomean across
+  key types and rates, and say in the comment what it gives up.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey
@@ -287,7 +298,10 @@ time, past the cache. The larger effect is the caller's: **batching the keys at 
 own `pipeline_depth` ring, and the bulk visit has chunks instead (a ring there measured 15% worse);
 sharing them costs the rehash 1.9 instructions per element and was rejected. `replace()` and
 `merge()` are gated, on **index** bytes — counting the values too was measured wrong. The two
-thresholds are **not the same**: 256 KB and 1 MB. A gate's crossover is where the ring's fixed 13–17
+thresholds are **not the same**: 256 KB and 1 MB. `replace()`'s was re-measured across both key types
+and both duplicate rates for #257 and kept: it is the best of four candidates on the geomean (0.9081
+against 0.9137 / 0.9143 / 0.9286), and it buys a 1.5x on one cell by accepting a 1.163 on its
+neighbour. A gate's crossover is where the ring's fixed 13–17
 instructions per element stop being worth the misses they hide, so it moves with what the *rest* of
 the loop costs — writing merge's walk with iterators instead of indices made it 5–11% cheaper and
 pushed its crossover two doublings up. Re-fit the constant whenever the gated loop changes; a shared
