@@ -1690,9 +1690,19 @@ private:
         ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
     }
 
-    // Every line of a block, for a caller that has not touched the group at all. prefetch_index
-    // skips the first line because the probe is about to read it anyway; a rehash is about to
-    // write a group it has never read, so it wants that line too.
+    // The first and last line of a block, for a caller that has not touched the group at all.
+    // prefetch_index skips the first line because the probe is about to read it anyway; a rehash is
+    // about to write a group it has never read, so it wants that line too.
+    //
+    // A quarter of blocks span *three* lines and this asks for two of them, which looks like a bug
+    // and is not one. `88 % 64 == 24` and `gcd(24, 64) == 8`, so `p % 64` walks the whole cycle
+    // whatever the array's alignment, and the two offsets above 40 put a third line in the middle --
+    // holding all eight counters and half the fingerprints. **The hardware fetches it anyway.**
+    // Asking for it explicitly is a consistent 2.5% *loss*: 12.47 ns per block against 12.78, five
+    // rounds of five, on a 176 MiB array walked at random with a sixteen-deep lookahead and a
+    // probe-shaped read. The same measurement says the second prefetch earns its keep -- one line
+    // alone is 13.19 -- so the shape here is the measured optimum and not an accident.
+    // scripts/ab/prefetch_lines.cpp, issue #250.
     template <typename Block>
     static void prefetch_block(Block const* block) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
