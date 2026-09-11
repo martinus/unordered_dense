@@ -323,18 +323,18 @@ Ratios, shipped over the caller's loop, at overlaps 0 / 25 / 50 / 75 / 90 / 100%
 
 | source | 0% | 25% | 50% | 75% | 90% | 100% |
 |---|---|---|---|---|---|---|
-| `uint64_t`, 4000 | 0.504 | 0.596 | 0.634 | 0.922 | **1.228** | 1.031 |
-| `uint64_t`, 64000 | 0.412 | 0.493 | 0.512 | 0.735 | 0.992 | 0.943 |
-| `uint64_t`, 1000000 | 0.511 | 0.575 | 0.510 | 0.604 | 0.750 | 0.749 |
-| `std::string`, 4000 | 0.464 | | 0.615 | | **1.113** | |
-| `std::string`, 64000 | 0.443 | | 0.542 | | 0.916 | |
-| `std::string`, 500000 | 0.551 | | 0.611 | | 0.826 | |
+| `uint64_t`, 4000 | 0.453 | 0.546 | 0.551 | 0.811 | **1.077** | 0.901 |
+| `uint64_t`, 64000 | 0.413 | 0.487 | 0.495 | 0.689 | 0.917 | 0.879 |
+| `uint64_t`, 1000000 | 0.506 | 0.569 | 0.498 | 0.597 | 0.733 | 0.713 |
+| `std::string`, 4000 | 0.459 | | 0.576 | | **1.053** | |
+| `std::string`, 64000 | 0.431 | | 0.526 | | 0.878 | |
+| `std::string`, 500000 | 0.556 | | 0.609 | | 0.825 | |
 
-So **2x to 2.4x where a merge normally is** -- two sets that mostly do not overlap -- and one corner
-where it loses: a small table whose source is nine tenths duplicates of it. That corner is exactly the
-backfill's best case and the compaction's worst, and it closes on its own as the map grows (1.23 at
-four thousand, 0.99 at sixty-four thousand, 0.75 at a million), because above cache the loop's second
-and third hash cost more than a rebuild does.
+So **1.8x to 2.4x where a merge normally is** -- two sets that mostly do not overlap -- and one corner
+where it still loses: a small table whose source is nine tenths duplicates of it, by 5 to 8%. That
+corner is exactly the backfill's best case and the compaction's worst, and it closes on its own as the
+map grows (1.08 at four thousand, 0.92 at sixty-four thousand, 0.73 at a million), because above cache
+the loop's second and third hash cost more than a rebuild does.
 
 It is not fixed, and the reason is worth keeping: choosing between the two strategies needs the
 overlap, and the overlap is not known until the probes that measure it have been paid. A pre-pass that
@@ -342,36 +342,49 @@ probes without moving would have to carry every element's hash into the second p
 anything -- eight bytes of scratch per source element -- or hash the taken elements twice, which is
 the common case paying for the rare one.
 
-*The ring.* The walk is the fifth `pipeline_depth` ring in the file, hashing sixteen elements ahead
-of the one it places, and it is gated on index bytes like `replace()`'s. Three binaries built from the
-same header -- ring deleted, ring always, ring gated -- alternated, medians of five, at overlaps
-0 / 50 / 90%:
+*The ring, and the gate's constant is not `replace()`'s.* The walk is the fifth `pipeline_depth` ring
+in the file, hashing sixteen elements ahead of the one it places, and it is gated on index bytes the
+way `replace()`'s is -- but **two doublings higher**, which was got wrong first. Three binaries built
+from the same header -- ring deleted, ring always, ring gated -- alternated, medians of five, at
+overlaps 0 / 50 / 90%:
 
-| source | ring / no ring | gated / no ring |
-|---|---|---|
-| 1000 | 1.09 / 1.10 / 1.14 | 1.05 / 0.96 / 1.00 |
-| 4000 | 1.07 / 1.11 / 1.11 | 1.02 / 1.01 / 0.99 |
-| 16000 | 1.01 / 1.05 / 1.06 | 0.98 / 1.03 / 1.03 |
-| 64000 | 0.91 / 0.94 / 0.97 | 0.89 / 0.91 / 0.95 |
-| 256000 | 0.83 / 0.82 / 0.89 | 0.83 / 0.81 / 0.88 |
-| 2000000 | 0.80 / 0.70 / 0.73 | 0.80 / 0.72 / 0.74 |
+| source | end index | ring / no ring | gated / no ring |
+|---|---|---|---|
+| 1000 | 22 KiB | 1.10 / 1.19 / 1.14 | 0.97 / 0.97 / 1.00 |
+| 16000 | 352 KiB | 1.07 / 1.12 / 1.09 | 0.99 / 1.01 / 1.00 |
+| 32000 | 704 KiB | 1.02 / 1.06 / 1.02 | 0.99 / 1.01 / 0.99 |
+| 64000 | 1408 KiB | 0.96 / 0.98 / 0.99 | 0.96 / 0.99 / 0.98 |
+| 128000 | 2816 KiB | 0.92 / 0.92 / 0.97 | 0.92 / 0.92 / 0.97 |
+| 2000000 | 44 MiB | 0.81 / 0.74 / 0.77 | 0.81 / 0.75 / 0.77 |
 
-The crossover is **within a doubling of the 256 KB of index `replace()` measured**, on a loop with a
-different body -- which is the evidence that the constant belongs to the cache and not to either loop.
-It is not exactly the same: the gate opens at sixteen thousand elements a side, where the ring is
-still 1 to 6% down, and does not pay until sixty-four thousand. That octave costs 2-3%, and a constant
-of `merge`'s own to recover it would be fitting one measurement at the resolution this file books as
-layout luck. The gate reads the index the destination will *end* with,
-`calc_shifts_for_size(size() + source.size())`, and not the one it has: the case the ring is most for
-is a large source going into a small map, where the index it has says nothing about the one the walk
-will run against.
+The crossover is at **704 KiB to 1408 KiB of index**, not `replace()`'s 256 KB, and the first version
+of this entry claimed otherwise on a reading taken before the walk was written with cursors. The
+correction is the useful part: a gate's crossover is where the ring's fixed 13-17 instructions per
+element stop being worth the misses they hide, so it moves with what the *rest* of the loop costs --
+and making the ringless loop 5 to 11% cheaper pushed `merge`'s crossover two doublings up. A shared
+constant would now cost 7 to 12% in the octave at 352 KiB. `merge_min_index_bytes` is a mebibyte, in
+the middle of the window with a doubling of margin on each side, and with the gate in, the worst cell
+anywhere on the sweep is **1.009**.
+
+The gate reads the index the destination will *end* with,
+`index_bytes_for(calc_shifts_for_size(size() + source.size()))`, and not the one it has: the case the
+ring is most for is a large source going into a small map, where the index it has says nothing about
+the one the walk will run against.
+
+*Three cursors, not three indices.* The walk holds `read`, `write` and `look` as iterators. Indexing
+`src_values[i]` is the trap `fill_buckets_from_values` records at length -- placing an element stores
+a fingerprint, a `std::uint8_t` store may alias the container's own data pointer, and every indexed
+read after a placement therefore has to load that pointer back before it can form the next address.
+Alternated against the indexed version of the same loop: **0.89 to 0.95 in cache** (0.92 / 0.89 / 0.91
+at four thousand elements) and 0.95 to 1.00 above it, 26 of 27 cells at or below 1.00, and 2.0 to 4.5
+fewer instructions retired per element at every size. It was written with indices first and the
+review caught it.
 
 *The gate has to be two loops, not a branch.* Written the obvious way -- the gate read per element --
 the gated-off sizes came back at 4.80 ns against 4.53 for the same loop with the ring deleted, losing
 5 to 10% at every size below the crossover, which is most of what the gate was there to save. A
 perfectly predicted branch is not free when a ring, a lambda and an array hang off it and the loop has
-to keep them live. `walk(std::true_type{})` against `walk(std::false_type{})` is the column above,
-within 5% of the ringless loop and on both sides of it.
+to keep them live. `walk(std::true_type{})` against `walk(std::false_type{})` is the column above.
 
 *`reserve(size() + source.size())` was measured and declined*, which is #248's answer arrived at from
 the other direction. The bound is exact -- a merge cannot end up larger than that -- and it is still a
@@ -383,21 +396,21 @@ the map cannot tell apart from it, on top of holding an index and a value vector
 the map ended up needing. Growth doubling is the right answer here for the same reason it is in
 `insert(first, last)`.
 
-*Mutation.* 95 mutants over the diff, **87% killed**, 55 of them by a test. The first run killed only 62%
+*Mutation.* 113 mutants over the whole change, **84% killed**, 55 of them by a test. The first run killed only 62%
 and said why: nothing reached the pipelined half of the walk, because the whole test file was below
 the 256 KB gate -- `delete: walk(std::true_type{})` survived. A test whose *destination* carries the
 size and whose source is nought to forty elements long turns the ring on cheaply and puts an edge on
 the priming loop at the same time. The rest of the gap was the exception repair: a moved-from
 `merge_bomb` that keeps its value makes "the source kept a husk" invisible, so the bomb now marks what
 it moved from, and a throwing *key compare* was added because the move bomb can only ever produce the
-drop-it case and never the keep-it one. The twelve that survive are all one class -- behaviour-identical
-by construction, so no correctness test can see them: seven are the arithmetic of the two pipeline
-gates (`wants_pipeline` and its two callers), one is `move_home`, which only moves an element back
-towards its home group, one is the `-fno-exceptions` arm that the test build does not compile, and two
-are early exits whose only effect is to skip work that would have produced the same answer. The
-self-merge guard is one of those, and the reason is worth knowing: without it the walk finds every key
-in itself, keeps every element, and rebuilds nothing, so it is O(n) of wasted probing rather than a
-wrong answer.
+drop-it case and never the keep-it one. The eighteen that survive are all one class -- behaviour-identical by
+construction, so no correctness test can see them, and nothing in the walk itself is among them.
+Fourteen are the two pipeline gates: their thresholds, `index_bytes_for`'s multiply, and the two
+comparisons. One is `move_home`, which only moves an element back towards its home group. One is the
+`-fno-exceptions` arm that the test build does not compile. Two are early exits whose only effect is
+to skip work that would have produced the same answer -- the self-merge guard is one, and the reason
+is worth knowing: without it the walk finds every key in itself, keeps every element and rebuilds
+nothing, so it is O(n) of wasted probing rather than a wrong answer.
 
 *What the source keeps.* References and iterators into either map are invalidated, and the source's
 order changes -- every element taken out of the middle leaves a gap the elements behind it close.

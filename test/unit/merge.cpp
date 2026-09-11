@@ -129,27 +129,26 @@ TEST_CASE_MAP("merge_against_std_unordered_map", uint64_t, uint64_t) {
 }
 
 // The walk hashes sixteen elements ahead of the one it places, and only above a measured amount of
-// index -- 256 KB, which is about 38000 elements between the two maps. Everything above is below that
-// line and never runs the ring at all: without this, deleting the pipelined half of the walk is a
-// mutation no test notices.
+// index -- merge_min_index_bytes, a mebibyte, which the two maps reach together at about 105000
+// elements. Everything above is below that line and never runs the ring at all: without this,
+// deleting the pipelined half of the walk is a mutation no test notices.
 //
-// The destination is what carries the size, so the *source* can be short: a source of nought to forty
-// with the ring switched on is what puts an edge on the priming loop, which primes min(16, n), and on
-// the refill's "is there an element sixteen further along".
+// The destination is what carries the size, so the *source* can be short: a source of nought to
+// thirty-three with the ring switched on is what puts an edge on the priming loop, which primes
+// min(16, n), and on the refill's "is there an element sixteen further along".
 TEST_CASE("merge_reaches_the_pipelined_walk") {
     // not `map_t`: TEST_CASE_MAP above declares one at namespace scope
     using piped_map = ankerl::unordered_dense::map<uint64_t, uint64_t>;
 
-    auto const big = merge_ids(0, 40000);
-    for (size_t len : {size_t{0}, size_t{1}, size_t{2}, size_t{15}, size_t{16}, size_t{17}, size_t{31}, size_t{33}}) {
-        merge_matches_std<piped_map>(big, merge_ids(40000, len)); // nothing overlaps
-        merge_matches_std<piped_map>(big, merge_ids(39990, len)); // the first few do
+    auto const big = merge_ids(0, 110000);
+    for (size_t len : {size_t{0}, size_t{1}, size_t{15}, size_t{16}, size_t{17}, size_t{33}}) {
+        merge_matches_std<piped_map>(big, merge_ids(110000, len)); // nothing overlaps
+        merge_matches_std<piped_map>(big, merge_ids(109990, len)); // the first few do
     }
 
     // and a source long enough to run the ring in its steady state, half of it already there
-    merge_matches_std<piped_map>(big, merge_ids(20000, 40000));
-    merge_matches_std<piped_map>(big, merge_ids(40000, 40000));
-    merge_matches_std<piped_map>(big, big);
+    merge_matches_std<piped_map>(big, merge_ids(55000, 110000));
+    merge_matches_std<piped_map>(big, merge_ids(110000, 110000));
 }
 
 TEST_CASE("merge_with_an_empty_map_on_either_side") {

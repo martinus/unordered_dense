@@ -1468,12 +1468,27 @@ private:
     // a 1032 byte value the footprint model opens the gate at ten thousand elements, where the
     // pipeline is a **14% loss**. Both value sizes cross over at the same index size instead.
     //
-    // Two callers, replace() and merge(), each with its own sweep beside it; they were measured
-    // separately and landed on the same number, which is what says it belongs to the cache and not to
-    // either loop. The range insert and the bulk visit were measured against the same question and
-    // neither wants a gate; the visit's crossover is set by the caller's hit rate, which the map does
-    // not know until it has already done a chunk's worth of work. Issues #247 and #242.
+    // replace()'s threshold; see the sweep beside its only use. The range insert and the bulk visit
+    // were measured against the same question and neither wants a gate at all; the visit's crossover
+    // is set by the caller's hit rate, which the map does not know until it has already done a
+    // chunk's worth of work. Issue #247.
     static constexpr std::size_t pipeline_min_index_bytes = std::size_t{256} << 10U;
+
+    // merge()'s, and it is two doublings higher than replace()'s rather than the same number -- which
+    // was the first guess, and wrong. A gate's crossover is where the ring's fixed cost per element
+    // stops being worth the misses it hides, so it moves with what the *rest* of the loop costs, and
+    // merge's walk is cheaper per element than replace()'s dedup. Measured on this loop, ring over
+    // the same loop with the ring deleted, at no overlap / half / nine tenths of it duplicated:
+    //
+    //     352 KiB of index   1.068 / 1.119 / 1.086   a clear loss
+    //     704 KiB            1.019 / 1.043 / 1.031 and 0.994 / 1.014 / 1.050 at two load factors
+    //    1408 KiB            0.966 / 0.988 / 0.986 and 0.927 / 0.968 / 1.005
+    //    2816 KiB            0.921 / 0.926 / 0.956
+    //     22 MiB             0.812 / 0.749 / 0.769
+    //
+    // The index doubles, so anything inside (704 KiB, 1408 KiB] switches at the same places; a
+    // mebibyte sits in the middle of that window with a doubling of margin either side. Issue #242.
+    static constexpr std::size_t merge_min_index_bytes = std::size_t{1} << 20U;
 
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
     static constexpr float default_max_load_factor = 0.8F;
@@ -2032,12 +2047,11 @@ private:
         return calc_num_groups(shifts) * slots_per_group;
     }
 
-    // Whether a bulk loop over an index of this shape is worth pipelining; see
-    // pipeline_min_index_bytes for the measurement. One reader for the threshold, so that the two
-    // gated loops cannot drift apart -- they differ in *which* index they ask about, which is the
-    // shifts they pass, and in nothing else.
-    [[nodiscard]] static constexpr auto wants_pipeline(std::uint8_t shifts) -> bool {
-        return calc_num_groups(shifts) * sizeof(typename bucket_container_type::block) > pipeline_min_index_bytes;
+    // How much index an array with these shifts is, which is what both pipeline gates are measured
+    // against. One spelling of the quantity; the threshold is the gated loop's own, because the two
+    // do not have the same one.
+    [[nodiscard]] static constexpr auto index_bytes_for(std::uint8_t shifts) -> std::size_t {
+        return calc_num_groups(shifts) * sizeof(typename bucket_container_type::block);
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(std::size_t s) const -> std::uint8_t {
@@ -2688,50 +2702,61 @@ private:
         allocate_buckets_if_none();
         auto& src_values = source.m_values;
         auto const n = src_values.size();
-        auto keep = std::size_t{0};
-        // The first element the source still owns, which is the one thing the repair below needs to
-        // know and the one thing an exception cannot tell it: a throw out of the probe leaves this
-        // element untouched and the source keeps it, a throw out of the placement leaves a husk it
-        // must drop. Advancing it *before* the placement rather than after the iteration is what says
-        // which, and it costs the loop nothing because it is the loop counter.
-        auto i = std::size_t{0};
+        // Three cursors rather than three indices, and it is the same reason fill_buckets_from_values
+        // gives at length: placing an element stores a fingerprint, a std::uint8_t store may alias any
+        // object at all including the container's own data pointer, so every indexed read after a
+        // placement has to load that pointer back before it can even form the next element's address.
+        // An iterator is already the address. Worth 0.89 to 0.95 of the indexed loop in cache (four
+        // thousand elements, no overlap / half / nine tenths: 0.92 / 0.89 / 0.91) and 0.95 to 1.00
+        // above it, 26 of 27 cells, and 2 to 4.5 fewer instructions retired per element at every size.
+        //
+        // The source never changes size while the walk runs -- the repair at the end is what shrinks
+        // it -- so all three stay valid, and the destination's growth cannot reach them.
+        auto const first = src_values.begin();
+        auto const last = src_values.end();
+        auto read = first;  // the element being handled; also what the repair calls `from`
+        auto write = first; // where the next survivor goes; also what the repair calls `keep`
+        auto look = first;  // the element being hashed ahead
+        // `read` is the first element the source still owns, which is the one thing the repair below
+        // needs to know and the one thing an exception cannot tell it: a throw out of the probe leaves
+        // this element untouched and the source keeps it, a throw out of the placement leaves a husk
+        // it must drop. Advancing it *before* the placement rather than after the iteration is what
+        // says which, and it costs the loop nothing because it is the loop's own cursor.
 
         // Hashed ahead of where it is placing, the same ring the range insert uses and for the same
         // reason -- the source's elements are all in hand, so the hash of a later one can be computed
         // while this one waits for its block. The compaction underneath cannot disturb it: the only
-        // writes go to keep, which never passes i, and the ring reads at i + pipeline_depth.
+        // writes go to `write`, which never passes `read`, and the ring reads at `look`, which is
+        // pipeline_depth ahead of it.
         //
         // Gated, like replace()'s ring and unlike the range insert's, because the loss below the
-        // crossover is not inside the noise here. Medians of five, ring over the same loop with the
-        // ring taken out, at no overlap / half / nine tenths: 1.09 / 1.10 / 1.14 at a source of a
-        // thousand, 1.07 / 1.11 / 1.11 at four thousand, 1.01 / 1.05 / 1.06 at sixteen thousand,
-        // then 0.91 / 0.94 / 0.97 at sixty-four thousand, 0.83 / 0.82 / 0.89 at a quarter million and
-        // 0.80 / 0.70 / 0.73 at two million. So the crossover is within a doubling of the 256 KB
-        // replace() measured, on a loop with a different body -- which is what says that number
-        // belongs to the cache and not to either loop. The gate opens at the low end of that window,
-        // which costs 2-3% in the one octave between; a constant of merge's own would be fitting
-        // noise.
+        // crossover is not inside the noise: 1.10 / 1.19 / 1.14 of the ringless loop at a source of a
+        // thousand elements, at no overlap / half / nine tenths. See merge_min_index_bytes for where
+        // the crossover is and why it is not replace()'s number. With the gate in, the same
+        // comparison reads 0.97 / 0.97 / 1.00 there and 0.81 / 0.75 / 0.77 at two million: the worst
+        // cell anywhere on the sweep is 1.009.
         //
         // Measured against the index the destination will end up with rather than the one it has:
         // every source element is new until the probe says otherwise, so this bounds it from above,
         // and reading today's index instead gets the case the ring is most for -- a large source into
         // a small map, where nothing is in cache and everything moves -- exactly wrong.
-        auto const pipelined = wants_pipeline(calc_shifts_for_size(size() + n));
+        auto const pipelined = index_bytes_for(calc_shifts_for_size(size() + n)) > merge_min_index_bytes;
         auto ring = std::array<std::uint64_t, pipeline_depth>{};
         // The group array is handed in rather than read here: it has to be read fresh once per
         // element, because placing one may grow the index and move it, but the prefetch and the probe
         // that follows it are separated by nothing that can grow it -- so once, not twice.
-        auto const fetch = [&](typename bucket_container_type::block const* groups, std::size_t slot, std::size_t at) -> void {
-            auto const mh = mixed_hash(get_key(src_values[at]));
+        auto const fetch =
+            [&](typename bucket_container_type::block const* groups, std::size_t slot, value_type const& value) -> void {
+            auto const mh = mixed_hash(get_key(value));
             ring[slot] = mh;
             prefetch_block(groups, std::size_t{group_idx_from_hash(mh)});
         };
         if (pipelined) {
             auto const* const groups = m_buckets.data();
-            for (auto s = std::size_t{0}; s < pipeline_depth && s < n; ++s) {
+            for (auto s = std::size_t{0}; s < pipeline_depth && look != last; ++s, ++look) {
                 // Outside the repair below on purpose: nothing has been moved yet, so a hash that
                 // throws here leaves the source exactly as it was.
-                fetch(groups, s, s);
+                fetch(groups, s, *look);
             }
         }
 
@@ -2740,20 +2765,21 @@ private:
         // the gate was there to save -- 5.09 ns at four thousand elements and half of them
         // overlapping, against 4.63 for the same loop with the ring taken out. A perfectly predicted
         // branch is not free when a ring, a lambda and an array hang off it and the loop has to keep
-        // them live. Two instantiations read 1.02 / 1.01 / 0.99 of the ringless loop there, and
-        // 1.05 / 0.96 / 1.00 at a thousand.
+        // them live.
         auto const walk = [&](auto is_pipelined) -> void {
-            while (i < n) {
-                auto& value = src_values[i];
+            auto slot = std::size_t{0};
+            while (read != last) {
+                auto& value = *read;
                 auto const* const groups = m_buckets.data();
                 auto mh = std::uint64_t{};
                 if constexpr (decltype(is_pipelined)::value) {
                     // this element's hash out of the ring before the slot it frees is refilled
-                    auto const slot = i % pipeline_depth;
                     mh = ring[slot];
-                    if (i + pipeline_depth < n) {
-                        fetch(groups, slot, i + pipeline_depth);
+                    if (look != last) {
+                        fetch(groups, slot, *look);
+                        ++look;
                     }
+                    slot = (slot + 1) % pipeline_depth;
                 } else {
                     mh = mixed_hash(get_key(value));
                 }
@@ -2766,14 +2792,14 @@ private:
                     // Stays behind. merge() is a writing operation, so a hit here pays for its own
                     // drift the same way one inside try_emplace does.
                     move_home(r.slot, mh);
-                    if (keep != i) {
-                        src_values[keep] = std::move(value);
+                    if (write != read) {
+                        *write = std::move(value);
                     }
-                    ++keep;
-                    ++i;
+                    ++write;
+                    ++read;
                     continue;
                 }
-                ++i; // this one is leaving, however the placement below ends
+                ++read; // this one is leaving, however the placement below ends
                 place_element_at(word, counter, home_idx, std::move(value));
             }
         };
@@ -2793,13 +2819,13 @@ private:
                 // the source is a container the caller still owns and did not hand over. Putting it
                 // back together is what keeps the throw at the basic guarantee instead of leaving a
                 // map whose next lookup reads an index into elements that have gone.
-                source.compact_and_reindex(keep, i);
+                source.compact_and_reindex(static_cast<std::size_t>(write - first), static_cast<std::size_t>(read - first));
                 throw;
             }
         } else {
             walk_either();
         }
-        source.drop_tail_and_reindex(keep);
+        source.drop_tail_and_reindex(static_cast<std::size_t>(write - first));
     }
 
     template <typename K, typename... Args>
@@ -3318,7 +3344,7 @@ public:
         // a quarter million.
         // m_shifts describes the array that was just allocated or kept above, so this is the index
         // the dedup will actually run against.
-        if (m_values.size() > pipeline_depth + 1 && wants_pipeline(m_shifts)) {
+        if (m_values.size() > pipeline_depth + 1 && index_bytes_for(m_shifts) > pipeline_min_index_bytes) {
             do_replace_pipelined(value_idx);
         }
 
