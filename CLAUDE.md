@@ -132,13 +132,14 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   *same* index size, because a duplicate refills its ring slot from the element read next and has no
   distance to prefetch over. A single index threshold cannot serve both; pick it on the geomean across
   key types and rates, and say in the comment what it gives up.
-- **A value-returning loop the compiler cannot prove terminates pays for it, and a `[[noreturn]]` dead
-  end is the cheapest exit to give it.** Bounding `slot_of_value`'s `while (true)` took the erase path
-  from 133.0 to 119.5 instructions per erase (#254). The same bound *returning a sentinel* measures
-  136.0 — worse than no bound. It does **not** generalise: `place_group` and the rehash's placement
-  loop got the same treatment and came back 0.1–0.2 instructions *worse* at every size, because they
-  return `void` and already had a clean exit. The shape that pays is a loop with exactly one
-  value-producing exit; anything else needs its own measurement.
+- **An instruction count can move because you perturbed the inliner, and that is not a finding.**
+  Bounding `slot_of_value`'s `while (true)` read 133.0 → 119.5 instructions per erase under clang,
+  with a sentinel-returning bound at 136.0 — a 10% spread that looked like a real property of
+  `[[noreturn]]`. It is not. Force `slot_of_value` out of line and all three collapse to 137.0 /
+  138.0 / 137.1; build with gcc and they collapse to 85.5 / 85.1 / 84.5. The change simply landed on
+  a different clang inlining decision, which any unrelated edit can flip. **Instruction counts are
+  immune to layout, not to inlining** — before believing one, pin the inlining with `noinline` and
+  re-measure, and check a second compiler. Both controls take minutes. #254.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey
@@ -296,9 +297,9 @@ reserving only the buckets is *worse* than not reserving.
 
 *Probe termination.* Every probe that searches for a key or a value is bounded; the two *placement*
 walks are not, and deliberately -- they terminate on the free-slot invariant the load factor
-maintains, which no caller can break, and bounding them measured slightly worse. The miss probe got
-its bound after a fuzz hang; `slot_of_value` got one after a five-line hang a mutable key could reach
-(#254), and it was 10% of the erase path to add it.
+maintains, which no caller can break. The miss probe got its bound after a fuzz hang; `slot_of_value`
+got one after a five-line hang a mutable key could reach (#254). The bound costs one compare on the
+next-group path and nothing on a home-group hit.
 
 *Still open.* Huge pages (22% of a large lookup, nothing asks for them).
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.

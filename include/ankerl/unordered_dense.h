@@ -2053,10 +2053,12 @@ private:
     // supported operation.
     //
     // The test is after the lane loop, so the common case -- the element is in its home group --
-    // returns before reaching it. It is not merely free: the erase path retires **13.4 fewer
-    // instructions per erase** with it than without, 133.0 to 119.5, flat across three sizes. The
-    // cause is the `[[noreturn]]` rather than the bound, and the same bound returning a sentinel
-    // instead measures 136.0 -- worse than no bound at all. See notes/index-design.md.
+    // returns without reaching it, and a group that does fall through was about to call next_group
+    // anyway: one compare, on the walking path only.
+    //
+    // It measured 10% *faster* than the unbounded version under clang, and that is an artifact, not
+    // a reason -- see notes/index-design.md. Forcing this function out of line makes the difference
+    // vanish and gcc never had it. The reason to bound the loop is that it hangs.
     [[nodiscard]] auto slot_of_value(std::uint64_t mh, value_idx_type value_idx) const -> value_idx_type {
         auto const word = fingerprint_word(mh);
         auto group_idx = group_idx_from_hash(mh);
