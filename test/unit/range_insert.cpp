@@ -22,9 +22,15 @@ TEST_CASE("range_insert_matches_a_loop_of_single_inserts") {
         input.emplace_back(static_cast<uint64_t>(i) * UINT64_C(0x9E3779B97F4A7C15), i);
     }
 
-    // Every length from empty to past two lookahead windows, then the whole thing: the priming
-    // loop, the steady state and the tail are all short-range cases.
+    // Every length from empty to past two lookahead windows, and then the whole range: the priming
+    // loop, the steady state and the tail are all short-range cases, and the last one is the only
+    // length that grows the table while the lookahead is running.
+    auto lengths = std::vector<size_t>();
     for (size_t len = 0; len <= 40; ++len) {
+        lengths.push_back(len);
+    }
+    lengths.push_back(input.size());
+    for (auto const len : lengths) {
         auto ranged = ankerl::unordered_dense::map<uint64_t, size_t>();
         auto looped = ankerl::unordered_dense::map<uint64_t, size_t>();
         ranged.insert(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(len));
@@ -35,13 +41,6 @@ TEST_CASE("range_insert_matches_a_loop_of_single_inserts") {
         for (auto const& [k, v] : looped) {
             REQUIRE(ranged.at(k) == v);
         }
-    }
-
-    auto ranged = ankerl::unordered_dense::map<uint64_t, size_t>();
-    ranged.insert(input.begin(), input.end());
-    REQUIRE(ranged.size() == input.size());
-    for (auto const& [k, v] : input) {
-        REQUIRE(ranged.at(k) == v);
     }
 }
 
@@ -98,10 +97,18 @@ TEST_CASE("range_insert_from_an_input_iterator") {
     REQUIRE(set.count(26) == 0U);
     static_assert(!ankerl::unordered_dense::detail::is_forward_iterator_v<std::istream_iterator<int>>,
                   "an istream_iterator is single-pass and must take the fallback");
-    static_assert(ankerl::unordered_dense::detail::is_forward_iterator_v<std::vector<int>::iterator>,
-                  "a vector iterator can be walked twice");
-    static_assert(ankerl::unordered_dense::detail::is_forward_iterator_v<std::list<int>::iterator>,
-                  "so can a list iterator, which is not random access");
+}
+
+// Which ranges get the lookahead at all. A type with no iterator_traits must answer no rather than
+// fail to compile, which is the case that decides how the trait is written.
+TEST_CASE("range_insert_which_iterators_can_be_walked_twice") {
+    struct no_traits {};
+    using namespace ankerl::unordered_dense::detail;
+    static_assert(is_forward_iterator_v<std::vector<int>::iterator>, "a vector iterator can be walked twice");
+    static_assert(is_forward_iterator_v<std::list<int>::iterator>, "so can a list iterator, which is not random access");
+    static_assert(is_forward_iterator_v<int const*>, "and a plain pointer, which is what an initializer_list gives");
+    static_assert(!is_forward_iterator_v<std::istream_iterator<int>>, "an istream_iterator cannot");
+    static_assert(!is_forward_iterator_v<no_traits>, "and a type with no iterator_traits must not fail to compile");
 }
 
 // A non-contiguous forward range still takes the lookahead path.
@@ -137,30 +144,12 @@ TEST_CASE("range_insert_across_several_growths") {
     }
 }
 
-// A default-constructed table has no bucket array, and inserting nothing must not give it one --
-// the same promise lazy_bucket_allocation.cpp makes of the other entry points. The range insert
-// allocates before it hashes anything, so the empty case has to return before that.
-TEST_CASE("range_insert_of_an_empty_range_allocates_nothing") {
-    auto input = std::vector<std::pair<int, int>>();
-    auto map = ankerl::unordered_dense::map<int, int>();
-    map.insert(input.begin(), input.end());
-    REQUIRE(map.bucket_count() == 0U);
-    REQUIRE(map.empty());
-
-    // and the same for a non-empty container's empty sub-range
-    input.emplace_back(1, 1);
-    map.insert(input.begin(), input.begin());
-    REQUIRE(map.bucket_count() == 0U);
-    map.insert(input.begin(), input.end());
-    REQUIRE(map.bucket_count() != 0U);
-}
-
-TEST_CASE("range_insert_initializer_list_and_self_range") {
+TEST_CASE("range_insert_initializer_list_and_from_a_copy") {
     auto map = ankerl::unordered_dense::map<int, int>{{1, 10}, {2, 20}, {3, 30}};
     REQUIRE(map.size() == 3U);
     REQUIRE(map.at(2) == 20);
 
-    // inserting a map's own values back into it changes nothing
+    // inserting a copy of a map's values back into it changes nothing
     auto copy = map;
     map.insert(copy.begin(), copy.end());
     REQUIRE(map.size() == 3U);

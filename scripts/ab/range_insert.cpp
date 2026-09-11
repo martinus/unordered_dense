@@ -10,6 +10,9 @@
 // rehash -- which is pipelined already -- are out of the measurement and what is left is the insert.
 //
 //   argv: <loop|range> <n> [rounds] [reserved|grow]
+//
+// Built by hand; -DUDM_RI_STR swaps the key for a std::string, which is the shape where the hash
+// being pipelined is worth the most.
 #include <ankerl/unordered_dense.h>
 
 #include <bench/workloads.h>

@@ -150,6 +150,25 @@ TEST_CASE("the_first_insert_allocates_the_buckets") {
         REQUIRE(map.size() == 2);
     }
 
+    // A range insert hashes ahead of where it places, so it has to have an array to prefetch
+    // against and allocates one before it looks at anything. Inserting *nothing* must still not
+    // allocate, which means the empty case has to be answered before that -- a mutation sweep on
+    // 2026-09-11 removed the check and nothing noticed.
+    SUBCASE("empty range insert") {
+        auto source = std::vector<pair_t>();
+        auto map = tracked<counting_map>(counts);
+        map.insert(source.begin(), source.end());
+        REQUIRE(map.empty());
+        REQUIRE(map.bucket_count() == 0);
+
+        // and an empty sub-range of a container that is not empty
+        source.emplace_back(1, 2);
+        map.insert(source.begin(), source.begin());
+        REQUIRE(map.bucket_count() == 0);
+        map.insert(source.begin(), source.end());
+        REQUIRE(map.bucket_count() != 0);
+    }
+
     SUBCASE("initializer list insert") {
         auto map = tracked<counting_map>(counts);
         map.insert({{1, 2}, {3, 4}});
