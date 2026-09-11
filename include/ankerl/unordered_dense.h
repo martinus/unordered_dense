@@ -1737,12 +1737,23 @@ private:
     // MERGED VARIANT: the indices sit inside the block, so what has to be pulled in is the rest of
     // the block rather than a second array. One block is 88 bytes and unaligned, so it covers two or
     // three lines; the first is the one the fingerprints are already being read from.
+    //
+    // The second address is the block's last byte for `group` and a fixed 128 for `group_big`, which
+    // is the same rule read twice: **the two lines after the one being read, clamped into the
+    // block**. 88 bytes never reaches past 128, so for the default type this is the `p + 87` it has
+    // always asked for and the generated code does not move. 152 bytes does: it spans four lines
+    // whenever `p % 64 > 40`, which is 36% of blocks, and asking for the first and the *last* of
+    // them leaves out the middle -- where eight of the sixteen value indices live. Naming all three
+    // instead is not the fix; it measured no better than the pair it replaces (15.65 against 15.64
+    // ns/block) while the two consecutive lines read 15.01, the same shape and the same reason as
+    // #250's fix to prefetch_block. gcc agrees, 15.54 / 15.60 against 15.00.
+    // scripts/ab/prefetch_lines.cpp, issue #252.
     template <typename Block>
     static void prefetch_index(Block const* blocks, value_idx_type group_idx) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(blocks + std::size_t{group_idx});
         ANKERL_UNORDERED_DENSE_PREFETCH(p + 64);
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
+        ANKERL_UNORDERED_DENSE_PREFETCH(p + (sizeof(Block) - 1 < 128 ? sizeof(Block) - 1 : 128));
     }
 
     // The first and last line of a block, for a caller that has not touched the group at all.
