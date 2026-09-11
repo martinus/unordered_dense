@@ -132,6 +132,13 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   *same* index size, because a duplicate refills its ring slot from the element read next and has no
   distance to prefetch over. A single index threshold cannot serve both; pick it on the geomean across
   key types and rates, and say in the comment what it gives up.
+- **A value-returning loop the compiler cannot prove terminates pays for it, and a `[[noreturn]]` dead
+  end is the cheapest exit to give it.** Bounding `slot_of_value`'s `while (true)` took the erase path
+  from 133.0 to 119.5 instructions per erase (#254). The same bound *returning a sentinel* measures
+  136.0 — worse than no bound. It does **not** generalise: `place_group` and the rehash's placement
+  loop got the same treatment and came back 0.1–0.2 instructions *worse* at every size, because they
+  return `void` and already had a clean exit. The shape that pays is a loop with exactly one
+  value-producing exit; anything else needs its own measurement.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey
@@ -286,6 +293,10 @@ range defeats all of them. `reserve(size() + distance())` is 128x the index at a
 and still guesses. Note the cost is the **value vector's** reallocation, not the index rehash:
 reserving only the values gets 10.4 ns/element against 9.9 for both and 19.6 for neither, and
 reserving only the buckets is *worse* than not reserving.
+
+*Probe termination.* Every probe in the file is bounded now. The miss probe got its bound after a fuzz
+hang; `slot_of_value` got one after a five-line hang a mutable key could reach (#254), and it was 10%
+of the erase path to add it.
 
 *Still open.* Huge pages (22% of a large lookup, nothing asks for them).
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.
