@@ -294,9 +294,11 @@ and still guesses. Note the cost is the **value vector's** reallocation, not the
 reserving only the values gets 10.4 ns/element against 9.9 for both and 19.6 for neither, and
 reserving only the buckets is *worse* than not reserving.
 
-*Probe termination.* Every probe in the file is bounded now. The miss probe got its bound after a fuzz
-hang; `slot_of_value` got one after a five-line hang a mutable key could reach (#254), and it was 10%
-of the erase path to add it.
+*Probe termination.* Every probe that searches for a key or a value is bounded; the two *placement*
+walks are not, and deliberately -- they terminate on the free-slot invariant the load factor
+maintains, which no caller can break, and bounding them measured slightly worse. The miss probe got
+its bound after a fuzz hang; `slot_of_value` got one after a five-line hang a mutable key could reach
+(#254), and it was 10% of the erase path to add it.
 
 *Still open.* Huge pages (22% of a large lookup, nothing asks for them).
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.

@@ -2044,6 +2044,14 @@ private:
     // there and the return is a slot number -- so the useful outcome is a diagnosable abort rather
     // than a core spinning at 100% forever, which is what this did until 2026-09-11 (#254).
     //
+    // Two things the throw is not. It is not recoverable: reached from finish_erase the slot is
+    // already gone, so the table is in the state that comment describes as unusable, and the
+    // exception says what happened rather than offering to continue. And it is not a guarantee --
+    // if the mutated key's sequence happens to cross the element's real slot with a matching
+    // fingerprint, a wrong-but-valid slot comes back and the counters are unwound from the wrong
+    // home instead. Bounding turns a hang into a diagnosis; only `replace_key()` turns it into a
+    // supported operation.
+    //
     // The test is after the lane loop, so the common case -- the element is in its home group --
     // returns before reaching it. It is not merely free: the erase path retires **13.4 fewer
     // instructions per erase** with it than without, 133.0 to 119.5, flat across three sizes. The

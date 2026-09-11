@@ -70,4 +70,13 @@ TEST_CASE("erase_churn_keeps_every_live_key_findable") {
             REQUIRE(map.find(gone) == map.end());
         }
     }
+
+    // Then empty it one element at a time by *iterator*, which reaches slot_of_value through
+    // locate() rather than through the backfill the erases above all went via. That probe is bounded
+    // (#254), and a table churned this long at this load is where its bound would fire spuriously if
+    // it were going to: elements here sit further from home than a freshly built table's ever do.
+    while (!map.empty()) {
+        map.erase(map.begin());
+    }
+    REQUIRE(map.size() == 0U);
 }
