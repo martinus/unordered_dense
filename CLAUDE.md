@@ -109,6 +109,15 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
 - **Code layout luck is ±3%**, from edits to code that never executes. Judge micro-optimizations by
   mechanism plus a focused microbenchmark, never by a single sub-benchmark delta.
 - **Rerun if nanobench prints `err%` above ~3.** A CPU-governor warning is normal noise.
+- **Take a null run before believing a sub-benchmark delta.** `scripts/ab/run.sh -r HEAD` on a clean
+  tree puts the *same* header on both sides; it reads `rmissstr` 1.036, `buildbig` 0.983 and
+  `hashstr` 0.872. That bias was reported as a win in two consecutive PRs before it was checked. One
+  run, and it retires anything under about 5% on those workloads.
+- **A benchmark's own input model can make a wrong heuristic look right.** `scripts/ab/range_insert.cpp`
+  draws duplicates from a pool that grows with the range, so the fresh-key rate is stationary — and a
+  range-insert sizing rule that extrapolated that rate reproduced the right bucket count at every
+  duplicate rate from 0% to 99% while being **64x wrong** on a fixed set of keys. The unit tests
+  caught it; the benchmark never would have. A benchmark says how fast, not whether it is right.
 - **A benchmark with a small per-epoch batch must advance its own randomness.** A replayed key
   sequence is learned by the branch predictor and flatters the branchiest probe by up to 2.7x. This
   mistake has been made twice, in two different tools.
@@ -257,6 +266,15 @@ on boost, so it is the call boundary and not this map's register allocation. **P
 it** (96.4 to 69.3 instructions, 34.0 to 17.5 cycles) on both maps. No source change steers it, and
 six have been tried; what is left against boost once the boundary is gone is eleven instructions,
 and at 4M entries the two are level.
+
+*Range insert sizing.* `insert(first, last)` reserving from the range is **2x** and was **declined**,
+#248 — every version that gets the 2x is a heuristic about data the map cannot see, and an ordered
+range defeats all of them. `reserve(size() + distance())` is 128x the index at a 99% duplicate rate
+*and* 1.21 slower; a sampled fresh rate is 64x (2048 keys drawn from ten thousand come back 90% new
+— the birthday bound, not a duplicate rate); a capture-recapture read of the same sample is accurate
+and still guesses. Note the cost is the **value vector's** reallocation, not the index rehash:
+reserving only the values gets 10.4 ns/element against 9.9 for both and 19.6 for neither, and
+reserving only the buckets is *worse* than not reserving.
 
 *Still open.* Huge pages (22% of a large lookup, nothing asks for them).
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.

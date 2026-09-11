@@ -9,7 +9,14 @@
 // round is what is timed. `reserved` builds into a map that was told its size, so growth and the
 // rehash -- which is pipelined already -- are out of the measurement and what is left is the insert.
 //
-//   argv: <loop|range> <n> [rounds] [reserved|grow]
+//   argv: <loop|range> <n> [rounds] [reserved|grow] [dup-percent] [vector|list]
+//
+// `dup-percent` is the share of the input that repeats an earlier key -- the case where reserving
+// from std::distance over-allocates, since the range is longer than the map will end up being. The
+// source container matters too: a std::list is a forward range, so std::distance over it is O(n) and
+// walks the whole thing a second time, which is the case where asking how long the range is may cost
+// more than knowing. The final bucket_count is printed so over-allocation is visible and not just
+// inferred.
 //
 // `loop` is the right control for "what does the range overload buy a caller" and the wrong one for
 // "does the ring inside it pay": it also carries the call boundary's ~15 instructions per element,
@@ -27,6 +34,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <list>
 #include <string>
 #include <vector>
 
@@ -57,16 +65,26 @@ int main(int argc, char** argv) {
     auto const n = static_cast<std::size_t>(argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 200000);
     auto const rounds = static_cast<std::size_t>(argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 20);
     auto const reserved = std::string(argc > 4 ? argv[4] : "grow") == "reserved";
+    auto const dup_pct = static_cast<std::size_t>(argc > 5 ? std::strtoull(argv[5], nullptr, 10) : 0);
+    auto const as_list = std::string(argc > 6 ? argv[6] : "vector") == "list";
 
     // Built once, outside the timing: what is being measured is the insert, not making the input.
     auto input = std::vector<std::pair<key_type, std::size_t>>();
     input.reserve(n);
     auto r = rng(1);
+    auto distinct = std::vector<std::uint64_t>();
     for (std::size_t i = 0; i < n; ++i) {
-        input.emplace_back(workloads::key_for<map_t>(r() >> 2U), i);
+        auto const dup = !distinct.empty() && (r() % 100) < dup_pct;
+        auto const v = dup ? distinct[static_cast<std::size_t>(r() % distinct.size())] : (r() >> 2U);
+        if (!dup) {
+            distinct.push_back(v);
+        }
+        input.emplace_back(workloads::key_for<map_t>(v), i);
     }
+    auto const listed = std::list<std::pair<key_type, std::size_t>>(input.begin(), input.end());
 
     auto acc = std::size_t{0};
+    auto buckets = std::size_t{0};
     auto const started = std::chrono::steady_clock::now();
     for (std::size_t round = 0; round < rounds; ++round) {
         auto map = map_t();
@@ -74,20 +92,33 @@ int main(int argc, char** argv) {
             map.reserve(n);
         }
         if (how == "range") {
-            map.insert(input.begin(), input.end());
+            if (as_list) {
+                map.insert(listed.begin(), listed.end());
+            } else {
+                map.insert(input.begin(), input.end());
+            }
+        } else if (as_list) {
+            for (auto const& kv : listed) {
+                map.insert(kv);
+            }
         } else {
             for (auto const& kv : input) {
                 map.insert(kv);
             }
         }
         acc += map.size();
+        buckets = map.bucket_count();
     }
     auto const elapsed = std::chrono::steady_clock::now() - started;
-    std::printf("%.3f ns/element  %s n=%zu rounds=%zu %s acc=%zu\n",
+    std::printf("%.3f ns/element  %s n=%zu rounds=%zu %s dup=%zu%% %s size=%zu buckets=%zu acc=%zu\n",
                 std::chrono::duration<double, std::nano>(elapsed).count() / static_cast<double>(n * rounds),
                 how.c_str(),
                 n,
                 rounds,
                 reserved ? "reserved" : "grow",
+                dup_pct,
+                as_list ? "list" : "vector",
+                acc / rounds,
+                buckets,
                 acc);
 }
