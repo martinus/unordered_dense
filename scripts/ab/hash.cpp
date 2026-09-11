@@ -110,8 +110,7 @@ auto measure(double targetWidth, Alternatives&&... alternatives) -> std::map<std
         auto times = std::vector<double>();
         times.reserve(r.size());
         for (std::size_t i = 0; i < r.size(); ++i) {
-            times.push_back(r.get(i, ankerl::nanobench::Result::Measure::elapsed) * 1e9 /
-                            static_cast<double>(num_keys));
+            times.push_back(r.get(i, ankerl::nanobench::Result::Measure::elapsed) * 1e9 / static_cast<double>(num_keys));
         }
         auto const interval = ankerl::nanobench::detail::medianInterval(std::move(times), 0.95);
         out[r.config().mBenchmarkName] = {r.median(ankerl::nanobench::Result::Measure::elapsed) * 1e9 /
@@ -129,44 +128,68 @@ void one_length(std::size_t len, double targetWidth, bool emit) {
     auto const t = measure(
         targetWidth,
         "main",
-        [&] { ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                  return udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size()); })); },
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
+                return udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+            }));
+        },
         "this",
-        [&] { ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                  return ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size()); })); }
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
+                return ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+            }));
+        }
 #ifdef UDM_AB_HAVE_JAN
         ,
         "jan",
-        [&] { ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                  return udmjan::unordered_dense::detail::wyhash::hash(s.data(), s.size()); })); }
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
+                return udmjan::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+            }));
+        }
 #endif
 #ifdef UDM_AB_HAVE_BOOST
         ,
         "boostdef",
-        [&] { ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                  return boost::hash<std::string>{}(s); })); }
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
+                return boost::hash<std::string>{}(s);
+            }));
+        }
 #endif
     );
 
     auto const l = measure(
         targetWidth,
         "main",
-        [&] { ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                  return udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size()); })); },
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
+                return udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+            }));
+        },
         "this",
-        [&] { ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                  return ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size()); })); }
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
+                return ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+            }));
+        }
 #ifdef UDM_AB_HAVE_JAN
         ,
         "jan",
-        [&] { ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                  return udmjan::unordered_dense::detail::wyhash::hash(s.data(), s.size()); })); }
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
+                return udmjan::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+            }));
+        }
 #endif
 #ifdef UDM_AB_HAVE_BOOST
         ,
         "boostdef",
-        [&] { ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                  return boost::hash<std::string>{}(s); })); }
+        [&] {
+            ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
+                return boost::hash<std::string>{}(s);
+            }));
+        }
 #endif
     );
 

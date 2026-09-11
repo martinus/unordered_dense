@@ -115,8 +115,8 @@ auto measure_at(char const* name, size_t epochs, bool with_boost) -> point {
     auto boost = [] {
         ankerl::nanobench::doNotOptimizeAway(scalar(Workload<Boost, N>::run()));
     };
-    auto const res = with_boost ? bench.compare("base", base, "cand", cand, "boost", boost)
-                                : bench.compare("base", base, "cand", cand);
+    auto const res =
+        with_boost ? bench.compare("base", base, "cand", cand, "boost", boost) : bench.compare("base", base, "cand", cand);
     auto const ns = [&](size_t i) {
         return res[i].result.median(ankerl::nanobench::Result::Measure::elapsed) * 1e9;
     };
@@ -179,19 +179,15 @@ void report(char const* name, std::vector<point> const& pts, bool with_boost) {
     std::fflush(stdout);
 }
 
-template <template <typename, size_t> class Workload,
-          size_t BaseN,
-          typename Base,
-          typename Cand,
-          typename Boost,
-          size_t... I>
+template <template <typename, size_t> class Workload, size_t BaseN, typename Base, typename Cand, typename Boost, size_t... I>
 void compare_seq(char const* name, size_t epochs, size_t points, bool with_boost, std::index_sequence<I...> /*unused*/) {
     auto pts = std::vector<point>();
     // Every point is instantiated, only the wanted ones run: the sizes are template arguments, so
     // that a workload's default instantiation stays the exact code the scored benchmark compiles.
     (void)std::initializer_list<int>{
-        (I < points ? (pts.push_back(measure_at<Workload, Base, Cand, Boost, octave_size(BaseN, I)>(name, epochs, with_boost)), 0)
-                    : 0)...};
+        (I < points
+             ? (pts.push_back(measure_at<Workload, Base, Cand, Boost, octave_size(BaseN, I)>(name, epochs, with_boost)), 0)
+             : 0)...};
     report(name, pts, with_boost);
 }
 

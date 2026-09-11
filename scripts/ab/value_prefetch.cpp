@@ -143,7 +143,8 @@ int main(int argc, char** argv) {
         }
     }
     if (map.size() != n || map.bucket_count() / 16U != groups) {
-        std::fprintf(stderr, "filling changed the table: size %zu of %zu, %zu groups\n", map.size(), n, map.bucket_count() / 16U);
+        std::fprintf(
+            stderr, "filling changed the table: size %zu of %zu, %zu groups\n", map.size(), n, map.bucket_count() / 16U);
         return 1;
     }
 

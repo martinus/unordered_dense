@@ -115,14 +115,13 @@ struct row {
 
 // Every hasher interleaved round by round in one process, so machine drift cancels out of the
 // comparison instead of landing on whichever ran first.
-#define UDM_EACH_HASH(WRAP)                                                                                            \
-    "udm5",                                                                                                            \
-        WRAP(ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size())),                                       \
-        "floor", WRAP(static_cast<std::uint64_t>(s.size()) ^ static_cast<std::uint64_t>(s[0]))                          \
-        UDM_BASE(WRAP) UDM_BOOST(WRAP) UDM_ABSL(WRAP) UDM_FOLLY(WRAP)                                                  \
-        , "foldhash", WRAP(udm_ab::foldhash::fast(s.data(), s.size()))                                                 \
-        , "foldhash-q", WRAP(udm_ab::foldhash::quality(s.data(), s.size()))                                            \
-        UDM_RAPID(WRAP) UDM_KOMI(WRAP) UDM_POLYMUR(WRAP) UDM_AQUA(WRAP) UDM_GX(WRAP)
+#define UDM_EACH_HASH(WRAP)                                                                                                 \
+    "udm5", WRAP(ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size())), "floor",                               \
+        WRAP(static_cast<std::uint64_t>(s.size()) ^ static_cast<std::uint64_t>(s[0])) UDM_BASE(WRAP) UDM_BOOST(WRAP)        \
+            UDM_ABSL(WRAP) UDM_FOLLY(WRAP),                                                                                 \
+        "foldhash", WRAP(udm_ab::foldhash::fast(s.data(), s.size())), "foldhash-q",                                         \
+        WRAP(udm_ab::foldhash::quality(s.data(), s.size())) UDM_RAPID(WRAP) UDM_KOMI(WRAP) UDM_POLYMUR(WRAP) UDM_AQUA(WRAP) \
+            UDM_GX(WRAP)
 
 #ifdef UDM_AB_HAVE_BASE
 #    define UDM_BASE(WRAP) , "udm4", WRAP(udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size()))
@@ -162,16 +161,15 @@ inline auto const polymur_params = [] {
     polymur_init_params_from_seed(&p, UINT64_C(0xfedcba9876543210));
     return p;
 }();
-#    define UDM_POLYMUR(WRAP)                                                                                          \
-        , "polymur",                                                                                                   \
-            WRAP(polymur_hash(reinterpret_cast<std::uint8_t const*>(s.data()), s.size(), &polymur_params, 0))
+#    define UDM_POLYMUR(WRAP) \
+        , "polymur", WRAP(polymur_hash(reinterpret_cast<std::uint8_t const*>(s.data()), s.size(), &polymur_params, 0))
 #else
 #    define UDM_POLYMUR(WRAP)
 #endif
 #if defined(UDM_AB_HAVE_AQUAHASH) && defined(__AES__)
-#    define UDM_AQUA(WRAP)                                                                                             \
-        , "AquaHash",                                                                                                  \
-            WRAP(static_cast<std::uint64_t>(                                                                           \
+#    define UDM_AQUA(WRAP)                   \
+        , "AquaHash",                        \
+            WRAP(static_cast<std::uint64_t>( \
                 _mm_cvtsi128_si64(AquaHash::Hash(reinterpret_cast<std::uint8_t const*>(s.data()), s.size()))))
 #else
 #    define UDM_AQUA(WRAP)
@@ -182,13 +180,17 @@ inline auto const polymur_params = [] {
 #    define UDM_GX(WRAP)
 #endif
 
-#define UDM_THROUGHPUT(EXPR)                                                                                           \
-    [&] {                                                                                                              \
-        ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) { return EXPR; }));                \
+#define UDM_THROUGHPUT(EXPR)                                                           \
+    [&] {                                                                              \
+        ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) { \
+            return EXPR;                                                               \
+        }));                                                                           \
     }
-#define UDM_LATENCY(EXPR)                                                                                              \
-    [&] {                                                                                                              \
-        ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) { return EXPR; }));                 \
+#define UDM_LATENCY(EXPR)                                                             \
+    [&] {                                                                             \
+        ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) { \
+            return EXPR;                                                              \
+        }));                                                                          \
     }
 
 auto measure(std::vector<std::string>& keys, double width) -> std::map<std::string, row> {

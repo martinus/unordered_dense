@@ -33,6 +33,7 @@ place rather than being deleted, because the retraction is usually the more usef
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
 - `replace()` hashes ahead too, once the reason it could not was looked at properly
+- The other two pipelines do not want the cache gate, and the gate's own footprint model was wrong
 - Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it
 - Chunks or a sliding ring: the rehash and the bulk visit want opposite answers
 - A bulk `visit()`, and the `prefetch(key)` API it replaced
@@ -348,32 +349,15 @@ count is the measurement. It is the same finding the bulk visit banked a day ear
 place -- the 88 byte block wants its address formed once and then reused.
 
 **And the pipeline only runs once the work is out of cache, which the first version of this got
-wrong.** The ring round trip is not free: it costs **13.6 instructions per element** (73.4 to 86.6 at
-n = 1024), and a prefetch of a line already in L2 still occupies a load port. Against the unpipelined
-loop, no duplicates, the ratio tracks the footprint -- values plus index -- against this machine's
-1 MiB L2 and nothing else:
+wrong.** The ring round trip is not free: it costs **13.2 instructions per element** (73.4 to 86.6 at
+n = 1024), and a prefetch of a line already in cache still occupies a load port. Against the
+unpipelined loop, no duplicates, it was a fifth slower at 32768 elements and level at 65536 -- and
+the two sizes the change was first measured at, 200000 and 2000000, are both above the crossover,
+which is how it went unnoticed. **Two sizes on the same side of a cache is one size**, which is the
+octave rule from the benchmark harness arriving in a place that has no harness.
 
-| footprint | n | pipelined / plain |
-|---|---|---|
-| 688 KiB | 32768 | 1.20 |
-| 1376 KiB | 65536 | 1.03 |
-| 2064 KiB | 98304 | 0.92 |
-| 5504 KiB | 262144 | 0.90 |
-| 22 MiB | 4000000 | 0.74 |
-
-A fifth slower on every size below a quarter million, and the two sizes the change was first measured
-at -- 200000 and 2000000 -- are both above the crossover, which is how it went unnoticed. The gate is
-the footprint against a conservative 1 MiB, the smallest L2 worth assuming; erring high costs at most
-that 1.20x on one octave, erring low costs it everywhere. **Two sizes on the same side of a cache is
-one size**, which is the octave rule from the benchmark harness arriving in a place that has no
-harness.
-
-It also makes the window boundary untestable at forty small elements, since none of them reach the
-gate. The sweep runs twice: once with `size_t` values for the plain loop, once with a 64 KiB mapped
-type, which crosses 1 MiB at sixteen elements and so puts the boundary at seventeen back inside a
-sweep of thirty. An instrumented build confirms which sweep reaches which loop -- 65 entries against
-0 -- because a test that silently stopped covering the path it is named for is exactly what a size
-gate invites.
+Which quantity the gate compares took a second pass to get right; the first one shipped wrong. See
+the next entry but one.
 
 With the gate and the decomposed ring in, against main, three interleaved repeats, median:
 
@@ -394,61 +378,83 @@ all on the footprint arithmetic, the threshold and the two prefetches. A mutant 
 answer -- so the number to read is that no survivor is in the loop body. Do not chase it by
 loosening the tests.
 
-`do_insert_range` and `do_visit` have the same ring and no such gate. Measured on 2026-09-11, and
-**neither needs one** -- see the next entry.
+`do_insert_range` and `do_visit` pipeline too and have no such gate. Measured, and neither needs
+one -- below.
 
-**The other two pipelines do not want the cache gate, and the instruction premium does not predict
-which does** (2026-09-11, issue #247, opened by the `replace()` result above). Each loop was built
-twice into its own binary, once as shipped and once with the ring taken out and the body written as
-a plain per-element loop -- same checksums, so the only difference is the pipeline -- and the two
-alternated.
+**The other two pipelines do not want the cache gate, and the gate's own footprint model was wrong**
+(2026-09-11, issue #247, `scripts/ab/{range_insert,bulk_visit,replace_bulk}.cpp`, Ryzen 9 7950X,
+clang 22, `uint64_t` keys). Each loop was built twice into its own binary -- once as shipped, once
+with the ring taken out and the body written as a plain per-element loop, same checksums -- and the
+two alternated.
 
-The instruction premium is large in all three and says nothing about where the crossover is:
+*The premium is flat and predicts nothing.* Instructions per element, plain against pipelined:
+`replace()` 73.4 to 86.6, `do_visit` 70.3 to 86.0, `do_insert_range` 81.0 to 97.9 -- +13.2, +15.7,
++16.9, each constant across sizes to 0.2 instructions. The loop carrying the *largest* premium is the
+one that never needs a gate.
 
-| loop | plain | pipelined | premium |
+*The range insert.* Medians of seven, pipelined over plain: 1.02 and 1.01 at n = 1024 and 4096
+reserved, 1.08 at 4096 growing, then 0.75 at 16384, 0.65 at 32768, 0.48 at 262144 and 0.54 at four
+million. So it is **slightly negative below a few thousand elements and a clear win from sixteen
+thousand**, and the small sizes are bimodal between repeats -- 0.46 and 1.52 both appear at n = 4096,
+because the round rebuilds the map and the allocator does not do the same thing twice. No gate: the
+loss is inside the noise of the sizes where it happens.
+
+*The bulk visit.* Medians of five: all hits, 1.08 / 1.05 / 1.01 at 1k / 4k / 16k, then 0.90 at 128k
+and 0.83 at four million. Half the keys missing, same map sizes: 0.91 / 0.89 / 0.88, then 0.84. So
+the only loss is a caller whose keys **all** hit a map below about sixteen thousand, and at those
+same sizes a 50% hit rate *wins* 11%. A footprint gate would give up the win to avoid the loss, on an
+axis the map does not know until it has already done a chunk's worth of work. It could measure the
+first chunk and fall back, which is the way to get both -- rejected on cost: a second loop body
+inside a function that already has three passes is an inlining-budget change, which by the rules
+above the paired harness cannot measure at all, for at most 8% on one slice.
+
+**And the same sweep, run with a second value size, says `replace()`'s gate was comparing the wrong
+number.** It shipped comparing values-plus-index against 1 MiB. At one value size that model and an
+index-only model are indistinguishable -- both are proportional to n -- so the original measurement
+could not tell them apart. With a 1032 byte value they separate, and the footprint model loses:
+
+| n | index | 16 byte value | 1032 byte value |
 |---|---|---|---|
-| `replace()` dedup | 73.4 | 86.6 | +13.2 |
-| `do_visit` (hit) | 70.3 | 86.0 | +15.7 |
-| `do_insert_range` (reserved) | 81.0 | 97.9 | +16.9 |
+| 10000 | 88 KiB | 1.05 | 1.14 |
+| 14000 | 176 KiB | 0.75 | 1.06 |
+| 20000 | 176 KiB | 1.05 | 0.98 |
+| 28000 | 352 KiB | 0.84 | 0.98 |
+| 40000 | 352 KiB | 0.82 | 0.97 |
+| 80000 | 704 KiB | 0.91 | 0.91 |
+| 160000 | 1408 KiB | 0.68 | 0.91 |
 
-Flat across sizes in each case, to 0.2 instructions. Yet the time ratios are not the same shape at
-all. Medians of five to seven interleaved repeats, pipelined over plain:
+Both columns cross over at the same **index** size, not at the same footprint -- which is what the
+mechanism says, since the index is the only array the prefetch is for and the values are walked in
+order for the hardware to handle. Under the footprint model a 1032 byte value opens the gate at ten
+thousand elements, where the measurement says 1.14. So the gate is now `index_bytes > 256 KiB`, and
+`pipeline_min_bytes` is `pipeline_min_index_bytes`.
 
-| n | `replace()` | `do_visit` hit | `do_visit` half | `do_insert_range` |
-|---|---|---|---|---|
-| 1024 | -- | 1.08 | 0.91 | 1.02 |
-| 4096 | -- | 1.05 | 0.89 | 1.01 |
-| 16384 | -- | 1.01 | 0.88 | 0.75 |
-| 32768 | 1.20 | | | 0.65 |
-| 65536 | 1.03 | | | 0.66 |
-| 131072 | | 0.90 | 0.84 | |
-| 262144 | 0.90 | | | 0.48 |
-| 4000000 | 0.74 | 0.83 | | 0.54 |
+Note the two rows at each index size: 176 KiB reads 0.75 at n = 14000 and 1.05 at n = 20000, same
+array, opposite answers, because the load factor runs from 0.43 to 0.61 between doublings. **The
+octave rule applies to this axis too** -- a single n is not a measurement of a cache effect any more
+than it is of a load-factor effect, and the first version of these numbers took one point per size.
 
-**The range insert never loses**, at any size, despite carrying the largest premium of the three. It
-is neutral at a thousand elements and already 1.33x at sixteen thousand. No gate.
+Unconfirmed mechanism: the ring only pays where the out-of-order window cannot already find the
+independent work, which would explain why the range insert -- whose body carries a vector append and
+its capacity branch -- is the one that never loses. Not tested; a stall count on the two bodies would
+settle it.
 
-**The bulk visit loses only for a caller whose keys all hit a map smaller than about sixteen
-thousand** -- 1.08 at a thousand, gone by sixteen thousand. At the same sizes with half the keys
-missing it *wins* 0.88-0.91, which settles it: a footprint gate would give up an 11% win to avoid an
-8% loss, and the map cannot see the caller's hit rate, which is the axis that actually decides. No
-gate.
+The gate change took a test with it, twice over. The 64 KiB mapped type that used to cross the
+footprint gate at sixteen elements does not cross an index gate at all, so the window boundary is
+now swept a different way: a duplicate walked through every one of the last forty positions of a
+thirty-thousand element container, which is the same boundary from the end it actually lives at. And
+mutation found a state no test had: `replace()` keeps an index it has already grown, so replacing a
+large map with a handful of elements leaves the index past the gate and the container shorter than
+the lookahead window. The `&&` is what stops the prologue reading past the end there, and turning it
+into `||` survived until that case was written down.
 
-A hypothesis for why, offered as one rather than a conclusion: the explicit ring only pays where the
-out-of-order window cannot already find the independent work. The two loops that lose at small sizes
--- `replace()` and the visit -- have short bodies over a sequentially read container, so the hardware
-already overlaps three or four elements without being told to. The range insert's body carries the
-placement *and* a vector append with its capacity branch, so fewer iterations fit the window and the
-ring adds parallelism that was not otherwise there. That would also explain why the loss is 1.20 for
-`replace()` and only 1.08 for the visit: the visit's body has the callback in it.
-
-Two measurement notes. The first comparison tried was `insert(first, last)` against a caller's own
-`for` loop of single inserts, which is the wrong control -- it includes ~15 instructions of call
-boundary per element (see the clang/gcc entry) and shows the range winning at every size, hiding any
-pipeline penalty underneath. The control has to be the same entry point with the ring removed. And
-the range insert's small sizes are bimodal between repeats -- 0.46 and 1.52 both appear at n=4096 --
-because the round rebuilds the map and the allocator does not do the same thing every time; that is
-why the numbers above are medians of seven and not of three.
+Two measurement notes. The control first tried for the range insert was `insert(first, last)`
+against a caller's own loop of single inserts, which is the wrong one: it also carries ~15
+instructions of call boundary per element (see the clang/gcc entry) and shows the range winning at
+every size, hiding any pipeline penalty underneath. The control has to be the same entry point with
+the ring removed. And `replace_bulk.cpp` times the container copy along with the call, which is
+invisible at 16 bytes a value and swamps everything at 1032 -- the second table above was taken with
+the copy moved outside the timed region.
 
 **Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it** (2026-09-11,
 issue #244, from four cleanup reviews of the range insert). Three of the four items were measured;

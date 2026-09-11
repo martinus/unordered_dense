@@ -32,9 +32,13 @@ auto names_of(std::index_sequence<I...>) -> std::vector<char const*> {
 // compare() takes name/op pairs; a tuple_cat of one pair per map turns the type list into them.
 template <typename Tuple, typename F, std::size_t... I>
 auto compare_all(ankerl::nanobench::Bench& b, F&& f, std::index_sequence<I...> /*seq*/) {
-    auto args = std::tuple_cat(
-        std::make_tuple(std::tuple_element_t<I, Tuple>::name, f(std::integral_constant<std::size_t, I>{}))...);
-    return std::apply([&](auto&&... a) { return b.compare(a...); }, args);
+    auto args =
+        std::tuple_cat(std::make_tuple(std::tuple_element_t<I, Tuple>::name, f(std::integral_constant<std::size_t, I>{}))...);
+    return std::apply(
+        [&](auto&&... a) {
+            return b.compare(a...);
+        },
+        args);
 }
 
 struct acc_row {
@@ -71,7 +75,13 @@ void print_geomean(char const* what, std::size_t base, acc_row const& acc) {
         auto const g = std::exp(acc.logsum[a] / static_cast<double>(acc.n));
         std::printf(" %s=%.2f", names[a], g);
         if (g_csv != nullptr) {
-            std::fprintf(g_csv, "%s,%s,%zu,%s,%.4f,%.4f\n", g_keyname, what, base, names[a], g,
+            std::fprintf(g_csv,
+                         "%s,%s,%zu,%s,%.4f,%.4f\n",
+                         g_keyname,
+                         what,
+                         base,
+                         names[a],
+                         g,
                          g / std::exp(acc.logsum[0] / static_cast<double>(acc.n)));
         }
     }
@@ -118,8 +128,8 @@ std::size_t g_points = 5;
 std::size_t g_span = 0;
 
 auto octave_size(std::size_t base, std::size_t i) -> std::size_t {
-    return static_cast<std::size_t>(
-        static_cast<double>(base) * std::pow(2.0, static_cast<double>(i) / static_cast<double>(g_points)));
+    return static_cast<std::size_t>(static_cast<double>(base) *
+                                    std::pow(2.0, static_cast<double>(i) / static_cast<double>(g_points)));
 }
 
 template <typename Key, typename Val>
@@ -144,16 +154,20 @@ void sweep(std::size_t base) {
         auto const lookup_batch = std::size_t{20000};
 
         if (wanted("build")) {
-        one_point<Tuple>("build", n, n, a_build, [&](auto ic) {
-            return [&] {
-                ankerl::nanobench::doNotOptimizeAway(build<std::tuple_element_t<ic.value, Tuple>>(p));
-            };
-        });
+            one_point<Tuple>("build", n, n, a_build, [&](auto ic) {
+                return [&] {
+                    ankerl::nanobench::doNotOptimizeAway(build<std::tuple_element_t<ic.value, Tuple>>(p));
+                };
+            });
         }
 
         if (wanted("hit") || wanted("miss") || wanted("half") || wanted("iterate")) {
             auto ms = Tuple();
-            std::apply([&](auto&... m) { (fill(m, p), ...); }, ms);
+            std::apply(
+                [&](auto&... m) {
+                    (fill(m, p), ...);
+                },
+                ms);
             auto st = std::vector<lookup_state>(k);
             for (auto const what : {asking::hits, asking::misses, asking::half}) {
                 auto* acc = what == asking::hits ? &a_hit : (what == asking::misses ? &a_miss : &a_half);
@@ -170,14 +184,20 @@ void sweep(std::size_t base) {
             }
             if (wanted("iterate")) {
                 one_point<Tuple>("iterate", n, n, a_iter, [&](auto ic) {
-                    return [&] { ankerl::nanobench::doNotOptimizeAway(std::get<ic.value>(ms).sum()); };
+                    return [&] {
+                        ankerl::nanobench::doNotOptimizeAway(std::get<ic.value>(ms).sum());
+                    };
                 });
             }
         }
 
         if (wanted("churn")) {
             auto ms = Tuple();
-            std::apply([&](auto&... m) { (fill(m, p), ...); }, ms);
+            std::apply(
+                [&](auto&... m) {
+                    (fill(m, p), ...);
+                },
+                ms);
             auto present = std::vector<std::vector<Key>>(k, p.present);
             auto spare = std::vector<std::vector<Key>>(k, p.spare);
             auto rngs = std::vector<ankerl::nanobench::Rng>();
@@ -189,15 +209,18 @@ void sweep(std::size_t base) {
             auto const batch = std::size_t{20000};
             one_point<Tuple>("churn", n, batch, a_churn, [&](auto ic) {
                 return [&] {
-                    churn(std::get<ic.value>(ms), present[ic.value], spare[ic.value], rngs[ic.value], batch,
-                          ticks[ic.value]);
+                    churn(std::get<ic.value>(ms), present[ic.value], spare[ic.value], rngs[ic.value], batch, ticks[ic.value]);
                 };
             });
         }
 
         if (wanted("ie")) {
             auto ms = Tuple();
-            std::apply([&](auto&... m) { (fill(m, p), ...); }, ms);
+            std::apply(
+                [&](auto&... m) {
+                    (fill(m, p), ...);
+                },
+                ms);
             auto ps = std::vector<pools<Key>>(k, p);
             auto rngs = std::vector<ankerl::nanobench::Rng>();
             rngs.reserve(k);
@@ -208,8 +231,8 @@ void sweep(std::size_t base) {
             auto const batch = std::size_t{10000};
             one_point<Tuple>("ie", n, 2 * batch, a_ie, [&](auto ic) {
                 return [&] {
-                    ankerl::nanobench::doNotOptimizeAway(insert_erase(std::get<ic.value>(ms), ps[ic.value],
-                                                                      rngs[ic.value], batch, ticks[ic.value]));
+                    ankerl::nanobench::doNotOptimizeAway(
+                        insert_erase(std::get<ic.value>(ms), ps[ic.value], rngs[ic.value], batch, ticks[ic.value]));
                 };
             });
         }
@@ -309,7 +332,9 @@ auto cross_check() -> int {
         auto const key = make_key<Key>(rng() % range);
         switch (rng() % 4) {
         case 0:
-            each([&](auto, auto& m) { m.insert(key, 1); });
+            each([&](auto, auto& m) {
+                m.insert(key, 1);
+            });
             break;
         case 1: {
             auto want = std::size_t{0};
@@ -325,7 +350,9 @@ auto cross_check() -> int {
             break;
         }
         case 2:
-            each([&](auto, auto& m) { m.erase(key); });
+            each([&](auto, auto& m) {
+                m.erase(key);
+            });
             break;
         default: {
             auto want = std::size_t{0};
@@ -368,8 +395,12 @@ auto cross_check() -> int {
     if (bad != 0) {
         return 1;
     }
-    std::printf("ok %s: %zu maps agree over %zu operations, %zu entries, checksum %zu\n", g_keyname, k, ops,
-                std::get<0>(ms).size(), want);
+    std::printf("ok %s: %zu maps agree over %zu operations, %zu entries, checksum %zu\n",
+                g_keyname,
+                k,
+                ops,
+                std::get<0>(ms).size(),
+                want);
     return 0;
 }
 
@@ -442,7 +473,7 @@ int main(int argc, char** argv) {
         return 0;
     };
 
-    auto const rc = keys == "str"  ? run(std::string{}, std::size_t{})
+    auto const rc = keys == "str"   ? run(std::string{}, std::size_t{})
                     : keys == "big" ? run(std::uint64_t{}, workloads::big_value{})
                                     : run(std::uint64_t{}, std::size_t{});
     if (g_csv != nullptr) {

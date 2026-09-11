@@ -16,10 +16,10 @@
 //
 //   argv: <hit|half> <inline|plain|bulk> <n> [reps]
 //
-// Sweep `n` and sweep `hit` against `half`: the pipeline inside visit() costs ~16 instructions per
-// lookup, and whether that is repaid depends on both the map's size and the caller's hit rate. It
-// is 1.08 for all-hits on a map of a thousand and 0.91 for half-hits on the same map. One point
-// measurement here says nothing.
+// Sweep `n` and sweep `hit` against `half`: whether visit()'s chunking is repaid depends on both the
+// map's size and the caller's hit rate, and at small n those two disagree in sign. One point
+// measurement here says nothing; the numbers are in notes/index-design.md under "The other two
+// pipelines".
 #include <ankerl/unordered_dense.h>
 
 #include <bench/workloads.h>

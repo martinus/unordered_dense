@@ -87,14 +87,17 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   octave and reports the geometric mean; `-p 1` restores the old single size. An eleven-slot group
   read 1.384 at one size and 1.039 over the octave; `churn64` read 1.199 and 0.974 — sign reversed.
   Every boost ratio not labelled "octave geomean" is a point measurement and must be re-taken.
-- **A prefetch pipeline is a loss while the data is in cache, so sweep across that boundary too.**
-  A lookahead ring costs 13–17 instructions per element in all four loops that have one, and the
-  ring's own round trip is paid whether or not the prefetch was needed. `replace()` was measured at
-  200k and 2M, both above the crossover, and shipped a version that was **a fifth slower below 65k**
-  until it was gated on footprint. Two sizes on the same side of a cache are one size.
+- **A prefetch pipeline can be a loss while the data is in cache, so sweep across that boundary
+  too.** The lookahead costs 13–17 instructions per element in the three loops measured, paid
+  whether or not the prefetch was needed — but only one of the three wants a gate, so measure, do
+  not assume. `replace()` was measured at 200k and 2M, both above its crossover, and shipped a
+  version that was a fifth slower below 65k. Two sizes on the same side of a cache are one size, and
+  the load factor still sweeps underneath: the *same* index size reads 0.75 and 1.05 at two n.
 - **The control for "does this pipeline pay" is the same entry point with the ring removed**, built
-  as a second header. A caller's own loop of single calls is not it: that carries ~15 instructions
-  of call boundary per element and shows the bulk entry point winning everywhere.
+  as a second binary (`solo.sh`, not the paired harness — removing a ring changes a function's
+  size). A caller's own loop of single calls is not it: that carries the call boundary's 15
+  instructions and shows the bulk entry point winning everywhere. Only the *time* needs the size
+  sweep; the instruction premium is flat, so one `perf` run gives it.
 - **The paired harness cannot measure anything that changes inlining, and gets the sign wrong.**
   It compiles both headers into one translation unit, which is exactly when a compiler exhausts its
   inlining budget. For anything touching `always_inline`, a function's size or a template boundary,
@@ -259,8 +262,10 @@ A built-in probe-length statistics facility like boost's. The string erase's ~50
 time, past the cache. The larger effect is the caller's: **batching the keys at all is 1.5x**, and a
 `prefetch(key)` API that was credited with that was reverted the same day it shipped.
 
-*The four pipelines.* The rehash, the range insert, the bulk visit and `replace()`'s dedup each have
-their own `pipeline_depth`-deep ring; sharing them costs the rehash 1.9 instructions per element and
-was rejected. Only `replace()` is gated on cache footprint — the range insert never loses at any
-size, and the visit loses 8% only when every key hits a map below ~16k, where the same map at a 50%
-hit rate wins 11%. Measured, #247.
+*The four pipelines.* The rehash, the range insert and `replace()`'s dedup each have their own
+`pipeline_depth` ring, and the bulk visit has chunks instead (a ring there measured 15% worse);
+sharing them costs the rehash 1.9 instructions per element and was rejected. Only `replace()` is
+gated, on **index** bytes — counting the values too was measured wrong. The range insert is slightly
+negative below a few thousand elements and a clear win above; the visit loses 8% only when every key
+hits a map below ~16k, where the same map at a 50% hit rate wins 11%, so its axis is the caller's
+hit rate. The rehash is the one that has never been measured below cache. #247.

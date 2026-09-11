@@ -16,8 +16,8 @@
 // second where building it would take a redesign.
 //
 //   clang++ -O2 -std=c++17 scripts/ab/placement.cpp -o placement && ./placement 0.799
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 

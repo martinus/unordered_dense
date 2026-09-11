@@ -61,7 +61,7 @@ class table {
     using value_type = std::pair<Key, Value>;
 
     std::vector<value_type> m_values{};
-    std::vector<std::uint8_t> m_fp{};  // one per slot; VARIANT 1 mirrors the first 16 past the end
+    std::vector<std::uint8_t> m_fp{}; // one per slot; VARIANT 1 mirrors the first 16 past the end
     std::vector<std::uint32_t> m_idx{};
     std::size_t m_mask = 0;   // slots - 1
     std::size_t m_shift = 64; // home = hash >> m_shift
@@ -74,8 +74,7 @@ class table {
     ankerl::unordered_dense::hash<Key> m_hash{};
 
     [[nodiscard]] static auto match(__m128i w, std::uint32_t word) -> unsigned {
-        return static_cast<unsigned>(
-            _mm_movemask_epi8(_mm_cmpeq_epi8(w, _mm_set1_epi32(static_cast<int>(word)))));
+        return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(w, _mm_set1_epi32(static_cast<int>(word)))));
     }
     [[nodiscard]] static auto match_empty(__m128i w) -> unsigned {
         return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(w, _mm_setzero_si128())));
@@ -432,8 +431,8 @@ void run(std::string const& what, std::size_t n, std::size_t reps) {
             t.emplace(present[i], i);
         }
         if (what == "memory") {
-            std::printf("%-6s %8.2f bytes/entry\n", what.c_str(),
-                        static_cast<double>(t.footprint()) / static_cast<double>(t.size()));
+            std::printf(
+                "%-6s %8.2f bytes/entry\n", what.c_str(), static_cast<double>(t.footprint()) / static_cast<double>(t.size()));
             return;
         }
         if (what == "churn") {
@@ -453,12 +452,11 @@ void run(std::string const& what, std::size_t n, std::size_t reps) {
                     acc += t.size();
                 }
             });
-            std::printf("%-6s %8.2f ns/op  rehashes=%zu slots=%zu\n", what.c_str(), ns,
-                        t.rehashes(), t.slots());
+            std::printf("%-6s %8.2f ns/op  rehashes=%zu slots=%zu\n", what.c_str(), ns, t.rehashes(), t.slots());
             std::printf("       placements: %zu onto an empty slot, %zu onto a tombstone (%.1f%% recycled)\n",
-                        t.on_empty(), t.on_tomb(),
-                        100.0 * static_cast<double>(t.on_tomb())
-                            / static_cast<double>(t.on_empty() + t.on_tomb()));
+                        t.on_empty(),
+                        t.on_tomb(),
+                        100.0 * static_cast<double>(t.on_tomb()) / static_cast<double>(t.on_empty() + t.on_tomb()));
         } else {
             auto const& keys = (what == "hit") ? present : absent;
             auto const p0 = t.probes();
@@ -468,9 +466,10 @@ void run(std::string const& what, std::size_t n, std::size_t reps) {
                     acc += t.contains(keys[(rng() >> 32U) * keys.size() >> 32U]) ? 1U : 0U;
                 }
             });
-            std::printf("%-6s %8.2f ns/op  windows visited per lookup %.4f\n", what.c_str(), ns,
-                        static_cast<double>(t.probe_windows() - w0)
-                            / static_cast<double>(t.probes() - p0));
+            std::printf("%-6s %8.2f ns/op  windows visited per lookup %.4f\n",
+                        what.c_str(),
+                        ns,
+                        static_cast<double>(t.probe_windows() - w0) / static_cast<double>(t.probes() - p0));
         }
     }
     ankerl::nanobench::doNotOptimizeAway(acc);
