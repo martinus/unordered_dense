@@ -44,8 +44,9 @@ TEST_CASE_MAP("mutated_key_terminates_from_every_entry_point", std::string, size
 }
 
 // The other way in: the element whose key was changed is not the one being erased, it is the one the
-// backfill drags into the hole. finish_erase() looks *that* one up, so the throw comes from a call
-// the caller never made against an element the caller did not name.
+// backfill drags into the hole. finish_erase() looks *that* one up -- through repoint_value(), which
+// walks the same probe sequence under the same bound -- so the throw comes from a call the caller
+// never made against an element the caller did not name.
 TEST_CASE_MAP("mutated_key_found_by_the_backfill_terminates", std::string, size_t) {
     auto map = map_t();
     for (size_t i = 0; i < 200; ++i) {
