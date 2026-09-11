@@ -218,7 +218,12 @@ misses at 4M. Splitting fingerprints from counters: a tie. Cache-line-aligning t
 A second fingerprint in the index's spare bits: 0.975. 16-bit indices for small maps: 0.986. A
 12-slot 64 byte block: 0.9888.
 
-*The values.* A slot back-pointer per value: pays only for string erase-by-iterator, loses the
+*The values.* A narrower value index, tiny pointers included: bounded at ~9% of memory and no speed
+by insertion order itself -- the referrer does not choose the position, so the index carries
+log2(n) - 1.44 bits per entry. The one speed idea behind it, a value address the group predicts and
+can prefetch, was measured on a layout built to make the prediction exact: 0.82 of a hit at 12M
+entries, **0.99 for a string**, and misses 13-24% worse at every size. Closed, #229.
+A slot back-pointer per value: pays only for string erase-by-iterator, loses the
 score. Distance nibbles with it: 0.959. `realloc` growth: available today via
 `AllocatorOrContainer`. A growth factor below 2: 7–13% of steady memory for 9–19% of a build —
 a knob, not a default. Not zeroing the index: 1.7% of a large build, and undefined behaviour in the

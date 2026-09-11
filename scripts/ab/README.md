@@ -110,6 +110,16 @@ with an argument for how many writing lookups each churn round does -- which is 
 `scripts/ab/placement.cpp` simulates bucketized placement against sliding-window placement with no
 map involved, which is how the ungrouped-window idea was priced without building it.
 
+`scripts/ab/value_prefetch.sh` answers a question about a container this library does not have. A
+hit here pays two dependent memory accesses, the group block and then the value, where a flat map
+pays one; a container that owned placement could predict the value's address from the group and
+fetch both at once. It makes that prediction true inside the shipped map -- keys inserted in
+home-group order, twelve per group, so the values of group g are twelve contiguous entries -- and a
+patched `probe()` prefetches them. It reports every figure as the **slope of two rep counts** rather
+than a total, because building a twelve-million-entry table is most of what `perf stat` sees at that
+size: measured as totals, a miss came out at 300 instructions and the fill order appeared to change
+the cost of a workload that never reads a value.
+
 `scripts/ab/mapsplot.py` draws the CSVs (`bars`, `memory`, `octave`) and prints them
 (`table`, `swing`); `scripts/ab/diagrams.py` draws the byte-level layout figures of every index in
 one house style. Both are stdlib only.
