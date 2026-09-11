@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- Tiny pointers, and the bound insertion order puts on the value index
 - Splitting the probe past the home group: kept, for keys whose compare is a call
 - The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary
 - The F14Vector string miss, re-measured, and the old explanation of it is wrong
@@ -288,6 +289,84 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Tiny pointers, and the bound insertion order puts on the value index** (2026-09-10/11, issue
+#229). Asked whether a tiny pointer (Bender et al., SODA '23; Flattened-TPHT, VLDB '26) could shrink
+the four of five and a half bytes per slot that are the `uint32_t` value index. **Half of it is
+settled without building anything, and the half that needed a measurement is now measured and lost.**
+
+**A tiny pointer needs the referrer to choose where the referent goes.** This map's value vector is
+insertion-ordered and that order is public contract -- `values()`, iteration, `extract()`,
+`replace()`. The user chooses every position, so the map from slot to vector position is an
+arbitrary permutation of n things and the index has to encode it: **log2(n) - 1.44 bits per entry**
+however the bits are arranged, at home or away from it. The issue's premise, a narrow index into a
+range the group implies, has nothing to stand on -- the group implies nothing about where the value
+sits. That bound caps every width reduction, tiny or otherwise:
+
+| value index | index B/entry (4 x 1/load, octave geomean 1.77) | total B/entry, 8 byte value |
+|---|---|---|
+| `uint32_t`, shipped | 7.1 | 32.6 |
+| 24 bit, built and measured, score 0.995 clang / 0.983 gcc, capped at 2^24 | 5.3 | ~30.8 |
+| the information-theoretic floor at n = 2^20 | 4.1 | ~29.6 |
+
+So the whole axis is worth **at most ~9% of memory and no speed** inside the contract, and the entry
+below ("Why none of them could have won") already says the L1 fills a narrower block saves are not on
+the critical path. It should not be prototyped.
+
+**What that leaves is a different container**, values in a hash-addressed table so the *map* chooses
+each value's slot. Its one possible speed win is that the value's line becomes a function of the
+group, so it can be fetched in parallel with the fingerprints instead of after them -- this map pays
+two dependent memory accesses on a hit where a flat map pays one, which is most of the 10-13% boost
+leads by on a fresh hit. Whether a software prefetch actually recovers that latency is the one thing
+argument cannot settle, so it was measured, by making the prediction true inside the *shipped* map:
+`scripts/ab/value_prefetch.{cpp,sh}` inserts keys in home-group order, exactly twelve per group, so
+the values of group g are twelve contiguous entries at `values + g * 12`, and a patched `probe()`
+prefetches that address before touching the group. Perfect packing and no holes, so it is an upper
+bound on what the container could get.
+
+Four variants: **A** random fill and no prefetch (today), **B** grouped fill and no prefetch
+(locality alone), **C** grouped and prefetching one to three lines (the question), **D** random and
+prefetching (the tax on a wrong address). ns per lookup, `uint64_t` key, n = 12 x 2^p:
+
+| | p=16, hit | p=18, hit | p=20, hit | p=16, miss | p=18, miss | p=20, miss |
+|---|---|---|---|---|---|---|
+| A random, no prefetch | 14.74 | 52.17 | 64.69 | 6.87 | 25.58 | 38.06 |
+| B grouped, no prefetch | 14.95 | 51.65 | 65.53 | 6.68 | 26.26 | 38.30 |
+| C grouped, 1 line | 13.75 | 48.06 | 58.87 | 8.30 | 30.40 | 38.65 |
+| C grouped, 3 lines | 15.28 | 46.60 | **53.98** | 11.21 | 36.33 | 41.38 |
+| D random, 1 line | 15.15 | 54.91 | 65.70 | 8.18 | 30.55 | 38.66 |
+
+**Three things kill it.**
+
+*The gain does not clear the bar, and the bar was set before the run.* The rule was hit(C) at or
+below 0.75 x hit(B) at both DRAM sizes, for integer and string keys. Best case is 0.824 at p=20 with
+an integer key, and **strings are 0.99** -- 148.74 to 147.11 ns at p=18, which is noise. For a string
+the value load was never the bottleneck: the key compare is a second dependent load into the string
+body and it happens either way.
+
+*The miss gets worse everywhere.* Integer +24% at p=16, +16% at p=18; string +13% and +18%. A miss
+never reads a value, so every one of those prefetches is wasted work on the critical path, and a
+50/50 workload is a **net loss** at p=18 and about 8% ahead only at p=20 with an integer key.
+
+*Locality alone is worth nothing.* B is A to within half a percent at every size and both key types,
+so the container gets nothing for free from owning placement -- its entire case is the prefetch.
+And even the ceiling is modest: hit(B) minus miss(B) at p=20 is 27.2 ns, the whole value load, and
+three lines of prefetch recover 11.6 of it, 42%, for six instructions and 2.8 extra L1 fills.
+
+So the container would give up insertion order, `values()` and vector-speed iteration, land at an
+estimated 28-30 bytes per entry (between boost and absl, not below them), lose on misses, pay a
+14-19% tax in cache, and win at most 17.6% on an integer hit at twelve million entries. **Closed.**
+
+**And a measurement trap worth more than the result.** The first run of this said the grouped layout
+alone was worth 18-25% at p=20 -- which is impossible, since a miss never reads a value and the
+index is structurally identical either way. The tell was in the instruction counts: **300 per lookup
+for a probe that stops in its home group**. `perf stat` counts the whole process, and building a
+table of twelve million entries by rejection sampling is most of the run at that size, so what the
+"locality" column actually measured was that a random-order fill is slower than a grouped one. The
+harness now reports every figure as the **slope of two rep counts**, which subtracts any fixed cost
+exactly, whatever it is; A and B then agree on instructions to the tenth, which is the physical
+check that the subtraction worked. Any harness that builds its own table and measures the process
+has this bug available to it.
+
 **Splitting the probe past the home group: kept, for keys whose compare is a call** (2026-09-10,
 issue #233). The entry below records this being tried on 2026-09-10 and reverted -- string miss
 138.3 to 126.5 instructions, integer miss 55.8 to 65.9 and integer hit 69.1 to 85.0, "it buys 8% of
