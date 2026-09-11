@@ -10,9 +10,10 @@
 // past L3. depth 0 is the baseline, so both sides run the identical loop and the only difference is
 // the prefetch.
 //
-// Every figure is the *slope* of two repetition counts. Building a table of millions of entries is
-// not free, and perf counts the whole process; measured as totals, the setup is most of the run at
-// the sizes that matter here.
+// The loop times itself and prints ns per lookup, so nothing outside it is counted and the harness
+// needs no perf -- which matters because the machines worth asking this on include macOS, where
+// there is none. An earlier version measured the whole process under `perf stat` and subtracted a
+// shorter run to cancel the setup; timing the loop directly is both simpler and exact.
 //
 // Pipelining the loop moves three things earlier at once: the key's own fetch, its hash, and the
 // block prefetch. Only the third is what prefetch() adds, so `mode` separates them -- `hash` fills
@@ -25,6 +26,7 @@
 
 #include <bench/workloads.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -104,6 +106,7 @@ int main(int argc, char** argv) {
     };
 
     auto acc = std::size_t{0};
+    auto const started = std::chrono::steady_clock::now();
     if (depth == 0) {
         for (std::size_t i = 0; i < reps; ++i) {
             acc += map.count(workloads::key_for<map_t>(next_key()));
@@ -127,5 +130,8 @@ int main(int argc, char** argv) {
             acc += map.count(workloads::key_for<map_t>(v), ph);
         }
     }
-    std::printf("%s depth=%zu n=%zu reps=%zu mode=%s acc=%zu\n", what.c_str(), depth, n, reps, mode.c_str(), acc);
+    auto const elapsed = std::chrono::steady_clock::now() - started;
+    auto const ns = std::chrono::duration<double, std::nano>(elapsed).count() / static_cast<double>(reps);
+    std::printf("%.3f ns/lookup  %s depth=%zu n=%zu reps=%zu mode=%s acc=%zu\n",
+                ns, what.c_str(), depth, n, reps, mode.c_str(), acc);
 }
