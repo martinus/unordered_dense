@@ -3142,48 +3142,6 @@ public:
         return {mixed_hash(key)};
     }
 
-    // Starts the memory access a later lookup of this key will make, and hands back the hash it
-    // had to compute to do so.
-    //
-    // A lookup on a table past the cache is two dependent memory accesses -- the group block, then
-    // the value -- and nothing in a single lookup can overlap them. A caller with *independent*
-    // lookups can: ask for the block of the key it will want in a few iterations, then do the
-    // lookup whose block it asked for a few iterations ago. Nothing here is faster; what changes is
-    // that the misses of several lookups are outstanding at once.
-    //
-    // The hash comes back because it is the reason to return anything at all. The address prefetched
-    // is `hash >> m_shifts`, so the hash is computed either way, and a caller who dropped it would
-    // hash every key twice -- once here and once in the lookup -- which for a string key is the
-    // largest single item in such a loop. Kept in a small ring and handed to `find(key, ph)`, every
-    // key is hashed once. It is deliberately not [[nodiscard]], unlike hash_for: dropping the hash
-    // is the ordinary use of the one-argument form, not a mistake.
-    //
-    // On a table with no buckets this prefetches nothing and still returns the hash, which is what
-    // hash_for does on the same table. The guard is not decoration: data() is null in that state and
-    // the group index is not, so forming the address would be pointer arithmetic on null. As with
-    // clear_buckets, that rests on the language rule rather than on a diagnostic -- removing the
-    // guard is a mutant that survives both sanitizers.
-    auto prefetch(Key const& key) const -> precomputed_hash {
-        auto const ph = precomputed_hash{mixed_hash(key)};
-        prefetch(ph);
-        return ph;
-    }
-
-    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto prefetch(K const& key) const -> precomputed_hash {
-        auto const ph = precomputed_hash{mixed_hash(key)};
-        prefetch(ph);
-        return ph;
-    }
-
-    void prefetch(precomputed_hash ph) const {
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_buckets.empty()))
-            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-                return;
-            }
-        prefetch_block(m_buckets.data(), std::size_t{group_idx_from_hash(ph.m_mixed_hash)});
-    }
-
     auto find(Key const& key, precomputed_hash ph) -> iterator {
         return do_find(key, ph);
     }
