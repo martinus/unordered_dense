@@ -2555,18 +2555,38 @@ private:
         auto ring_home = std::array<value_idx_type, pipeline_depth>{};
         auto ring_block = std::array<typename bucket_container_type::block const*, pipeline_depth>{};
 
+        // Cursors for the elements, a counter for the index, and both are needed: place_group wants
+        // the index, and reading m_values[value_idx] to get the element wants the container's data
+        // pointer back after every placement, because placing stores a fingerprint and a
+        // std::uint8_t store may alias that pointer. fill_buckets_from_values has the full argument
+        // and the measurement. The counter costs an increment in a register; re-deriving it from
+        // `read - first` would be a divide by the element size on any value type whose size is not a
+        // power of two.
+        //
+        // Two cursors, and deliberately not a third for the end. Holding `last` as well and testing
+        // `last - read` was built and measured and is the slower of the two -- 3.83 ns against 3.54
+        // at two hundred thousand elements with no duplicates -- because it costs a register across a
+        // loop that already holds three ring arrays, and because it cannot simply be decremented on a
+        // pop: std::deque::pop_back invalidates the past-the-end iterator and a deque is a value
+        // container this map supports, so it would need an m_values.end() after every duplicate. The
+        // container's own size() answers the same question for nothing.
+        auto const first = m_values.begin();
+        auto read = first;                  // element value_idx
+        auto look = first + pipeline_depth; // element value_idx + pipeline_depth
+
         // Hashes and decomposes, but does not ask for the block: the caller decides that, because
         // the one refill that happens on a duplicate is read by the very next iteration and has no
         // distance to run.
-        auto fetch = [&](std::size_t slot, std::size_t at) {
-            auto const mh = mixed_hash(get_key(m_values[at]));
+        auto fetch = [&](std::size_t slot, value_type const& value) {
+            auto const mh = mixed_hash(get_key(value));
             ring_word[slot] = fingerprint_word(mh);
             ring_home[slot] = group_idx_from_hash(mh);
             ring_block[slot] = groups + std::size_t{ring_home[slot]};
         };
 
-        for (auto i = std::size_t{}; i < pipeline_depth; ++i) {
-            fetch(i, i);
+        auto prime = first;
+        for (auto i = std::size_t{}; i < pipeline_depth; ++i, ++prime) {
+            fetch(i, *prime);
             prefetch_block(ring_block[i]);
         }
         while (m_values.size() > value_idx + pipeline_depth + 1) {
@@ -2576,21 +2596,23 @@ private:
             auto const home_idx = ring_home[slot];
             // The group is handed over rather than looked up: this loop asked for it
             // pipeline_depth elements ago, so the probe must not ask again.
-            if (probe_at_home(get_key(m_values[value_idx]), word, counter, *ring_block[slot], home_idx).found) {
+            if (probe_at_home(get_key(*read), word, counter, *ring_block[slot], home_idx).found) {
                 // The slot the duplicate vacated is refilled from the element that just moved into
                 // it -- read by the very next iteration, so there is no distance to prefetch over.
-                // value_idx is below the last element here, by the loop's own condition, so the
-                // plain loop's self-move guard cannot be needed.
-                m_values[value_idx] = std::move(m_values.back());
+                // `read` is below the last element here, by the loop's own condition, so the plain
+                // loop's self-move guard cannot be needed.
+                *read = std::move(m_values.back());
                 m_values.pop_back();
-                fetch(slot, value_idx);
+                fetch(slot, *read);
             } else {
                 place_group(word, counter, home_idx, static_cast<value_idx_type>(value_idx));
-                // The slot holding element value_idx is the one value_idx + pipeline_depth goes
-                // into, and the loop's own condition says that element exists. There is no separate
-                // lookahead cursor because it would never hold anything but this sum.
-                fetch(slot, value_idx + pipeline_depth);
+                // The slot holding this element is the one `look` goes into, and the loop's own
+                // condition says that element exists. `look` moves only here, so it stays exactly
+                // pipeline_depth ahead of `read`.
+                fetch(slot, *look);
+                ++look;
                 prefetch_block(ring_block[slot]);
+                ++read;
                 ++value_idx;
             }
         }
@@ -3349,17 +3371,22 @@ public:
         }
 
         // loop until we reach the end of the container. duplicated entries will be replaced with back().
+        // On a cursor rather than m_values[value_idx], for the reason do_replace_pipelined gives: the
+        // placement below stores a fingerprint, and an indexed read after it has to load the
+        // container's data pointer back before it can form the next element's address.
+        auto read = m_values.begin() + static_cast<difference_type>(value_idx);
         while (value_idx != m_values.size()) {
-            auto const& key = get_key(m_values[value_idx]);
+            auto const& key = get_key(*read);
             auto const mh = mixed_hash(key);
             auto r = probe(key, mh);
             if (r.found) {
                 if (value_idx != m_values.size() - 1) {
-                    m_values[value_idx] = std::move(m_values.back());
+                    *read = std::move(m_values.back());
                 }
                 m_values.pop_back();
             } else {
                 place_group(mh, static_cast<value_idx_type>(value_idx));
+                ++read;
                 ++value_idx;
             }
         }
