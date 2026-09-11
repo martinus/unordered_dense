@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `prefetch(key)`, and why it returns the hash
 - Tiny pointers, and the bound insertion order puts on the value index
 - Splitting the probe past the home group: kept, for keys whose compare is a call
 - The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary
@@ -289,6 +290,57 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`prefetch(key)`, and why it returns the hash** (2026-09-11, issue #232). A lookup past the cache
+is two dependent memory accesses -- the group's block, then the value -- and nothing inside one
+lookup can overlap them. A caller with many keys can overlap them *across* lookups, which is what
+abseil's and F14's `prefetch` exist for; this map had `hash_for()` but nothing that touched memory
+early. The win is entirely in the caller's loop, which is why none of the scored workloads can show
+it and why the score does not move.
+
+`scripts/ab/prefetch_api.{cpp,sh}`, ns per lookup, `map<uint64_t, size_t>`, clang 22. The middle
+column pipelines the key fetch and the hash with `hash_for` and touches no map memory, so the gap
+between the two right-hand columns is the prefetch and nothing else:
+
+| entries | work | plain | `hash_for` ahead | `prefetch` ahead | |
+|---|---|---|---|---|---|
+| 200000 | hit | 10.27 | 10.42 | 8.21 | 1.25x |
+| 4000000 | hit | 58.44 | 64.40 | **38.46** | **1.52x** |
+| 16000000 | hit | 65.56 | 73.08 | **42.52** | **1.54x** |
+| 4000000 | half | 55.12 | 48.32 | 38.10 | 1.45x |
+| 16000000 | half | 61.16 | 55.07 | 39.90 | 1.53x |
+
+**The hash coming back is the part worth arguing about, and the string column settles it.** Without
+it the loop hashes every key twice, once in the prefetch and once in the lookup. For an integer key
+that is ~8 of ~60 instructions; for a string at four million entries, `hash_for` ahead is worth 6%
+(158.1 to 149.2 ns) and the prefetch the other 29% (149.2 to 115.2), so throwing the hash away would
+have given back a fifth of the gain. It is deliberately not `[[nodiscard]]`, unlike `hash_for`:
+dropping it is the ordinary use of the one-argument form.
+
+**Depth is not monotone.** Of 4, 8, 16 and 32, eight was best, and **32 was slower than 8** at four
+million entries (46.4 against 38.5 ns) -- only so many misses can be outstanding at once, and past
+that the ring is just extra work. The README says eight.
+
+**Two measurement notes, both of which changed the numbers.** The first version of the harness drew
+its key sequence into a vector sized by the repetition count; that vector's cost is *proportional*
+to reps and so survives the slope subtraction, which only removes what is fixed. Keys are drawn in
+the loop instead. And the first version had no `hash_for`-ahead column, which would have credited
+the prefetch with pipelining the key fetch and the hash as well -- at 200000 entries that is most of
+the apparent gain, and at four million on hits the hash-ahead column is *worse* than plain, so the
+prefetch is doing more than the headline ratio suggests rather than less.
+
+**Mutation swept, and all three survivors are of a kind that cannot be tested.** Deleting the
+`prefetch(ph)` call from either key overload leaves a function that returns the same hash and
+touches no memory -- a prefetch has no observable result, which is the whole point of it, so nothing
+can catch that and nothing should pretend to. The third deletes the empty-table guard, which would
+form an address from a null `data()` and a non-zero group index; that survives **both sanitizers**,
+the same way `clear_buckets`'s null guard does, so it rests on the language rule rather than on a
+diagnostic. Recorded in the header so the next sweep does not re-open it.
+
+**The ring is easy to get wrong and the test caught it.** The slot holding key `i` is the same slot
+key `i + depth` goes into, so refilling before reading overwrites the hash about to be used. The
+first version of `prefetch_hash_drives_the_lookup_overloads` did exactly that and the lookup missed
+-- which would have shipped in the README as the recommended loop.
+
 **Tiny pointers, and the bound insertion order puts on the value index** (2026-09-10/11, issue
 #229). Asked whether a tiny pointer (Bender et al., SODA '23; Flattened-TPHT, VLDB '26) could shrink
 the four of five and a half bytes per slot that are the `uint32_t` value index. **Half of it is
