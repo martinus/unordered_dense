@@ -132,14 +132,16 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   *same* index size, because a duplicate refills its ring slot from the element read next and has no
   distance to prefetch over. A single index threshold cannot serve both; pick it on the geomean across
   key types and rates, and say in the comment what it gives up.
-- **An instruction count can move because you perturbed the inliner, and that is not a finding.**
-  Bounding `slot_of_value`'s `while (true)` read 133.0 → 119.5 instructions per erase under clang,
-  with a sentinel-returning bound at 136.0 — a 10% spread that looked like a real property of
-  `[[noreturn]]`. It is not. Force `slot_of_value` out of line and all three collapse to 137.0 /
-  138.0 / 137.1; build with gcc and they collapse to 85.5 / 85.1 / 84.5. The change simply landed on
-  a different clang inlining decision, which any unrelated edit can flip. **Instruction counts are
-  immune to layout, not to inlining** — before believing one, pin the inlining with `noinline` and
-  re-measure, and check a second compiler. Both controls take minutes. #254.
+- **An instruction count can move because you perturbed the inliner. That is real for the binary you
+  shipped and is not a property of the change.** Bounding `slot_of_value`'s `while (true)` reads
+  133.0 → 119.5 instructions and 0.92–0.95 of the time per erase under clang, and that does ship. It
+  is not a property of `[[noreturn]]` or of bounded loops, which is what it was first written up as:
+  force `slot_of_value` out of line and the three variants collapse to 137.0 / 138.1 / 137.1, and
+  under gcc they are 85.5 / 85.1 / 84.5. It landed on a different clang inlining decision — one a
+  compiler upgrade or an unrelated edit to those functions can flip, and one that transfers to
+  nothing else. **Instruction counts are immune to code layout, not to inlining.** Before
+  *generalising* one, pin the inlining with `noinline` and check a second compiler; both take
+  minutes. Keep the win, do not build a rule on it. #254.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey
