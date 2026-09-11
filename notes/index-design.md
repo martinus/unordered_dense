@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `finish_erase` packed a slot that the store took straight back apart
 - An unbounded probe that hangs -- and the 10% speedup that came with it is an inlining artifact
 - `replace()`'s gate was re-measured on a fixed harness and kept, and the harness is the finding
 - `replace()`'s two loops walk with cursors too, and one cursor too many is slower than none
@@ -301,6 +302,58 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`finish_erase` packed a slot that the store took straight back apart** (2026-09-11, issue #260,
+Ryzen 9 7950X, clang 22 and gcc 16, `perf stat`, single-header binaries).
+
+Every erase but the last one per table backfills: the last value moves into the hole and the slot
+pointing at it has to be repointed. That was written as
+
+```cpp
+m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
+```
+
+and the two halves undo each other. `slot_of_value` has the group base and the lane in registers when
+it finds the entry, packs them into `group_idx * slots_per_group + lane`, and `index_at` -- its only
+caller -- divides that straight back into `slot / slots` and `slot % slots`. Clang folds it on the
+`erase(iterator)` path, where the slot goes to `erase_group_slot`, and did not fold it here.
+
+`repoint_value(mh, value_idx, new_value_idx)` is the same walk storing in place, with the same
+`delta == m_group_mask` bound and the same `on_error_key_changed()` exhaustion #254 gave the original.
+`index_at` had no other caller and is gone.
+
+**The whole binary is identical apart from `finish_erase`**, which is what makes this measurable
+rather than arguable. In the tail, `shl $0x4 / add / mov / shr $0x4 / imul $0x58 / add / and $0xf`
+ahead of the store becomes one `mov %esi,0x18(%r11,%r14,4)`; and clang then restructures the lane
+loop, hoisting `add %rax,%r11` and `movzwl` out of it and moving `lanes &= lanes - 1` after the
+compare, so the found case -- the common one -- skips three more instructions.
+
+Instructions per erase, build-only subtracted, three repeats each (they do not vary):
+
+| | 50k | 200k | 1M |
+|---|---|---|---|
+| clang, before | 119.57 | 119.43 | 117.59 |
+| clang, after | **114.50** | **114.36** | **112.58** |
+| gcc, before | | 84.95 | 83.09 |
+| gcc, after | | **80.43** | **78.58** |
+
+Time follows under gcc -- 6.04 to 5.67 ns/erase at 200k and 5.97 to 5.65 at 1M -- and under clang it
+does not: flat at 50k and 200k, and at 1M the median of nine alternating runs reads 10.44 before
+against 10.76 after, about 3% the wrong way. Loads, stores, branch misses and L1 misses per erase are
+the same to three digits there, and cycles for the *same* binary swing 51.7 to 59.4 between runs, so
+that 3% is the layout band the rest of this file keeps warning about -- everything after
+`finish_erase` sits 48 bytes lower in the candidate. The score says the same thing in the other
+direction: one header per binary against `origin/main`, clang **1.0076** (5 of 5 rounds) and gcc
+**1.0019** (4 of 5).
+
+Two details worth keeping. A variant that returns `value_idx_type*` and lets the caller store through
+it compiles to a **byte-identical binary** under clang, so the choice between storing inside the walk
+and handing back a pointer is cosmetic. And #254 predicted this would lose: it found that a loop
+returning a value pays for a `[[noreturn]]` exit while `place_group`, which returns `void`, measured
+0.1-0.2 instructions per insert *worse* -- and `repoint_value` returns `void`. That prediction was
+about the wrong thing. What is removed here is not an exit, it is a pack and an unpack, and the
+difference shows in both compilers and in the disassembly, which is how a property of the change
+tells itself apart from an inlining accident.
+
 **An unbounded probe that hangs -- and the 10% speedup that came with it is an inlining artifact**
 (2026-09-11, issue #254, Ryzen 9 7950X, clang 22 and gcc 16, `perf stat`, single-header binaries).
 **The performance half of this entry is a retraction of what it said when first written.**

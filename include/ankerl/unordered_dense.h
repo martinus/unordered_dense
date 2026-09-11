@@ -1415,11 +1415,6 @@ public:
     [[nodiscard]] auto data() const -> block const* {
         return m_blocks.data();
     }
-    // The few places that hold a flat slot number rather than a group and a lane. slots is a power
-    // of two, so this is a shift and a mask.
-    [[nodiscard]] auto index_at(std::size_t slot) -> value_idx_type& {
-        return m_blocks[slot / slots].m_index[slot % slots];
-    }
     // Zeroes the metadata of every block and leaves the indices alone, which is what the split
     // version's single memset did: an empty slot's index is never read.
     void clear_metadata() {
@@ -2044,9 +2039,10 @@ private:
     // there and the return is a slot number -- so the useful outcome is a diagnosable abort rather
     // than a core spinning at 100% forever, which is what this did until 2026-09-11 (#254).
     //
-    // Two things the throw is not. It is not recoverable: reached from finish_erase the slot is
-    // already gone, so the table is in the state that comment describes as unusable, and the
-    // exception says what happened rather than offering to continue. And it is not a guarantee --
+    // Two things the throw is not. It is not recoverable: reached from the backfill in finish_erase
+    // -- through repoint_value, the twin below -- the slot is already gone, so the table is in the
+    // state that comment describes as unusable, and the exception says what happened rather than
+    // offering to continue. And it is not a guarantee --
     // if the mutated key's sequence happens to cross the element's real slot with a matching
     // fingerprint, a wrong-but-valid slot comes back and the counters are unwound from the wrong
     // home instead. Bounding turns a hang into a diagnosis; only `replace_key()` turns it into a
@@ -2073,6 +2069,41 @@ private:
                 auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
                 if (group.m_index[lane] == value_idx) {
                     return slot;
+                }
+                lanes &= lanes - 1;
+            }
+            if (ANKERL_UNORDERED_DENSE_UNLIKELY(delta == m_group_mask))
+                ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+                    on_error_key_changed();
+                }
+            group_idx = next_group(group_idx, delta);
+        }
+    }
+
+    // The same walk, for the one caller that does not want a slot number but only to overwrite the
+    // index it finds. Handing that caller a slot was worth 5.1 instructions per erase under clang and
+    // 4.5 under gcc: the loop has the group base and the lane in registers and packs them into
+    // `group_idx * slots_per_group + lane`, which the store then took straight back apart --
+    // `shl / add / mov / shr / imul $0x58 / add / and $0xf` in front of a store that is now one
+    // `mov`. Clang folds that away on the erase(iterator) path, where erase_group_slot gets the same
+    // slot, and did not fold it here (#260). Returning a pointer to the index instead of storing
+    // through it compiles to a byte-identical binary, so the choice between the two is cosmetic.
+    //
+    // Precondition, bound and exhaustion are slot_of_value's; its comment is the one to read.
+    void repoint_value(std::uint64_t mh, value_idx_type value_idx, value_idx_type new_value_idx) {
+        auto const word = fingerprint_word(mh);
+        auto group_idx = group_idx_from_hash(mh);
+        auto* groups = m_buckets.data();
+        value_idx_type delta = 0;
+        while (true) {
+            prefetch_index(groups, group_idx);
+            auto& group = groups[group_idx];
+            auto lanes = match_fingerprint(group, word);
+            while (lanes != 0) {
+                auto const lane = first_lane(lanes);
+                if (group.m_index[lane] == value_idx) {
+                    group.m_index[lane] = new_value_idx;
+                    return;
                 }
                 lanes &= lanes - 1;
             }
@@ -2435,7 +2466,7 @@ private:
             // update the value index of the moved entry
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
             auto const mh = mixed_hash(get_key(val));
-            m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
+            repoint_value(mh, values_idx_back, value_idx_to_remove);
         }
         m_values.pop_back();
     }
