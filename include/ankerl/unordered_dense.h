@@ -3005,7 +3005,7 @@ public:
         if (m_values.size() > pipeline_depth + 1) {
             auto* const groups = m_buckets.data();
             auto ring = std::array<std::uint64_t, pipeline_depth>{};
-            auto hash_at = [this, groups](std::size_t at) {
+            auto hash_at = [this, groups](std::size_t at) -> std::uint64_t {
                 auto const mh = this->mixed_hash(get_key(m_values[at]));
                 prefetch_block(groups, std::size_t{group_idx_from_hash(mh)});
                 return mh;
