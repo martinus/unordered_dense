@@ -1453,11 +1453,18 @@ private:
                   "a group is sixteen fingerprints, matched as one vector or two words, and eight counters, picked by "
                   "the low three bits of the fingerprint");
 
-    // How far ahead the three loops that pipeline look: the rehash, the range insert and the bulk
-    // visit. It is a count of memory accesses that has to fit inside what the core keeps
+    // How far ahead the four loops that pipeline look: the rehash, the range insert, the bulk visit
+    // and replace()'s dedup. It is a count of memory accesses that has to fit inside what the core keeps
     // outstanding, which is about two dozen on a Zen 4 -- not a property of the map, and every size
     // from 8 to 32 measured within 2% of this one. Boost's bulk visit uses the same number.
     static constexpr std::size_t pipeline_depth = 16;
+
+    // Below this much data, a pipeline costs more than it saves: the ring round trip is about 13
+    // instructions per element, and a prefetch of a line already in L2 still occupies a load port.
+    // The crossover tracks the last level of cache the loop's footprint -- its values plus its index
+    // -- still fits in, so this is a conservative stand-in for L2: the smallest one worth assuming.
+    // See replace(), the only caller so far, for the measurement.
+    static constexpr std::size_t pipeline_min_bytes = std::size_t{1} << 20U;
 
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
     static constexpr float default_max_load_factor = 0.8F;
@@ -3070,13 +3077,13 @@ public:
         //    5504 KiB (n=262144)  0.90x
         //    22 MiB   (n=4000000) 0.74x
         //
-        // So the gate is the footprint the loop streams -- the values plus the index -- against a
-        // conservative 1 MiB, which is the smallest L2 worth assuming. Getting it wrong in the safe
-        // direction (a machine with more L2) costs at most that 1.20x on one octave of sizes;
-        // omitting the gate costs it on every size below a quarter million.
+        // So the gate is the footprint the loop streams -- the values plus the index -- against
+        // pipeline_min_bytes. Getting it wrong in the safe direction (a machine with more L2) costs
+        // at most that 1.20x on one octave of sizes; omitting the gate costs it on every size below
+        // a quarter million.
         auto const footprint = m_values.size() * sizeof(value_type) +
                                (std::size_t{m_group_mask} + 1) * sizeof(typename bucket_container_type::block);
-        if (m_values.size() > pipeline_depth + 1 && footprint > (std::size_t{1} << 20U)) {
+        if (m_values.size() > pipeline_depth + 1 && footprint > pipeline_min_bytes) {
             do_replace_pipelined(value_idx);
         }
 
