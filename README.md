@@ -35,7 +35,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
     - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
     - [3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#336-auto-hash_fork-const-key-const---precomputed_hash)
-    - [3.3.7. `auto visit(FwdIt first, FwdIt last, F&& f) -> size_t`](#337-auto-visitfwdit-first-fwdit-last-f-f---size_t)
+    - [3.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#337-auto-visitfwdit-first-fwdit-last-f-f---size_t)
   - [3.4. Custom Container Types](#34-custom-container-types)
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
@@ -392,7 +392,7 @@ auto it = map.find("status"s, h);
 
 Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason — it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
 
-#### 3.3.7. `auto visit(FwdIt first, FwdIt last, F&& f) -> size_t`
+#### 3.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`
 
 Looks up a whole range of keys, calls `f` on each one that is there, and returns how many that was.
 
