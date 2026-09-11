@@ -108,6 +108,11 @@
 // mandatory there, so this needs no runtime dispatch either. Restricted to little endian because
 // the mask below reads the comparison result as one 64 bit word, and to AArch64 because 32 bit ARM
 // lacks the horizontal ops -- both fall back to SWAR, which is correct everywhere.
+// EXPERIMENT ONLY -- not for main; see issue #228 and the note in prefetch_block.
+#if !defined(ANKERL_UNORDERED_DENSE_BLOCK_PREFETCH)
+#    define ANKERL_UNORDERED_DENSE_BLOCK_PREFETCH 2 // NOLINT(cppcoreguidelines-macro-usage)
+#endif
+
 // EXPERIMENT ONLY -- not for main; see issue #228 and the note in prefetch_index.
 #if !defined(ANKERL_UNORDERED_DENSE_INDEX_PREFETCH)
 #    define ANKERL_UNORDERED_DENSE_INDEX_PREFETCH 3 // NOLINT(cppcoreguidelines-macro-usage)
@@ -1669,11 +1674,17 @@ private:
     // skips the first line because the probe is about to read it anyway; a rehash is about to
     // write a group it has never read, so it wants that line too.
     template <typename Block>
+    // EXPERIMENT ONLY -- not for main; see issue #228. 1 issues the first line alone, 2 the shipped
+    // pair. The pair assumes a 64 byte line, where an 88 byte block covers two or three of them; on
+    // a 128 byte line, which is what Apple's cores have, the block's first and last byte are the
+    // same line about two thirds of the time and the second prefetch is then redundant.
     static void prefetch_block(Block const* blocks, std::size_t group_idx) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(blocks + group_idx);
         ANKERL_UNORDERED_DENSE_PREFETCH(p);
+#    if ANKERL_UNORDERED_DENSE_BLOCK_PREFETCH >= 2
         ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
+#    endif
     }
 
     // Forced inline because gcc does not do it on its own in a large translation unit, and the

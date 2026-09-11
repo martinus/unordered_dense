@@ -1,0 +1,93 @@
+# Issue #228, the other half: what the prefetch API is worth, and at what depth, on a core that is
+# not a Zen 4.
+#
+# `prefetch(key)` is worth 1.5x on a large table here, at a pipeline depth of eight -- and eight is
+# not a property of the map. It is how many misses the core keeps outstanding, about two dozen on a
+# 7950X, and thirty-two measured *slower* than eight there for that reason. A core with more memory
+# parallelism should want a deeper pipeline, and Apple's have considerably more.
+#
+# The second question only Apple Silicon can answer: prefetch_block issues the block's first and
+# last line, which is right for a 64 byte line, where an 88 byte block covers two or three. On a
+# **128 byte** line the first and last byte are the same line about two thirds of the time, so the
+# second prefetch is mostly redundant. ANKERL_UNORDERED_DENSE_BLOCK_PREFETCH=1 drops it; if that is
+# a tie on Apple and a loss on the 64 byte machines, the shipped version should pick by line size.
+#
+# The benchmark times its own loop, so this needs no perf -- which is what lets it run on macOS at
+# all. Each row is written to the summary as it finishes, so a job that runs out of time still
+# leaves behind everything it had measured.
+#
+#   git push -f origin HEAD:macbench
+name: mac-prefetch-depth
+
+on:
+  push:
+    branches: [macbench]
+
+jobs:
+  depth:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The only machine here with 128 byte cache lines, and the one with the most memory
+          # parallelism to hide behind a deeper pipeline.
+          - name: macos arm64 (Apple Silicon)
+            os: macos-14
+            cxx: clang++
+          # 64 byte lines, so it should behave like x86 on the line question and can differ only on
+          # depth.
+          - name: linux arm64 (Neoverse)
+            os: ubuntu-24.04-arm
+            cxx: g++
+          # The machine whose answer is already on record, for calibration.
+          - name: linux x86-64
+            os: ubuntu-latest
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: machine
+        run: |
+          uname -s -m
+          ${{ matrix.cxx }} --version | head -1
+          sysctl -n machdep.cpu.brand_string hw.cachelinesize hw.l1dcachesize hw.l2cachesize 2>/dev/null || true
+          grep -m1 'model name' /proc/cpuinfo 2>/dev/null || true
+          getconf LEVEL1_DCACHE_LINESIZE 2>/dev/null || true
+      - name: depth sweep
+        shell: bash
+        run: |
+          set -o pipefail
+          echo "## ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            uname -m
+            sysctl -n hw.cachelinesize 2>/dev/null || getconf LEVEL1_DCACHE_LINESIZE 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Written a block at a time rather than at the end: a job that runs out of time then still
+          # leaves what it managed to measure.
+          for b in 2 1; do
+            for keys in u64 str; do
+              echo "::group::block_prefetch=$b keys=$keys"
+              {
+                echo
+                echo "### block prefetch $b, $keys keys$([ "$b" = 2 ] && echo '  (shipped)')"
+                echo
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              PF_EXTRA_FLAGS="-DANKERL_UNORDERED_DENSE_BLOCK_PREFETCH=$b" \
+                scripts/ab/prefetch_api.sh -c ${{ matrix.cxx }} -k "$keys" \
+                  -n "200000 4000000" -d "0 4 8 16 32 64" -r 4000000 \
+                | tee -a "$GITHUB_STEP_SUMMARY" "depth-$b-$keys.txt"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo "::endgroup::"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-prefetch-depth-${{ matrix.name }}
+          path: depth-*.txt
