@@ -1711,6 +1711,35 @@ private:
         return probe_from(key, word, counter, group_idx, delta);
     }
 
+    // What happens once the home group has been looked at and did not hold the key: whether it is
+    // worth walking on at all, and the walk. Shared by probe() and by the bulk visit, so that the
+    // probe's termination invariant is written once -- it was copied into the second of those, and
+    // a copy of an invariant is silent when it drifts, because the result is a wrong answer and not
+    // a crash.
+    //
+    // `m_group_mask == 0` cannot fire while the smallest array is four groups; it is here because it
+    // is what the loop tests at delta zero, so a mutation survivor on it is expected. The counter
+    // beside it is not: turning that `== 0` into `== 1` makes a key that overflowed its home group
+    // with exactly one same-class neighbour unfindable, and a steered test covers it.
+    template <typename K>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+    probe_after_home(K const& key, std::uint32_t word, unsigned counter, Bucket const& home, value_idx_type home_idx) const
+        -> probe_result {
+        if (home.m_overflows[counter] == 0 || m_group_mask == 0) {
+            return {0, 0, false};
+        }
+        value_idx_type delta = 0;
+        auto const next = next_group(home_idx, delta);
+        if constexpr (detail::key_compare_is_call_v<Key>) {
+            return probe_past_home(key, word, counter, next, delta);
+        } else {
+            // A compare that needs no frame needs no call either: the same choice probe() makes for
+            // such a key, and the reason the bulk path must not simply always take the out-of-line
+            // one.
+            return probe_from(key, word, counter, next, delta);
+        }
+    }
+
     template <typename K>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
         auto const word = fingerprint_word(mh);
@@ -1738,12 +1767,7 @@ private:
             // with delta zero, and it cannot fire while the smallest array is four groups -- it is
             // kept because it is what the loop tests, not because it is reachable, so a mutation
             // survivor on it is expected rather than a hole.
-            if (home.m_overflows[counter] == 0 || m_group_mask == 0) {
-                return {0, 0, false};
-            }
-            value_idx_type delta = 0;
-            auto const next = next_group(home_idx, delta);
-            return probe_past_home(key, word, counter, next, delta);
+            return probe_after_home(key, word, counter, home, home_idx);
         }
     }
 
@@ -2329,66 +2353,60 @@ private:
     // hit. The public overloads move into this parameter.
     template <typename FwdIt, typename F>
     auto do_visit(FwdIt first, FwdIt last, F f) -> std::size_t {
-        auto found = std::size_t{0};
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty())) {
-            return found;
+            return 0;
         }
         // Sixteen, which is what boost's bulk visit uses. It is a count that has to fit inside the
         // core's outstanding misses, and every size from 8 to 32 measured within 2% of it here.
         constexpr auto bulk = std::size_t{16};
-        auto mh = std::array<std::uint64_t, bulk>{};
+        auto const* groups = m_buckets.data();
+        // The block pointer rather than the group number: a block is 88 bytes, so forming its
+        // address is a multiply, and passes two and three would each redo it.
+        auto block = std::array<decltype(groups), bulk>{};
         auto word = std::array<std::uint32_t, bulk>{};
         auto home = std::array<value_idx_type, bulk>{};
         auto lanes = std::array<lane_mask, bulk>{};
-        auto const* groups = m_buckets.data();
+        auto found = std::size_t{0};
 
         while (first != last) {
             auto n = std::size_t{0};
             auto it = first;
             for (; n < bulk && it != last; ++n, ++it) {
-                mh[n] = mixed_hash(*it);
-                word[n] = fingerprint_word(mh[n]);
-                home[n] = group_idx_from_hash(mh[n]);
+                auto const mh = mixed_hash(*it);
+                word[n] = fingerprint_word(mh);
+                home[n] = group_idx_from_hash(mh);
+                block[n] = groups + std::size_t{home[n]};
                 prefetch_block(groups, std::size_t{home[n]});
             }
             for (auto i = std::size_t{}; i < n; ++i) {
-                lanes[i] = match_fingerprint(groups[home[i]], word[i]);
+                lanes[i] = match_fingerprint(*block[i], word[i]);
             }
             for (auto i = std::size_t{}; i < n; ++i, ++first) {
-                auto const& group = groups[home[i]];
+                auto const& group = *block[i];
+                // The element, once it is known: converging on a pointer rather than a found-flag
+                // keeps the call to f in one place instead of one per way of arriving at it.
+                value_type* element = nullptr;
                 auto remaining = lanes[i];
-                auto hit = false;
                 while (remaining != 0) {
                     auto const lane = first_lane(remaining);
                     auto const value_idx = group.m_index[lane];
                     if (m_equal(*first, get_key(m_values[value_idx]))) {
-                        f(m_values[value_idx]);
-                        ++found;
-                        hit = true;
+                        element = &m_values[value_idx];
                         break;
                     }
                     remaining &= remaining - 1;
                 }
-                if (!hit) {
-                    // Not at home: the two stopping conditions probe() uses, then the same
-                    // out-of-line walk. About 5% of keys reach this and none of their work was
-                    // pipelined, which is what keeps the common path straight.
-                    //
-                    // `m_group_mask != 0` cannot fire while the smallest array is four groups; it is
-                    // here because it is what the loop tests, so a mutation survivor on it is
-                    // expected. What is *not* expected, and is covered by a steered test, is the
-                    // counter: turning the `!= 0` beside it into `!= 1` makes a key that overflowed
-                    // its home group with exactly one same-class neighbour unfindable.
-                    auto const counter = word[i] & 7U;
-                    if (group.m_overflows[counter] != 0 && m_group_mask != 0) {
-                        value_idx_type delta = 0;
-                        auto const next = next_group(home[i], delta);
-                        auto const r = probe_past_home(*first, word[i], counter, next, delta);
-                        if (r.found) {
-                            f(m_values[r.value_idx]);
-                            ++found;
-                        }
+                if (element == nullptr) {
+                    // Not at home. About 5% of keys get here and none of their work was pipelined,
+                    // which is what keeps the common path straight.
+                    auto const r = probe_after_home(*first, word[i], word[i] & 7U, group, home[i]);
+                    if (r.found) {
+                        element = &m_values[r.value_idx];
                     }
+                }
+                if (element != nullptr) {
+                    f(*element);
+                    ++found;
                 }
             }
         }
@@ -3226,8 +3244,8 @@ public:
     //   3. compare the keys and call f
     //
     // Measured against the same batch looked up one key at a time with find(), a map of eight byte
-    // keys to eight byte values, ns per lookup: at four million entries 33.4 to 29.4 on all hits and
-    // 35.2 to 32.3 at half, at sixteen million 36.6 to 33.3 and 38.1 to 35.7. About 1.1x, and it
+    // keys to eight byte values, ns per lookup: at four million entries 34.0 to 26.3 on all hits and
+    // 34.4 to 28.4 at half, at sixteen million 36.5 to 30.4 and 37.3 to 31.5. About 1.2x, and it
     // needs a table past the cache to be worth anything.
     //
     // Two things this deliberately does not do. It does not prefetch the *value* in pass 2, which is
@@ -3251,8 +3269,8 @@ public:
         return const_cast<table*>(this)->do_visit( // NOLINT(cppcoreguidelines-pro-type-const-cast)
             first,
             last,
-            [&f](value_type& v) -> void {
-                f(std::as_const(v));
+            [&f](value_type const& v) -> void {
+                f(v);
             });
     }
 

@@ -1,11 +1,11 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/hashers.h>
 
 #include <cstdint>
 #include <string>
-#include <string_view>
-#include <unordered_map>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -16,14 +16,9 @@
 // their home group, which is the path the chunk does not pipeline.
 
 namespace {
-// A hash the test chooses, so that keys can be steered into one group and made to overflow it --
-// the same construction fuzz_group_index uses.
-struct steered_hash {
-    using is_avalanching = void;
-    auto operator()(std::uint64_t k) const noexcept -> std::uint64_t {
-        return k;
-    }
-};
+// test::identity_hash lets a key name the slot it wants: the top byte picks the group and the low
+// byte the fingerprint, which is how a test steers one group into overflowing. Same construction as
+// fuzz_group_index and probe_split.
 auto steered(std::uint8_t group, std::uint8_t id, std::uint8_t fingerprint) -> std::uint64_t {
     return (static_cast<std::uint64_t>(group) << 56U) | (static_cast<std::uint64_t>(id) << 8U) | fingerprint;
 }
@@ -96,7 +91,7 @@ TEST_CASE("visit_on_an_empty_map") {
 // pipeline, and it is reached through the same out-of-line walk a single lookup uses. Steered on
 // purpose rather than hoped for, because a wrong answer there is silent.
 TEST_CASE("visit_finds_keys_that_are_not_in_their_home_group") {
-    auto map = ankerl::unordered_dense::map<uint64_t, size_t, steered_hash>();
+    auto map = ankerl::unordered_dense::map<uint64_t, size_t, test::identity_hash>();
     map.reserve(17);
     auto keys = std::vector<uint64_t>();
     for (std::uint8_t i = 0; i < 16U; ++i) {

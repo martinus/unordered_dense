@@ -295,8 +295,8 @@ baseline** (2026-09-11, issue #232, asked as "would it make sense to have a bulk
 shipped documented at 1.5x and was reverted the same day. Both halves are worth keeping, because the
 mistake is one any lookup-pipelining feature invites.
 
-**The baseline was the bug.** `scripts/ab/prefetch_api.cpp` compared a pipelined loop against a plain
-one in which the key was *acquired inside the loop body* -- a random index into another array -- so
+**The baseline was the bug.** Its harness (`scripts/ab/prefetch_api.cpp`, deleted with it) compared a pipelined loop
+against a plain one in which the key was *acquired inside the loop body* -- a random index into another array -- so
 each iteration's key miss sat in front of its map miss and neither overlapped with anything. Against
 that, pipelining read 1.5x. But **collecting the keys into a batch first and looking them up
 afterwards is worth 1.5x on its own**, with no API at all: 50.9 ns to 33.4 per lookup at four million
@@ -314,10 +314,16 @@ looked up one key at a time, `map<uint64_t, size_t>`, medians of three:
 
 | entries | work | one at a time | `visit` | |
 |---|---|---|---|---|
-| 4000000 | hit | 33.36 | **29.36** | 1.14x |
-| 4000000 | half | 35.19 | **32.26** | 1.09x |
-| 16000000 | hit | 36.62 | **33.33** | 1.10x |
-| 16000000 | half | 38.06 | **35.65** | 1.07x |
+| 4000000 | hit | 33.97 | **26.34** | 1.29x |
+| 4000000 | half | 34.37 | **28.44** | 1.21x |
+| 16000000 | hit | 36.53 | **30.40** | 1.20x |
+| 16000000 | half | 37.31 | **31.53** | 1.18x |
+
+Those are after a cleanup pass; the first working version read 1.07-1.14x. The difference is one
+line: a block is 88 bytes, so `groups[home[i]]` is a multiply, and the first version did it three
+times per key -- once to prefetch, once to match, once to compare. Holding the pointer instead is
+worth **10% of the whole operation**, which is a reminder that the address arithmetic of a
+non-power-of-two block is not free just because it is not a memory access.
 
 **The reason it was built is not the reason it works.** Boost prefetches the *element* in pass 2, and
 that was the whole argument for a batch here: the value load is the second dependent access, the one
@@ -337,10 +343,9 @@ once in a test and once in a README example, and only the test caught it.
 **Mutation swept: seven survivors, all of them correct-but-slower or unreachable**, which is what a
 pipeline should look like -- it exists to change timing and nothing else. Deleting the block prefetch
 has no observable result at all. `++i` to `--i` leaves every key visited exactly once, because the
-outer loop re-chunks from wherever `first` reached, at sixteen times the hashing. Deleting `hit = true`
-or the `break` lets the fallback run for a key already found, and `probe_past_home` starts *after* the
-home group, so it cannot find a key that is at home -- no double visit. `&& ` to `||` makes the
-fallback always run. `m_group_mask != 1` is unreachable while the smallest array is four groups. The
+outer loop re-chunks from wherever `first` reached, at sixteen times the hashing. Deleting the `break` in the
+lane walk keeps scanning lanes whose fingerprints cannot belong to the key. Turning the counter test into one that always passes makes the
+fallback run for every key. `m_group_mask != 1` is unreachable while the smallest array is four groups. The
 two that would have been real were both **caught**: `--first`, and the counter's `!= 0` turned into
 `!= 1`, which is the same hole the probe split had and is covered here by the same steered
 construction.
