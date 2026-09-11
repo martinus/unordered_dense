@@ -190,6 +190,9 @@ namespace detail {
 [[noreturn]] inline ANKERL_UNORDERED_DENSE_NOINLINE void on_error_too_many_elements() {
     throw std::out_of_range("ankerl::unordered_dense::map::replace(): too many elements");
 }
+[[noreturn]] inline ANKERL_UNORDERED_DENSE_NOINLINE void on_error_key_changed() {
+    throw std::logic_error("ankerl::unordered_dense: an element's key changed after it was inserted; use replace_key()");
+}
 
 #    else
 
@@ -200,6 +203,9 @@ namespace detail {
     abort();
 }
 [[noreturn]] inline void on_error_too_many_elements() {
+    abort();
+}
+[[noreturn]] inline void on_error_key_changed() {
     abort();
 }
 
@@ -2028,8 +2034,21 @@ private:
         uncount(groups, mask, home_idx, counter, found_in);
     }
 
-    // The slot that points at a value, searched from the value's home group. Every value has one,
-    // so there is no other stopping condition.
+    // Which slot points at this value, searched from the value's home group. Its precondition is that one does, and the map's
+    // own callers always satisfy it -- but the key is *not* const here, so a caller can break it with an assignment and no
+    // cast: `it->first = x; m.erase(it);` then asks for a slot on a probe sequence the element is not on.
+    //
+    // Bounded for that, the same way the miss probe is and after the same kind of hang: `delta ==
+    // m_group_mask` means the triangular sequence has now visited every group, so there is nowhere
+    // left. Returning "not found" is not available -- every caller's contract says the element is
+    // there and the return is a slot number -- so the useful outcome is a diagnosable abort rather
+    // than a core spinning at 100% forever, which is what this did until 2026-09-11 (#254).
+    //
+    // The test is after the lane loop, so the common case -- the element is in its home group --
+    // returns before reaching it. It is not merely free: the erase path retires **13.4 fewer
+    // instructions per erase** with it than without, 133.0 to 119.5, flat across three sizes. The
+    // cause is the `[[noreturn]]` rather than the bound, and the same bound returning a sentinel
+    // instead measures 136.0 -- worse than no bound at all. See notes/index-design.md.
     [[nodiscard]] auto slot_of_value(std::uint64_t mh, value_idx_type value_idx) const -> value_idx_type {
         auto const word = fingerprint_word(mh);
         auto group_idx = group_idx_from_hash(mh);
@@ -2047,6 +2066,10 @@ private:
                 }
                 lanes &= lanes - 1;
             }
+            if (ANKERL_UNORDERED_DENSE_UNLIKELY(delta == m_group_mask))
+                ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
+                    on_error_key_changed();
+                }
             group_idx = next_group(group_idx, delta);
         }
     }
