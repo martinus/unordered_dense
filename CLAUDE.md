@@ -225,7 +225,9 @@ block. Fusing the insert's probe with its placement: more instructions, not fewe
 index prefetch: a clang win and a bigger gcc loss, so left alone.
 
 *The layout.* Merged 88 byte block: **kept**, 7% of a lookup's instructions and 28% of its dTLB
-misses at 4M. Splitting fingerprints from counters: a tie. Cache-line-aligning the indices: 0.993.
+misses at 4M. A quarter of those blocks span three cache lines and `prefetch_block` asks for two of
+them — the geometry is real and no alignment avoids it, but the hardware fetches the middle line
+anyway and asking explicitly is a 2.5% loss (#250, `scripts/ab/prefetch_lines.cpp`). Splitting fingerprints from counters: a tie. Cache-line-aligning the indices: 0.993.
 A second fingerprint in the index's spare bits: 0.975. 16-bit indices for small maps: 0.986. A
 12-slot 64 byte block: 0.9888.
 
