@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `replace()`'s two loops walk with cursors too, and one cursor too many is slower than none
 - `merge()`, and why it is not the loop the caller would write
 - `replace()` hashes ahead too, once the reason it could not was looked at properly
 - `insert(first, last)` sizing the table from the range: built, measured, declined
@@ -298,6 +299,59 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`replace()`'s two loops walk with cursors too, and one cursor too many is slower than none**
+(2026-09-11, issue #242's follow-up, `scripts/ab/replace_bulk.cpp`, Ryzen 9 7950X, clang 22, medians
+of seven, paired within each run).
+
+`merge()`'s walk was 0.89-0.95 for holding its elements in cursors instead of indexing them, so the
+same question was put to every other bulk loop in the file. Only two of them have the shape: a
+sequential walk over `m_values` interleaved with placements that store fingerprints. `do_visit`
+indexes, but from the probe -- a random index, with no cursor to hold -- and it never places.
+`fill_buckets_from_values` and `do_insert_range` were already iterator-based.
+
+The two are `do_replace_pipelined` and the plain loop `replace()` finishes with. Cursor over indexed,
+all 24 cells:
+
+| n | dup 0% | 25% | 75% | | n | dup 0% | 25% | 75% |
+|---|---|---|---|---|---|---|---|---|
+| `uint64_t` 8000 | 0.684 | 0.982 | 0.948 | | `std::string` 8000 | 0.902 | 0.937 | 0.935 |
+| 32000 | 0.956 | 0.933 | 0.812 | | 32000 | 0.879 | 0.952 | 0.960 |
+| 200000 | 0.957 | 0.945 | 0.873 | | 200000 | 0.886 | 0.955 | 0.964 |
+| 2000000 | 0.962 | 0.972 | 0.890 | | 2000000 | 0.933 | 0.976 | 0.958 |
+
+(The 0.684 is not a 1.46x: at eight thousand elements the *indexed* binary is bimodal between repeats
+-- 4.40, 2.85, 2.88, 4.76, 5.19, 2.76 -- where the cursor one is tight at 2.39-2.65. The round
+rebuilds the container and the allocator does not do the same thing twice, which `range_insert.cpp`
+records at the same sizes. The cursor version being the *stable* one is the finding there.)
+
+Instructions and cycles, both down in every cell measured: 80.93 to 79.92 instructions and 20.47 to
+19.01 cycles per element at 32000 with no duplicates, 74.76 to 69.99 and 34.51 to 30.22 at 200000 at
+a 75% duplicate rate. For a **string** key the instruction count does not move at all (487.48 to
+487.21) and the cycles do, 176.23 to 170.57 -- which is the mechanism seen from the other side: there
+the reload is not extra work, it is a memory latency sitting on the critical path in front of the next
+hash.
+
+*One cursor too many is worse than none.* The first version held `read`, `look` **and** `last`, and
+tested `last - read > pipeline_depth + 1` instead of asking the container its size. It retired two
+fewer instructions per element than the indexed loop and took **3.5% more cycles** for it -- 3.83 ns
+against 3.54 for the two-cursor version at two hundred thousand elements with no duplicates, and 1.03
+to 1.04 against the indexed loop it was supposed to beat, reproducibly over nine repeats. Two reasons,
+both worth keeping: `last` is a fourth live value across a loop already holding three ring arrays, and
+it cannot be decremented on a pop, because `std::deque::pop_back` invalidates the past-the-end
+iterator and a deque is a value container this map supports -- so it needs an `m_values.end()` after
+every duplicate. `size()` answers the same question for nothing. A variant holding only `read` and
+indexing the lookahead was measured too and is between the two (3.77).
+
+*`replace()`'s gate was not re-fitted, and the reason is that its gap is older than this.* Re-fitting
+after the loop gets cheaper is the rule `merge()` established, so it was tried. The `uint64_t` side of
+that sweep is unusable -- the same bimodality as above, ratios of 0.885, 0.654, 1.005, 0.688 at
+neighbouring sizes -- and the string side is clean and says the ring *loses* 2 to 10% from 176 KiB of
+index to 1408 KiB. That band was then measured on `origin/main` as well, with the indexed loops:
+**1.116 / 1.043 / 1.072 / 0.988 there against 1.072 / 1.051 / 1.021 / 0.992 here**, i.e. the same
+band, very slightly better. So it is not something the cursors introduced: `pipeline_min_index_bytes`
+was fitted on `uint64_t` in #249 and is too low for a key whose hash is long. Filed separately rather
+than changed on a sweep this noisy.
+
 **`merge()`, and why it is not the loop the caller would write** (2026-09-11, issue #242,
 `scripts/ab/merge.cpp`, Ryzen 9 7950X, clang 22, medians of five, both maps rebuilt from the same
 input every round and only the merge inside the clock).

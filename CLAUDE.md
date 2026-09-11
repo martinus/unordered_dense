@@ -305,5 +305,14 @@ plain loop back.
 **Walk a value container with iterators, never with an index, in any loop that also places
 elements.** `fill_buckets_from_values` records why — a `uint8_t` fingerprint store may alias the
 container's data pointer, so an indexed read reloads it after every placement, and that is a store-
-to-load chain per element (10.43 → 2.74 ns/insert there). `merge()`'s walk was written with indices
-first and cost 0.89–0.95 for it; `do_insert_range` and the rehash were already iterator-based.
+to-load chain per element (10.43 → 2.74 ns/insert there). `merge()`'s walk cost 0.89–0.95 for being
+written with indices first; `replace()`'s two loops cost 0.68–0.98 over 24 cells. All four loops that
+place are cursor-based now, `do_visit` indexes randomly from the probe and cannot be, and for a
+**string** key the win shows up as cycles with the instruction count flat — there the reload is not
+extra work, it is a latency in front of the next hash.
+
+**But hold one cursor fewer than feels natural: ask the container its `size()`.** `replace()`'s first
+cursor version also held `last` and tested `last - read`. It retired two *fewer* instructions per
+element and took **3.5% more cycles**, reproducibly — a fourth live value across a loop holding three
+ring arrays, and it cannot be decremented on a pop because `std::deque::pop_back` invalidates the
+past-the-end iterator, so it needs an `end()` after every one.
