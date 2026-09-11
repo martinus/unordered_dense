@@ -40,6 +40,14 @@ def main():
     if lldb is None:
         print("SKIP: no lldb found")
         return SKIP
+    # An lldb on PATH is not the same as an lldb that can debug what this platform builds, and the
+    # two differ exactly on Windows: the runners there have one, so the check above does not fire,
+    # the fixture is built by whatever `c++` is on PATH rather than by the leg's MSVC, and the
+    # session then produces nothing at all. All four Windows legs failed on that. Everywhere else
+    # this runs for real -- every Linux variant including ARM64 and libc++, and macOS arm64.
+    if os.name == "nt":
+        print("SKIP: no lldb here that can debug what this platform builds")
+        return SKIP
     if not os.path.exists(args.formatter):
         print("SKIP: no formatter at %s" % args.formatter)
         return SKIP
