@@ -1,10 +1,13 @@
 // What replace() costs per element, with and without duplicates in the source.
 //
-// replace() hands the map a whole container and dedups it in place. It is the one bulk build path
-// with no lookahead: it hashes, probes and places one element at a time, over a contiguous
-// container -- the shape the lookahead helps most. What stopped it being pipelined is that removing
-// a duplicate pulls `back()` into the hole, and a lookahead has already hashed elements near the
-// back.
+// replace() hands the map a whole container and dedups it in place. Before the pipelining landed it
+// was the one bulk build path with no lookahead: it hashed, probed and placed one element at a time,
+// over a contiguous container -- the shape the lookahead helps most. What had stopped it being
+// pipelined is that removing a duplicate pulls `back()` into the hole, and a lookahead has already
+// hashed elements near the back.
+//
+// Sweep `n` as well as `dup-percent`: the pipeline is gated on the container outgrowing cache, and
+// on both sides of that gate the answer is different. Build with -DUDM_RB_STR for string keys.
 //
 //   argv: <n> [rounds] [dup-percent]
 #include <ankerl/unordered_dense.h>
@@ -26,6 +29,8 @@ using key_type = std::uint64_t;
 using map_t = ankerl::unordered_dense::map<key_type, std::size_t>;
 using container_t = typename map_t::value_container_type;
 
+// Not ankerl::nanobench::Rng: that one's constructor is out of line, so using it would make this
+// standalone file need test/app/nanobench.cpp linked in, compiled once per header under test.
 struct rng {
     std::uint64_t s;
     explicit rng(std::uint64_t seed)
@@ -47,7 +52,7 @@ int main(int argc, char** argv) {
 
     // Built once: `dup_pct` percent of the entries repeat an earlier key, so the dedup path is
     // exercised at a chosen rate rather than never or always.
-    auto source = std::vector<std::pair<key_type, std::size_t>>();
+    auto source = container_t();
     source.reserve(n);
     auto r = rng(1);
     auto distinct = std::vector<std::uint64_t>();
@@ -63,11 +68,7 @@ int main(int argc, char** argv) {
     auto acc = std::size_t{0};
     auto const t0 = std::chrono::steady_clock::now();
     for (std::size_t round = 0; round < rounds; ++round) {
-        auto container = container_t();
-        container.reserve(source.size());
-        for (auto const& kv : source) {
-            container.emplace_back(kv.first, kv.second);
-        }
+        auto container = container_t(source);
         auto map = map_t();
         map.replace(std::move(container));
         acc += map.size();
@@ -75,5 +76,9 @@ int main(int argc, char** argv) {
     auto const el = std::chrono::steady_clock::now() - t0;
     std::printf("%.3f ns/element  n=%zu rounds=%zu dup=%zu%% unique=%zu acc=%zu\n",
                 std::chrono::duration<double, std::nano>(el).count() / static_cast<double>(n * rounds),
-                n, rounds, dup_pct, distinct.size(), acc);
+                n,
+                rounds,
+                dup_pct,
+                distinct.size(),
+                acc);
 }

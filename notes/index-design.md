@@ -331,9 +331,58 @@ pipelined loop off entirely and fall through to the plain one. The margin is kep
 returns a wrong answer rather than crashing, and one element of pipelining is a cheap price for not
 sitting on the edge.
 
-One survivor is worth knowing about separately: `lookahead < size()` to `<=` reads `m_values[size()]`,
-which is undefined but lands inside the vector's *capacity*, so neither sanitizer objects. It is the
-same class as the note elsewhere about reading one slot past a bucket.
+One survivor was worth knowing about separately, and cleanup then removed the line it was on:
+`lookahead < size()` to `<=` read `m_values[size()]`, which is undefined but lands inside the
+vector's *capacity*, so neither sanitizer objected. It is the same class as the note elsewhere about
+reading one slot past a bucket. The guard survived mutation because it was dead: `lookahead` was
+always `value_idx + pipeline_depth`, and the loop condition already says that element exists. It is
+gone, and with it the variable.
+
+**The ring holds the hash taken apart, not the hash** -- fingerprint word, home group and the block
+pointer, filled by the same `fetch` that issues the prefetch. Decomposing at the far end of a
+sixteen-deep ring instead means the table load, the `& 7` and the shift happen twice, once in the
+probe and once in the placement, and the block's address is formed three times. Slope of two round
+counts, 2000000 elements: **90.8 instructions per element to 85.6** with no duplicates, 83.7 to 81.9
+at fifty percent. Wall clock moved the other way by 3-5%, which is code layout luck; the instruction
+count is the measurement. It is the same finding the bulk visit banked a day earlier, in a third
+place -- the 88 byte block wants its address formed once and then reused.
+
+**And the pipeline only runs once the work is out of cache, which the first version of this got
+wrong.** The ring round trip is not free: it costs **13.6 instructions per element** (73.4 to 86.6 at
+n = 1024), and a prefetch of a line already in L2 still occupies a load port. Against the unpipelined
+loop, no duplicates, the ratio tracks the footprint -- values plus index -- against this machine's
+1 MiB L2 and nothing else:
+
+| footprint | n | pipelined / plain |
+|---|---|---|
+| 688 KiB | 32768 | 1.20 |
+| 1376 KiB | 65536 | 1.03 |
+| 2064 KiB | 98304 | 0.92 |
+| 5504 KiB | 262144 | 0.90 |
+| 22 MiB | 4000000 | 0.74 |
+
+A fifth slower on every size below a quarter million, and the two sizes the change was first measured
+at -- 200000 and 2000000 -- are both above the crossover, which is how it went unnoticed. The gate is
+the footprint against a conservative 1 MiB, the smallest L2 worth assuming; erring high costs at most
+that 1.20x on one octave, erring low costs it everywhere. **Two sizes on the same side of a cache is
+one size**, which is the octave rule from the benchmark harness arriving in a place that has no
+harness.
+
+It also makes the window boundary untestable at forty small elements, since none of them reach the
+gate. The sweep runs twice: once with `size_t` values for the plain loop, once with a 64 KiB mapped
+type, which crosses 1 MiB at sixteen elements and so puts the boundary at seventeen back inside a
+sweep of thirty. An instrumented build confirms which sweep reaches which loop -- 65 entries against
+0 -- because a test that silently stopped covering the path it is named for is exactly what a size
+gate invites.
+
+The gate costs mutation score, unavoidably: survivors went from 6 to 26, and the twenty new ones are
+all on the footprint arithmetic, the threshold and the two prefetches. A mutant that moves a
+*performance* gate cannot be caught by a correctness test -- either side of it returns the same
+answer -- so the number to read is that no survivor is in the loop body. Do not chase it by
+loosening the tests.
+
+`do_insert_range` and `do_visit` have the same ring and no such gate; whether they have the same
+cliff is not measured, and is issue material rather than a claim.
 
 **Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it** (2026-09-11,
 issue #244, from four cleanup reviews of the range insert). Three of the four items were measured;
