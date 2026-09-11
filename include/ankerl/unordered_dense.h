@@ -3239,7 +3239,7 @@ public:
     // not reported; the return value counts the ones that were found.
     template <typename FwdIt, typename F>
     auto visit(FwdIt first, FwdIt last, F&& f) -> std::size_t {
-        return do_visit(first, last, f);
+        return do_visit(first, last, std::forward<F>(f));
     }
 
     template <typename FwdIt, typename F>
@@ -3247,8 +3247,8 @@ public:
         return const_cast<table*>(this)->do_visit( // NOLINT(cppcoreguidelines-pro-type-const-cast)
             first,
             last,
-            [&f](value_type& v) {
-                f(std::as_const(v));
+            [&f](value_type& v) -> void {
+                std::forward<F>(f)(std::as_const(v));
             });
     }
 
