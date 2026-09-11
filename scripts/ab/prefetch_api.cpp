@@ -57,7 +57,10 @@ struct rng {
     }
 };
 
-constexpr std::size_t max_depth = 32;
+// The deepest pipeline the ring allows. Eight is best on a Zen 4, which holds about two dozen
+// misses outstanding; a core with more memory parallelism can want considerably more, so the sweep
+// has to be able to ask for more than the answer on one machine.
+constexpr std::size_t max_depth = 128;
 
 } // namespace
 
