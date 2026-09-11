@@ -2978,6 +2978,64 @@ public:
         // index the loop produces is representable -- it is the count that is not.
         auto value_idx = std::size_t{};
 
+        // Hashing ahead of where it places, which this loop could not simply be given because of how
+        // it removes a duplicate: it pulls back() into the hole, and a lookahead has already hashed
+        // the elements near the back.
+        //
+        // What makes it possible anyway is that the pull disturbs exactly *one* position, the last.
+        // So while the container is longer than the window by more than one, the window cannot
+        // contain the element that moves, and every hash in it stays valid. Only the tail -- the last
+        // pipeline_depth + 1 elements -- has to run unpipelined, and it is the loop below.
+        //
+        // A duplicate inside the pipelined region therefore costs one re-hash, not a flush: the
+        // element at value_idx is a different one afterwards, and nothing else in the ring moved.
+        // The index does not advance, exactly as it does not in the plain loop.
+        //
+        // The exact condition for safety is size > value_idx + pipeline_depth; the + 1 below is one
+        // stricter than it needs to be, which costs one element of pipelining and buys margin on a
+        // loop where an off-by-one is a wrong answer rather than a crash. A mutation sweep confirms
+        // there is slack on both sides -- loosening the bound by one still passes, because the
+        // iteration that could read a stale entry is the one after which the loop exits -- so the
+        // boundary is not balanced on a knife edge in either direction.
+        //
+        // The bucket array is sized once before this and never grows here, so it is held in a local
+        // for the reason fill_buckets_from_values holds its own: placing stores a std::uint8_t
+        // fingerprint, which may alias the container's data pointer, so reading it through `this`
+        // would put a reload on every element's address chain.
+        if (m_values.size() > pipeline_depth + 1) {
+            auto* const groups = m_buckets.data();
+            auto ring = std::array<std::uint64_t, pipeline_depth>{};
+            auto hash_at = [this, groups](std::size_t at) {
+                auto const mh = this->mixed_hash(get_key(m_values[at]));
+                prefetch_block(groups, std::size_t{group_idx_from_hash(mh)});
+                return mh;
+            };
+            for (auto i = std::size_t{}; i < pipeline_depth; ++i) {
+                ring[i] = hash_at(i);
+            }
+            auto lookahead = pipeline_depth;
+
+            while (m_values.size() > value_idx + pipeline_depth + 1) {
+                auto const slot = value_idx % pipeline_depth;
+                auto const mh = ring[slot];
+                auto const r = probe(get_key(m_values[value_idx]), mh);
+                if (r.found) {
+                    // value_idx is below the last element here, by the loop's own condition, so the
+                    // plain loop's self-move guard cannot be needed.
+                    m_values[value_idx] = std::move(m_values.back());
+                    m_values.pop_back();
+                    ring[slot] = hash_at(value_idx);
+                } else {
+                    place_group(mh, static_cast<value_idx_type>(value_idx));
+                    if (lookahead < m_values.size()) {
+                        ring[slot] = hash_at(lookahead);
+                        ++lookahead;
+                    }
+                    ++value_idx;
+                }
+            }
+        }
+
         // loop until we reach the end of the container. duplicated entries will be replaced with back().
         while (value_idx != m_values.size()) {
             auto const& key = get_key(m_values[value_idx]);

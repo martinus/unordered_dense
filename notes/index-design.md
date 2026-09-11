@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `replace()` hashes ahead too, once the reason it could not was looked at properly
 - Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it
 - Chunks or a sliding ring: the rehash and the bulk visit want opposite answers
 - A bulk `visit()`, and the `prefetch(key)` API it replaced
@@ -292,6 +293,48 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`replace()` hashes ahead too, once the reason it could not was looked at properly** (2026-09-11,
+issue #244 item 4, asked as "would it be simpler going from back to front"). It was the last bulk
+build path with no lookahead, and the obstacle looked structural: removing a duplicate pulls
+`back()` into the hole, and a lookahead has already hashed the elements near the back.
+
+**Back to front does not help** -- it makes it worse. Going down from the end, everything above the
+cursor is already *placed*, so `back()` is in processed territory: moving it leaves a bucket pointing
+at a dead index that then has to be found and repointed. A stale ring is traded for a stale index.
+
+**What does work is noticing that the pull disturbs exactly one position**, the last. While the
+container is longer than the window by more than one, the window cannot contain the element that
+moves, so every hash in the ring stays valid -- and a duplicate costs one re-hash of the slot it
+lands in, not a flush of the ring. Only the last `pipeline_depth + 1` elements run unpipelined. The
+behaviour is unchanged: same survivors, same final order, same number of moves, which the test checks
+element by element against an independent copy of the plain loop rather than against a set.
+
+ns per element, rebuilding through `replace()`, medians of three:
+
+| | no duplicates | 5% duplicates | 50% duplicates |
+|---|---|---|---|
+| 200000, before | 5.77 | 8.51 | 8.73 |
+| 200000, after | **4.87** | **5.54** | 8.48 |
+| 2000000, before | 10.76 | 14.99 | 16.85 |
+| 2000000, after | **8.04** | **9.93** | 16.15 |
+
+1.19-1.34x with no duplicates and **1.5x at five percent**, which is the shape that matters: a
+duplicate does not consume the lookahead, so at fifty percent half the iterations do not advance and
+the pipeline barely fills -- 1.03x, and nothing is lost.
+
+**The boundary has slack on both sides, which is the useful thing the mutation sweep said.** Six
+mutants survive and all six are on the loop condition. The exact requirement is
+`size > value_idx + pipeline_depth`; the shipped `+ 1` is one stricter, so tightening it is correct
+(that is one survivor) and loosening it by one is *also* correct, because the iteration that could
+read a stale entry is the one after which the loop exits (that is two more). The rest turn the
+pipelined loop off entirely and fall through to the plain one. The margin is kept: an off-by-one here
+returns a wrong answer rather than crashing, and one element of pipelining is a cheap price for not
+sitting on the edge.
+
+One survivor is worth knowing about separately: `lookahead < size()` to `<=` reads `m_values[size()]`,
+which is undefined but lands inside the vector's *capacity*, so neither sanitizer objects. It is the
+same class as the note elsewhere about reading one slot past a bucket.
+
 **Taking the hash apart once per insert instead of twice, and the shared pipeline that was not worth it** (2026-09-11,
 issue #244, from four cleanup reviews of the range insert). Three of the four items were measured;
 two are in and one is not.
