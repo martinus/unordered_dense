@@ -14,7 +14,8 @@
 //
 //   none   no prefetch at all, for scale
 //   one    p only -- if this ties with `two`, the hardware is fetching the rest
-//   two    what the header does: p and p + 87
+//   two    first line and last: p and p + 87, which is what the header did until #250
+//   next   what the header does now: p and p + 64, the first line and the one after it
 //   three  p, p + 64 and p + 87
 //
 // The read shape matters as much as the prefetch, because a sequential sweep of the block trains the
@@ -23,7 +24,11 @@
 //   full   every byte, the way a rehash writes one
 //   probe  sixteen fingerprints, one overflow counter and one index -- what a lookup reads
 //
-//   argv: <none|one|two|three> <full|probe> <blocks> [reps]
+// `two` and `next` differ only for the quarter of blocks that span three lines, where they prefetch
+// the same first line and then disagree about the second: `two` takes the last line, `next` takes
+// the middle one. For the other three quarters they issue prefetches to exactly the same two lines.
+//
+//   argv: <none|one|two|next|three> <full|probe> <blocks> [reps]
 #include <ankerl/unordered_dense.h>
 
 #include <bench/workloads.h>
@@ -98,10 +103,12 @@ int main(int argc, char** argv) {
         if (how == "one") {
             return;
         }
-        if (how == "three") {
+        if (how == "next" || how == "three") {
             ANKERL_UNORDERED_DENSE_PREFETCH(p + 64);
         }
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(block) - 1);
+        if (how != "next") {
+            ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(block) - 1);
+        }
     };
 
     auto acc = std::uint64_t{0};
