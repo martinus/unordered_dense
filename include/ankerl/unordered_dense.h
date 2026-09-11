@@ -3358,9 +3358,20 @@ public:
     // what boost::concurrent_flat_map's bulk visit does and what this was built to try: the address
     // is known there, unlike in a single lookup, and it measured +3.8% on all hits and **-4.8% at
     // half hits**, because an absent key has nothing to fetch and a present one is already covered
-    // once the passes are separated. And it is a fixed-size chunk with straight passes rather than a
-    // sliding ring, because a ring has to be read before the slot it frees is refilled, and getting
-    // that backwards is a wrong answer rather than a crash.
+    // once the passes are separated.
+    //
+    // And it is a fixed-size chunk with straight passes rather than a sliding ring. A ring is the
+    // obvious shape and it is worse, measured: at four million entries 31.8 ns against 26.6 on all
+    // hits, at sixteen million 34.7 against 30.4. Not because of code generation -- both retire
+    // 224.5 instructions per lookup, identical to the tenth -- but because the ring takes 15% more
+    // cycles waiting. The gap is 15% on all hits and 6% at half hits, and a miss reads no value, so
+    // what it is losing is the *value* loads: the third pass issues sixteen of them back to back and
+    // nothing else here creates that parallelism, since the value is the one access not prefetched.
+    // A ring even has the better block prefetch -- a full depth of work for every element, where a
+    // chunk gives its last element less than its first -- and still loses.
+    //
+    // The second reason is that a ring has to be read before the slot it frees is refilled, and
+    // getting that backwards is a wrong answer rather than a crash.
     //
     // f is taken by value, as the standard algorithms take a callable, and is called with
     // value_type& -- or value_type const& on a const map. Keys that are absent are not reported; the
