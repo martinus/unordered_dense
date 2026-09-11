@@ -145,6 +145,18 @@
                 return slot;
 >>>
 
+# the backfill's search for the slot accepts any fingerprint match
+# repoint_value is the same search, walked for the value the dense move just brought into the hole,
+# and it writes rather than returns. Without the index check it overwrites the first slot sharing a
+# fingerprint: that entry now names the moved value and the moved value is reachable from nothing.
+<<<
+                if (group.m_index[lane] == value_idx) {
+                    group.m_index[lane] = new_value_idx;
+===
+                if (static_cast<void>(value_idx), true) {
+                    group.m_index[lane] = new_value_idx;
+>>>
+
 # ---------------------------------------------------------------- growth and load factor
 
 # the table never decides it is full, so it fills up completely and probes forever
@@ -302,14 +314,14 @@
 <<<
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
             auto const mh = mixed_hash(get_key(val));
-            m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
+            repoint_value(mh, values_idx_back, value_idx_to_remove);
         }
         m_values.pop_back();
 ===
             m_values.pop_back();
             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
             auto const mh = mixed_hash(get_key(val));
-            m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
+            repoint_value(mh, values_idx_back, value_idx_to_remove);
             return;
         }
         m_values.pop_back();

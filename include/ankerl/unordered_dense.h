@@ -2039,10 +2039,10 @@ private:
     // there and the return is a slot number -- so the useful outcome is a diagnosable abort rather
     // than a core spinning at 100% forever, which is what this did until 2026-09-11 (#254).
     //
-    // Two things the throw is not. It is not recoverable: reached from the backfill in finish_erase
-    // -- through repoint_value, the twin below -- the slot is already gone, so the table is in the
-    // state that comment describes as unusable, and the exception says what happened rather than
-    // offering to continue. And it is not a guarantee --
+    // Two things the throw is not. It is not recoverable: the twin below reaches it from the backfill
+    // in finish_erase, where the slot is already gone, so the table is in the state that comment
+    // describes as unusable and the exception says what happened rather than offering to continue.
+    // And it is not a guarantee --
     // if the mutated key's sequence happens to cross the element's real slot with a matching
     // fingerprint, a wrong-but-valid slot comes back and the counters are unwound from the wrong
     // home instead. Bounding turns a hang into a diagnosis; only `replace_key()` turns it into a
@@ -2081,15 +2081,15 @@ private:
     }
 
     // The same walk, for the one caller that does not want a slot number but only to overwrite the
-    // index it finds. Handing that caller a slot was worth 5.1 instructions per erase under clang and
-    // 4.5 under gcc: the loop has the group base and the lane in registers and packs them into
-    // `group_idx * slots_per_group + lane`, which the store then took straight back apart --
-    // `shl / add / mov / shr / imul $0x58 / add / and $0xf` in front of a store that is now one
-    // `mov`. Clang folds that away on the erase(iterator) path, where erase_group_slot gets the same
-    // slot, and did not fold it here (#260). Returning a pointer to the index instead of storing
-    // through it compiles to a byte-identical binary, so the choice between the two is cosmetic.
+    // index it finds. Handing that caller a slot cost 5.1 instructions per erase under clang and 4.5
+    // under gcc: the loop has the group base and the lane in registers, packs them into `group_idx *
+    // slots_per_group + lane`, and the store then took that straight back apart. Clang folds it away
+    // on the erase(iterator) path, where erase_group_slot gets the same slot, and did not fold it
+    // here; gcc folds it at none of the sites that still pack one. notes/index-design.md has the
+    // before and after (#260).
     //
-    // Precondition, bound and exhaustion are slot_of_value's; its comment is the one to read.
+    // Precondition, bound and exhaustion are slot_of_value's; its comment is the one to read, and
+    // the half of it about the throw not being recoverable is about this function.
     void repoint_value(std::uint64_t mh, value_idx_type value_idx, value_idx_type new_value_idx) {
         auto const word = fingerprint_word(mh);
         auto group_idx = group_idx_from_hash(mh);
