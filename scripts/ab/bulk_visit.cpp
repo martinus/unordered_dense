@@ -90,14 +90,25 @@ int main(int argc, char** argv) {
     auto acc = std::size_t{0};
     auto const started = std::chrono::steady_clock::now();
 
+    // `bulk` and `plain` both work from a materialised batch; only the lookup differs, so the fill
+    // is written once and charged to both.
+    auto keys = std::vector<key_type>(batch);
+    auto fill = [&](std::size_t m) {
+        for (std::size_t i = 0; i < m; ++i) {
+            keys[i] = workloads::key_for<map_t>(next_key());
+        }
+    };
+    auto const chunk = [&](std::size_t done) {
+        return (reps - done) < batch ? reps - done : batch;
+    };
+
     if (how == "bulk") {
-        auto keys = std::vector<key_type>(batch);
         for (std::size_t done = 0; done < reps; done += batch) {
-            auto const m = (reps - done) < batch ? reps - done : batch;
-            for (std::size_t i = 0; i < m; ++i) {
-                keys[i] = workloads::key_for<map_t>(next_key());
-            }
-            map.visit(keys.begin(), keys.begin() + static_cast<std::ptrdiff_t>(m), [&](auto const& kv) { acc += kv.second; });
+            auto const m = chunk(done);
+            fill(m);
+            map.visit(keys.begin(), keys.begin() + static_cast<std::ptrdiff_t>(m), [&](auto const& kv) {
+                acc += kv.second;
+            });
         }
     } else if (how == "inline") {
         // The key is acquired and looked up in one loop body, so the key's own cache miss sits in
@@ -110,13 +121,9 @@ int main(int argc, char** argv) {
             }
         }
     } else {
-        // The same batching as `bulk`, so that materialising the keys is charged to both.
-        auto keys = std::vector<key_type>(batch);
         for (std::size_t done = 0; done < reps; done += batch) {
-            auto const m = (reps - done) < batch ? reps - done : batch;
-            for (std::size_t i = 0; i < m; ++i) {
-                keys[i] = workloads::key_for<map_t>(next_key());
-            }
+            auto const m = chunk(done);
+            fill(m);
             for (std::size_t i = 0; i < m; ++i) {
                 auto const it = map.find(keys[i]);
                 if (it != map.end()) {
@@ -129,5 +136,9 @@ int main(int argc, char** argv) {
     auto const elapsed = std::chrono::steady_clock::now() - started;
     std::printf("%.3f ns/lookup  %s %s n=%zu reps=%zu acc=%zu\n",
                 std::chrono::duration<double, std::nano>(elapsed).count() / static_cast<double>(reps),
-                what.c_str(), how.c_str(), n, static_cast<std::size_t>(reps), acc);
+                what.c_str(),
+                how.c_str(),
+                n,
+                static_cast<std::size_t>(reps),
+                acc);
 }

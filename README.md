@@ -410,10 +410,10 @@ auto found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += 
 
 | entries | | one at a time | `visit` | |
 | ------: | :--- | ----: | ----: | ---: |
-| 4 000 000 | all hits | 33.4 | 29.4 | 1.14x |
-| 4 000 000 | half hits | 35.2 | 32.3 | 1.09x |
-| 16 000 000 | all hits | 36.6 | 33.3 | 1.10x |
-| 16 000 000 | half hits | 38.1 | 35.7 | 1.07x |
+| 4 000 000 | all hits | 34.0 | 26.3 | 1.29x |
+| 4 000 000 | half hits | 34.4 | 28.4 | 1.21x |
+| 16 000 000 | all hits | 36.5 | 30.4 | 1.20x |
+| 16 000 000 | half hits | 37.3 | 31.5 | 1.18x |
 
 **It needs a table past the cache to be worth anything**, like every other memory-level trick here: on a map that fits in L2 there is nothing to overlap and the extra passes are a small loss.
 
