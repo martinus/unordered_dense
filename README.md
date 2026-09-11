@@ -35,6 +35,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
     - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
     - [3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#336-auto-hash_fork-const-key-const---precomputed_hash)
+    - [3.3.7. `auto visit(FwdIt first, FwdIt last, F&& f) -> size_t`](#337-auto-visitfwdit-first-fwdit-last-f-f---size_t)
   - [3.4. Custom Container Types](#34-custom-container-types)
   - [3.5. Custom Bucket Types](#35-custom-bucket-types)
     - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
@@ -390,6 +391,45 @@ auto it = map.find("status"s, h);
 ```
 
 Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason — it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
+
+#### 3.3.7. `auto visit(FwdIt first, FwdIt last, F&& f) -> size_t`
+
+Looks up a whole range of keys, calls `f` on each one that is there, and returns how many that was.
+
+```cpp
+auto const keys = std::vector<std::string>{"alpha", "beta", "gamma"};
+auto total = 0;
+auto found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += kv.second; });
+```
+
+`f` receives `value_type&`, or `value_type const&` on a `const` map, so a visit can modify what it finds. Keys that are absent are not reported; the count says how many were there.
+
+**Why it is faster than the same loop of `find()`.** A lookup on a table past the cache is two dependent memory accesses — the group's block, and then the value the slot points at — and a loop doing one lookup at a time can only overlap them as far as the processor's own reordering reaches past a whole loop body. `visit` works a chunk at a time in three passes: every key's block is asked for, then the fingerprints are matched once the blocks have arrived, then the keys are compared. Every block in the chunk is in flight at once.
+
+`map<uint64_t, size_t>`, clang 22 on a 7950X, ns per lookup, against the same batch looked up one key at a time:
+
+| entries | | one at a time | `visit` | |
+| ------: | :--- | ----: | ----: | ---: |
+| 4 000 000 | all hits | 33.4 | 29.4 | 1.14x |
+| 4 000 000 | half hits | 35.2 | 32.3 | 1.09x |
+| 16 000 000 | all hits | 36.6 | 33.3 | 1.10x |
+| 16 000 000 | half hits | 38.1 | 35.7 | 1.07x |
+
+**It needs a table past the cache to be worth anything**, like every other memory-level trick here: on a map that fits in L2 there is nothing to overlap and the extra passes are a small loss.
+
+**And the batching itself matters more than `visit` does.** If the keys are being fetched from somewhere in the same loop that looks them up — a random index into another array, say — then the key's own cache miss sits in front of the map's and neither overlaps with anything. Collecting the keys first and looking them up afterwards is worth **1.5x** at four million entries before `visit` is involved at all:
+
+```cpp
+for (size_t i = 0; i < n; ++i) {              // 51 ns per lookup
+    auto it = map.find(keys[indices[i]]);
+}
+
+std::vector<key_type> batch;                  // 33 ns per lookup
+for (size_t i = 0; i < n; ++i) { batch.push_back(keys[indices[i]]); }
+for (auto const& k : batch) { auto it = map.find(k); }
+```
+
+That is a property of loops and memory parallelism rather than of this map, and it is the larger of the two effects. `visit` is what is left on top once the loop is already shaped that way.
 
 ### 3.4. Custom Container Types
 

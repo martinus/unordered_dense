@@ -244,5 +244,9 @@ it** (96.4 to 69.3 instructions, 34.0 to 17.5 cycles) on both maps. No source ch
 six have been tried; what is left against boost once the boundary is gone is eleven instructions,
 and at 4M entries the two are level.
 
-*Still open.* Huge pages (22% of a large lookup, nothing asks for them). ARM prefetch tuning.
+*Still open.* Huge pages (22% of a large lookup, nothing asks for them).
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.
+
+*Bulk lookups.* `visit(first, last, f)` is 1.07-1.14x over the same batch looked up one key at a
+time, past the cache. The larger effect is the caller's: **batching the keys at all is 1.5x**, and a
+`prefetch(key)` API that was credited with that was reverted the same day it shipped.

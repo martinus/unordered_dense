@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- A bulk `visit()`, and the `prefetch(key)` API it replaced
 - Tiny pointers, and the bound insertion order puts on the value index
 - Splitting the probe past the home group: kept, for keys whose compare is a call
 - The insert path's instructions, counted one by one: the clang/gcc gap is the call boundary
@@ -289,6 +290,61 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**A bulk `visit()`, and the `prefetch(key)` API it replaced -- which was measured against the wrong
+baseline** (2026-09-11, issue #232, asked as "would it make sense to have a bulk api"). `prefetch(key)`
+shipped documented at 1.5x and was reverted the same day. Both halves are worth keeping, because the
+mistake is one any lookup-pipelining feature invites.
+
+**The baseline was the bug.** `scripts/ab/prefetch_api.cpp` compared a pipelined loop against a plain
+one in which the key was *acquired inside the loop body* -- a random index into another array -- so
+each iteration's key miss sat in front of its map miss and neither overlapped with anything. Against
+that, pipelining read 1.5x. But **collecting the keys into a batch first and looking them up
+afterwards is worth 1.5x on its own**, with no API at all: 50.9 ns to 33.4 per lookup at four million
+entries, because two short loops each saturate their own memory parallelism where one long body does
+not. The feature was being credited with the batching. In the batched loop -- which is the shape the
+README's own example showed, keys already in a container -- `prefetch(key)` measured **a 3% loss**,
+34.3 against 33.4. Reverted rather than re-documented: with `visit` in it covered a narrow case
+badly, and removing it before 5.0 was free where after would have been breaking.
+
+**What replaced it is boost's shape**: `concurrent_flat_map::visit(first, last, f)` with
+`bulk_visit_size = 16` -- a chunk in three passes rather than a sliding ring. Hash every key in the
+chunk and fetch its home block; match the fingerprints, by which time the blocks have arrived;
+compare the keys and call `f`. Every block in the chunk is in flight at once. Against the same batch
+looked up one key at a time, `map<uint64_t, size_t>`, medians of three:
+
+| entries | work | one at a time | `visit` | |
+|---|---|---|---|---|
+| 4000000 | hit | 33.36 | **29.36** | 1.14x |
+| 4000000 | half | 35.19 | **32.26** | 1.09x |
+| 16000000 | hit | 36.62 | **33.33** | 1.10x |
+| 16000000 | half | 38.06 | **35.65** | 1.07x |
+
+**The reason it was built is not the reason it works.** Boost prefetches the *element* in pass 2, and
+that was the whole argument for a batch here: the value load is the second dependent access, the one
+a single lookup cannot hide because the address is unknown until the block arrives -- which is what
+issue #229 measured and closed. In a batch the address *is* known. Isolated, it is worth **+3.8% on
+all hits and -4.8% at half hits**, so it is not in the shipped version: an absent key has nothing to
+fetch, and a present one is already covered by the out-of-order window once the passes are separated.
+**The gain is the separation, not the fetch.** #229's conclusion stands and this does not reopen it.
+
+Three passes rather than a ring is also a correctness choice. A ring has to be read before the slot
+it frees is refilled -- `ring[i % depth]` is the slot `i + depth` writes -- and getting that backwards
+returns a wrong answer rather than crashing. It was got backwards twice while this was being built,
+once in a test and once in a README example, and only the test caught it.
+
+**A chunk of 16 is not load-bearing**: 8 through 32 measured within 2%. Sixteen is what boost uses.
+
+**Mutation swept: seven survivors, all of them correct-but-slower or unreachable**, which is what a
+pipeline should look like -- it exists to change timing and nothing else. Deleting the block prefetch
+has no observable result at all. `++i` to `--i` leaves every key visited exactly once, because the
+outer loop re-chunks from wherever `first` reached, at sixteen times the hashing. Deleting `hit = true`
+or the `break` lets the fallback run for a key already found, and `probe_past_home` starts *after* the
+home group, so it cannot find a key that is at home -- no double visit. `&& ` to `||` makes the
+fallback always run. `m_group_mask != 1` is unreachable while the smallest array is four groups. The
+two that would have been real were both **caught**: `--first`, and the counter's `!= 0` turned into
+`!= 1`, which is the same hole the probe split had and is covered here by the same steered
+construction.
+
 **Tiny pointers, and the bound insertion order puts on the value index** (2026-09-10/11, issue
 #229). Asked whether a tiny pointer (Bender et al., SODA '23; Flattened-TPHT, VLDB '26) could shrink
 the four of five and a half bytes per slot that are the `uint32_t` value index. **Half of it is
