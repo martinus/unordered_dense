@@ -1453,10 +1453,11 @@ private:
                   "a group is sixteen fingerprints, matched as one vector or two words, and eight counters, picked by "
                   "the low three bits of the fingerprint");
 
-    // How far ahead the four loops that pipeline look: the rehash, the range insert, the bulk
-    // visit and replace()'s dedup. The visit uses it as a chunk size rather than a ring depth. It is a count of memory
-    // accesses that has to fit inside what the core keeps outstanding, which is about two dozen on a Zen 4 -- not a property
-    // of the map, and every size from 8 to 32 measured within 2% of this one. Boost's bulk visit uses the same number.
+    // How far ahead the five loops that pipeline look: the rehash, the range insert, the bulk
+    // visit, replace()'s dedup and merge()'s walk. The visit uses it as a chunk size rather than a ring depth. It is a count
+    // of memory accesses that has to fit inside what the core keeps outstanding, which is about two dozen on a Zen 4 -- not a
+    // property of the map, and every size from 8 to 32 measured within 2% of this one. Boost's bulk visit uses the same
+    // number.
     static constexpr std::size_t pipeline_depth = 16;
 
     // Below this much *index*, a pipeline costs more than it saves: the ring round trip is about 13
@@ -1467,10 +1468,11 @@ private:
     // a 1032 byte value the footprint model opens the gate at ten thousand elements, where the
     // pipeline is a **14% loss**. Both value sizes cross over at the same index size instead.
     //
-    // See replace(), the only caller, for the sweep. The range insert and the bulk visit were
-    // measured against the same question and neither wants a gate; the visit's crossover is set by
-    // the caller's hit rate, which the map does not know until it has already done a chunk's worth
-    // of work. Issue #247.
+    // Two callers, replace() and merge(), each with its own sweep beside it; they were measured
+    // separately and landed on the same number, which is what says it belongs to the cache and not to
+    // either loop. The range insert and the bulk visit were measured against the same question and
+    // neither wants a gate; the visit's crossover is set by the caller's hit rate, which the map does
+    // not know until it has already done a chunk's worth of work. Issues #247 and #242.
     static constexpr std::size_t pipeline_min_index_bytes = std::size_t{256} << 10U;
 
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
@@ -1508,6 +1510,22 @@ public:
 
 private:
     using value_idx_type = typename Bucket::value_idx_type;
+
+    // merge(source) takes the source apart and puts it back together: it compacts the elements that
+    // stay behind and rebuilds the index over them once, neither of which the public API can
+    // express. The standard lets the source differ in its hash and its key_equal, so it is a
+    // different instantiation of this same template and not otherwise a friend of it.
+    // Wider than the need -- every table is a friend of every other, where merge wants only the ones
+    // holding the same value type in the same container -- and C++17 has no way to say less: a friend
+    // template cannot constrain its own argument list.
+    template <class, class, class, class, class, class, bool>
+    friend class table;
+
+    // What merge() accepts: this table with another hash or another key_equal, which is the pair the
+    // standard allows to differ. Everything else has to match, because the elements move out of one
+    // container and into the other.
+    template <class H2, class KE2>
+    using sibling_table = table<Key, T, H2, KE2, AllocatorOrContainer, Bucket, IsSegmented>;
 
     static_assert(std::is_trivially_destructible_v<Bucket>, "assert there's no need to call destructor / std::destroy");
     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
@@ -2012,6 +2030,14 @@ private:
     // in slots, which is what the bucket interface counts in
     [[nodiscard]] static constexpr auto calc_num_buckets(std::uint8_t shifts) -> std::size_t {
         return calc_num_groups(shifts) * slots_per_group;
+    }
+
+    // Whether a bulk loop over an index of this shape is worth pipelining; see
+    // pipeline_min_index_bytes for the measurement. One reader for the threshold, so that the two
+    // gated loops cannot drift apart -- they differ in *which* index they ask about, which is the
+    // shifts they pass, and in nothing else.
+    [[nodiscard]] static constexpr auto wants_pipeline(std::uint8_t shifts) -> bool {
+        return calc_num_groups(shifts) * sizeof(typename bucket_container_type::block) > pipeline_min_index_bytes;
     }
 
     [[nodiscard]] constexpr auto calc_shifts_for_size(std::size_t s) const -> std::uint8_t {
@@ -2591,6 +2617,191 @@ private:
         place_element_at(word, counter, home_idx, std::forward<V>(value));
     }
 
+    // Closes the gaps a merge left behind, on the table it took them out of: compacts everything
+    // from `from` on down onto `keep`, drops the tail that is now moved-from, and rebuilds the index
+    // once over what is left. Called on the *source*, which is why it pairs with
+    // fill_buckets_from_values rather than living beside do_merge.
+    //
+    // That one rebuild is the point of the whole design. The loop a caller could write instead --
+    // try_emplace here, erase(it) there -- repairs the index once per element taken, and each repair
+    // is a second hash of the key leaving plus a third of the element the backfill drags into its
+    // place. Over a source that mostly does not overlap, that is most of the work.
+    void drop_tail_and_reindex(std::size_t keep) {
+        auto const n = m_values.size();
+        if (keep == n) {
+            // nothing was taken, so the index still describes the values exactly
+            return;
+        }
+        // Counted rather than "while size() > keep": the compaction above does not change the size,
+        // so the count is known, and the container is only required to have pop_back -- vector's
+        // resize(n) would need the value type to be default constructible, which nothing else here
+        // asks of it, and segmented_vector has no erase(first, last) to take a range out with.
+        for (auto k = n; k > keep; --k) {
+            m_values.pop_back();
+        }
+        clear_buckets();
+        fill_buckets_from_values();
+    }
+
+    // As above for the path that has gaps to close first. Kept apart from it because the walk's
+    // normal exit has none by construction, and folding the two would inline a compaction loop that
+    // can never run into the merge's hot path.
+    void compact_and_reindex(std::size_t keep, std::size_t from) {
+        auto const n = m_values.size();
+        for (auto i = from; i < n; ++i, ++keep) {
+            if (keep != i) {
+                m_values[keep] = std::move(m_values[i]);
+            }
+        }
+        drop_tail_and_reindex(keep);
+    }
+
+    // The engine behind merge(). One pass over the source's values, taking every element whose key
+    // is not here already and compacting the ones left behind down over the gaps.
+    //
+    // Compaction rather than the backfill erase() does, because the two have opposite best cases and
+    // this one's best case is the common one: a merge of sources that barely overlap takes nearly
+    // every element, so there is nearly nothing left to compact, where a backfill moves one element
+    // for every element it takes.
+    //
+    // The probe and the placement are written out here rather than calling do_insert_hashed, and the
+    // reason is the repair below. A throw out of the probe -- the hash, or the key compare -- leaves
+    // the source's element untouched, and a throw out of the placement leaves a husk the source must
+    // not keep, because a moved-from key can collide with a key that is still there and the source
+    // would then hold two elements that compare equal. Inside do_insert_hashed that boundary is not
+    // visible from outside.
+    template <typename Source>
+    void do_merge(Source& source) {
+        if constexpr (std::is_same_v<Source, table>) {
+            // "if (this == &source) there are no effects", which is worth honouring for its own sake
+            // and not only because the walk below would be reading a container it is emptying
+            if (this == &source) {
+                return;
+            }
+        }
+        if (source.empty()) {
+            // Ahead of allocate_buckets_if_none() and load-bearing there: without it, merging an
+            // empty source into a default constructed map allocates that map an index it never asked
+            // for. do_erase_key owns its own emptiness check for the same reason.
+            return;
+        }
+        allocate_buckets_if_none();
+        auto& src_values = source.m_values;
+        auto const n = src_values.size();
+        auto keep = std::size_t{0};
+        // The first element the source still owns, which is the one thing the repair below needs to
+        // know and the one thing an exception cannot tell it: a throw out of the probe leaves this
+        // element untouched and the source keeps it, a throw out of the placement leaves a husk it
+        // must drop. Advancing it *before* the placement rather than after the iteration is what says
+        // which, and it costs the loop nothing because it is the loop counter.
+        auto i = std::size_t{0};
+
+        // Hashed ahead of where it is placing, the same ring the range insert uses and for the same
+        // reason -- the source's elements are all in hand, so the hash of a later one can be computed
+        // while this one waits for its block. The compaction underneath cannot disturb it: the only
+        // writes go to keep, which never passes i, and the ring reads at i + pipeline_depth.
+        //
+        // Gated, like replace()'s ring and unlike the range insert's, because the loss below the
+        // crossover is not inside the noise here. Medians of five, ring over the same loop with the
+        // ring taken out, at no overlap / half / nine tenths: 1.09 / 1.10 / 1.14 at a source of a
+        // thousand, 1.07 / 1.11 / 1.11 at four thousand, 1.01 / 1.05 / 1.06 at sixteen thousand,
+        // then 0.91 / 0.94 / 0.97 at sixty-four thousand, 0.83 / 0.82 / 0.89 at a quarter million and
+        // 0.80 / 0.70 / 0.73 at two million. So the crossover is within a doubling of the 256 KB
+        // replace() measured, on a loop with a different body -- which is what says that number
+        // belongs to the cache and not to either loop. The gate opens at the low end of that window,
+        // which costs 2-3% in the one octave between; a constant of merge's own would be fitting
+        // noise.
+        //
+        // Measured against the index the destination will end up with rather than the one it has:
+        // every source element is new until the probe says otherwise, so this bounds it from above,
+        // and reading today's index instead gets the case the ring is most for -- a large source into
+        // a small map, where nothing is in cache and everything moves -- exactly wrong.
+        auto const pipelined = wants_pipeline(calc_shifts_for_size(size() + n));
+        auto ring = std::array<std::uint64_t, pipeline_depth>{};
+        // The group array is handed in rather than read here: it has to be read fresh once per
+        // element, because placing one may grow the index and move it, but the prefetch and the probe
+        // that follows it are separated by nothing that can grow it -- so once, not twice.
+        auto const fetch = [&](typename bucket_container_type::block const* groups, std::size_t slot, std::size_t at) -> void {
+            auto const mh = mixed_hash(get_key(src_values[at]));
+            ring[slot] = mh;
+            prefetch_block(groups, std::size_t{group_idx_from_hash(mh)});
+        };
+        if (pipelined) {
+            auto const* const groups = m_buckets.data();
+            for (auto s = std::size_t{0}; s < pipeline_depth && s < n; ++s) {
+                // Outside the repair below on purpose: nothing has been moved yet, so a hash that
+                // throws here leaves the source exactly as it was.
+                fetch(groups, s, s);
+            }
+        }
+
+        // Two loops out of one body rather than one loop with the gate inside it. A runtime branch
+        // is the obvious way to write this and costs the gated-off case nearly the whole difference
+        // the gate was there to save -- 5.09 ns at four thousand elements and half of them
+        // overlapping, against 4.63 for the same loop with the ring taken out. A perfectly predicted
+        // branch is not free when a ring, a lambda and an array hang off it and the loop has to keep
+        // them live. Two instantiations read 1.02 / 1.01 / 0.99 of the ringless loop there, and
+        // 1.05 / 0.96 / 1.00 at a thousand.
+        auto const walk = [&](auto is_pipelined) -> void {
+            while (i < n) {
+                auto& value = src_values[i];
+                auto const* const groups = m_buckets.data();
+                auto mh = std::uint64_t{};
+                if constexpr (decltype(is_pipelined)::value) {
+                    // this element's hash out of the ring before the slot it frees is refilled
+                    auto const slot = i % pipeline_depth;
+                    mh = ring[slot];
+                    if (i + pipeline_depth < n) {
+                        fetch(groups, slot, i + pipeline_depth);
+                    }
+                } else {
+                    mh = mixed_hash(get_key(value));
+                }
+                // taken apart once for both halves, exactly as do_insert_hashed does it
+                auto const word = fingerprint_word(mh);
+                auto const counter = word & 7U;
+                auto const home_idx = group_idx_from_hash(mh);
+                auto const r = probe_at_home(get_key(value), word, counter, groups[home_idx], home_idx);
+                if (r.found) {
+                    // Stays behind. merge() is a writing operation, so a hit here pays for its own
+                    // drift the same way one inside try_emplace does.
+                    move_home(r.slot, mh);
+                    if (keep != i) {
+                        src_values[keep] = std::move(value);
+                    }
+                    ++keep;
+                    ++i;
+                    continue;
+                }
+                ++i; // this one is leaving, however the placement below ends
+                place_element_at(word, counter, home_idx, std::move(value));
+            }
+        };
+
+        auto const walk_either = [&]() -> void {
+            if (pipelined) {
+                walk(std::true_type{});
+            } else {
+                walk(std::false_type{});
+            }
+        };
+        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()) {
+            try {
+                walk_either();
+            } catch (...) {
+                // The source's index stopped describing its values at the first element taken, and
+                // the source is a container the caller still owns and did not hand over. Putting it
+                // back together is what keeps the throw at the basic guarantee instead of leaving a
+                // map whose next lookup reads an index into elements that have gone.
+                source.compact_and_reindex(keep, i);
+                throw;
+            }
+        } else {
+            walk_either();
+        }
+        source.drop_tail_and_reindex(keep);
+    }
+
     template <typename K, typename... Args>
     auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         allocate_buckets_if_none();
@@ -3105,8 +3316,9 @@ public:
         // pipeline_min_bytes. Getting it wrong in the safe direction (a machine with more L2) costs
         // at most that 1.20x on one octave of sizes; omitting the gate costs it on every size below
         // a quarter million.
-        auto const index_bytes = (std::size_t{m_group_mask} + 1) * sizeof(typename bucket_container_type::block);
-        if (m_values.size() > pipeline_depth + 1 && index_bytes > pipeline_min_index_bytes) {
+        // m_shifts describes the array that was just allocated or kept above, so this is the index
+        // the dedup will actually run against.
+        if (m_values.size() > pipeline_depth + 1 && wants_pipeline(m_shifts)) {
             do_replace_pipelined(value_idx);
         }
 
@@ -3411,6 +3623,26 @@ public:
         swap(m_hash, other.m_hash);
         swap(m_equal, other.m_equal);
         swap(m_shifts, other.m_shifts);
+    }
+
+    // Every element of source whose key is not here already moves over; the rest stay behind. The
+    // source may hash and compare differently -- that is the overload std::unordered_map has, and
+    // the keys are re-hashed with this table's hasher on the way in.
+    //
+    // Two differences from the standard's merge are worth knowing, and both follow from the elements
+    // living in a vector rather than in nodes. References and iterators into *either* table are
+    // invalidated, where a node splice preserves the ones into the elements it moves; and the
+    // source's order changes, because every element taken out of the middle of it leaves a gap that
+    // the elements behind it close. erase() already carries both, and this is the same mechanism.
+    template <class H2, class KE2>
+    void merge(sibling_table<H2, KE2>& source) {
+        do_merge(source);
+    }
+
+    template <class H2, class KE2>
+    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved)
+    void merge(sibling_table<H2, KE2>&& source) {
+        merge(source);
     }
 
     // lookup /////////////////////////////////////////////////////////////////
