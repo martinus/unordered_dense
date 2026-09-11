@@ -375,6 +375,19 @@ sweep of thirty. An instrumented build confirms which sweep reaches which loop -
 0 -- because a test that silently stopped covering the path it is named for is exactly what a size
 gate invites.
 
+With the gate and the decomposed ring in, against main, three interleaved repeats, median:
+
+| n | no duplicates | 5% | 50% |
+|---|---|---|---|
+| 8192 | 0.98 | 0.98 | 0.96 |
+| 65536 | 0.81 | 0.94 | 0.91 |
+| 262144 | 0.64 | 0.65 | 1.01 |
+| 2000000 | 0.72 | 0.68 | 1.01 |
+
+The 1.20x below the gate is gone and the wins above it got bigger -- **1.5x at a quarter million**,
+where the ungated version read 0.90. Fifty percent duplicates is a tie at every size, as it was
+before: a duplicate does not advance the cursor, so the pipeline never fills.
+
 The gate costs mutation score, unavoidably: survivors went from 6 to 26, and the twenty new ones are
 all on the footprint arithmetic, the threshold and the two prefetches. A mutant that moves a
 *performance* gate cannot be caught by a correctness test -- either side of it returns the same
