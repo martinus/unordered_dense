@@ -70,7 +70,9 @@ TEST_CASE("visit_agrees_with_find_over_every_range_length") {
     }
 
     auto total = size_t{0};
-    auto const found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += kv.second; });
+    auto const found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) {
+        total += kv.second;
+    });
     REQUIRE(found == 4000U);
     REQUIRE(total == 4000U * 3999U / 2U);
 }
@@ -80,9 +82,13 @@ TEST_CASE("visit_on_an_empty_map") {
     auto map = ankerl::unordered_dense::map<std::string, int>();
     auto keys = std::vector<std::string>{"a", "b", "c"};
     auto calls = 0;
-    REQUIRE(map.visit(keys.begin(), keys.end(), [&](auto const&) { ++calls; }) == 0U);
+    REQUIRE(map.visit(keys.begin(), keys.end(), [&](auto const&) {
+        ++calls;
+    }) == 0U);
     REQUIRE(calls == 0);
-    REQUIRE(map.visit(keys.begin(), keys.begin(), [&](auto const&) { ++calls; }) == 0U);
+    REQUIRE(map.visit(keys.begin(), keys.begin(), [&](auto const&) {
+        ++calls;
+    }) == 0U);
     REQUIRE(calls == 0);
 }
 
@@ -105,7 +111,9 @@ TEST_CASE("visit_finds_keys_that_are_not_in_their_home_group") {
     keys.push_back(steered(0, 201, 0x03U)); // same class, never inserted
 
     auto sum = size_t{0};
-    auto const found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { sum += kv.second; });
+    auto const found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) {
+        sum += kv.second;
+    });
     REQUIRE(found == 17U);
     REQUIRE(sum == 999U + 15U * 16U / 2U);
 }
@@ -117,7 +125,10 @@ TEST_CASE("visit_repeated_keys_are_visited_each_time") {
     auto keys = std::vector<int>(40, 1); // one key, forty times, spanning chunks
     auto calls = 0;
     auto sum = 0;
-    REQUIRE(map.visit(keys.begin(), keys.end(), [&](auto const& kv) { ++calls; sum += kv.second; }) == 40U);
+    REQUIRE(map.visit(keys.begin(), keys.end(), [&](auto const& kv) {
+        ++calls;
+        sum += kv.second;
+    }) == 40U);
     REQUIRE(calls == 40);
     REQUIRE(sum == 400);
 }
@@ -131,7 +142,9 @@ TEST_CASE("visit_can_modify_through_a_mutable_map") {
     for (int i = 0; i < 100; i += 2) {
         keys.push_back(i);
     }
-    REQUIRE(map.visit(keys.begin(), keys.end(), [](auto& kv) { kv.second = -kv.second; }) == 50U);
+    REQUIRE(map.visit(keys.begin(), keys.end(), [](auto& kv) {
+        kv.second = -kv.second;
+    }) == 50U);
     REQUIRE(map[10] == -10);
     REQUIRE(map[11] == 11);
 }
@@ -156,6 +169,8 @@ TEST_CASE("visit_on_a_set") {
     set.insert("beta");
     auto keys = std::vector<std::string>{"alpha", "gamma", "beta"};
     auto seen = std::vector<std::string>();
-    REQUIRE(set.visit(keys.begin(), keys.end(), [&](auto const& k) { seen.push_back(k); }) == 2U);
+    REQUIRE(set.visit(keys.begin(), keys.end(), [&](auto const& k) {
+        seen.push_back(k);
+    }) == 2U);
     REQUIRE(seen == std::vector<std::string>{"alpha", "beta"});
 }
