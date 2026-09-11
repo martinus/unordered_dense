@@ -260,9 +260,10 @@ test(
     verbose: true)
 
 # The LLDB formatter check. The script builds its own -O0 -g fixture and holds the
-# formatter's answers against ground truth that fixture prints itself. No workflow
-# installs a debugger, so it exits 77 -- meson's skip -- everywhere in CI until one
-# does; on a machine with lldb on PATH it runs for real.
+# formatter's answers against ground truth the fixture prints itself. It runs for real
+# on most of CI -- every Linux variant including ARM64, 32 bit, libc++, the sanitizers
+# and valgrind, and macOS arm64 -- and exits 77, meson's skip, where there is no lldb
+# that can debug what the platform builds (MinGW has none; Windows has one that cannot).
 test(
     'lldb_formatters',
     find_program(meson.current_source_dir() / '..' / 'scripts' / 'test_lldb_formatters.py'),
