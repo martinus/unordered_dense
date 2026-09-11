@@ -19,17 +19,15 @@ while getopts "c:k:n:d:r:" opt; do
     esac
 done
 kf=""; [ "$keys" = str ] && kf="-DUDM_PF_STR"
-"$cxx" -O3 -DNDEBUG -std=c++17 -w -I"$root/include" -I"$root/test" ${kf:+"$kf"} \
+# shellcheck disable=SC2086 -- PF_EXTRA_FLAGS is meant to split
+"$cxx" -O3 -DNDEBUG -std=c++17 -w ${PF_EXTRA_FLAGS:-} -I"$root/include" -I"$root/test" ${kf:+"$kf"} \
     "$root/scripts/ab/prefetch_api.cpp" -o "$build/prefetch_api"
 
-measure() {
-    perf stat -x, -e task-clock ${AB_CORE:+taskset -c "$AB_CORE"} \
-        "$build/prefetch_api" "$1" "$2" "$3" "$4" "$5" 2>&1 | awk -F, '$3=="task-clock"{print $1}'
-}
+# The binary times its own loop, so nothing here needs perf -- which is what lets this run on
+# macOS, and macOS is where the answer is most likely to differ.
 run() { # work depth n mode -> ns per lookup
-    local lo=$((reps / 4))
-    awk -v d=$((reps - lo)) -v f="$(measure "$1" "$2" "$3" "$reps" "$4")" -v s="$(measure "$1" "$2" "$3" "$lo" "$4")" \
-        'BEGIN { printf "%8.2f", (f - s) * 1e6 / d }'
+    ${AB_CORE:+taskset -c "$AB_CORE"} "$build/prefetch_api" "$1" "$2" "$3" "$reps" "$4" |
+        awk '{ printf "%8.2f", $1 }'
 }
 
 # `hash` pipelines the key fetch and the hash and touches no map memory; `prefetch` also fetches

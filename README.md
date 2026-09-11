@@ -429,7 +429,7 @@ What it is worth, `map<uint64_t, size_t>`, clang 22 on a 7950X, ns per lookup. T
 
 With `std::string` keys at four million entries it is 158 ns to 115 ns, 1.37x — and there the hash matters too, which is why the hash comes back rather than being thrown away: pipelining it alone is worth 6% and the prefetch adds the other 29%.
 
-Two things to know. **Depth is not free to increase**: eight was the best of 4, 8, 16 and 32 here, and 32 was *slower* than 8 at four million entries, because only so many misses can be outstanding at once. And **it only pays past the cache** — at 200 000 entries it is worth a quarter, at 4 million half, and on a table that fits in L2 it is a wasted instruction.
+Two things to know. **Depth is not free to increase**: eight was the best of 4, 8, 16 and 32 *on the machine above*, and 32 was *slower* than 8 at four million entries, because a core can only keep so many misses outstanding at once — a Zen 4 about two dozen. That ceiling is a property of the core, not of the map, so the best depth on a different one will differ and is worth a minute of measuring; `scripts/ab/prefetch_api.sh` sweeps it. And **it only pays past the cache** — at 200 000 entries it is worth a quarter, at 4 million half, and on a table that fits in L2 it is a wasted instruction.
 
 The returned hash is not `[[nodiscard]]`: dropping it is the ordinary use of the plain form.
 
