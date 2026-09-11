@@ -1463,7 +1463,12 @@ private:
     // instructions per element, and a prefetch of a line already in L2 still occupies a load port.
     // The crossover tracks the last level of cache the loop's footprint -- its values plus its index
     // -- still fits in, so this is a conservative stand-in for L2: the smallest one worth assuming.
-    // See replace(), the only caller so far, for the measurement.
+    // See replace(), the only caller, for the measurement.
+    //
+    // The other two pipelines were measured against the same question and neither wants it: the
+    // range insert never loses at any size, and the bulk visit loses 8% only when every key hits a
+    // map below ~16k, where the same map with half the keys missing wins 11% -- so the axis that
+    // decides there is the caller's hit rate, which the map cannot see. Issue #247.
     static constexpr std::size_t pipeline_min_bytes = std::size_t{1} << 20U;
 
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
@@ -2460,9 +2465,9 @@ private:
             // twice. fill_buckets_from_values has the same ordering for the same reason.
             //
             // The three rings in this file -- here, fill_buckets_from_values and
-            // do_replace_pipelined -- are deliberately not one shared loop. Extracting the ring into
-            // a helper taking
-            // both halves as callables was built and measured on 2026-09-11: it costs the rehash
+            // do_replace_pipelined -- are deliberately not one shared loop. Extracting the ring
+            // into a helper taking both halves as callables was built and measured on 2026-09-11:
+            // it costs the rehash
             // **1.9 instructions per element**, 45.7 to 47.6, and 1.3% of its time on six of six
             // interleaved pairs, because that loop wants its group pointer, mask and shift in locals
             // and this one cannot have them -- growth moves them. Passing the element index through

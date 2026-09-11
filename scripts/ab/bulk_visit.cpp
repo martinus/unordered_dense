@@ -15,6 +15,11 @@
 // and all three must print the same checksum. The loop times itself, so no perf is needed.
 //
 //   argv: <hit|half> <inline|plain|bulk> <n> [reps]
+//
+// Sweep `n` and sweep `hit` against `half`: the pipeline inside visit() costs ~16 instructions per
+// lookup, and whether that is repaid depends on both the map's size and the caller's hit rate. It
+// is 1.08 for all-hits on a map of a thousand and 0.91 for half-hits on the same map. One point
+// measurement here says nothing.
 #include <ankerl/unordered_dense.h>
 
 #include <bench/workloads.h>
