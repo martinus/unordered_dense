@@ -141,11 +141,10 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   compiler upgrade or an unrelated edit to those functions can flip, and one that transfers to
   nothing else. **Instruction counts are immune to code layout, not to inlining.** Before
   *generalising* one, pin the inlining with `noinline` and check a second compiler; both take
-  minutes. Keep the win, do not build a rule on it. #254. The contrast is #260, which removed the
-  slot pack-and-unpack between `finish_erase` and `index_at`: -5.1 instructions per erase under clang
-  and -4.5 under gcc, the same seven instructions gone from both disassemblies, and the rest of the
-  binary byte-identical. Two compilers and a visible mechanism are what tell a property of the change
-  from an inlining accident.
+  minutes. Keep the win, do not build a rule on it. #254. The contrast is #260, where the same kind of
+  count did transfer: taking a slot pack-and-unpack out of `finish_erase` reads -5.1 instructions per
+  erase under clang and -4.5 under gcc, from a mechanism visible in the disassembly and with nothing
+  else in the binary changed.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey

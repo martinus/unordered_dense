@@ -315,14 +315,17 @@ m_buckets.index_at(slot_of_value(mh, values_idx_back)) = value_idx_to_remove;
 and the two halves undo each other. `slot_of_value` has the group base and the lane in registers when
 it finds the entry, packs them into `group_idx * slots_per_group + lane`, and `index_at` -- its only
 caller -- divides that straight back into `slot / slots` and `slot % slots`. Clang folds it on the
-`erase(iterator)` path, where the slot goes to `erase_group_slot`, and did not fold it here.
+`erase(iterator)` path, where the slot goes to `erase_group_slot`, and did not fold it here. **gcc
+folds it nowhere**: `shr $0x4` and `and $0xf` are still there in `erase(iterator)`, `erase(key)` and
+the writing hit's `move_home`, which all pack a slot out of `probe_result` for a consumer that takes
+it apart again. That is the same defect at four more sites and it is #262, not this entry.
 
 `repoint_value(mh, value_idx, new_value_idx)` is the same walk storing in place, with the same
 `delta == m_group_mask` bound and the same `on_error_key_changed()` exhaustion #254 gave the original.
 `index_at` had no other caller and is gone.
 
-**The whole binary is identical apart from `finish_erase`**, which is what makes this measurable
-rather than arguable. In the tail, `shl $0x4 / add / mov / shr $0x4 / imul $0x58 / add / and $0xf`
+**The whole binary is identical apart from `finish_erase`** and the addresses that shift after it,
+which is what makes this measurable rather than arguable. In the tail, `shl $0x4 / add / mov / shr $0x4 / imul $0x58 / add / and $0xf`
 ahead of the store becomes one `mov %esi,0x18(%r11,%r14,4)`; and clang then restructures the lane
 loop, hoisting `add %rax,%r11` and `movzwl` out of it and moving `lanes &= lanes - 1` after the
 compare, so the found case -- the common one -- skips three more instructions.
@@ -346,8 +349,8 @@ direction: one header per binary against `origin/main`, clang **1.0076** (5 of 5
 **1.0019** (4 of 5).
 
 Two details worth keeping. A variant that returns `value_idx_type*` and lets the caller store through
-it compiles to a **byte-identical binary** under clang, so the choice between storing inside the walk
-and handing back a pointer is cosmetic. And #254 predicted this would lose: it found that a loop
+it compiles to a **byte-identical binary** under clang -- under gcc only the benchmark's own stack
+slots move -- so the choice between storing inside the walk and handing back a pointer is cosmetic. And #254 predicted this would lose: it found that a loop
 returning a value pays for a `[[noreturn]]` exit while `place_group`, which returns `void`, measured
 0.1-0.2 instructions per insert *worse* -- and `repoint_value` returns `void`. That prediction was
 about the wrong thing. What is removed here is not an exit, it is a pack and an unpack, and the
