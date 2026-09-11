@@ -1706,13 +1706,15 @@ private:
     // from a per-group helper: returning a probe_result from an inner function costs gcc 26% of an
     // integer hit even fully inlined, and this path must stay exactly what it was for a key whose
     // compare is cheap.
-    template <typename K>
+    template <bool Prefetch = true, typename K>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
     probe_from(K const& key, std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type delta) const
         -> probe_result {
         auto const* groups = m_buckets.data();
         while (true) {
-            prefetch_index(groups, group_idx);
+            if constexpr (Prefetch) {
+                prefetch_index(groups, group_idx);
+            }
             auto const& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
@@ -1775,14 +1777,23 @@ private:
     template <typename K>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
         auto const word = fingerprint_word(mh);
-        auto const counter = word & 7U;
-        auto const home_idx = group_idx_from_hash(mh);
+        return probe_hashed(key, word, word & 7U, group_idx_from_hash(mh));
+    }
+
+    // The same probe for a caller that has already taken the hash apart. A pipelined insert has all
+    // three in hand -- it derived the group to prefetch it -- and re-deriving them per element is a
+    // table load, an and and a shift on the hot path of a loop that is doing nothing else.
+    template <bool Prefetch = true, typename K>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+    probe_hashed(K const& key, std::uint32_t word, unsigned counter, value_idx_type home_idx) const -> probe_result {
         if constexpr (!detail::key_compare_is_call_v<Key>) {
-            return probe_from(key, word, counter, home_idx, 0);
+            return probe_from<Prefetch>(key, word, counter, home_idx, 0);
         } else {
             // The home group inline and the rest behind a call, which is where the frame goes.
             auto const* groups = m_buckets.data();
-            prefetch_index(groups, home_idx);
+            if constexpr (Prefetch) {
+                prefetch_index(groups, home_idx);
+            }
             auto const& home = groups[home_idx];
             auto lanes = match_fingerprint(home, word);
             while (lanes != 0) {
@@ -1807,8 +1818,15 @@ private:
     // counts it.
     ANKERL_UNORDERED_DENSE_FORCEINLINE void place_group(std::uint64_t mh, value_idx_type value_idx) {
         auto const word = fingerprint_word(mh);
-        auto const counter = word & 7U;
-        auto group_idx = group_idx_from_hash(mh);
+        place_group_hashed(word, word & 7U, group_idx_from_hash(mh), value_idx);
+    }
+
+    // The placement for a caller that has already taken the hash apart, and has just probed with
+    // exactly these three -- so this is the second of the two walks an insert does, not a third
+    // derivation of where to start it.
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void
+    place_group_hashed(std::uint32_t word, unsigned counter, value_idx_type home_idx, value_idx_type value_idx) {
+        auto group_idx = home_idx;
         auto* groups = m_buckets.data();
         value_idx_type delta = 0;
         while (true) {
@@ -2356,6 +2374,16 @@ private:
     // places (clang 73.2 instructions against 48.4) -- it is simply smaller than 17% of a build.
     template <typename... Args>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
+        auto const word = fingerprint_word(mh);
+        return place_element(word, word & 7U, group_idx_from_hash(mh), std::forward<Args>(args)...);
+    }
+
+    // As above for a caller holding the hash in pieces. The home group is only used on the branch
+    // that does not grow; growth rebuilds the whole index and places this element with the rest, so
+    // a stale group index cannot escape it.
+    template <typename... Args>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+    place_element(std::uint32_t word, unsigned counter, value_idx_type home_idx, Args&&... args) -> std::pair<iterator, bool> {
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
         m_values.emplace_back(std::forward<Args>(args)...);
 
@@ -2365,7 +2393,7 @@ private:
                 increase_size(); // places every value, the new one included
             }
         else {
-            place_group(mh, value_idx);
+            place_group_hashed(word, counter, home_idx, value_idx);
         }
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
@@ -2424,12 +2452,21 @@ private:
     // an iterator to each element, and a returned pair nobody reads is surface no test can defend.
     template <typename V>
     void do_insert_hashed(std::uint64_t mh, V&& value) {
-        auto r = probe(get_key(value), mh);
+        // Taken apart once and handed to both halves. A probe that misses is followed by a placement
+        // that starts from the same group with the same fingerprint, and deriving those twice is
+        // work this loop is otherwise not doing.
+        //
+        // The probe is told not to prefetch: the caller asked for this whole block sixteen elements
+        // ago, so the probe's own request is for a line already in flight or resident.
+        auto const word = fingerprint_word(mh);
+        auto const counter = word & 7U;
+        auto const home_idx = group_idx_from_hash(mh);
+        auto r = probe_hashed<false>(get_key(value), word, counter, home_idx);
         if (r.found) {
             move_home(r.slot, mh);
             return;
         }
-        do_place_element(mh, std::forward<V>(value));
+        place_element(word, counter, home_idx, std::forward<V>(value));
     }
 
     template <typename K, typename... Args>
@@ -2998,7 +3035,7 @@ public:
                 increase_size();
             }
         else {
-            place_group(mh, value_idx);
+            place_group(mh, static_cast<value_idx_type>(value_idx));
         }
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
