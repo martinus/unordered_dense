@@ -772,18 +772,23 @@ using detect_is_transparent = typename T::is_transparent;
 template <typename T>
 using detect_iterator = typename T::iterator;
 
+template <typename T>
+using detect_iterator_category = typename std::iterator_traits<T>::iterator_category;
+
 // Whether a range can be walked twice, which is what reading ahead of where you are writing needs.
-// Written as a trait rather than asked inline, because a type with no iterator_traits at all -- a
-// test's hand-rolled iterator, say -- has to answer "no" rather than fail to compile.
-template <typename T, typename = void>
-struct is_forward_iterator : std::false_type {};
+// A type with no iterator_traits at all -- a test's hand-rolled iterator, say -- has to answer no
+// rather than fail to compile, which is what is_detected_v is for.
+template <typename T>
+[[nodiscard]] constexpr auto is_forward_iterator() -> bool {
+    if constexpr (is_detected_v<detect_iterator_category, T>) {
+        return std::is_convertible_v<detect_iterator_category<T>, std::forward_iterator_tag>;
+    } else {
+        return false;
+    }
+}
 
 template <typename T>
-struct is_forward_iterator<T, std::void_t<typename std::iterator_traits<T>::iterator_category>>
-    : std::is_convertible<typename std::iterator_traits<T>::iterator_category, std::forward_iterator_tag> {};
-
-template <typename T>
-constexpr bool is_forward_iterator_v = is_forward_iterator<T>::value;
+constexpr bool is_forward_iterator_v = is_forward_iterator<T>();
 
 template <typename T>
 using detect_reserve = decltype(std::declval<T&>().reserve(std::size_t{}));
@@ -1448,6 +1453,12 @@ private:
                   "a group is sixteen fingerprints, matched as one vector or two words, and eight counters, picked by "
                   "the low three bits of the fingerprint");
 
+    // How far ahead the three loops that pipeline look: the rehash, the range insert and the bulk
+    // visit. It is a count of memory accesses that has to fit inside what the core keeps
+    // outstanding, which is about two dozen on a Zen 4 -- not a property of the map, and every size
+    // from 8 to 32 measured within 2% of this one. Boost's bulk visit uses the same number.
+    static constexpr std::size_t pipeline_depth = 16;
+
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
     static constexpr float default_max_load_factor = 0.8F;
 
@@ -1669,11 +1680,19 @@ private:
     // skips the first line because the probe is about to read it anyway; a rehash is about to
     // write a group it has never read, so it wants that line too.
     template <typename Block>
-    static void prefetch_block(Block const* blocks, std::size_t group_idx) {
+    static void prefetch_block(Block const* block) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
-        auto const* p = reinterpret_cast<char const*>(blocks + group_idx);
+        auto const* p = reinterpret_cast<char const*>(block);
         ANKERL_UNORDERED_DENSE_PREFETCH(p);
         ANKERL_UNORDERED_DENSE_PREFETCH(p + sizeof(Block) - 1);
+    }
+
+    // The same for a caller holding a group number rather than a pointer. A block is 88 bytes, so
+    // the difference is a multiply, and a caller that already formed the address should not pay it
+    // twice.
+    template <typename Block>
+    static void prefetch_block(Block const* blocks, std::size_t group_idx) {
+        prefetch_block(blocks + group_idx);
     }
 
     // Forced inline because gcc does not do it on its own in a large translation unit, and the
@@ -2104,7 +2123,7 @@ private:
     // while the table is empty (do_find and do_find_hashed's callers, do_erase_key), or needs an
     // iterator into m_values and so
     // cannot be reached in this state (erase, extract, replace_key), or calls this first -- which
-    // is the three insert entry points, the only ones that reach the buckets without a prior
+    // is the four insert entry points, the only ones that reach the buckets without a prior
     // emptiness check.
     void allocate_buckets_if_none() {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_buckets.empty()))
@@ -2162,7 +2181,7 @@ private:
         // The index is counted in value_idx_type and never in the container's size, for the reason
         // spelled out in replace(): max_size() is exactly what value_idx_type can hold, so a
         // container of precisely that many has a size that is not representable in it.
-        constexpr auto ahead = std::size_t{16};
+        constexpr auto ahead = pipeline_depth;
         auto* const groups = m_buckets.data();
         auto const mask = m_group_mask;
         auto const shifts = m_shifts;
@@ -2345,8 +2364,55 @@ private:
         return {begin() + static_cast<difference_type>(value_idx), true};
     }
 
+    // The pipelined half of insert(first, last); see the comment there for what it buys.
+    //
+    // Growth during the loop is safe and not special-cased: it moves the bucket array, so prefetches
+    // already in flight are aimed at the old one and simply do nothing, and the hashes stay valid
+    // because a hash does not depend on the table. That is also why the array and the shift are read
+    // fresh for every element rather than hoisted the way the rehash hoists them -- the rehash never
+    // grows, and this may.
+    template <typename FwdIt>
+    void do_insert_range(FwdIt first, FwdIt last) {
+        if (first == last) {
+            return;
+        }
+        allocate_buckets_if_none();
+        auto ring = std::array<std::uint64_t, pipeline_depth>{};
+        auto lookahead = first;
+        auto hash_and_prefetch = [this](auto const& value) {
+            auto const mh = mixed_hash(get_key(value));
+            prefetch_block(m_buckets.data(), std::size_t{group_idx_from_hash(mh)});
+            return mh;
+        };
+        for (auto i = std::size_t{}; i < pipeline_depth && lookahead != last; ++i) {
+            ring[i] = hash_and_prefetch(*lookahead);
+            ++lookahead;
+        }
+        for (auto i = std::size_t{}; first != last; ++first, ++i) {
+            // This element's hash out of the ring before the slot it frees is refilled: the slot
+            // holding element i is the one element i + pipeline_depth goes into.
+            auto const slot = i % pipeline_depth;
+            auto const mh = ring[slot];
+            if (lookahead != last) {
+                ring[slot] = hash_and_prefetch(*lookahead);
+                ++lookahead;
+            }
+            do_insert_hashed(mh, *first);
+        }
+    }
+
     // An insert whose key has already been hashed, which is what lets a range insert hash ahead of
-    // where it is placing. Everything else about it is do_try_emplace's path.
+    // where it is placing.
+    //
+    // It is emplace()'s job rather than do_try_emplace's: it takes a whole value, not a key and
+    // pieces to build one from. Unlike emplace() it probes before constructing anything, which it
+    // can because a value_type already carries its key -- emplace() has to build the element first
+    // to find out what the key is, and pop it back off again when the key turns out to be present.
+    // Routing the single-element insert(value) through here too would save it that, and is left for
+    // its own change because the insert path is measured and this one is not about it.
+    //
+    // The caller allocates the buckets; every other insert helper does that itself, and this one
+    // cannot because the range insert has to prefetch against an array that already exists.
     //
     // Returns nothing on purpose: the only caller is the range insert, which has nothing to do with
     // an iterator to each element, and a returned pair nobody reads is surface no test can defend.
@@ -2384,9 +2450,7 @@ private:
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty())) {
             return 0;
         }
-        // Sixteen, which is what boost's bulk visit uses. It is a count that has to fit inside the
-        // core's outstanding misses, and every size from 8 to 32 measured within 2% of it here.
-        constexpr auto bulk = std::size_t{16};
+        constexpr auto bulk = pipeline_depth;
         auto const* groups = m_buckets.data();
         // The block pointer rather than the group number: a block is 88 bytes, so forming its
         // address is a multiply, and passes two and three would each redo it.
@@ -2404,7 +2468,7 @@ private:
                 word[n] = fingerprint_word(mh);
                 home[n] = group_idx_from_hash(mh);
                 block[n] = groups + std::size_t{home[n]};
-                prefetch_block(groups, std::size_t{home[n]});
+                prefetch_block(block[n]);
             }
             for (auto i = std::size_t{}; i < n; ++i) {
                 lanes[i] = match_fingerprint(*block[i], word[i]);
@@ -2766,56 +2830,24 @@ public:
         return insert(std::forward<P>(value)).first;
     }
 
-    template <class InputIt>
-    // Inserting a range hashes sixteen elements ahead of the one it is placing, and asks for the
-    // block each of those will come home to.
+    // Inserting a range hashes ahead of the element it is placing, and asks for the block each of
+    // those will come home to.
     //
     // A single insert cannot do this: the hash is the first thing it computes and the block is the
     // next thing it needs, so there is nothing to put between them. Over a range there is -- the
     // hash of a later element, which depends on nothing the table is doing. It is the same trick the
-    // growth rehash uses, where it is worth 1.26x on the loop below cache, and the machinery for it
-    // was already here.
+    // growth rehash uses, where it is worth 1.26x on that loop.
     //
     // Only for an iterator that can be walked twice. An input iterator is single-pass, so reading
     // ahead would mean buffering the elements, and those copies would cost more than the prefetch
     // saves; such a range takes the plain loop.
-    //
-    // Growth during the loop is safe and not special-cased: it moves the array, so prefetches
-    // already in flight are aimed at the old one and simply do nothing, and the hashes stay valid
-    // because a hash does not depend on the table.
+    template <class InputIt>
     void insert(InputIt first, InputIt last) {
         if constexpr (detail::is_forward_iterator_v<InputIt>) {
-            if (first == last) {
-                return;
-            }
-            allocate_buckets_if_none();
-            constexpr auto ahead = std::size_t{16};
-            auto ring = std::array<std::uint64_t, ahead>{};
-            auto lookahead = first;
-            auto fetch = [&](std::size_t slot) -> void {
-                auto const mh = mixed_hash(get_key(*lookahead));
-                ++lookahead;
-                ring[slot] = mh;
-                // Read fresh rather than hoisted: a growth reallocates the array out from under it.
-                prefetch_block(m_buckets.data(), static_cast<std::size_t>(mh >> m_shifts));
-            };
-            for (auto i = std::size_t{}; i < ahead && lookahead != last; ++i) {
-                fetch(i);
-            }
-            for (auto i = std::size_t{}; first != last; ++first, ++i) {
-                // This element's hash out of the ring before the slot it frees is refilled: the slot
-                // holding element i is the one element i + ahead goes into.
-                auto const slot = i % ahead;
-                auto const mh = ring[slot];
-                if (lookahead != last) {
-                    fetch(slot);
-                }
-                do_insert_hashed(mh, *first);
-            }
+            do_insert_range(first, last);
         } else {
-            while (first != last) {
+            for (; first != last; ++first) {
                 insert(*first);
-                ++first;
             }
         }
     }
