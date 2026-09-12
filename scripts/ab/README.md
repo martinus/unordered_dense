@@ -114,6 +114,24 @@ workloads do not move. That is also why the point count is a compile-time consta
 the binary rather than re-running it, which costs 17 seconds of clang at fifty points against four
 at five.
 
+## One change to the header, across the size axis
+
+    scripts/ab/back_pointer.sh [-c COMPILER] [-r ROUNDS] [sizes...]
+
+The shipped header against itself with `back_pointer.patch` applied, per workload and per size, one
+variant per binary. It exists for issue #266 -- a slot number stored per value, so that the backfill
+an erase leaves can repoint the moved element directly instead of hashing its key a second time --
+and it is the shape to copy for any change too large to live in a harness file: the experiment is a
+patch in this directory, the shipped header keeps one configuration, and the script builds the
+second variant by applying the patch to a copy and renaming it into its own namespace.
+
+What it reports is ns per operation for `build`, `churn`, `erasekey`, `eraseiter` and `find`, plus
+live bytes per entry counted through a replaced global `operator new`. **`find` is the control**: no
+variant of this change can reach it, so what it reads is the floor under everything else in the same
+column (1.003-1.016 for string keys, 0.952-0.990 for integer ones, which is the two-binary layout
+band). The answer, and why the idea lost, is in `notes/index-design.md` under "A slot back-pointer,
+re-tested across the cache boundary".
+
 ## Every other map, on the same workloads
 
     scripts/ab/maps.sh [-c COMPILER] [-s] [-r REV] <check|speed|memory|names> [u64|str|big] [base]
