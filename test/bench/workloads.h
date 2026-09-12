@@ -183,10 +183,14 @@ struct insert_erase_result {
 // Random insert & erase, ~10k entries live.
 //
 // Range is the size knob: a template parameter, not a function argument, so that the default
-// instantiation is the same code it has always been. That matters -- the scored benchmark's
-// absolute numbers are only comparable across time if its workloads do not change, and turning a
-// literal loop bound into a runtime value is a change even when the value is the same. The A/B
-// harness instantiates other sizes to average a ratio over a whole doubling; see scripts/ab.
+// instantiation is the same code it has always been. That matters for the scored benchmark, whose
+// absolute numbers are only comparable across time if its workloads do not change -- editing a
+// literal the score compiles is editing the score. It is *not* measurable in what the code costs:
+// putting every size behind an `asm volatile("" : "+r"(v))`, which is what a function argument
+// would do to the compiler's knowledge of it, moves the five workloads that have one by 0.959x to
+// 1.014x, against 0.998x and 0.986x for two workloads whose code the change cannot reach. See
+// "The sizes are template arguments" in notes/index-design.md. The A/B harness instantiates other
+// sizes to average a ratio over a whole doubling; see scripts/ab.
 template <typename Map, size_t Range = 20000>
 auto insert_erase() -> insert_erase_result {
     tame_allocator();
