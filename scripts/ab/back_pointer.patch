@@ -12,6 +12,10 @@
 # swap. Guarded by ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER, which defaults to 0, so applying the
 # patch alone changes nothing; scripts/ab/back_pointer.sh defines it for its own copy of the header.
 #
+# It applies to include/ankerl/unordered_dense.h as of commit 7c5779f2e331. When it stops applying,
+# `git show 7c5779f2e331:include/ankerl/unordered_dense.h` is the header it was measured against,
+# so the numbers stay re-takeable rather than merely dated.
+#
 #   git apply scripts/ab/back_pointer.patch      # to run the unit tests against it:
 #   CXXFLAGS=-DANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER=1 meson setup builddir/bp && ninja -C builddir/bp
 #

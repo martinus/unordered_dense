@@ -325,30 +325,39 @@ looking, from the issue: a win only in the large-string regime, paid for by memo
 `build64`, is a knob and not a default; #248's principle rules out guessing at the caller's data.
 
 **The win is exactly where it was predicted, and it is the only one.** One packed slot per value in
-a vector parallel to `m_values`; ns per operation, one variant per binary, three rounds, medians,
-`std::string` keys, and `find` as the control because the change cannot reach it:
+a vector parallel to `m_values`; ns per operation, one variant per binary, rounds alternating the two
+variants, three of them, medians, and `find` as the control because the change cannot reach it.
+`std::string` keys:
 
 | n | erase by key | churn (erase+insert) | erase by iterator | build | find (control) |
 |---|---|---|---|---|---|
-| 50000 | **0.915** | 0.957 | 0.936 | 1.067 | 1.016 |
-| 200000 | **0.921** | 1.022 | 1.008 | 1.058 | 1.016 |
-| 800000 | **0.877** | 1.011 | 0.978 | 1.047 | 1.010 |
-| 2000000 | **0.894** | 1.008 | 0.975 | 1.066 | 1.003 |
-| 4000000 | **0.887** | 0.999 | 0.970 | 1.054 | 1.003 |
+| 50000 | **0.915** | 0.949 | 0.938 | 1.031 | 1.001 |
+| 200000 | **0.908** | 0.936 | 1.001 | 1.034 | 1.034 |
+| 800000 | **0.893** | 1.033 | 0.971 | 1.060 | 1.006 |
+| 2000000 | **0.900** | 1.006 | 0.975 | 1.049 | 1.000 |
+| 4000000 | **0.901** | 0.993 | 0.956 | 1.011 | 0.999 |
 
-Erasing a string key by key is 8-12% cheaper at every size, and the *absolute* saving grows with the
-table exactly as the 50 ns figure implied: 5.2 ns at fifty thousand entries and **46.5 ns at four
+Erasing a string key by key is 9-11% cheaper at every size, and the *absolute* saving grows with the
+table exactly as the 50 ns figure implied: 5.4 ns at fifty thousand entries and **40.8 ns at four
 million**, where nothing the second hash touches is in cache. That is the largest single cost the
 notes had named in the churn workloads, and the back-pointer does remove it.
 
+**A 64 byte mapped value is the shape where the memory objection is weakest, and it loses worse.**
+Four bytes per entry is 5% of a `map<uint64_t, big_value>` and 19% of a `map<uint64_t, size_t>`, so
+if the tax were only the memory this is where the trade would come good. It does not: erase by key
+wins the same way (0.994, 0.975, 0.930, 0.909, **0.898** over the five sizes) and **churn loses at
+every one of them** -- 1.058, 1.122, 1.069, 1.066, 1.070 -- against a control at 1.010-1.060. The
+bigger the value, the more the extra store per insert competes for the same cache the value wants.
+
 **It does not survive the insert.** Every element erased had to be inserted, and the back-pointer
-charges every insert a store and the value vector a parallel growth: `build` is 4.7-6.7% slower for
-strings at every size, and the instruction counts -- which no code layout can move -- put the cost
-at **+12.8% per operation on `build64`**, +10.4% on `buildbig` and +2.6% on `buildstr`, against
--3.8% on `churn64`, -4.5% on `churnstr` and -4.9% on `iestr`. So the mechanism is confirmed from
-both sides, and a workload that holds a table at a fixed size by erasing one and inserting one --
-`churn`, the shape a real cache has -- comes out **0.957 to 1.022, a wash at every size from fifty
-thousand to four million**. The erase win and the insert tax are the same size.
+charges every insert a store and the value vector a parallel growth: `build` is 1.1-6.0% slower for
+strings and 6.9-23.3% for integer keys, and the instruction counts -- which no code layout can move
+-- put the cost at **+12.8% per operation on `build64`**, +10.4% on `buildbig` and +2.6% on
+`buildstr`, against -3.8% on `churn64`, -4.5% on `churnstr` and -4.9% on `iestr`. So the mechanism
+is confirmed from both sides, and a workload that holds a table at a fixed size by erasing one and
+inserting one -- `churn`, the shape a real cache has -- comes out **0.936 to 1.033 for strings**, a
+wash inside a control band of 1.000-1.034, and a loss for both other value shapes. The erase win and
+the insert tax are the same size.
 
 **`erase(iterator)` gains nothing, which is the half the issue expected most from.** 0.970 to 1.008
 for strings against a control at 1.003-1.016. The reason is structural and worth recording: the
@@ -366,36 +375,60 @@ insert-and-erase 1.020. Per workload, paired: `build64` 0.930, `buildstr` 0.977,
 recorded (`churnstr` 1.045, `iestr` 1.024, `build64` 0.953), at the same sizes, from a different
 harness.
 
-**Memory, quoted next to the speed as the issue required.** Live bytes per entry, counted through a
-replaced global `operator new`: an integer key and an 8 byte value goes **56.4 to 66.9, +18.6%**;
-a string key 167.5 to 178.0, +6.3%, because the key bodies on the heap dilute it. The 2025 note's
-"19% more memory for an 8 byte value" reproduces exactly.
+**Memory, quoted next to the speed as the issue required.** Live bytes per entry -- allocations
+minus frees, counted through a replaced global `operator new`, because the experiment's vector is on
+the default allocator and an allocator-side counter cannot see it:
+
+| | base | back-pointer | |
+|---|---|---|---|
+| `map<uint64_t, size_t>` | 28.2 | 33.4 | **+18.6%** |
+| `map<std::string, size_t>` | 107.9 | 113.1 | +4.9% |
+| `map<uint64_t, big_value>` | 101.6 | 106.8 | +5.2% |
+
+The 2025 note's "19% more memory for an 8 byte value" reproduces exactly; the other two are diluted
+by what the key or the value already costs.
 
 **So it is rejected, and this time the size axis is covered.** Not a default: it loses the score on
 both compilers and costs a fifth of the memory of an integer map. Not a knob either, and the reason
 is sharper than "it loses on balance": the regime where it wins is *erasing without inserting*, and
-there is no such workload -- a caller who drains a table paid the build tax to fill it, and a caller
-who holds one at a fixed size pays the insert tax on every erase they save. The issue's own terms
+no workload in the score's set separates the two -- a caller who drains a table paid the build tax
+to fill it, and one who holds a table at a fixed size pays the insert tax on every erase they save.
+A caller might exist for whom the fill is off the measured path and the erases are on it; #248's
+rule is what answers them, because the map cannot see which caller it has and this file does not
+ship knobs that guess. The issue's own terms
 said that if the re-test came back negative the nibble variant could not rescue it. It cannot: the
 nibbles pay for `erase(iterator)`, which is the half measured here at nothing.
 
 **Two things found on the way.**
 
+*The first version of the harness diluted the very ratio the verdict rests on.* Its `churn` drew
+both the key to erase and the key to insert by indexing a prepared array of 3n keys -- two random
+reads into 384 MB at four million string entries, inside the timed loop, doing work neither variant
+does and compressing every ratio toward 1.00. "A wash on churn" is exactly the conclusion that
+dilution manufactures, so it was rebuilt in `workloads::churn`'s shape -- a live set of key *values*
+with the key made from one -- and re-measured. The wash held (0.957-1.022 before, 0.936-1.033 after,
+against a control at 1.000-1.034), which is the only reason the conclusion stands rather than the
+harness's.
+
 *The harness measured its own inlining until it was split.* With both variants in one translation
-unit the integer erase-by-iterator cell reads 1.77; with one variant per binary it reads 1.27, and
-the `find` control moves from 1.01 to 0.95. Two headers in one unit share an inlining budget --
+unit the integer erase-by-iterator cell reads 1.77 at 200000 entries; with one variant per binary
+the same cell reads 1.27, and the `find` control -- code the change cannot reach -- moves from 1.02
+to 0.95, which is the two-binary layout band showing up where the one-binary run hid it. Two headers in one unit share an inlining budget --
 `scripts/ab/window.cpp` says so at the top and `CLAUDE.md` makes it a rule -- and this change alters
 `finish_erase`'s size, so it is exactly the case the rule is about. The numbers above are all one
 variant per binary. The two harnesses agree on everything large (`erasekey` at 2M: 0.896 and 0.894)
 and disagree on everything small, which is the useful summary of what each is good for.
 
-*The back-pointer makes a documented diagnosis impossible.* `mutated_key_found_by_the_backfill_terminates`
-requires that a key changed through an iterator be caught when the backfill walks to the moved
-element's slot. There is no walk any more, so the backfill repoints the mutated element correctly
-and nothing throws -- four test cases fail, and they are the only ones that do out of 835, under
-clang, gcc and ASan+UBSan. It is a better behaviour reached by removing the need for the check, and
-it is recorded because a future re-test will see the same four failures and should not read them as
-a bug.
+*The back-pointer trades a loud failure for a silent one, which is a third reason against it.*
+`mutated_key_found_by_the_backfill_terminates` requires that a key changed through an iterator be
+caught when the backfill walks to the moved element's slot; there is no walk any more, so nothing
+throws and four test cases fail -- the only four of 835, under clang, gcc and ASan+UBSan. That is
+not the check being made unnecessary. The mutated element still sits in a slot whose fingerprint and
+home group belong to its old key, so the table is exactly as corrupt as before and now says nothing
+about it: `find(new_key)` will not reach it and `find(old_key)` will not match it. The walk was
+never the problem, it was where the corruption surfaced. A shipped back-pointer would owe a
+replacement check -- verify the fingerprint at the back-pointed slot before writing through it --
+and that check would eat part of the win being measured here.
 
 The experiment is `scripts/ab/back_pointer.patch` -- ten maintenance sites, listed at the top of it
 -- with `scripts/ab/back_pointer.cpp` and `.sh` to re-take any of these numbers.
