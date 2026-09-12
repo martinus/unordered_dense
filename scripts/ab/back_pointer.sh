@@ -34,7 +34,7 @@ mkdir -p "$build"
 cp "$root/include/ankerl/unordered_dense.h" "$build/bp_raw.h"
 patch -s -p3 "$build/bp_raw.h" < "$root/scripts/ab/back_pointer.patch" ||
     { echo "back_pointer.patch no longer applies to the header -- the measurement it belongs to is" >&2
-      echo "dated; the commit it was taken against is named at the top of the patch" >&2
+      echo "dated; the header it was taken against is named at the top of the patch" >&2
       exit 1; }
 sed 's/ankerl::unordered_dense/udmbp::unordered_dense/g; s/ANKERL_UNORDERED_DENSE/UDMBP_UNORDERED_DENSE/g; s/namespace ankerl/namespace udmbp/g; s|#        include "stl.h"|#        include <ankerl/stl.h>|' \
     "$build/bp_raw.h" > "$build/bp.h"
