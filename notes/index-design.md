@@ -34,7 +34,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
-- `probe_result`'s shape swept three ways, and the one that ships is the best of them
+- `probe_result`'s shape swept two ways, a third argued down from the return sequence, and the one that ships is the best of them
 - A slot back-pointer, re-tested across the cache boundary: the win is real, and it is cancelled by the inserts that put the elements there
 - Fifty points draw the load-factor sawtooth that five average out, and five points are worth 26% of a cross-family ratio
 - The #260/#262 sweep run over find and churn, and it comes back empty
@@ -313,9 +313,9 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
-**`probe_result`'s shape swept three ways, and the one that ships is the best of them** (2026-09-12,
+**`probe_result`'s shape swept two ways, a third argued down from the return sequence, and the one that ships is the best of them** (2026-09-12,
 issue #267, Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh` and `scripts/ab/perwl.sh`, one
-header per binary).
+header per binary, five alternating rounds for the score and instruction counts that need none).
 
 #262 repacked `probe_result` and the `std::string` 50%-find row moved 0.9749 in instructions under
 gcc; this file also records the opposite, a `probe_result` returned from an inner function costing
@@ -347,8 +347,8 @@ return register it saves -- and the insert paths, which also take `value_idx` ou
 1.4-1.5% on an integer build for the same reason. The sentinel is a smaller version of the same
 answer, 1.1% under clang.
 
-**Why there was nothing to win, from the binary rather than from reasoning.** The return sequence of
-`probe_past_home` for a string key, in the shipped baseline:
+**Why there was nothing to win, read off the baseline.** The return sequence of `probe_past_home`
+for a string key:
 
     shl $0x20,%r12 ; or %rsi,%r12      group_idx and value_idx into one register
     or  $0x100,%r13d                   lane and found into the other
@@ -356,18 +356,21 @@ answer, 1.1% under clang.
 
 Clang already packs the twelve bytes into the two registers the ABI allows, with two ALU ops and no
 memory at all. So there is no hidden pointer to remove, no spill to save, and the only thing a
-narrower struct can do is make the caller re-derive what it stopped carrying. That is also the
-answer to the third variant the issue lists and the reason it was not built: an out-parameter
-replaces two register moves with a store and a load, which is the same trade as the narrowing in a
-more expensive currency.
+narrower struct can do is make the caller re-derive what it stopped carrying.
+
+**The third variant the issue lists, an out-parameter, was not built, and what follows is an argument
+and not a measurement.** Against that return sequence it replaces two register moves with a store
+and a load, which is the narrowing's trade in a more expensive currency. It is the one cell of the
+sweep that is reasoning, and if the shape is ever revisited it is the one to measure.
 
 **The two probes do want different things, and it is not a shape.** Every effect in the table landed
-on the string find; the integer find reads **1.0000, 1.0001, 0.9998, 1.0001** across all four
-variant-by-compiler cells. A key whose compare needs no call never goes through `probe_past_home` at
-all -- `probe_from` is force-inlined into the caller and no return value is ever formed -- so the
-struct's shape is free there by construction. The delicacy the file records is the *call boundary*,
-not the struct: it is worth something only where a boundary exists, and what it is worth there is
-negative for both ways of making the struct smaller.
+where a return value is formed. A key whose compare needs no call never goes through
+`probe_past_home` at all -- `probe_from` is force-inlined into the caller -- so the struct's shape is
+free on the integer *find* by construction, which is what that row of the table says. Its insert
+paths are a different matter and do move, because they take `value_idx` out of a probe and the
+narrowing makes them re-read it. The delicacy this file records is the *call boundary*, not the
+fields: it is worth something only where a boundary exists, and what it is worth there is negative
+for both ways of making the struct smaller.
 
 **What this says and does not say.** It says the shipped `probe_result` is a local optimum on the
 two axes anyone has proposed, that the 26% and the 0.9749 in this file were both about crossing the

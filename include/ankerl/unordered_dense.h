@@ -1614,13 +1614,10 @@ private:
     // erase_group_slot and move_home divide it apart again -- which gcc never folded (#262). The
     // lane is a std::uint8_t so that this stays the same twelve bytes it was.
     //
-    // Swept for #267 and this is the best shape of the three tried. Dropping `value_idx` and having
-    // the caller re-read `m_index[lane]` -- twelve bytes to eight, two return registers to one --
-    // costs 4.1% of the string 50%-find's instructions under clang, and folding `found` into `lane`
-    // as a sentinel costs 1.1%; neither buys anything anywhere, and the integer find does not move
-    // at all, because its probe is inlined and forms no return value. Clang already packs these
-    // twelve bytes into the two registers the ABI gives it, with two ALU ops and no memory, so there
-    // is nothing here to save. notes/index-design.md, "probe_result's shape".
+    // Do not narrow it: dropping `value_idx` for the caller to re-read, and folding `found` into
+    // `lane` as a sentinel, both cost the string find and buy nothing anywhere, because a compiler
+    // already returns these twelve bytes in two registers and there is no spill to save (measured
+    // 2026-09-12, `notes/index-design.md`, "probe_result's shape").
     struct probe_result {
         value_idx_type group_idx;
         value_idx_type value_idx;
