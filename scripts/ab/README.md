@@ -118,6 +118,7 @@ at five.
 
     scripts/ab/maps.sh [-c COMPILER] [-s] [-r REV] <check|speed|memory|names> [u64|str|big] [base]
     scripts/ab/maps_one.sh [-c COMPILER] [-k u64|str|big] <workload> <entries> <reps> [map...]
+    scripts/ab/bench_readme.sh [-c COMPILER] [-b BASE] [-r ROUNDS] [-o OUTDIR] [-w WORKLOAD,...] [map...]
 
 `run.sh` compares this header against another revision of itself. `maps.sh` compares it against
 everything else: `boost::unordered_flat_map` and `unordered_node_map`, `absl::flat_hash_map` and
@@ -128,6 +129,20 @@ process with `compare()` interleaving them. `boost` and `absl` appear twice, onc
 library's hash and once with their own, because the same-hash convention is the right way to
 compare *indexes* and is not what a caller gets by typing the type name; for a string key that
 control moves boost by 31% on a hit.
+
+`bench_readme.sh` asks the other question outright: every map in the configuration a caller gets by
+typing its type name, own hash included, which is what the README's two graphs are about. It builds
+one binary per map rather than one process holding them all, sweeps five sizes across an octave from
+a million entries at ten million operations a cell, and writes `doc/bench_readme.csv` plus four
+SVGs: per key type, one chart of this map and 4.11.0 against the other libraries, and one of the
+shapes this map can be asked to take. Seven workloads, five of them drawn: `buildfree` (construct,
+fill and destroy) and `rss` (peak resident set, one fork per fill) are the drawn ones, with `build`
+(inserts only) and `memory` (bytes requested, from interposed allocators) measured beside them as
+the controls the choice of each was made against. A full run is 1h45m; `-w memory` re-takes a single panel in about five minutes. It compiles
+with `-DUDM_DEFAULT_HASH -DUDM_VARIANTS`, which is what switches `maps.h` from one shared hash to
+each library's own and what adds `segmented_map` and the two huge-page shapes to the list -- so its
+binaries are *not* interchangeable with `maps.sh`'s, and it writes them under their own names inside
+`AB_BUILD` for that reason.
 
 Every map that is found on the machine is compiled in and one that is not is left out with a note.
 The include paths come from the environment (`ABSL_ROOT`, `FOLLY_ROOT`, `FOLLY_CONFIG`,
@@ -201,7 +216,7 @@ than a total, because building a twelve-million-entry table is most of what `per
 size: measured as totals, a miss came out at 300 instructions and the fill order appeared to change
 the cost of a workload that never reads a value.
 
-`scripts/ab/mapsplot.py` draws the CSVs (`bars`, `memory`, `octave`) and prints them
+`scripts/ab/mapsplot.py` draws the CSVs (`bars`, `readme`, `memory`, `octave`) and prints them
 (`table`, `swing`); `scripts/ab/diagrams.py` draws the byte-level layout figures of every index in
 one house style. Both are stdlib only.
 
