@@ -11,7 +11,13 @@
 #                reported, because a table's load factor sweeps a sawtooth between doublings and
 #                two indexes double at different sizes -- so one fixed size measures wherever that
 #                size happens to land on each. `-p 1` is the single size the score used before
-#                2026-09-07; it runs five times faster and is only comparable with itself.
+#                2026-09-07; it runs five times faster and is only comparable with itself. `-p 50`
+#                draws the sawtooth instead of averaging it out: 5m34 against the default's 2m21
+#                here, where a tenfold count would have been 20 minutes. The two workloads that
+#                grow a map from empty keep five points, having no sawtooth left to sample, and
+#                the two lookup workloads search a table built once outside the timed region. The
+#                sizes are template arguments, so -p rebuilds the binary: 17s of clang at fifty
+#                points against 4s at five.
 #
 # Uses the vendored nanobench (test/third-party, >= 4.6 for Bench::compare()); NANOBENCH_INCLUDE
 # overrides it. The workloads come from test/bench/workloads.h, the benchmark's own. Everything is built in $AB_BUILD (default: a temporary directory), the tree is not
@@ -50,11 +56,11 @@ esac
 git -C "$root" show "$rev:include/ankerl/unordered_dense.h" \
     | sed 's/ankerl::unordered_dense/udmbase::unordered_dense/g; s/ANKERL_UNORDERED_DENSE/UDMBASE_UNORDERED_DENSE/g; s/namespace ankerl/namespace udmbase/g; s|#        include "stl.h"|#        include <ankerl/stl.h>|' \
     > "$build/base.h"
-flags=(-O3 -DNDEBUG -std=c++17 -I"$build" -I"$root/include" -I"$root/test")
+flags=(-O3 -DNDEBUG -std=c++17 "-DUDM_AB_POINTS=$points" -I"$build" -I"$root/include" -I"$root/test")
 # shellcheck disable=SC2206 -- word splitting is what makes AB_EXTRA_FLAGS able to carry several
 flags+=(${AB_EXTRA_FLAGS:-})
 [ $boost = 1 ] && flags+=(-DUDM_AB_HAVE_BOOST)
 [ -f "$build/nanobench_$cxx.o" ] || (cd "$build" && printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > nb.cpp && "$cxx" "${flags[@]}" -c nb.cpp -o "nanobench_$cxx.o")
 "$cxx" "${flags[@]}" "$root/scripts/ab/ab.cpp" "$build/nanobench_$cxx.o" -o "$build/$exe"
 echo "baseline $rev vs working tree, $cxx, in $build" >&2
-"$build/$exe" "$1" "${2:-12}" "$boost" "$points"
+"$build/$exe" "$1" "${2:-12}" "$boost"

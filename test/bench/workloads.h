@@ -16,6 +16,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace workloads {
@@ -123,6 +124,10 @@ struct key_source<std::string> {
         return key;
     }
 };
+
+// The top bit, kept out of every key a workload inserts so that setting it names a key that cannot
+// be there. Three workloads look for one.
+inline constexpr auto never_inserted = uint64_t{1} << 63U;
 
 template <typename Map>
 [[nodiscard]] auto key_for(uint64_t v) -> decltype(auto) {
@@ -234,7 +239,6 @@ auto find_50() -> size_t {
     tame_allocator();
     ankerl::nanobench::Rng insert_rng(123123);
     ankerl::nanobench::Rng search_rng(987654321);
-    constexpr auto never_inserted = uint64_t{1} << 63U;
 
     std::vector<uint64_t> inserted;
     inserted.reserve(Steps);
@@ -263,32 +267,64 @@ auto find_50() -> size_t {
     return checksum;
 }
 
-// 50k entries, then 10M lookups that all hit (a random key that is there) or all miss (one that
-// cannot be): the two ends of what a workload's hit rate can do to the probe.
-template <typename Map, bool Hits, size_t NumElements = 50000>
-auto find_all() -> size_t {
-    tame_allocator();
-    ankerl::nanobench::Rng rng(999);
-    constexpr auto never_inserted = uint64_t{1} << 63U;
-    Map map;
-    std::vector<uint64_t> keys;
-    keys.reserve(NumElements);
-    while (map.size() < NumElements) {
-        auto v = rng() & ~never_inserted;
-        if (map.emplace(key_for<Map>(v), keys.size()).second) {
-            keys.push_back(v);
+// A table of a fixed size and the keys that are in it, for the lookup-only workloads.
+//
+// Built apart from the loop that searches it because these two are the A/B harness's workloads
+// and not the score's, and a point of its size sweep must not pay for a fill: the lookups are a
+// million now rather than ten, so a fill of fifty thousand entries left inside the timed region
+// would be a tenth of what is measured and a tenth of every ratio would be the insert path. It is
+// also what the file's own rule asks for -- warm the subject, then measure it -- where rebuilding
+// it every round measures the allocator.
+//
+// The rng is part of the table, so successive timed runs carry on drawing fresh keys instead of
+// replaying one sequence from a seed, which a branch predictor learns.
+template <typename Map>
+struct lookup_table {
+    Map map{};
+    std::vector<uint64_t> keys{};
+    ankerl::nanobench::Rng rng{999};
+
+    explicit lookup_table(size_t num_elements = 50000) {
+        tame_allocator();
+        keys.reserve(num_elements);
+        while (map.size() < num_elements) {
+            auto const v = rng() & ~never_inserted;
+            if (map.emplace(key_for<Map>(v), keys.size()).second) {
+                keys.push_back(v);
+            }
         }
     }
+};
+
+// 50k entries, then a million lookups that all hit (a random key that is there) or all miss (one
+// that cannot be): the two ends of what a workload's hit rate can do to the probe.
+//
+// The rng is drawn into a local and written back at the end, the keys are read through their own
+// pointer, and the end iterator is taken once. Left in the table, the rng's state update is a store
+// the compiler must assume can alias the map's members -- reached through the same pointer -- and it
+// reloads them on every lookup: 6.28 ns against 6.05 for the same million hits, which is the whole
+// of the difference between this loop and the one that built its own table inside the timed region.
+// It is the aliasing the notes record for the value walks, in a new place. The string workloads
+// still pay some of it inside find() itself, because making a string key memcpy's into a shared
+// buffer and a char store may alias anything.
+template <bool Hits, typename Map>
+auto find_all(lookup_table<Map>* t) -> size_t {
+    constexpr size_t lookups = 1000000;
+    auto rng = t->rng.copy();
+    auto const* keys = t->keys.data();
+    auto const num_keys = t->keys.size();
+    auto const& map = t->map;
+    auto const end = map.end();
     size_t checksum = 0;
-    auto const num_keys = keys.size();
-    for (size_t i = 0; i < 10000000; ++i) {
-        auto r = rng();
+    for (size_t i = 0; i < lookups; ++i) {
+        auto const r = rng();
         auto const& key = key_for<Map>(Hits ? keys[((r >> 32U) * num_keys) >> 32U] : (r | never_inserted));
         auto it = map.find(key);
-        if (it != map.end()) {
+        if (it != end) {
             checksum += it->second;
         }
     }
+    t->rng = std::move(rng);
     return checksum;
 }
 
@@ -351,7 +387,6 @@ auto churn() -> size_t {
     tame_allocator();
     constexpr size_t num_elements = NumElements;
     constexpr size_t num_rounds = 4;
-    constexpr auto never_inserted = uint64_t{1} << 63U;
 
     ankerl::nanobench::Rng rng(31337);
     Map map;

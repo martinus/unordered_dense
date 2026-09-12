@@ -34,6 +34,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- Fifty points draw the load-factor sawtooth that five average out, and five points are worth 26% of a cross-family ratio
 - The #260/#262 sweep run over find and churn, and it comes back empty
 - The opt-in huge page allocator, measured across the size axis
 - The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses for it
@@ -310,6 +311,159 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Fifty points draw the load-factor sawtooth that five average out, and five points are worth 26% of
+a cross-family ratio** (2026-09-12, issue #274, Ryzen 9 7950X, clang 22, `scripts/ab/run.sh -p`,
+`scripts/ab/ab.cpp`, `test/bench/workloads.h`).
+
+The paired harness has swept five sizes across an octave since 2026-09-07 (the boost entry below)
+because a comparison at one size reports wherever that size lands on each map's sawtooth. #274 asked
+the next question: five points cannot land on the *peak* -- the size just before a doubling, which
+is where a table is fullest and every probe is longest -- so is a much denser sweep affordable, is
+the octave really one whole turn of the cycle, and can the payload be cut so the run does not
+explode?
+
+**The switch did not mean what it said.** The five sizes were a table of five scale factors and
+`-p N` ran its first N, so `-p 3` swept from n to 1.32n -- three fifths of an octave -- and printed
+"octave geomean" over it. Nothing recorded in this file was taken that way (every `run.sh` entry
+says five), but the switch was there and it was wrong. The count is now a compile-time constant --
+`run.sh -p` rebuilds the binary, because the sizes are template arguments -- and the i-th of P
+points is `n * 2^(i/P)` for any P, which spans exactly one doubling however many are asked for.
+
+**What fifty points see that five do not.** The dearest point of an octave over the cheapest, per
+element, same header on both sides, twelve epochs:
+
+| | 5 points | 50 points | dearest at |
+|---|---|---|---|
+| `rmiss64` | 1.286x | **1.458x** | load 0.795 |
+| `churn64` | 1.142x | **1.284x** | load 0.795 |
+| `churnbig` | 1.148x | 1.247x | load 0.795 |
+| `rhit64` | 1.115x | 1.168x | load 0.742 |
+| `churnstr` | 1.055x | 1.120x | load 0.752 |
+| `rmissstr` | 1.061x | 1.099x | load 0.795 |
+
+A fifth of an octave gets no closer to the peak than load 0.763 of a maximum of 0.800; a fiftieth
+reaches 0.795. Half of `rmiss64`'s amplitude is in that last 4% of the load, which is exactly where
+the issue expected it to be: the cost of a miss is superlinear in the load factor, so the top of the
+cycle is a spike and not a plateau, and a sweep that steps past it never sees it.
+
+**The spike belongs to the miss and not to the hit**, which fifty points make plain and five could
+not. `rmiss64` steps 32.2% and `rmissstr` 10.3% across the single size where the array doubles;
+`rhit64`'s largest step anywhere in the octave is 2.0% and `rhitstr`'s 2.9%, and neither is at the
+doubling -- their 1.168x and 1.097x climb with the size of the table and not with its load. A key
+that is there is found in its home group whatever the load; a key that is not there is what walks.
+
+**And what five points are worth, measured rather than argued.** A fifty-point run contains ten
+five-point sweeps -- every tenth point, each spanning the whole octave, each one a sweep this
+harness would have reported without complaint. Each one's geomean against the fifty-point one:
+
+| | `base/cand`, the same header twice | `boost/cand` |
+|---|---|---|
+| `churn64` | 0.999 .. 1.005 | **0.742 .. 1.023** |
+| `churnbig` | 0.995 .. 1.002 | 0.787 .. 1.069 |
+| `churnstr` | 0.998 .. 1.001 | 0.855 .. 1.038 |
+| `rmiss64` | 0.989 .. 0.996 | 0.833 .. 1.010 |
+| `build64` | 0.992 .. 1.003 | 1.459 .. 1.571 |
+| `rhit64` | 0.974 .. 0.980 | 0.753 .. 0.776 |
+| `rhitstr` | 0.993 .. 1.017 | 0.858 .. 0.881 |
+
+**Against another revision of this header, five points are worth 0.6%** -- the two sawtooths are in
+phase, so they cancel out of the ratio whatever is sampled, which is the reason every same-family
+paired number in this file is sound however it was taken. **Against boost they are worth 26%**:
+`churn64` reads 0.742 or 1.023 for one quantity depending only on which five of the fifty sizes the
+sweep starts from. Two fifty-point runs made the same day give that spread to within 0.4%, so it is
+the phase and not the noise. The five-point and fifty-point geomeans themselves differ by under 4%
+on nine of the ten workloads and by **16% on `buildbig`** (1.986 against 1.716), for a reason worth
+seeing on its own.
+
+The fifty-point column is the one to quote from now on. `boost::unordered_flat_map` given this
+library's hash, **boost's time over this map's, so above 1.00 means this map is faster**, the same
+header on the other two sides, same order of columns as the table above:
+
+| | 5 points | 50 points |
+|---|---|---|
+| `build64` | 1.591 | 1.526 |
+| `buildstr` | 2.026 | 2.054 |
+| `buildbig` | 1.986 | **1.716** |
+| `churn64` | 0.805 | 0.810 |
+| `churnstr` | 0.890 | 0.898 |
+| `churnbig` | 0.843 | 0.858 |
+| `rhit64` | 0.761 | 0.762 |
+| `rmiss64` | 0.868 | 0.888 |
+| `rhitstr` | 0.875 | 0.869 |
+| `rmissstr` | 0.832 | 0.837 |
+
+The two columns agree because one five-point sweep out of ten was run, not because five points are
+enough: the table above this one is what the other nine would have said.
+
+**`buildbig`'s octave has a 5.9x step in it that has nothing to do with the load factor.** Building
+a `map<uint64_t, big_value>` costs 3.90 ms at 249666 entries and 23.09 ms at 263902, one 5.7% step
+in size later, and stays there for the rest of the octave: 64 bytes times a quarter million is 17 MB
+of values, and doubling that vector wants the old and the new at once, which is where a 32 MB L3
+stops holding the copy. The sawtooth column reads 6.45x for that workload and it is a cache cliff,
+not a cycle. A five-point sweep puts two points below it and three above, a fifty-point sweep five
+and forty-five, and the geomean moves by the difference. It is the "sweep across the cache boundary"
+rule arriving in a workload that was never thought of as a size sweep.
+
+**The growth is measured now, not assumed.** An octave is one whole turn of the cycle only because
+the bucket array doubles, which is this map's policy and not a law -- a growth factor under two is a
+knob this file already records. So before anything is timed the harness inserts into each map in the
+comparison and records every size at which `bucket_count()` changes:
+
+    # cand  grows at 1639 3277 6554 13108 26215 52429 104858 209716   x2.000 -- one octave is exactly one sawtooth
+    # boost grows at 1680 3360 6720 13440 26880 53760 107520 215040   x2.000 -- one octave is exactly one sawtooth
+
+Both double, so both are one octave per cycle and the geomean over an octave is unbiased for both;
+they double 2.5% apart, which is the whole reason the boost column needs the points. A map whose
+ratios were not 2.000 would print a warning saying the geomean weighs part of the cycle twice. The
+same table gives every point line its load factor, so where on the cycle a number sits is readable
+instead of inferred.
+
+**The run does not get ten times longer, and the reason is where a point's cost was cut.** All
+twenty workloads, twelve epochs, clang: **2m21 at five points and 5m34 at fifty**, against 3m19 for
+the five-point run before this change; with boost as a third alternative, 3m32 and 8m37 against
+4m51. Compiling costs 3.6s at five points and 17.4s at fifty, since every size is a template argument.
+Three things pay for the other forty-five points:
+
+- **The two lookup workloads search a table built outside the timed region**, a million times rather
+  than ten million. Before, every timed iteration filled a fifty thousand entry map and then searched
+  it; the fill is not what `rhit64` is for, and with a tenth of the lookups it would have been a tenth
+  of the measurement. `rhit*`/`rmiss*` cost 8.2 s and 2.9 s at fifty points where they cost 7.7 s and
+  3.0 s at five before -- the payload cut buys exactly the ten times the point count spends.
+- **The two workloads that grow a map from empty keep five points.** Their cost is the integral over
+  every doubling they passed through, so there is no cycle left in it. Measured at fifty points
+  anyway, by building the harness with that cap removed: `ie64`'s per-element cost moves 1.021x from
+  its cheapest size to its dearest against the 1.026x five points read, `find64` 1.137x against
+  1.110x and monotonically with size, and **neither has a single step over 1.3%** anywhere in fifty
+  -- where `rmiss64` steps 32.2%, `churn64` 22.1% and `build64` 18.1% in one 1.4% increment of size,
+  at exactly the 52429 and 209716 the growth probe prints. The two of them at fifty points cost 4m43
+  to reproduce what five points said.
+- **Nothing else needed anything.** `build*` and `churn*` run the full payload at every point, which
+  is what takes the run from 2m21 to 5m34; they are the cheap ones.
+
+**Two traps inside that restructuring, both of them this file's own rules.** Passing the table to
+the lookup loop by pointer made it 6.28 ns per hit against the 6.05 the old loop cost, because the
+rng's state update is a store the compiler must assume can alias the map's members -- reached through
+the same pointer -- so it reloaded them on every lookup. Drawing the rng and the key pointer into
+locals and writing the rng back at the end restores 6.05: the same aliasing the notes record for the
+value walks, in a new place. And the control for those four workloads reads 0.976 in one build of the
+harness and 1.000 in another, with `-falign-functions=32` moving 0.976 to 0.997 -- the +-3% code
+layout band, now plainly visible because the timed region is one tight loop and nothing else.
+
+**What this says and does not say.** It says a cross-family ratio -- this map against boost, or an
+index against one with a different number of slots per group -- wants fifty points, and that the ten
+boost ratios in this file taken at five carry up to 26% of sampling error on churn and 16% on
+`buildbig`. It says a header-against-header A/B does not want them: 0.6% is below everything else
+this harness is subject to, and `-p 5` stays the default for that reason. It does not say the
+absolute times of `rhit*`/`rmiss*` are comparable with any run before 2026-09-12 -- the payload is a
+tenth and the table is no longer rebuilt inside the measurement -- **and their boost ratios are not
+either**: taking the fill out moved `rhit64` from 0.798 to 0.760, `rmiss64` 0.917 to 0.868,
+`rmissstr` 0.931 to 0.832 and `rhitstr` 0.886 to 0.874. This map's own per-lookup cost is where it
+was (6.05 ns per hit before, 6.00-6.10 after), so the move is on boost's side of the ratio, and how
+much of it is the fill leaving the measurement and how much is the +-2% the control shows across
+builds was not separated. Against another revision of this header the ratios did not move, because
+there the fill is the same code on both sides and cancels. And it does not touch `bench_quick_overall_udm`: every scored workload compiles the
+same code it did, because the knobs added are template parameters whose defaults are what they were.
+
 **The #260/#262 sweep run over find and churn, and it comes back empty** (2026-09-12, issue #268,
 Ryzen 9 7950X, gcc 16 and clang 22, `scripts/ab/solo.sh`, `perf record` and `perf stat`).
 
@@ -1231,6 +1385,12 @@ mechanism could not reach a lookup at all. Running `scripts/ab/run.sh -r HEAD` o
 and `hashstr` 0.872. So the candidate side of a paired run is systematically faster on those, and a
 single-digit-percent reading on them means nothing. The null run is the check, it costs one run, and
 it should be taken before believing any sub-benchmark delta under about 5%.
+
+Re-taken 2026-09-12 after the lookup workloads stopped rebuilding their table (see "Fifty points
+draw the load-factor sawtooth"): `rmissstr` now reads 0.993 to 1.008 and `rhit64` 0.976 to 1.000
+across builds of the harness, with `-falign-functions=32` moving that 0.976 to 0.997. **The null run
+has to be re-taken per build, not per harness** -- each build is one sample of the code layout band,
+and the workload that carries the bias is not always the same one.
 
 **A block's prefetches should step from its start, not jump to its end** (2026-09-11, issue #250,
 `scripts/ab/prefetch_lines.cpp`, Ryzen 9 7950X, clang 22). Raised by a cleanup review as "a quarter

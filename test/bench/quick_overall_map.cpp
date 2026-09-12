@@ -144,17 +144,21 @@ TEST_CASE("bench_find_all_hits_or_misses_udm" * doctest::test_suite("bench") * d
     bench.title("find").minEpochTime(100ms);
     using map_t = ankerl::unordered_dense::map<uint64_t, size_t>;
     using map_str_t = ankerl::unordered_dense::map<std::string, size_t, hash_str_t>;
-    bench.run("map<uint64_t, size_t> all hits", [] {
-        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<map_t, true>());
+    // The tables are built here and searched below, so what is timed is the lookups and not a
+    // fill; see workloads::lookup_table.
+    auto ints = workloads::lookup_table<map_t>();
+    auto strings = workloads::lookup_table<map_str_t>();
+    bench.run("map<uint64_t, size_t> all hits", [&] {
+        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<true>(&ints));
     });
-    bench.run("map<uint64_t, size_t> no hits", [] {
-        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<map_t, false>());
+    bench.run("map<uint64_t, size_t> no hits", [&] {
+        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<false>(&ints));
     });
-    bench.run("map<std::string, size_t> all hits", [] {
-        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<map_str_t, true>());
+    bench.run("map<std::string, size_t> all hits", [&] {
+        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<true>(&strings));
     });
-    bench.run("map<std::string, size_t> no hits", [] {
-        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<map_str_t, false>());
+    bench.run("map<std::string, size_t> no hits", [&] {
+        ankerl::nanobench::doNotOptimizeAway(workloads::find_all<false>(&strings));
     });
 }
 
