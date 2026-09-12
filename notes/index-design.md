@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- Nothing holds a flat slot number any more, and gcc was the one paying for it
 - The two value walks do not want the index prefetch the probe wants
 - `prefetch_index` was a line short for `group_big`, and covering that line is not the fix
 - `finish_erase` packed a slot that the store took straight back apart
@@ -304,6 +305,63 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**Nothing holds a flat slot number any more, and gcc was the one paying for it** (2026-09-12,
+issue #262, Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh` and `perf stat`).
+
+#260 took the pack-and-unpack out of `finish_erase`. The same round trip was still there on the
+*lookup* half of every erase. `probe_result` carried `slot = group_idx * slots_per_group + lane`, and
+both of its consumers divided it straight back apart: `erase_group_slot` into `slot / slots_per_group`
+and `slot % slots_per_group`, `move_home` into the same pair. Four producers fed them -- `probe_from`,
+the two home-group loops, and `slot_of_value`.
+
+Clang folded most of it, which is why it was invisible from one compiler: what survived there was an
+`and` and a zero-extending `mov` per site. **gcc folded none of it.** Counting the `shr $0x4` /
+`and $0xf` pair inside each function of a three-entry-point translation unit:
+
+| | gcc before | gcc after | clang before | clang after |
+|---|---|---|---|---|
+| `erase(iterator)` | 2 | 0 | 0 | 0 |
+| `erase(key)` | 2 | 0 | 0 | 0 |
+| writing hit, through `move_home` | 2 | 0 | 0 | 0 |
+
+`probe_result` now carries `group_idx` and a `std::uint8_t lane`, `slot_of_value` returns the same
+pair as a `group_slot`, and `erase_group_slot`, `move_home`, `do_erase` and `located` take it.
+**The struct does not grow**: 12 bytes for `group` and 24 for `group_big`, exactly what it was, so the
+return-register question that makes `probe_past_home` delicate never comes up.
+
+Per-workload instructions from the score binaries themselves, one header per binary, candidate over
+baseline:
+
+| workload | gcc | clang |
+|---|---|---|
+| `uint64_t` random insert erase | **0.9549** | 0.9859 |
+| `uint64_t` churn at a fixed size | 0.9778 | 1.0025 |
+| `std::string` random insert erase | **0.9451** | 0.9905 |
+| `std::string` churn | 0.9808 | 0.9991 |
+| `std::string` 50% probability to find | **0.9749** | 0.9893 |
+| `big_value` random insert erase | 0.9610 | 0.9866 |
+| `big_value` churn | 0.9805 | 1.0000 |
+| every build and iterate workload | 1.0000 | 1.0000 |
+
+The string *find* row is the surprise and it is not the erase path: a string key takes the out-of-line
+`probe_past_home`, so `probe_result` is what that function returns, and repacking it made the return
+cheaper. The file's own warning points the other way -- returning a `probe_result` from an inner
+function once cost gcc 26% of an integer hit -- so that axis has teeth in both directions and nobody
+has swept it.
+
+**And the time is a lesson in why this is settled on instructions.** The score, one header per
+binary against `main`:
+
+| | ratio | rounds |
+|---|---|---|
+| gcc | 1.0017 | 5 of 5 candidate-faster |
+| clang, default alignment | 0.9975, then 0.9956 on a rerun | candidate-slower |
+| clang, `-falign-functions=32` | **1.0052** | 5 of 5 candidate-faster |
+
+Same source, same compiler, opposite sign, from nothing but where the functions landed. Two runs of
+the *same two binaries* are one layout sample, not two, and it took a third build to see it. The
+instruction counts above never moved.
+
 **The two value walks do not want the index prefetch the probe wants** (2026-09-12, issue #263,
 Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh`).
 

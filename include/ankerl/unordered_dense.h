@@ -1601,9 +1601,22 @@ private:
     // Where a probe for a key stopped. Found: the slot holding it, and the value it points to.
     // Not found: nothing but `found` is meaningful, and an insert walks the probe sequence again
     // from the hash to place the key.
+    // A slot, as the group it is in and the lane inside it. Nothing in the map holds a flat slot
+    // number any more: the probe finds the pair, and both consumers -- erase_group_slot and
+    // move_home -- address the group with it directly.
+    struct group_slot {
+        value_idx_type group_idx;
+        std::uint8_t lane;
+    };
+
+    // Where the probe stopped, as the group and the lane inside it. Not as one flat slot number:
+    // every consumer wants the pair back, and packing `group_idx * slots_per_group + lane` here made
+    // erase_group_slot and move_home divide it apart again -- which gcc never folded (#262). The
+    // lane is a std::uint8_t so that this stays the same twelve bytes it was.
     struct probe_result {
-        value_idx_type slot;
+        value_idx_type group_idx;
         value_idx_type value_idx;
+        std::uint8_t lane;
         bool found;
     };
 
@@ -1821,17 +1834,16 @@ private:
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
                 auto const lane = first_lane(lanes);
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
                 auto const value_idx = group.m_index[lane];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
-                    return {slot, value_idx, true};
+                    return {group_idx, value_idx, static_cast<std::uint8_t>(lane), true};
                 }
                 lanes &= lanes - 1;
             }
             // Not here if nothing of this class ever overflowed past this group, and not anywhere
             // once every group has been looked at: see the note on termination above.
             if (group.m_overflows[counter] == 0 || delta == m_group_mask) {
-                return {0, 0, false};
+                return {0, 0, 0, false};
             }
             group_idx = next_group(group_idx, delta);
         }
@@ -1862,7 +1874,7 @@ private:
     probe_after_home(K const& key, std::uint32_t word, unsigned counter, Bucket const& home, value_idx_type home_idx) const
         -> probe_result {
         if (home.m_overflows[counter] == 0 || m_group_mask == 0) {
-            return {0, 0, false};
+            return {0, 0, 0, false};
         }
         value_idx_type delta = 0;
         auto const next = next_group(home_idx, delta);
@@ -1899,10 +1911,9 @@ private:
         auto lanes = match_fingerprint(home, word);
         while (lanes != 0) {
             auto const lane = first_lane(lanes);
-            auto const slot = static_cast<value_idx_type>(std::size_t{home_idx} * slots_per_group + lane);
             auto const value_idx = home.m_index[lane];
             if (m_equal(key, get_key(m_values[value_idx]))) {
-                return {slot, value_idx, true};
+                return {home_idx, value_idx, static_cast<std::uint8_t>(lane), true};
             }
             lanes &= lanes - 1;
         }
@@ -1925,10 +1936,9 @@ private:
             auto lanes = match_fingerprint(home, word);
             while (lanes != 0) {
                 auto const lane = first_lane(lanes);
-                auto const slot = static_cast<value_idx_type>(std::size_t{home_idx} * slots_per_group + lane);
                 auto const value_idx = home.m_index[lane];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
-                    return {slot, value_idx, true};
+                    return {home_idx, value_idx, static_cast<std::uint8_t>(lane), true};
                 }
                 lanes &= lanes - 1;
             }
@@ -1990,14 +2000,14 @@ private:
         }
     }
 
-    // Frees the slot and takes the entry out of the counters.
-    void erase_group_slot(value_idx_type slot, std::uint64_t mh) {
+    // Frees the slot and takes the entry out of the counters. The slot arrives as the group it is
+    // in and the lane inside it, which is how the probe had it.
+    void erase_group_slot(value_idx_type found_in, std::uint8_t lane, std::uint64_t mh) {
         auto* groups = m_buckets.data();
         auto const mask = m_group_mask;
         auto const home_idx = group_idx_from_hash(mh);
         auto const counter = fingerprint_word(mh) & 7U;
-        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
-        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
+        groups[found_in].m_fingerprints[lane] = 0;
         uncount(groups, mask, home_idx, counter, found_in);
     }
 
@@ -2023,8 +2033,7 @@ private:
     //
     // Only from paths that already write. A const find cannot do this, and a non-const find()
     // is treated as read-only by callers who share a map between threads, so it does not either.
-    void move_home(value_idx_type slot, std::uint64_t mh) {
-        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
+    void move_home(value_idx_type found_in, std::uint8_t from_lane, std::uint64_t mh) {
         auto const home_idx = group_idx_from_hash(mh);
         if (ANKERL_UNORDERED_DENSE_LIKELY(found_in == home_idx)) {
             return;
@@ -2039,7 +2048,6 @@ private:
         auto const mask = m_group_mask;
         auto const counter = fingerprint_word(mh) & 7U;
         auto& from = groups[found_in];
-        auto const from_lane = slot % slots_per_group;
         home.m_fingerprints[lane] = from.m_fingerprints[from_lane];
         home.m_index[lane] = from.m_index[from_lane];
         from.m_fingerprints[from_lane] = 0;
@@ -2082,7 +2090,7 @@ private:
     // any other one; the time moves less than the noise floor, baseline/candidate 1.0039 under gcc
     // and 0.9991 under clang, one header per binary with scripts/ab/solo.sh. It ships on the
     // instruction count. #263.
-    [[nodiscard]] auto slot_of_value(std::uint64_t mh, value_idx_type value_idx) const -> value_idx_type {
+    [[nodiscard]] auto slot_of_value(std::uint64_t mh, value_idx_type value_idx) const -> group_slot {
         auto const word = fingerprint_word(mh);
         auto group_idx = group_idx_from_hash(mh);
         auto const* groups = m_buckets.data();
@@ -2092,9 +2100,8 @@ private:
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
                 auto const lane = first_lane(lanes);
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
                 if (group.m_index[lane] == value_idx) {
-                    return slot;
+                    return {group_idx, static_cast<std::uint8_t>(lane)};
                 }
                 lanes &= lanes - 1;
             }
@@ -2496,15 +2503,15 @@ private:
         m_values.pop_back();
     }
 
-    // slot is the one that points at the value; mh is the value's mixed hash, which the counters
+    // `at` is the slot that points at the value; mh is the value's mixed hash, which the counters
     // on the way to it are undone with.
     template <typename Op>
-    void do_erase(value_idx_type slot, value_idx_type value_idx_to_remove, std::uint64_t mh, Op handle_erased_value) {
+    void do_erase(group_slot at, value_idx_type value_idx_to_remove, std::uint64_t mh, Op handle_erased_value) {
         // both values are needed once the slot is freed; start fetching them now to overlap the latencies
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values[value_idx_to_remove]);
         ANKERL_UNORDERED_DENSE_PREFETCH(&m_values.back());
 
-        erase_group_slot(slot, mh);
+        erase_group_slot(at.group_idx, at.lane, mh);
         auto&& erased_value = std::move(m_values[value_idx_to_remove]);
 
         // erase() hands the value to a callback that cannot throw, so the branch below is not even instantiated for it.
@@ -2534,7 +2541,7 @@ private:
         if (!r.found) {
             return 0;
         }
-        do_erase(r.slot, r.value_idx, mh, handle_erased_value);
+        do_erase({r.group_idx, r.lane}, r.value_idx, mh, handle_erased_value);
         return 1;
     }
 
@@ -2757,7 +2764,7 @@ private:
         // the current array, so a growth since then is simply a prefetch that did nothing.
         auto r = probe_at_home(get_key(value), word, counter, m_buckets.data()[home_idx], home_idx);
         if (r.found) {
-            move_home(r.slot, mh);
+            move_home(r.group_idx, r.lane, mh);
             return;
         }
         place_element_at(word, counter, home_idx, std::forward<V>(value));
@@ -2923,7 +2930,7 @@ private:
                 if (r.found) {
                     // Stays behind. merge() is a writing operation, so a hit here pays for its own
                     // drift the same way one inside try_emplace does.
-                    move_home(r.slot, mh);
+                    move_home(r.group_idx, r.lane, mh);
                     if (write != read) {
                         *write = std::move(value);
                     }
@@ -2971,7 +2978,7 @@ private:
         auto const home_idx = group_idx_from_hash(mh);
         auto r = probe(key, word, counter, home_idx);
         if (r.found) {
-            move_home(r.slot, mh);
+            move_home(r.group_idx, r.lane, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
         return place_element_at(word,
@@ -3572,7 +3579,7 @@ public:
         auto r = probe(key, mh);
         if (r.found) {
             m_values.pop_back(); // value was already there, so get rid of it
-            move_home(r.slot, mh);
+            move_home(r.group_idx, r.lane, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
 
@@ -3664,7 +3671,8 @@ public:
         target_key = std::forward<K>(new_key);
 
         auto const value_idx = static_cast<value_idx_type>(it - begin());
-        erase_group_slot(slot_of_value(old_key_hash, value_idx), old_key_hash);
+        auto const at = slot_of_value(old_key_hash, value_idx);
+        erase_group_slot(at.group_idx, at.lane, old_key_hash);
         place_group(new_key_hash, value_idx);
         return {it, true};
     }
@@ -3674,7 +3682,7 @@ public:
     struct located {
         value_idx_type value_idx;
         std::uint64_t mh;
-        value_idx_type slot;
+        group_slot at;
     };
 
     [[nodiscard]] auto locate(iterator it) const -> located {
@@ -3687,7 +3695,7 @@ public:
         auto const e = locate(it);
         // The noexcept here and on the other two erase callbacks is what keeps erase() out of do_erase()'s exception
         // guard: a call expression is noexcept only if the callee says so, an empty body is not enough.
-        do_erase(e.slot, e.value_idx, e.mh, [](value_type const& /*unused*/) noexcept -> void {
+        do_erase(e.at, e.value_idx, e.mh, [](value_type const& /*unused*/) noexcept -> void {
         });
         return begin() + static_cast<difference_type>(e.value_idx);
     }
@@ -3695,7 +3703,7 @@ public:
     auto extract(iterator it) -> value_type {
         auto const e = locate(it);
         auto tmp = std::optional<value_type>{};
-        do_erase(e.slot, e.value_idx, e.mh, [&tmp](value_type&& val) -> void {
+        do_erase(e.at, e.value_idx, e.mh, [&tmp](value_type&& val) -> void {
             tmp = std::move(val);
         });
         return std::move(tmp).value();

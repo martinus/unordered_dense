@@ -149,7 +149,11 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   minutes. Keep the win, do not build a rule on it. #254. The contrast is #260, where the same kind of
   count did transfer: taking a slot pack-and-unpack out of `finish_erase` reads -5.1 instructions per
   erase under clang and -4.5 under gcc, from a mechanism visible in the disassembly and with nothing
-  else in the binary changed.
+  else in the binary changed. #262 is the same defect on the lookup half of the erase -- `probe_result`
+  packed a slot that `erase_group_slot` and `move_home` took apart -- and it is also the cleanest
+  demonstration of the layout band: gcc scored it 1.0017, clang 0.9975 and 0.9956 on one pair of
+  binaries and **1.0052** on a pair built with `-falign-functions=32`. Two runs of the same two
+  binaries are one layout sample.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey
