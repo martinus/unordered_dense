@@ -347,9 +347,13 @@ session did find is below the code.
 measured by running one binary twice with `GLIBC_TUNABLES=glibc.malloc.hugetlb=1` on and off; 22%
 of a lookup past L3. The old line here said the score could not see them; it was measuring hits on a
 warm map, the one shape that overlaps its translations. Nothing in the header can ask for a page
-size. An opt-in allocator can (#231), and so can a user's environment; both are worth documenting.
+size. An opt-in allocator can, and so can a user's environment; both are documented in README 3.8.
+`huge_page_allocator` (#231) puts blocks of 2 MB and up on their own huge pages: `build` 1.5-1.7x
+from 200000 entries, `churn` 1.33x at 800000, lookups 1.14x at 4M, **nothing at 50000** because
+no block there is 2 MB -- the score's churn gain needs the heap-wide route, which shares extents.
+A string's body is `malloc`ed outside any allocator the map holds and stays on 4 KB pages.
 
-*Still open.* The opt-in huge page allocator itself (#231).
+*Still open.* Nothing measured and unclaimed; #231's size sweep is in the notes.
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.
 
 *Bulk lookups.* `visit(first, last, f)` is 1.07-1.14x over the same batch looked up one key at a

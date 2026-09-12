@@ -43,6 +43,7 @@ Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::un
     - [3.5.2. `ankerl::unordered_dense::bucket_type::group_big`](#352-ankerlunordered_densebucket_typegroup_big)
   - [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe)
   - [3.7. LLDB Data Formatters](#37-lldb-data-formatters)
+  - [3.8. Huge Pages](#38-huge-pages)
 - [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
 - [5. Design](#5-design)
   - [5.1. Inserts](#51-inserts)
@@ -527,6 +528,55 @@ script unordered_dense.NAME_CHILDREN_BY_KEY = False
 
 Custom value containers (see [3.4](#34-custom-container-types)) fall back to whatever LLDB itself can display for
 them.
+
+### 3.8. Huge Pages
+
+A lookup touches two or three random addresses -- the group's block, the value it points at, and for a string key its body -- and on 4 KB pages each of them is an address translation. A first-level data TLB holds on the order of 64-96 entries, a few hundred KB, so any table larger than that pays an L2 TLB lookup per access, and on a dependent chain that lookup is latency. Measured on this library's own scored benchmark by running the same binary with its heap on 2 MB pages: **2.6% (gcc) to 3.6% (clang) over the whole score, 5-8% on churn and on random finds at 50000 entries, and 22% of a lookup past the last-level cache**. Nothing asks for huge pages by default, and on the common Linux setting (`/sys/kernel/mm/transparent_hugepage/enabled` = `madvise`) nothing gets them without asking. There are two ways to ask.
+
+**The environment, for the whole process.** glibc 2.35 and later can `madvise` its heap for you:
+
+```sh
+GLIBC_TUNABLES=glibc.malloc.hugetlb=1 ./your_program
+```
+
+This is what the numbers above were measured with, and it is the route that helps *small* tables too, because neighbouring blocks share a 2 MB extent on the heap. Setting the THP mode to `always` does the same for every process on the machine.
+
+**The allocator, for one map.** `include/ankerl/huge_page_allocator.h` is a separate header (it needs `<sys/mman.h>`) with an allocator that puts every block of 2 MB and up on its own 2 MB-aligned, `MADV_HUGEPAGE`d mapping and leaves smaller ones to `std::allocator`:
+
+```cpp
+#include <ankerl/huge_page_allocator.h>
+
+using map_t = ankerl::unordered_dense::map<uint64_t, uint64_t,
+                                           ankerl::unordered_dense::hash<uint64_t>,
+                                           std::equal_to<uint64_t>,
+                                           ankerl::unordered_dense::huge_page_allocator<std::pair<uint64_t, uint64_t>>>;
+```
+
+Both the index and the values get it, since the index rebinds the value allocator. What it is worth, ns per operation with `std::allocator` and with this one, on the scored workloads at sizes the score does not run (clang, Ryzen 9 7950X; gcc within a few percent of the same ratios):
+
+| | 200000 | 800000 | 4000000 |
+|---|---|---|---|
+| build from empty, `uint64_t` | 20.4 → 13.3 (**1.53x**) | 22.1 → 12.8 (**1.73x**) | 38.4 → 24.6 (**1.56x**) |
+| build from empty, `std::string` | 71.9 → 63.6 (1.13x) | 85.5 → 68.6 (1.25x) | 121.8 → 94.4 (1.29x) |
+| churn at a fixed size, `uint64_t` | 12.7 → 12.3 (1.03x) | 16.1 → 12.1 (**1.33x**) | 53.7 → 49.4 (1.09x) |
+| random find, 50% hits, `uint64_t` | 5.49 → 5.45 | 6.50 → 6.21 (1.05x) | 16.3 → 14.3 (1.14x) |
+
+A build gains more than the TLB explains: a vector that doubles faults in every new block, and on 2 MB pages that is 512 times fewer faults. It is not specific to this map -- `boost::unordered_flat_map` on the same allocator gains 1.5-1.9x on integer builds and 1.62x on churning 64 byte values, where its single region holds the values inline -- so it changes nothing about which map is ahead where; the full table is in `notes/index-design.md`. Two things to know:
+
+* **It only helps once the blocks themselves reach 2 MB**, which is the index from about 370000 entries and the values from `2 MB / sizeof(value_type)` entries. A huge page is 2 MB whole, and an allocator that owns only its own blocks has no neighbour to share one with -- that is what the environment route has and this one does not. Below that size, use the environment.
+* **Every block is rounded up to 2 MB, and the rounding is resident memory**, because touching one byte of an `MADV_HUGEPAGE`d extent populates all of it. The map doubles both regions, so the loss is at most half a doubling step per region, while that region sits between doublings. The threshold is the second template parameter (`huge_page_allocator<T, 4 << 20>`), and it cannot go below 2 MB.
+
+**With `segmented_vector`, size the segment for the page.** A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. The segment size is chosen through the container slot rather than the `segmented_map` alias:
+
+```cpp
+ankerl::unordered_dense::map<K, V, ankerl::unordered_dense::hash<K>, std::equal_to<K>,
+    ankerl::unordered_dense::segmented_vector<std::pair<K, V>,
+        ankerl::unordered_dense::huge_page_allocator<std::pair<K, V>>, 16 << 20>>
+```
+
+A segment holds a power of two of elements, rounded *down* to fit the byte size, so a 2 MB segment is exactly one huge page for a 16 byte pair and 1.28 MB -- below the threshold, no huge page -- for a 40 byte one. 16 MB segments bound that rounding at 2 MB each for any element size, and are the setting to use unless `sizeof(value_type)` is a power of two. Measured at 800000 entries, ns per operation, `std::vector` on `std::allocator` / segmented on this allocator with 16 MB segments: build `uint64_t` 22.0 / 14.7, `std::string` 85.6 / **63.3**, 64 byte values 77.1 / **20.5**; churn `uint64_t` 16.1 / 14.5, `std::string` 101.0 / 95.6. The segmented container costs 10-20% on lookups and churn for its extra indirection, and huge pages do not take that back; on builds it is the fastest thing here, because it neither copies nor faults.
+
+On Windows and macOS the class exists with the same interface and forwards everything to `std::allocator`; `huge_page_allocator<T>::uses_huge_pages` says which you got. `scripts/ab/huge_pages.sh` measures it across sizes and workloads, and the measurements are in `notes/index-design.md`.
 
 ## 4. `segmented_map` and `segmented_set`
 

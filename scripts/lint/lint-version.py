@@ -17,6 +17,7 @@ CHECKS = [
     (HEADER, r"Version (\d+)\.(\d+)\.(\d+)", 1),
     (ROOT / "CMakeLists.txt", r"^\s+VERSION (\d+)\.(\d+)\.(\d+)", 1),
     (ROOT / "include" / "ankerl" / "stl.h", r"Version (\d+)\.(\d+)\.(\d+)", 1),
+    (ROOT / "include" / "ankerl" / "huge_page_allocator.h", r"Version (\d+)\.(\d+)\.(\d+)", 1),
     (ROOT / "meson.build", r"version:\s*'?(\d+)\.(\d+)\.(\d+)'?", 1),
     (ROOT / "test" / "unit" / "namespace.cpp", r"unordered_dense::v(\d+)_(\d+)_(\d+)", 1),
 ]

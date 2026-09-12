@@ -63,6 +63,7 @@ test_sources = [
     'unit/hash_string_view.cpp',
     'unit/hash.cpp',
     'unit/hash_golden.cpp',
+    'unit/huge_page_allocator.cpp',
     'unit/include_only.cpp',
     'unit/initializer_list.cpp',
     'unit/insert_or_assign.cpp',
