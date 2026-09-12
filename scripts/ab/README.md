@@ -33,6 +33,76 @@ which spans 0.79 to 1.33 point to point. The same thing happens to the boost col
 header untouched: a single same-code run reads `boost/cand` at 1.205, 0.641, 0.649, 0.685 and 0.831
 across one octave of `churn64`, a 1.9x swing, geomean 0.779.
 
+### Fifty points draw it, five average it out
+
+`-p 50` measures fifty sizes across the octave instead of five, and what it draws is not what five
+points suggest. The top of the cycle is a *point*: a sweep spaced a fifth of an octave apart gets
+no nearer the peak than load 0.763, one spaced a fiftieth reaches 0.795 of a maximum of 0.800, and
+the amplitude it then reports is far bigger.
+
+| dearest over cheapest, per element across the octave | 5 points | 50 points |
+|---|---|---|
+| `rmiss64` | 1.286x | **1.458x** |
+| `churn64` | 1.142x | **1.284x** |
+| `churnbig` | 1.148x | 1.247x |
+| `rhit64` | 1.115x | 1.168x |
+| `churnstr` | 1.055x | 1.120x |
+| `rmissstr` | 1.061x | 1.099x |
+
+Each point line carries the load factor of a table of that size, so where on the cycle a number
+sits is readable rather than inferred, and each workload prints its cheapest and dearest point;
+where the workload's live size is about half of n (`ie*`, `find*`) the load is left off rather than
+guessed.
+
+**What that is worth depends on whether the two maps double at the same sizes.** Taking the fifty
+points of a run apart into the ten five-point sweeps inside it -- every tenth point, each one
+spanning the whole octave, each one a sweep this harness would have been happy to report -- and
+comparing each to the fifty-point geomean:
+
+| | `base/cand`, the same header both sides | `boost/cand` |
+|---|---|---|
+| `churn64` | 0.999 .. 1.005 | **0.742 .. 1.023** |
+| `churnbig` | 0.995 .. 1.002 | 0.787 .. 1.069 |
+| `churnstr` | 0.998 .. 1.001 | 0.855 .. 1.038 |
+| `rmiss64` | 0.989 .. 0.996 | 0.833 .. 1.010 |
+| `build64` | 0.992 .. 1.003 | 1.459 .. 1.571 |
+| `rhit64` | 0.974 .. 0.980 | 0.753 .. 0.776 |
+
+Against another revision of this header the five-point sweep is worth 0.6% -- the two sawtooths are
+in phase, so they cancel out of the ratio whatever is sampled, which is why every same-family
+paired number in this project is sound however it was taken. Against boost, whose bucket counts are
+a different sequence, the same five points land anywhere within **26%** of the answer: `churn64`
+reads 0.742 or 1.023 for one quantity depending only on where the five sizes start. Both fifty-point
+runs made on the day agree to 0.4% on that spread, so it is phase and not noise. **A cross-family
+ratio wants fifty points; a header-against-header one does not.**
+
+The cycle is one octave long only because the array doubles, which is the map's policy and not a
+law. So the harness measures it: before anything is timed it inserts into each map under comparison,
+records every size at which `bucket_count()` changes, prints those sizes and the ratio between them,
+and says whether an octave is one whole turn. A growth factor under two -- which this project's
+notes list as a knob -- would make the geomean over an octave weigh part of the cycle twice, and the
+run now says so where it cannot be missed instead of being quietly wrong.
+
+Fifty points do not make the run ten times longer, because what a point costs was cut where the
+sawtooth needs the points and left alone where it does not. All twenty workloads, twelve epochs,
+clang on a 7950X: **2m21 at five points and 5m34 at fifty**, where the five-point run cost 3m19
+before this change. With `-b`, three alternatives instead of two: 4m51 before, 3m32 and 8m37 now.
+
+| workload | sizes at `-p 50` | why |
+|---|---|---|
+| `it*`, `hashstr` | 1 | no bucket array whose load factor cycles, and iteration is quadratic in the element count |
+| `ie*`, `find*` | 5 | the map grows from empty through every doubling while the workload runs, so the cost is already an integral over the cycle: measured over one octave, `ie64`'s per-element cost moves 1.03x and `find64`'s a monotone 1.10x, neither with a cycle in it |
+| `build*`, `churn*` | 50 | n is the live size and the payload is n operations; both carry the whole sawtooth |
+| `rhit*`, `rmiss*` | 50 | the sharpest sawtooth there is here (1.32x on a miss), and a point costs the same at every size |
+
+The two lookup workloads pay for the other fifty: they search a table built **outside** the timed
+region, a million times rather than ten, which is what makes a point of the sweep cheap without the
+fill being part of the ratio. Their absolute times before and after 2026-09-12 are not comparable,
+**and neither are their ratios against a map that is not this header**: `rhit64` against boost read
+0.798 with the fill inside the timed region and 0.760 without it, `rmissstr` 0.931 and 0.832. Their
+ratios against another revision of this header are unchanged to within 1%, because there both sides
+pay the same fill and it cancels. Nothing scored changed.
+
 `it64`, `itstr`, `itbig` and `hashstr` are measured at one size on purpose. Iteration walks the
 dense value vector, which has no buckets and so no sawtooth to average out, and its cost is
 quadratic in the element count, so sweeping it would triple the run for an answer that does not
@@ -40,7 +110,9 @@ move; `hashstr` never touches a table. The sizes are template parameters rather 
 arguments, so the default instantiation is the same code `bench_quick_overall_udm` has always
 compiled -- turning a literal loop bound into a runtime value would be a change to the scored
 benchmark even at the same value, and its absolute numbers are only comparable across time if its
-workloads do not move.
+workloads do not move. That is also why the point count is a compile-time constant: `-p` rebuilds
+the binary rather than re-running it, which costs 17 seconds of clang at fifty points against four
+at five.
 
 ## Every other map, on the same workloads
 
@@ -558,9 +630,11 @@ because that is the only one of the three with branches to mispredict -- 0.575 p
 0.02 for main and 0.024 for this map, counted with `perf` on one-map binaries.
 
 It is the mistake this project's own notes record having fixed once already in the scored find
-workload, reintroduced in this tool. What makes the scored workloads safe and the sweep not is the
-batch size: `find_all` does 10M lookups per epoch, far past what a predictor can hold, while the
-sweep does 20000. The rngs now live in a `state` beside each map and carry on across epochs and
+workload, reintroduced in this tool. What made the scored workloads safe and the sweep not was the
+batch size: `find_all` did 10M lookups per epoch from one seed, far past what a predictor can hold,
+while the sweep does 20000. `find_all` is a million lookups per epoch since 2026-09-12, so it is no
+longer out of reach by size alone, and its rng moved into the table beside its map -- carrying on
+across epochs, exactly as the sweep's does. The rngs now live in a `state` beside each map and carry on across epochs and
 across sample points. Cross-checked afterwards against one-map-per-binary runs of the same
 workload, the fixed sweep agrees to 3-8% and orders the four maps identically at every point; the
 replayed one did not.

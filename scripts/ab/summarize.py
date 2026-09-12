@@ -113,7 +113,9 @@ def main():
         lo, hi = min(swept), max(swept)
         span = str(lo) if lo == hi else f"{lo}-{hi}"
         print(f"_Each ratio is the geometric mean over {span} sizes spanning one octave. Iteration and "
-              "hashstr are measured at one size: neither has a bucket array whose load factor sweeps._")
+              "hashstr are measured at one size: neither has a bucket array whose load factor sweeps. "
+              "`ie*` and `find*` grow a map from empty through every doubling, which averages the "
+              "sawtooth out already, so they keep five sizes however many the rest are given._")
     else:
         print("_One size per workload, so each ratio is a single point on each map's load-factor "
               "sawtooth and is comparable only with other single-size runs._")

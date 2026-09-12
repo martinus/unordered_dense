@@ -128,7 +128,8 @@ entries; churn is 50000. Anything past L2/L3 is invisible to it and needs the si
 | the mechanism (cycles, misses, TLB) | `perf stat` / `perf record` on the score binary or `scripts/ab/maps_one.sh` (one map per binary) | `perf record` first: an out-of-line symbol in `nm` is not evidence the hot path calls it (#268) |
 | an environment setting: page size, allocator tunable, governor | `scripts/ab/same_binary.sh 5 GLIBC_TUNABLES=glibc.malloc.hugetlb=1` | same binary, no layout band; the paired harness cannot see this (both sides share a process) |
 | the size axis, other maps, allocators | `scripts/ab/huge_pages.sh`, `scripts/ab/maps.sh`, `scripts/ab/prefetch_lines.sh`, ... (all self-contained, variant = template instantiation, interleaved rounds, medians) | never one size: sweep, and sweep across the cache boundary |
-| is the paired harness biased today | `scripts/ab/run.sh -r HEAD` (same header both sides) | reads `rmissstr` 1.036, `buildbig` 0.983, `hashstr` 0.872 on a clean tree: retires anything under ~5% there |
+| a ratio against a map that is not this header (boost, another slots-per-group) | `scripts/ab/run.sh -b -p 50` (2.4x the default's wall clock) | five points are worth up to 26% there and 0.6% against another revision of this header: the two sawtooths are only in phase in the second case (#274) |
+| is the paired harness biased today | `scripts/ab/run.sh -r HEAD` (same header both sides) | one build is one sample of the layout band: `rmissstr` 1.036 then 0.993-1.008, `rhit64` 0.976-1.000, `hashstr` 0.872-1.05. Re-take it per build and retire anything under ~5% |
 
 Calibration constants, all measured: run-to-run drift 1–2%; **code layout luck ±3%** (two runs of the
 same two binaries are one layout sample; `-falign-functions=32` re-rolls it: #262 read 0.9975 and
@@ -142,6 +143,9 @@ THP-`always` runner scores 2.6–3.6% above a `madvise` one for no reason in the
 - **Never quote a ratio from one table size.** Load factor sawtooths ½→max between doublings and two
   indexes double at different sizes: 11 slots read 1.384 at one size, 1.039 over the octave; churn64
   reversed sign. Every boost ratio not labelled "octave geomean" is a point measurement. grep "octave".
+  **Five points across that octave never land on its peak** (load 0.763 of a maximum of 0.800) and
+  read half the amplitude `-p 50` reads (`rmiss64` 1.29x against 1.46x). Five is right for a
+  header-against-header A/B and wrong for anything out of phase with this map. grep "Fifty points".
 - **Sweep across the cache boundary for any prefetch/pipeline.** Lookahead costs 13–17 instr/element
   whether needed or not; `replace()` shipped a fifth slower below 65k after being measured only above
   its crossover. Two sizes on one side of a cache are one size. grep "crossover".
