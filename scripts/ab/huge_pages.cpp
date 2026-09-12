@@ -65,16 +65,16 @@ using seg_huge = ankerl::unordered_dense::segmented_vector<T, huge_alloc<T>, (st
 template <class T>
 using seg_huge16 = ankerl::unordered_dense::segmented_vector<T, huge_alloc<T>, (std::size_t{16} << 20U)>;
 
-// The same thing `huge_page::segmented_map`'s own parameters say, which is how a caller writes it
-// now: the allocator slot is spoken for by the alias, so the allocator template this shape is
-// dispatched with is unused here.
-template <class K, class V, template <class> class /*unused*/>
-using seg_huge16_map = ankerl::unordered_dense::huge_page::segmented_map<K,
-                                                                         V,
-                                                                         ankerl::unordered_dense::hash<K>,
-                                                                         std::equal_to<K>,
-                                                                         ankerl::unordered_dense::bucket_type::group,
-                                                                         (std::size_t{16} << 20U)>;
+// A 16 MB segment through the alias's own parameter, which is how a caller writes it now. Same type
+// as the `huge_page::` spelling when the allocator is that one, and the allocator stays a parameter.
+template <class K, class V, template <class> class A>
+using seg16_map = ankerl::unordered_dense::segmented_map<K,
+                                                         V,
+                                                         ankerl::unordered_dense::hash<K>,
+                                                         std::equal_to<K>,
+                                                         A<std::pair<K, V>>,
+                                                         ankerl::unordered_dense::bucket_type::group,
+                                                         (std::size_t{16} << 20U)>;
 
 #if HUGE_PAGES_HAS_BOOST
 // boost::unordered_flat_map with the same hash the paired harness gives it (scripts/ab/ab.cpp), and
@@ -173,7 +173,7 @@ auto main(int argc, char** argv) -> int {
     } else if (alloc == "seghuge") {
         r = run_keys<map_with, seg_huge>(keys, work, n);
     } else if (alloc == "seghuge16") {
-        r = run_keys<seg_huge16_map, std_alloc>(keys, work, n);
+        r = run_keys<seg16_map, huge_alloc>(keys, work, n);
 #if HUGE_PAGES_HAS_BOOST
     } else if (alloc == "boost") {
         r = run_keys<boost_with, std_alloc>(keys, work, n);

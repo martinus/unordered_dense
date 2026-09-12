@@ -215,8 +215,11 @@ namespace huge_page {
 template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
 using map = detail::table<Key, T, Hash, KeyEqual, huge_page_allocator<std::pair<Key, T>>, Bucket, false>;
 
-// The segment size is worth setting here: a segment of 16 MB is at least one whole huge page for any
-// element size, where the 4096 byte default is far below the allocator's threshold and gets none.
+// The segment size is worth setting here, and is not defaulted to a large one: a segment is
+// allocated whole, so a 16 MB default would cost a map with ten elements 16 MB. The default gets
+// this allocator for the index and not for the values, which is the right floor for a small map and
+// the wrong answer for a large one -- 16 MB is at least one whole huge page after the rounding for
+// any element size, and is what the README recommends.
 template <class Key,
           class T,
           class Hash = hash<Key>,
