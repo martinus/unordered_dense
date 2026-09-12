@@ -38,6 +38,40 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
   was tried and what happened; one index line per entry, same commit), and retractions are written
   in place, never deleted. A negative result is an entry too.
 
+## Session mechanics (what cost turns last time)
+
+- **Long runs: one background call, no polling.** Start it with `run_in_background`, `tee` its
+  output to `/home/martinus/gra/<name>/*.txt` (the task's own output file is on `/tmp`), and do
+  independent work until the notification. The command cap is 1 hour: split sweeps at ~45 min.
+- **Smoke every harness at the smallest size, one round, before the real run.** Three scripts this
+  week failed only at run time: `env VAR=x fn` cannot call a shell function; `ls_l1_d_tlb_miss.all_l2_dtlb_miss`
+  is not an event; `$!` after `cmd | tee &` is `tee`'s pid.
+- **Verify the mechanism is engaged before A/B-ing it.** A setting that did not take effect measures
+  as a clean null. Huge pages: `AnonHugePages` in `/proc/<pid>/smaps_rollup` mid-run, or `perf stat
+  -e ls_l1_d_tlb_miss.tlb_reload_2m_l2_hit`. Prefetch/inlining: the symbol table (`nm -C | grep -c`)
+  and `perf record` of the hot function.
+- **CI watcher** (pending shows as `pending` in the tabular view; JSON `conclusion` is `""`):
+  `for i in $(seq 1 55); do t=$(gh pr checks N | awk -F'\t' '{print $2}' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}'); grep -q pending <<<"$t" || { echo "$t"; break; }; sleep 60; done`
+  — then `gh pr merge N --rebase --delete-branch=false` only if the user said "merge when green".
+- **perf events that exist on this machine** (Zen 4, perf 6.x): `cycles`, `instructions`,
+  `branch-misses`, `dTLB-load-misses`, `ls_l1_d_tlb_miss.{all,all_l2_miss,tlb_reload_4k_l2_hit,tlb_reload_2m_l2_hit,tlb_reload_coalesced_page_hit}`.
+  Four or more events multiplex; three per run for clean counts. `cpuid` is not installed.
+- **A new public header**: `Version X.Y.Z` line in its banner, add it to `CHECKS` in
+  `scripts/lint/lint-version.py`, `#include "unordered_dense.h"` for the version namespace, a unit
+  test registered in `test/meson.build` (then the unity leg), CMake installs the directory so nothing
+  else changes.
+- **Templates.** Issue: `## The number` (measured, with the notes entry name) / `## What to build` /
+  `## How to measure it` / `## Done means`. Notes entry: `**What was tried and what happened**
+  (YYYY-MM-DD, issue #N, Ryzen 9 7950X, clang 22 and gcc 16, the scripts used).` then tables, then
+  "what this says and does not say"; index line = the bold sentence. Commit: one sentence, body with
+  numbers, `Closes #N`. Comment on an issue only when asked ("comment that").
+- **The owner's requests, as phrased:** "Ok now 260" = implement issue 260 and open its PR. "Run
+  simplify" = `/simplify` on the open PR, fix findings directly (never file them as issues unless
+  told). "Merge when green" = watch CI, merge on 34/34, otherwise report. "File 1 2 and 3" = one issue
+  per numbered point in the last reply. "Comment that" = post the last reasoning as an issue comment.
+  "Is it still running?" = check the background job and show partial output. Questions ("would it
+  make sense to…") want the measured answer and a recommendation, not a plan.
+
 ## Build, test, lint
 
 ```sh
