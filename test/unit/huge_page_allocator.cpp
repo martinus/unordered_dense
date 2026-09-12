@@ -110,38 +110,25 @@ TEST_CASE_MAP("huge_page_allocator_round_trips_with_the_map",
 }
 
 // The aliases exist so that opting in is one word instead of five template arguments, so what there
-// is to check is that the word names exactly the type the five arguments do -- and that a map so
-// named is an ordinary map, since the alias is the only thing between the caller and `detail::table`.
+// is to check is that the word names exactly the type the five arguments do. Nothing else: the
+// assert is type identity, and a map of the same type cannot behave differently.
 TEST_CASE("huge_page_aliases_name_the_same_types_as_the_arguments_they_replace") {
-    using namespace ankerl::unordered_dense;
+    namespace udm = ankerl::unordered_dense;
 
-    static_assert(std::is_same_v<huge_page::map<int, int>,
-                                 map<int, int, hash<int>, std::equal_to<int>, huge_page_allocator<std::pair<int, int>>>>);
+    static_assert(std::is_same_v<udm::huge_page::map<int, int>,
+                                 udm::map<int, int, udm::hash<int>, std::equal_to<int>, huge<std::pair<int, int>>>>);
+    static_assert(std::is_same_v<udm::huge_page::segmented_map<int, int>,
+                                 udm::segmented_map<int, int, udm::hash<int>, std::equal_to<int>, huge<std::pair<int, int>>>>);
+    static_assert(std::is_same_v<udm::huge_page::set<int>, udm::set<int, udm::hash<int>, std::equal_to<int>, huge<int>>>);
+    static_assert(std::is_same_v<udm::huge_page::segmented_set<int>,
+                                 udm::segmented_set<int, udm::hash<int>, std::equal_to<int>, huge<int>>>);
+
+    // Every parameter the alias forwards, forwarded: an alias that dropped one and hardcoded its
+    // default would satisfy all four asserts above.
+    static_assert(std::is_same_v<udm::huge_page::map<int, int, std::hash<int>>,
+                                 udm::map<int, int, std::hash<int>, std::equal_to<int>, huge<std::pair<int, int>>>>);
     static_assert(
-        std::is_same_v<huge_page::segmented_map<int, int>,
-                       segmented_map<int, int, hash<int>, std::equal_to<int>, huge_page_allocator<std::pair<int, int>>>>);
-    static_assert(std::is_same_v<huge_page::set<int>, set<int, hash<int>, std::equal_to<int>, huge_page_allocator<int>>>);
-    static_assert(std::is_same_v<huge_page::segmented_set<int>,
-                                 segmented_set<int, hash<int>, std::equal_to<int>, huge_page_allocator<int>>>);
-
-    // The hash and the equality are still the caller's to choose, which a fixed alias would take
-    // away: only the allocator argument is spent.
-    static_assert(std::is_same_v<huge_page::map<int, int, std::hash<int>>,
-                                 map<int, int, std::hash<int>, std::equal_to<int>, huge_page_allocator<std::pair<int, int>>>>);
-
-    auto m = huge_page::map<std::uint64_t, std::uint64_t>();
-    for (std::uint64_t i = 0; i < 1000; ++i) {
-        m[i] = i * 3;
-    }
-    REQUIRE(m.size() == 1000);
-    REQUIRE(m.find(999)->second == 2997);
-    auto copy = m;
-    REQUIRE(copy == m);
-    m.erase(999);
-    REQUIRE(m.size() == 999);
-    REQUIRE(!m.contains(999));
-
-    auto s = huge_page::set<std::uint64_t>();
-    s.insert(42);
-    REQUIRE(s.contains(42));
+        std::is_same_v<
+            udm::huge_page::map<int, int, udm::hash<int>, std::equal_to<int>, udm::bucket_type::group_big>,
+            udm::map<int, int, udm::hash<int>, std::equal_to<int>, huge<std::pair<int, int>>, udm::bucket_type::group_big>>);
 }

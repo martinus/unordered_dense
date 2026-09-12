@@ -549,7 +549,7 @@ This is what the numbers above were measured with, and it is the route that help
 using map_t = ankerl::unordered_dense::huge_page::map<uint64_t, uint64_t>;
 ```
 
-`huge_page::map`, `segmented_map`, `set` and `segmented_set` are the ordinary four with this allocator already in the allocator slot -- the same shape `pmr::` has, and the hash and the equality are still yours to choose. Spelling the five arguments out names exactly the same type:
+`huge_page::map`, `segmented_map`, `set` and `segmented_set` fill the allocator slot for you. This names the same type:
 
 ```cpp
 using map_t = ankerl::unordered_dense::map<uint64_t, uint64_t,
@@ -570,9 +570,9 @@ Both the index and the values get it, since the index rebinds the value allocato
 A build gains more than the TLB explains: a vector that doubles faults in every new block, and on 2 MB pages that is 512 times fewer faults. It is not specific to this map -- `boost::unordered_flat_map` on the same allocator gains 1.5-1.9x on integer builds and 1.62x on churning 64 byte values, where its single region holds the values inline -- so it changes nothing about which map is ahead where; the full table is in `notes/index-design.md`. Two things to know:
 
 * **It only helps once the blocks themselves reach 2 MB**, which is the index from about 370000 entries and the values from `2 MB / sizeof(value_type)` entries. A huge page is 2 MB whole, and an allocator that owns only its own blocks has no neighbour to share one with -- that is what the environment route has and this one does not. Below that size, use the environment.
-* **Every block is rounded up to 2 MB, and the rounding is resident memory**, because touching one byte of an `MADV_HUGEPAGE`d extent populates all of it. The map doubles both regions, so the loss is at most half a doubling step per region, while that region sits between doublings. The threshold is the second template parameter (`huge_page_allocator<T, 4 << 20>`), and it cannot go below 2 MB.
+* **Every block is rounded up to 2 MB, and the rounding is resident memory**, because touching one byte of an `MADV_HUGEPAGE`d extent populates all of it. The map doubles both regions, so the loss is at most half a doubling step per region, while that region sits between doublings. The threshold is the second template parameter (`huge_page_allocator<T, 4 << 20>`), and it cannot go below 2 MB; the `huge_page::` aliases use the default, so a different threshold is the allocator written out.
 
-**With `segmented_vector`, size the segment for the page.** A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. The segment size is chosen through the container slot, which is the one thing `huge_page::segmented_map` cannot do for you -- it fixes the allocator, and the segment size lives on the container:
+**With `segmented_vector`, size the segment for the page.** A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. The segment size is chosen through the container slot rather than the `huge_page::segmented_map` alias:
 
 ```cpp
 ankerl::unordered_dense::map<K, V, ankerl::unordered_dense::hash<K>, std::equal_to<K>,
