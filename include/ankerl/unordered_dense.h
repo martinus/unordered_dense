@@ -1731,56 +1731,62 @@ private:
         return match_fingerprint(group, 0);
     }
 
-    // The value indices of a group are the next thing a hit reads, and their address needs only
-    // the group, so they are asked for before the fingerprints have arrived: the two latencies
-    // overlap instead of adding. Measured 3 cycles off every hit, 0.2 onto every miss.
-    // MERGED VARIANT: the indices sit inside the block, so what has to be pulled in is the rest of
-    // the block rather than a second array. One block is 88 bytes and unaligned, so it covers two or
-    // three lines; the first is the one the fingerprints are already being read from.
+    // Both helpers here ask for **two consecutive cache lines, clamped into the block**, and differ
+    // only in which line they start at. That rule is #250's: the hardware fetches what it can see
+    // coming, so the job is to start it in the right place rather than to name every line a block
+    // touches. A block is 88 bytes, or 152 for `group_big`, at eight byte alignment, and
+    // `88 % 64 == 24` with `gcd(24, 64) == 8`, so `p % 64` cycles through {0, 8, ... 56} whatever
+    // the array's address and a quarter of blocks reach one line further than the rest. Naming that
+    // extra line has now been measured twice and lost twice: 12.85 ns/block against 12.28 on the 88
+    // byte block (#250), and 16.37 against 16.07 under clang and 16.49 against 16.08 under gcc on
+    // the 152 byte one, where a rehash-shaped read of every byte ties at 19.12 against 19.15 (#252).
+    // scripts/ab/prefetch_lines.cpp. They are two functions rather than one template because
+    // folding them together moves gcc's code generation on the default bucket type, and this way
+    // both spellings are byte identical to what shipped before.
     //
-    // The second address is the block's last byte for `group` and a fixed 128 for `group_big`, which
-    // is the same rule read twice: **the two lines after the one being read, clamped into the
-    // block**. 88 bytes never reaches past 128, so for the default type this is the `p + 87` it has
-    // always asked for and the generated code does not move. 152 bytes does: it spans four lines
-    // whenever `p % 64 > 40`, which is 36% of blocks, and asking for the first and the *last* of
-    // them leaves out the middle -- where eight of the sixteen value indices live. Naming all three
-    // instead is not the fix; it measured no better than the pair it replaces (15.65 against 15.64
-    // ns/block) while the two consecutive lines read 15.01, the same shape and the same reason as
-    // #250's fix to prefetch_block. gcc agrees, 15.54 / 15.60 against 15.00.
-    // scripts/ab/prefetch_lines.cpp, issue #252.
+    // The rest of the block, for a probe that is reading the fingerprints out of the first line as
+    // this is issued. The value indices of a group are the next thing a hit reads and their address
+    // needs only the group, so they are asked for before the fingerprints have arrived: the two
+    // latencies overlap instead of adding. Measured 3 cycles off every hit, 0.2 onto every miss.
+    //
+    // Call it where the index a group hands back is an *address*. `probe_from` loads
+    // `m_values[value_idx]` behind it -- a second miss queued on the first -- and that is the chain
+    // the prefetch shortens. The two walks that look a value *up* have no load behind the index, and
+    // measured better without it (#263, and the comment on slot_of_value).
+    //
+    // For `group` the second address is the block's last byte, which is where it has always pointed;
+    // for `group_big` it is 128. 152 bytes spans four lines whenever `p % 64 > 40`, a quarter of
+    // blocks, and asking for the first and the *last* of them left out the middle -- where eight of
+    // the sixteen value indices live. The clamp also keeps a block that does not reach the second
+    // line, such as the 64 byte layout measured in #250's neighbourhood, from asking past itself.
     template <typename Block>
     static void prefetch_index(Block const* blocks, value_idx_type group_idx) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(blocks + std::size_t{group_idx});
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + 64);
-        ANKERL_UNORDERED_DENSE_PREFETCH(p + (sizeof(Block) - 1 < 128 ? sizeof(Block) - 1 : 128));
+        constexpr auto first = (std::min)(std::size_t{64}, sizeof(Block) - 1);
+        constexpr auto second = (std::min)(std::size_t{128}, sizeof(Block) - 1);
+        ANKERL_UNORDERED_DENSE_PREFETCH(p + first);
+        if constexpr (second != first) {
+            ANKERL_UNORDERED_DENSE_PREFETCH(p + second);
+        }
     }
 
-    // The first and last line of a block, for a caller that has not touched the group at all.
-    // prefetch_index skips the first line because the probe is about to read it anyway; a rehash is
-    // about to write a group it has never read, so it wants that line too.
+    // The same two lines started at the block's first, for a caller that has not touched the group
+    // at all: prefetch_index skips that line because the probe is about to read it anyway, and a
+    // rehash is about to write a group it has never read, so it wants that line too.
     //
-    // Consecutive lines from the block's start -- *not* its first and its last, which is what this
-    // asked for until 2026-09-11 and is a line short. A block is 88 bytes with four byte alignment,
-    // `88 % 64 == 24` and `gcd(24, 64) == 8`, so `p % 64` walks the whole cycle whatever the array's
-    // alignment and a quarter of blocks span three lines. Asking for `p` and `p + 87` then covers
-    // the first and the *last*, leaving out the middle -- which holds all eight counters and half
-    // the fingerprints, the two things a probe reads first. Stepping by 64 instead covers the first
-    // two and leaves out the last, which holds only the top two index entries.
-    //
-    // Same instruction count, **3.3% faster**: 12.28 ns per block against 12.67, seven rounds of
-    // seven with no overlap, on a 176 MiB array walked at random with a sixteen-deep lookahead and a
-    // probe-shaped read. Adding a third prefetch to cover the tail as well is a loss (12.85) -- the
-    // hardware fetches what it can see coming, so the job here is to start it in the right place
-    // rather than to name every line. scripts/ab/prefetch_lines.cpp, issue #250.
-    //
-    // The loop is what makes it right for group_big too: 152 bytes spans up to four lines, and the
-    // old pair covered the first and the last of them.
+    // Asking for `p` and `p + 87` instead -- the first line and the *last*, which is what this did
+    // until 2026-09-11 -- left out the middle, which holds all eight counters and half the
+    // fingerprints, the two things a probe reads first. Stepping by 64 was worth 3.3%, 12.28
+    // ns/block against 12.67, on a 176 MiB array walked at random with a sixteen-deep lookahead and
+    // a probe-shaped read (#250). The `off < 128` is the clamp, and it is the half of the rule this
+    // function was missing: without it a 152 byte block gets a third prefetch, which is the one
+    // #252 measured as a loss.
     template <typename Block>
     static void prefetch_block(Block const* block) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
         auto const* p = reinterpret_cast<char const*>(block);
-        for (std::size_t off = 0; off < sizeof(Block); off += 64) {
+        for (std::size_t off = 0; off < sizeof(Block) && off < 128; off += 64) {
             ANKERL_UNORDERED_DENSE_PREFETCH(p + off);
         }
     }
@@ -2063,17 +2069,19 @@ private:
     // returns without reaching it, and a group that does fall through was about to call next_group
     // anyway: one compare, on the walking path only.
     //
-    // No prefetch_index here, unlike the probe, and none in repoint_value either. There the index a
-    // group hands back is an address to load from -- `m_values[value_idx]`, a second miss behind the
-    // first -- so pulling the rest of the block in early shortens a chain. Here the index is the
-    // answer: it feeds a compare, and in the twin a store that ends the function. Dropping the two
-    // prefetches takes 0.3-0.6% of the instructions off every erase-heavy workload of the score under
-    // both compilers and nothing off any other one, with the time gcc 1.0039 and clang 0.9991 --
-    // one header per binary, scripts/ab/solo.sh. #263.
-    //
     // It measured 10% *faster* than the unbounded version under clang, and that is an artifact, not
     // a reason -- see notes/index-design.md. Forcing this function out of line makes the difference
     // vanish and gcc never had it. The reason to bound the loop is that it hangs.
+    //
+    // No prefetch_index here, unlike the probe, and none in repoint_value either. There the index a
+    // group hands back is an address to load from -- `m_values[value_idx]`, a second miss behind the
+    // first -- so the prefetch takes one level off a two-level chain. Here the index ends the chain:
+    // it feeds a compare, and in the twin a store that ends the function, so what the prefetch can
+    // overlap is worth about what its two instructions cost. Dropping both takes 0.3-0.6% of the
+    // instructions off every erase-heavy workload of the score under both compilers and nothing off
+    // any other one; the time moves less than the noise floor, baseline/candidate 1.0039 under gcc
+    // and 0.9991 under clang, one header per binary with scripts/ab/solo.sh. It ships on the
+    // instruction count. #263.
     [[nodiscard]] auto slot_of_value(std::uint64_t mh, value_idx_type value_idx) const -> value_idx_type {
         auto const word = fingerprint_word(mh);
         auto group_idx = group_idx_from_hash(mh);

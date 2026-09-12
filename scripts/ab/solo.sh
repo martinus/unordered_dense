@@ -2,7 +2,7 @@
 # One header per binary: build the scored benchmark twice, from two revisions of the header, and
 # alternate whole runs.
 #
-#   scripts/ab/solo.sh [-r REV] [-c COMPILER] [rounds]
+#   scripts/ab/solo.sh [-r REV] [-c COMPILER] [-t TESTCASE] [rounds]
 #
 # The paired harness next door interleaves baseline and candidate epoch by epoch in one process,
 # which cancels drift and is the right tool for almost everything. It cannot measure a change that
@@ -18,11 +18,12 @@
 # 10% with instruction counts from maps_one.sh, which neither layout nor drift can move.
 set -euo pipefail
 export LC_ALL=C
-rev=HEAD cxx=clang++
-while getopts "r:c:" opt; do
+rev=HEAD cxx=clang++ tc=bench_quick_overall_udm
+while getopts "r:c:t:" opt; do
     case $opt in
         r) rev=$OPTARG ;;
         c) cxx=$OPTARG ;;
+        t) tc=$OPTARG ;;
         *) exit 1 ;;
     esac
 done
@@ -52,8 +53,10 @@ for side in base cand; do
     cp "$dir/test/udm-test" "$build/udm-$side"
 done
 
-score() { "$1" -ns -tc=bench_quick_overall_udm 2>&1 | grep bench_quick_overall_map_udm | awk '{print $1}'; }
-echo "one header per binary, $cxx, candidate = working tree, baseline = $rev"
+# bench_quick_overall_udm_bigbucket is the same fifteen workloads over `group_big`, which nothing
+# else in the tree measures end to end; it prints the same label as the default test case.
+score() { "$1" -ns -tc="$tc" 2>&1 | grep bench_quick_overall_map_udm | awk '{print $1}'; }
+echo "one header per binary, $cxx, $tc, candidate = working tree, baseline = $rev"
 for r in $(seq 1 "$rounds"); do
     b=$(score "$build/udm-base"); c=$(score "$build/udm-cand")
     printf "  round %d   baseline %.6f   candidate %.6f   ratio %.4f\n" "$r" "$b" "$c" \
