@@ -134,25 +134,38 @@ TEST_CASE("huge_page_aliases_name_the_same_types_as_the_arguments_they_replace")
 }
 
 // A segment sized for the page, which is the recipe the README gives and the one the segment-size
-// parameter exists for: the 4096 byte default is far below the allocator's 2 MB threshold, so a
-// segmented map gets no huge page at all without it.
-TEST_CASE("huge_page_segmented_map_with_a_16mb_segment_round_trips") {
+// parameter exists for: the default segment is 4096 bytes, far below the allocator's 2 MB
+// threshold, so a segmented map gets huge pages for its index and none for its values without it.
+TEST_CASE("huge_page_segmented_map_with_a_sized_segment_round_trips") {
     namespace udm = ankerl::unordered_dense;
-    using huge_seg_map_t = udm::huge_page::segmented_map<std::uint64_t,
-                                                         std::uint64_t,
-                                                         udm::hash<std::uint64_t>,
-                                                         std::equal_to<std::uint64_t>,
-                                                         udm::bucket_type::group,
-                                                         (std::size_t{16} << 20U)>;
+    using pair_t = std::pair<std::uint64_t, std::uint64_t>;
 
-    // The parameter reaches the container it is about, rather than being accepted and dropped.
-    static_assert(std::is_same_v<huge_seg_map_t::value_container_type,
-                                 udm::segmented_vector<std::pair<std::uint64_t, std::uint64_t>,
-                                                       huge<std::pair<std::uint64_t, std::uint64_t>>,
-                                                       (std::size_t{16} << 20U)>>);
+    // 16 MB is the size the README recommends, because it is at least one whole huge page after the
+    // rounding for any element size. The parameter has to reach the container it is about.
+    static_assert(std::is_same_v<udm::huge_page::segmented_map<std::uint64_t,
+                                                               std::uint64_t,
+                                                               udm::hash<std::uint64_t>,
+                                                               std::equal_to<std::uint64_t>,
+                                                               udm::bucket_type::group,
+                                                               (std::size_t{16} << 20U)>::value_container_type,
+                                 udm::segmented_vector<pair_t, huge<pair_t>, (std::size_t{16} << 20U)>>);
+    static_assert(std::is_same_v<udm::huge_page::segmented_set<std::uint64_t,
+                                                               udm::hash<std::uint64_t>,
+                                                               std::equal_to<std::uint64_t>,
+                                                               udm::bucket_type::group,
+                                                               (std::size_t{16} << 20U)>::value_container_type,
+                                 udm::segmented_vector<std::uint64_t, huge<std::uint64_t>, (std::size_t{16} << 20U)>>);
 
-    // 200000 entries is 3.2 MB of values, so the first segment is whole and the second is begun.
-    auto map = huge_seg_map_t();
+    // Run it on a 1 MB segment instead: 65536 pairs per segment, so 200000 entries span four of them
+    // and the growth below allocates more -- which a 16 MB segment would not do until a million, at
+    // 32 MB of resident huge pages for a unit test.
+    using seg_map_t = udm::huge_page::segmented_map<std::uint64_t,
+                                                    std::uint64_t,
+                                                    udm::hash<std::uint64_t>,
+                                                    std::equal_to<std::uint64_t>,
+                                                    udm::bucket_type::group,
+                                                    (std::size_t{1} << 20U)>;
+    auto map = seg_map_t();
     constexpr std::uint64_t n = 200000;
     for (std::uint64_t i = 0; i < n; ++i) {
         map[i] = i * 7;
@@ -160,7 +173,8 @@ TEST_CASE("huge_page_segmented_map_with_a_16mb_segment_round_trips") {
     REQUIRE(map.size() == n);
     REQUIRE(map.find(n - 1)->second == (n - 1) * 7);
 
-    // A segmented container's references survive growth, which is the reason to have one.
+    // A segmented container's references survive growth, which is the reason to have one, and this
+    // growth crosses into segments the pinned reference is not in.
     auto const& pinned = map[12345];
     for (std::uint64_t i = n; i < n * 2; ++i) {
         map[i] = i;

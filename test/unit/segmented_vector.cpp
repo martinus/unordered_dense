@@ -559,45 +559,60 @@ TEST_CASE("segmented_vector_free_swap_forwards_to_the_member") {
     }
 }
 
-// The segment size the alias takes, against the two things it must not disturb: the default names
-// the type it always named, and a caller who brought their own container keeps it.
+// The segment size the alias takes, against the things it must not disturb: the default names the
+// type it always named, and a caller who brought their own container keeps it. Passing both a
+// container and a size is a static_assert, which is why only the legal spelling appears here.
 TEST_CASE("segmented_map_segment_size_reaches_the_container_and_defaults_unchanged") {
     namespace udm = ankerl::unordered_dense;
+    using pair_t = std::pair<int, int>;
 
-    static_assert(std::is_same_v<udm::segmented_map<int, int>,
-                                 udm::detail::table<int,
-                                                    int,
-                                                    udm::hash<int>,
-                                                    std::equal_to<int>,
-                                                    std::allocator<std::pair<int, int>>,
-                                                    udm::bucket_type::group,
-                                                    true>>,
-                  "the default spelling has to stay the type it has always been");
+    static_assert(
+        std::is_same_v<
+            udm::segmented_map<int, int>,
+            udm::detail::
+                table<int, int, udm::hash<int>, std::equal_to<int>, std::allocator<pair_t>, udm::bucket_type::group, true>>,
+        "the default spelling has to stay the type it has always been");
+    static_assert(
+        std::is_same_v<
+            udm::segmented_set<int>,
+            udm::detail::
+                table<int, void, udm::hash<int>, std::equal_to<int>, std::allocator<int>, udm::bucket_type::group, true>>);
 
-    using sized = udm::segmented_map<int,
-                                     int,
-                                     udm::hash<int>,
-                                     std::equal_to<int>,
-                                     std::allocator<std::pair<int, int>>,
-                                     udm::bucket_type::group,
-                                     (std::size_t{1} << 20U)>;
-    static_assert(std::is_same_v<sized::value_container_type,
-                                 udm::segmented_vector<std::pair<int, int>, std::allocator<std::pair<int, int>>, 1U << 20U>>);
-    static_assert(!std::is_same_v<sized, udm::segmented_map<int, int>>, "a different segment size is a different container");
-
-    // A container in the allocator slot is passed through whatever the size argument says, because
-    // the size is then the caller's to have set on the container they brought.
-    using own = udm::segmented_vector<std::pair<int, int>, std::allocator<std::pair<int, int>>, 8192>;
+    // The size reaches the container, for every alias that takes one -- each is a hand-written
+    // parameter list that could have dropped or misordered it.
+    constexpr auto mb = std::size_t{1} << 20U;
     static_assert(std::is_same_v<udm::segmented_map<int,
                                                     int,
                                                     udm::hash<int>,
                                                     std::equal_to<int>,
-                                                    own,
+                                                    std::allocator<pair_t>,
                                                     udm::bucket_type::group,
-                                                    (std::size_t{1} << 20U)>::value_container_type,
-                                 own>);
+                                                    mb>::value_container_type,
+                                 udm::segmented_vector<pair_t, std::allocator<pair_t>, mb>>);
+    static_assert(
+        std::is_same_v<
+            udm::segmented_set<int, udm::hash<int>, std::equal_to<int>, std::allocator<int>, udm::bucket_type::group, mb>::
+                value_container_type,
+            udm::segmented_vector<int, std::allocator<int>, mb>>);
+#if defined(ANKERL_UNORDERED_DENSE_PMR)
+    static_assert(
+        std::is_same_v<udm::pmr::segmented_map<int, int, udm::hash<int>, std::equal_to<int>, udm::bucket_type::group, mb>::
+                           value_container_type,
+                       udm::segmented_vector<pair_t, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<pair_t>, mb>>);
+    static_assert(
+        std::is_same_v<udm::pmr::segmented_set<int, udm::hash<int>, std::equal_to<int>, udm::bucket_type::group, mb>::
+                           value_container_type,
+                       udm::segmented_vector<int, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<int>, mb>>);
+#endif
 
-    auto map = sized();
+    // A container in the allocator slot is passed through, which is the only spelling that compiles
+    // once a container is there.
+    using own = udm::segmented_vector<pair_t, std::allocator<pair_t>, 8192>;
+    static_assert(
+        std::is_same_v<udm::segmented_map<int, int, udm::hash<int>, std::equal_to<int>, own>::value_container_type, own>);
+
+    auto map = udm::
+        segmented_map<int, int, udm::hash<int>, std::equal_to<int>, std::allocator<pair_t>, udm::bucket_type::group, mb>();
     for (int i = 0; i < 10000; ++i) {
         map[i] = i;
     }

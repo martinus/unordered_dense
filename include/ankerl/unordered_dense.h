@@ -870,10 +870,12 @@ struct require_avalanching : Hash {
     using is_avalanching = void;
 };
 
-// How many bytes of elements a segment holds by default. It is the *maximum*: a segment is a power
-// of two of elements that fits inside it, rounded down, so 4096 bytes is 256 pairs of eight-byte
-// halves and 51 of them for a 80 byte value -- 32 after the rounding. See segmented_map's parameter
-// of the same name for when that rounding is the thing that matters.
+// How many bytes of elements a segment holds by default, and the *maximum*: a segment is a power of
+// two of elements that fits inside it, rounded down. So 4096 bytes is 256 pairs of eight-byte halves
+// exactly, and 32 of an 80 byte value rather than 51 -- 2560 bytes. `segmented_map` takes this as a
+// trailing parameter, which is worth setting when the rounding is what decides whether a segment
+// reaches an allocator's threshold: a "2 MB" segment is one whole huge page for a 16 byte pair and
+// 1.28 MB for a 40 byte one.
 inline constexpr std::size_t default_segment_size_bytes = 4096;
 
 // Very much like std::deque, but faster for indexing (in most cases). As of now this doesn't implement the full std::vector
@@ -4229,18 +4231,23 @@ public:
 // What a segmented alias puts in the container slot, so that the segment size can be chosen there.
 //
 // `table` builds `segmented_vector<value_type, Alloc>` itself from its IsSegmented flag, and that
-// spelling has no room for a size. Resolving the container in the alias instead reaches it without
-// another `table` parameter, which would change `erase_if`'s deduction and every mangled name.
-//
-// Two cases pass the argument straight through: a caller who supplied their own container -- the
-// size is then theirs to set and not ours to wrap -- and the default size, where `table` builds
-// exactly this type anyway, so passing the allocator keeps `segmented_map<K, V>` the type it has
-// always been rather than a second spelling of it.
+// spelling has no room for a size. Resolving the container in the alias reaches it without an eighth
+// `table` parameter, which would change `erase_if`'s deduction and every mangled name. The default
+// size passes the allocator through instead of wrapping it, because `table` then builds exactly this
+// type anyway and `segmented_map<K, V>` stays the type it has always been.
 template <class Value, class AllocatorOrContainer, std::size_t MaxSegmentSizeBytes>
-using segmented_container_for = std::conditional_t<is_detected_v<detect_iterator, AllocatorOrContainer> ||
-                                                       MaxSegmentSizeBytes == default_segment_size_bytes,
-                                                   AllocatorOrContainer,
-                                                   segmented_vector<Value, AllocatorOrContainer, MaxSegmentSizeBytes>>;
+struct segmented_container {
+    static_assert(!is_detected_v<detect_iterator, AllocatorOrContainer> || MaxSegmentSizeBytes == default_segment_size_bytes,
+                  "a container in the allocator slot carries its own segment size; drop the size argument");
+
+    using type = std::conditional_t<is_detected_v<detect_iterator, AllocatorOrContainer> ||
+                                        MaxSegmentSizeBytes == default_segment_size_bytes,
+                                    AllocatorOrContainer,
+                                    segmented_vector<Value, AllocatorOrContainer, MaxSegmentSizeBytes>>;
+};
+
+template <class Value, class AllocatorOrContainer, std::size_t MaxSegmentSizeBytes>
+using segmented_container_for = typename segmented_container<Value, AllocatorOrContainer, MaxSegmentSizeBytes>::type;
 
 } // namespace detail
 
