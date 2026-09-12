@@ -33,6 +33,7 @@ place rather than being deleted, because the retraction is usually the more usef
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
 - The #260/#262 sweep run over find and churn, and it comes back empty
+- The opt-in huge page allocator, measured across the size axis
 - The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses for it
 - Nothing holds a flat slot number any more, and gcc was the one paying for it
 - The two value walks do not want the index prefetch the probe wants
@@ -369,6 +370,117 @@ benchmark binary, where the walk is inlined into `workloads::build`, the same lo
 `and %r13d,%r10d` with the mask and the group pointer both hoisted across the store. gcc
 disambiguates it where it matters. **A scratch TU can invent a redundancy as well as hide one**,
 which is the other half of #254's rule.
+
+**The opt-in huge page allocator, measured across the size axis** (2026-09-12, issue #231,
+Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/huge_pages.{cpp,sh}`, `include/ankerl/huge_page_allocator.h`).
+
+`huge_page_allocator<T, Threshold = 2 MB>`: a block of at least `Threshold` bytes is `mmap`ed on
+its own, 2 MB aligned, rounded up to a multiple of 2 MB and `madvise(MADV_HUGEPAGE)`d; smaller
+blocks go to `std::allocator`. Handed to the map as the allocator it covers both regions, since the
+index rebinds the value allocator. The harness instantiates the score's own workloads
+(`test/bench/workloads.h`) on the map with each allocator, one cell per process so the variant is
+a template instantiation, five interleaved rounds, medians. ns per operation, `std::allocator` then
+`huge_page_allocator`, ratio above 1 meaning huge pages are faster:
+
+| clang | 50000 | 200000 | 800000 | 4000000 |
+|---|---|---|---|---|
+| `build` u64 | 18.27 / 18.55 (0.98) | 20.40 / 13.30 (**1.53**) | 22.07 / 12.78 (**1.73**) | 38.35 / 24.58 (**1.56**) |
+| `build` str | 68.49 / 58.45 (**1.17**) | 71.91 / 63.59 (**1.13**) | 85.46 / 68.64 (**1.25**) | 121.82 / 94.45 (**1.29**) |
+| `churn` u64 | 10.61 / 10.65 (1.00) | 12.66 / 12.26 (1.03) | 16.13 / 12.12 (**1.33**) | 53.74 / 49.40 (1.09) |
+| `churn` str | 33.95 / 34.15 (0.99) | 44.59 / 40.74 (1.09) | 100.67 / 93.91 (1.07) | 156.20 / 146.53 (1.07) |
+| `churn` big | -- | 15.08 / 12.40 (**1.22**) | 32.93 / 28.13 (**1.17**) | 58.31 / 53.13 (1.10) |
+| `find` u64 | 4.47 / 4.48 (1.00) | 5.49 / 5.45 (1.01) | 6.50 / 6.21 (1.05) | 16.27 / 14.25 (**1.14**) |
+| `find` str | 16.65 / 16.66 (1.00) | 19.27 / 18.91 (1.02) | 28.13 / 25.63 (1.10) | 65.97 / 60.81 (1.08) |
+
+gcc at the two headline sizes says the same: `build` u64 24.18 / 13.92 (**1.74**) at 800k and
+43.12 / 27.00 (**1.60**) at 4M, `build` str 90.14 / 74.78 (1.21) and 126.88 / 99.81 (1.27),
+`churn` u64 18.35 / 13.84 (**1.33**) and 60.23 / 55.89 (1.08), `find` u64 6.10 / 5.80 (1.05) and
+15.13 / 13.17 (**1.15**), `find` str 28.34 / 25.91 (1.09) and 66.14 / 61.38 (1.08), `churn` str
+106.66 / 99.60 (1.07) and 162.69 / 152.21 (1.07).
+
+**Three things the table says.** First, the size axis is the whole result, and it is the header
+comment's: at 50000 entries nothing but the string build moves, because nothing but the string
+values vector (2 MB at 50000 x 40 bytes) reaches a block of 2 MB. The score's 50000-entry churn
+gained 7% from the glibc route in the entry below and 0% here, and both are right -- a per-block
+allocator has no neighbour to share a huge page with. Second, `build` gains far more than the TLB:
+a doubling vector faults in every new block, and on 2 MB pages that is 512 times fewer faults --
+the cost `tame_allocator()` removed from the score, halved again, and it starts at 200000 for
+integers. Third, the allocator's reach ends at what the map allocates. `perf stat` per operation,
+L1 misses served by the L2 TLB / page walks, 4 KB then huge: `find` u64 4M 1.07 / 0.94 to 0.55 /
+0.016; `churn` u64 800k 1.32 / 0.79 to 0.48 / 0.0006; but `churn` str 4M 0.37 / 2.68 to only 0.29 /
+1.11 and `find` str 4M 0.95 / 1.53 to 0.57 / 0.45, because a string's *body* is `malloc`ed outside
+the allocator and still lives on 4 KB pages. The environment route covers those; this one cannot.
+
+**The segmented container, with its segment sized for the page** (asked as "would it make sense to
+size one chunk exactly as one huge page"). Yes, and it is the cleanest fit in the story for a
+power-of-two element size: a 2 MB segment of 16 byte pairs is 131072 elements, exactly one huge
+page, verified 2 MB aligned at elements 0, 131072 and 262144 of a 300000 entry map, with no
+rounding to amortize and no copy on growth. The catch is `num_bits_closest`, which rounds the
+element count *down* to a power of two so the index stays a shift and a mask: a "2 MB" segment of
+40 byte pairs is 32768 elements, 1.28 MB, below the threshold, and gets nothing; 16 MB segments
+bound the rounding at 2 MB per segment for any element size. The `segmented_map` alias hardcodes
+4096 bytes, so the recipe goes through the map's container slot. ns per operation, clang, `std::vector`
+on `std::allocator` / on the allocator / segmented on `std::allocator` / segmented 2 MB on the
+allocator / segmented 16 MB on the allocator:
+
+| | 200000 | 800000 | 4000000 |
+|---|---|---|---|
+| `churn` u64 | 11.80 / 11.38 / 13.98 / 13.39 / 13.47 | 16.05 / 12.00 / 18.61 / 14.19 / 14.52 | 53.94 / 49.55 / 65.95 / 61.23 / 61.17 |
+| `churn` str | 44.60 / 40.71 / 45.69 / 45.79 / 41.72 | 100.99 / 93.88 / 102.59 / 100.44 / 95.59 | 155.93 / 145.94 / 158.30 / 154.39 / 148.84 |
+| `find` u64 | 5.55 / 5.42 / 5.86 / 5.85 / 5.94 | 6.55 / 6.25 / 7.02 / 6.85 / 6.82 | 16.34 / 14.27 / 17.32 / 15.40 / 15.26 |
+| `find` str | 19.43 / 19.04 / 19.79 / 19.92 / 19.51 | 28.13 / 25.74 / 28.99 / 28.40 / 26.25 | 66.18 / 60.92 / 67.64 / 65.55 / 62.40 |
+| `build` u64 | 20.34 / 13.56 / 19.17 / 15.10 / 15.02 | 22.04 / 13.19 / 21.21 / 15.04 / 14.65 | 39.33 / 24.69 / 39.02 / 26.36 / 26.19 |
+| `build` str | 72.57 / 64.14 / 72.44 / 71.67 / 62.32 | 85.64 / 69.17 / 76.44 / 74.02 / **63.28** | 121.14 / 94.78 / 105.77 / 98.23 / **91.31** |
+| `churn` big | | 32.98 / 28.10 / 37.65 / 35.74 / 31.74 | |
+| `build` big | | 77.09 / 25.50 / 40.51 / 36.26 / **20.49** | |
+
+Three readings. The 2 MB segment gets the vector's whole gain for 16 byte pairs (`churn` u64 800k
+18.61 to 14.19, the same 1.31 the vector reads) and nothing for 40 and 72 byte ones, exactly as the
+rounding says, and 16 MB segments get it for all three. The segmented container itself is 10-20%
+slower than the vector on churn and lookups -- this file had never recorded that number -- and it
+is the second dependent load of every value access, which huge pages do not remove: segmented on
+huge pages lands about where the vector on 4 KB pages was. And on builds the order inverts: a
+segmented map neither copies on growth nor faults a new block in, so 16 MB segments on the allocator
+are the fastest build measured, 63.3 against the vector's 69.2 for strings and 20.5 against 25.5
+for 64 byte values, 3.8x the plain vector. Whether `segmented_map` should expose the segment size
+is an API question, not a measurement one; the recipe needs the container slot today.
+
+**boost::unordered_flat_map on the same allocator**, with the hash `scripts/ab/ab.cpp` gives it,
+because the 2026-09-06 entry found huge pages worth the same 22% to both maps at one size and one
+workload and the question was whether that holds. Point measurements, one per cell, five rounds,
+ns per operation: this map / this map on the allocator / boost / boost on the allocator. **Not
+octave geomeans**, so the boost-against-this-map ratios are the kind CLAUDE.md says must be re-taken
+before being quoted as a ranking; the allocator-against-itself ratios are what this table is for.
+
+| | 200000 | 800000 | 4000000 |
+|---|---|---|---|
+| `churn` u64 | 11.96 / 11.41 / 13.33 / 12.68 | 16.32 / 12.22 / 17.89 / 15.96 | 54.30 / 49.58 / 30.55 / 28.54 |
+| `churn` str | 44.79 / 40.61 / 54.07 / 49.81 | 101.17 / 94.14 / 109.01 / 104.04 | 156.17 / 146.11 / 111.76 / 105.80 |
+| `churn` big | | 33.08 / 28.19 / 49.35 / 30.41 | |
+| `find` u64 | 5.56 / 5.40 / 4.76 / 4.79 | 6.56 / 6.24 / 5.61 / 5.36 | 16.34 / 14.19 / 11.54 / 10.45 |
+| `find` str | 19.41 / 19.10 / 18.66 / 18.20 | 28.53 / 26.23 / 25.93 / 24.77 | 66.17 / 60.85 / 57.10 / 55.27 |
+| `build` u64 | 20.32 / 13.46 / 23.19 / 15.44 | 21.78 / 12.98 / 26.54 / 14.71 | 38.67 / 24.84 / 47.05 / 24.86 |
+| `build` str | 72.56 / 63.86 / 86.76 / 80.54 | 86.06 / 68.78 / 153.40 / 139.82 | 124.73 / 95.31 / 275.52 / 229.78 |
+| `build` big | | 77.61 / 25.36 / 93.54 / 36.20 | |
+
+Huge pages help both, and by amounts that follow each layout. boost gains most where its one
+region holds everything: the 64 byte value churn at 800k goes 49.35 to 30.41 (1.62x) because the
+values are inline in its bucket array and one huge-paged region gets all of it, where this map's
+values are a second region and its churn goes 33.08 to 28.19 (1.17x); its integer builds gain
+1.5-1.9x to this map's 1.5-1.7x. This map gains more on the integer churn at 800k (1.34x against
+1.12x), where its two regions are two translations per access and boost's one is one. The
+counters on the integer find at 4M say the same for both: L1 misses served by the L2 TLB per
+operation 1.07 to 0.55 here and 1.34 to 0.46 for boost, page walks 0.94 to 0.016 and 0.53 to 0.016.
+Nothing changes who is ahead where: boost stays ahead on lookups and on the large integer and
+string churn, this map stays ahead on every build and on churn up to 800k, and at 4M the two
+integer builds land on the same number (24.84 and 24.86) with or without -- which is the "level at
+4M" the insert-path entry above recorded, unmoved by the page size.
+
+**The threshold is 2 MB, not #231's 4 MB.** `huge4` -- the same allocator at a 4 MB threshold --
+tracks the 2 MB one wherever every block is past both and loses wherever blocks fall between:
+`build` u64 at 200000 reads 13.30 against 17.08, because the 3.2 MB values vector qualifies at one
+threshold and not the other. There is no size at which 4 MB wins, since a block below 2 MB is
+never rounded either way.
 
 **The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses for it** (2026-09-12, found
 while closing #268; Ryzen 9 7950X, gcc 16 and clang 22, glibc 2.43, THP mode `madvise`).
