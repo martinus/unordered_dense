@@ -35,9 +35,11 @@
 #include <cstddef>     // for size_t, ptrdiff_t
 #include <cstdint>     // for uintptr_t
 #include <cstdlib>     // for abort
+#include <functional>  // for equal_to
 #include <memory>      // for allocator
 #include <new>         // for bad_alloc
 #include <type_traits> // for true_type
+#include <utility>     // for pair
 
 #if defined(__linux__) && defined(__has_include)
 #    if __has_include(<sys/mman.h>)
@@ -204,6 +206,30 @@ private:
     }
 #endif
 };
+
+// The map and set with this allocator already in place, so that opting in is one word rather than
+// five template arguments -- the same shape `pmr::` has in unordered_dense.h, and for the same
+// reason. What it is worth and what it costs is in notes/index-design.md under "the opt-in huge page
+// allocator": 1.5-1.7x on a build from about 200000 entries, 1.33x on churn at 800000, and nothing
+// at 50000, where no block is big enough to reach the threshold.
+//
+// No deduction guides: they are C++20 for alias templates, which is what the note above the guides
+// in unordered_dense.h says about `pmr::` too.
+namespace huge_page {
+
+template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using map = detail::table<Key, T, Hash, KeyEqual, huge_page_allocator<std::pair<Key, T>>, Bucket, false>;
+
+template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using segmented_map = detail::table<Key, T, Hash, KeyEqual, huge_page_allocator<std::pair<Key, T>>, Bucket, true>;
+
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using set = detail::table<Key, void, Hash, KeyEqual, huge_page_allocator<Key>, Bucket, false>;
+
+template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+using segmented_set = detail::table<Key, void, Hash, KeyEqual, huge_page_allocator<Key>, Bucket, true>;
+
+} // namespace huge_page
 
 } // namespace ANKERL_UNORDERED_DENSE_NAMESPACE
 } // namespace ankerl::unordered_dense
