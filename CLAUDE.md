@@ -121,6 +121,11 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
 - **A benchmark with a small per-epoch batch must advance its own randomness.** A replayed key
   sequence is learned by the branch predictor and flatters the branchiest probe by up to 2.7x. This
   mistake has been made twice, in two different tools.
+- **A benchmark that picks its variant inside the measured loop is measuring the dispatch.**
+  `prefetch_lines.cpp` chose what to prefetch with `how == "pair"`, a `std::string` compare per
+  iteration and a different number of them per mode: two modes naming the *identical* pair of
+  addresses read 14.11 and 13.43 ns/block. Make the variant a template parameter — the same reason a
+  gated loop needs two instantiations rather than a branch.
 - **A benchmark that rebuilds its subject every round is measuring the allocator too, and bimodally.**
   `replace_bulk.cpp` read 4.40, 2.85, 2.88, 4.76, 5.19, 2.76 ns/element for the *same* binary because
   each round built a fresh map and the index allocation landed inside the clock. Replacing into the
@@ -255,13 +260,18 @@ counter is one aligned load and still per-class.
 *The probe.* Double hashing instead of the triangular sequence: mechanism works, time worse. A
 sliding unaligned window (indivi's): 1–5% of a hit, and it forecloses both counters and the merged
 block. Fusing the insert's probe with its placement: more instructions, not fewer. Removing either
-index prefetch: a clang win and a bigger gcc loss, so left alone.
+index prefetch *there*: a clang win and a bigger gcc loss, so left alone — but the two walks that
+look a *value* up (`slot_of_value`, `repoint_value`) do not want it at all and no longer have it,
+because the index they read is the answer rather than an address to load from (#263).
 
 *The layout.* Merged 88 byte block: **kept**, 7% of a lookup's instructions and 28% of its dTLB
 misses at 4M. A quarter of those blocks span three cache lines, and `prefetch_block` steps
 by 64 from the start rather than asking for the first and the last — same instruction count, 3.3%,
 because it takes the middle line (counters and fingerprints) over the tail. Naming all three lines
-is *slower* than either (#250, `scripts/ab/prefetch_lines.cpp`). Splitting fingerprints from counters: a tie. Cache-line-aligning the indices: 0.993.
+is *slower* than either (#250, `scripts/ab/prefetch_lines.cpp`). `prefetch_index` says the same thing
+from the other end: it skips the line being read and asks for the two after it, clamped into the
+block, which is what it always did for `group` and is 4% for `group_big`'s 152 bytes — where naming
+the line it used to miss buys nothing (#252). Splitting fingerprints from counters: a tie. Cache-line-aligning the indices: 0.993.
 A second fingerprint in the index's spare bits: 0.975. 16-bit indices for small maps: 0.986. A
 12-slot 64 byte block: 0.9888.
 
