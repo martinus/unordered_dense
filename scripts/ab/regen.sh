@@ -1,17 +1,17 @@
 #!/bin/bash
 # Regenerate everything in doc/: the CSVs, the SVGs and the interactive page.
 #
-#   scripts/ab/regen.sh              # measure everything, then draw    (~8 hours)
+#   scripts/ab/regen.sh              # measure everything, then draw    (~10 hours)
 #   scripts/ab/regen.sh --redraw     # draw from the CSVs already there (~2 seconds)
-#   scripts/ab/regen.sh --quick      # measure coarsely, for checking the pipeline (~10 minutes)
+#   scripts/ab/regen.sh --quick      # measure coarsely, for checking the pipeline (~20 minutes)
 #
 #   -r REV   the "robin hood (main)" baseline   (default origin/main)
 #   -j REV   the "4.8.1 (January)" baseline     (default 3234af2, where main stood on 1 Jan 2026)
 #   -c CXX   compiler                           (default clang++)
 #   -o CORE  core to pin the measurements to    (default 2)
 #
-# --redraw is the one to use after changing plot.py or dashboard.py: nothing is measured, so nothing
-# moves, and a chart change can be reviewed against unchanged numbers.
+# --redraw is the one to use after changing plot.py, mapsplot.py or dashboard.py: nothing is
+# measured, so nothing moves, and a chart change can be reviewed against unchanged numbers.
 #
 # A full run is hours of measurement and it must have the machine to itself -- everything else it
 # does lands somewhere in the numbers. It is pinned to one core for that reason, which helps and does
@@ -29,7 +29,7 @@ if [ "${AB_REEXEC:-}" != "1" ]; then
 fi
 trap 'rm -f "$0"' EXIT # the snapshot is this file; bash keeps its fd, so removing it now is safe
 
-redraw=0 quick=0 rev=origin/main jan=3234af2 cxx=clang++ core=2
+redraw=0 quick=0 rev=origin/main jan=3234af2 cxx=clang++ core=2 readme_base=1000000
 while [ $# -gt 0 ]; do
     case $1 in
         --redraw) redraw=1 ;;
@@ -123,6 +123,23 @@ PY
             "--panels=iterate_u64:uint64_t keys|iterate_str:std::string keys" \
             "--x=sizeof(mapped_type), bytes" "--of=map&lt;K, T&gt;" --bars
         rm -f "$doc/.value_size_wide.csv"
+    fi
+    # The README's four charts. Drawn by mapsplot.py rather than plot.py and from their own CSV, so
+    # they are listed separately, but they are doc/ output like everything else here and --redraw
+    # has to refresh them or a change to the drawing code reaches every chart except these.
+    if [ -f "$doc/bench_readme.csv" ]; then
+        local udm=udm,udm-segmented,udm-huge,udm-seg-huge
+        local panels=(buildfree:"build + destroy" find:"find, 50% hits" churn iterate rss:"peak memory")
+        for k in u64 str; do
+            "$root/scripts/ab/mapsplot.py" readme "$doc/bench_readme.csv" "$k" "$readme_base" \
+                "$doc/bench-readme-$k.svg" --drop="${udm#udm,}" "${panels[@]}" >/dev/null
+            "$root/scripts/ab/mapsplot.py" readme "$doc/bench_readme.csv" "$k" "$readme_base" \
+                "$doc/bench-readme-udm-$k.svg" --only="$udm" \
+                --title="what this map itself can be asked to be" "${panels[@]}" >/dev/null
+            echo "  bench-readme-$k.svg bench-readme-udm-$k.svg"
+        done
+    else
+        echo "skip bench-readme-*.svg: no bench_readme.csv" >&2
     fi
     "$root/scripts/ab/dashboard.py"
 }
@@ -219,5 +236,15 @@ run insert_erase_str sweep "$s_shift" "$s_octave" 20000 2 "$s_width" 1 > "$doc/i
 run memory_size_str  memory "$s_shift" 12 0 0 1                        > "$doc/memory_vs_size_str.csv"
 run value_size_str   valuesize "$s_entries" "$s_width" 1               > "$doc/value_size_str.csv"
 run memory_value_str memory 0 0 1 200000 1                             > "$doc/memory_vs_value_size_str.csv"
+
+# The README's own charts: a separate harness because every map is in its *own* default
+# configuration there, one binary per map, which is the opposite of what the sweeps above do.
+# Two hours; the readme_base is the size its entry in notes/index-design.md argues for.
+echo "bench_readme (the README's four charts) ..."
+if [ $quick = 1 ]; then
+    AB_BUILD="$build/readme" AB_CORE=$core "$root/scripts/ab/bench_readme.sh" -c "$cxx" -b 32000 -r 1 -o "$doc"
+else
+    AB_BUILD="$build/readme" AB_CORE=$core "$root/scripts/ab/bench_readme.sh" -c "$cxx" -b "$readme_base" -r 3 -o "$doc"
+fi
 
 draw_all

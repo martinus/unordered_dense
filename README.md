@@ -15,51 +15,52 @@ The classes `ankerl::unordered_dense::map` and `ankerl::unordered_dense::set` ar
 Additionally, there are `ankerl::unordered_dense::segmented_map` and `ankerl::unordered_dense::segmented_set` with lower peak memory usage, and stable references (iterators are NOT stable) on insert.
 
 - [1. Overview](#1-overview)
-- [2. Installation](#2-installation)
-  - [2.1. Installing using cmake](#21-installing-using-cmake)
-- [3. Usage](#3-usage)
-  - [3.1. Modules](#31-modules)
-  - [3.2. Hash](#32-hash)
-    - [3.2.1. Simple Hash](#321-simple-hash)
-    - [3.2.2. High Quality Hash](#322-high-quality-hash)
-    - [3.2.3. Specialize `ankerl::unordered_dense::hash`](#323-specialize-ankerlunordered_densehash)
-    - [3.2.4. Heterogeneous Overloads using `is_transparent`](#324-heterogeneous-overloads-using-is_transparent)
-    - [3.2.5. Automatic Fallback to `std::hash`](#325-automatic-fallback-to-stdhash)
-    - [3.2.6. Hash the Whole Memory](#326-hash-the-whole-memory)
-    - [3.2.7. Marking a Hash Avalanching From Outside](#327-marking-a-hash-avalanching-from-outside)
-    - [3.2.8. Requiring an Avalanching Hash](#328-requiring-an-avalanching-hash)
-  - [3.3. Container API](#33-container-api)
-    - [3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`](#331-auto-replace_keyiterator-it-k-new_key---stdpairiterator-bool)
-    - [3.3.2. `auto extract() && -> value_container_type`](#332-auto-extract----value_container_type)
-    - [3.3.3. `extract()` Single Elements](#333-extract-single-elements)
-    - [3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#334-nodiscard-auto-values-const-noexcept---value_container_type-const)
-    - [3.3.5. `auto replace(value_container_type&& container)`](#335-auto-replacevalue_container_type-container)
-    - [3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#336-auto-hash_fork-const-key-const---precomputed_hash)
-    - [3.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#337-auto-visitfwdit-first-fwdit-last-f-f---size_t)
-    - [3.3.8. `void merge(map& source)`](#338-void-mergemap-source)
-  - [3.4. Custom Container Types](#34-custom-container-types)
-  - [3.5. Custom Bucket Types](#35-custom-bucket-types)
-    - [3.5.1. `ankerl::unordered_dense::bucket_type::group`](#351-ankerlunordered_densebucket_typegroup)
-    - [3.5.2. `ankerl::unordered_dense::bucket_type::group_big`](#352-ankerlunordered_densebucket_typegroup_big)
-  - [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe)
-  - [3.7. LLDB Data Formatters](#37-lldb-data-formatters)
-  - [3.8. Huge Pages](#38-huge-pages)
-- [4. `segmented_map` and `segmented_set`](#4-segmented_map-and-segmented_set)
-- [5. Design](#5-design)
-  - [5.1. Inserts](#51-inserts)
-  - [5.2. Lookups](#52-lookups)
-  - [5.3. Removals](#53-removals)
-- [6. Real World Usage](#6-real-world-usage)
-  - [6.1. Databases and data engines](#61-databases-and-data-engines)
-  - [6.2. Games, emulators and game engines](#62-games-emulators-and-game-engines)
-  - [6.3. Graphics, rendering and GPU compute](#63-graphics-rendering-and-gpu-compute)
-  - [6.4. Maps and geospatial](#64-maps-and-geospatial)
-  - [6.5. CAD, 3D printing and simulation](#65-cad-3d-printing-and-simulation)
-  - [6.6. Bioinformatics](#66-bioinformatics)
-  - [6.7. Networking, media and security](#67-networking-media-and-security)
-  - [6.8. Finance and blockchain](#68-finance-and-blockchain)
-  - [6.9. Tools, libraries and machine learning](#69-tools-libraries-and-machine-learning)
-  - [6.10. Ports](#610-ports)
+- [2. Benchmarks](#2-benchmarks)
+- [3. Installation](#3-installation)
+  - [3.1. Installing using cmake ](#31-installing-using-cmake-)
+- [4. Usage](#4-usage)
+  - [4.1. Modules](#41-modules)
+  - [4.2. Hash](#42-hash)
+    - [4.2.1. Simple Hash](#421-simple-hash)
+    - [4.2.2. High Quality Hash](#422-high-quality-hash)
+    - [4.2.3. Specialize `ankerl::unordered_dense::hash`](#423-specialize-ankerlunordered_densehash)
+    - [4.2.4. Heterogeneous Overloads using `is_transparent`](#424-heterogeneous-overloads-using-is_transparent)
+    - [4.2.5. Automatic Fallback to `std::hash`](#425-automatic-fallback-to-stdhash)
+    - [4.2.6. Hash the Whole Memory](#426-hash-the-whole-memory)
+    - [4.2.7. Marking a Hash Avalanching From Outside](#427-marking-a-hash-avalanching-from-outside)
+    - [4.2.8. Requiring an Avalanching Hash](#428-requiring-an-avalanching-hash)
+  - [4.3. Container API](#43-container-api)
+    - [4.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`](#431-auto-replace_keyiterator-it-k-new_key---stdpairiterator-bool)
+    - [4.3.2. `auto extract() && -> value_container_type`](#432-auto-extract----value_container_type)
+    - [4.3.3. `extract()` Single Elements](#433-extract-single-elements)
+    - [4.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#434-nodiscard-auto-values-const-noexcept---value_container_type-const)
+    - [4.3.5. `auto replace(value_container_type&& container)`](#435-auto-replacevalue_container_type-container)
+    - [4.3.6. `auto hash_for(K const& key) const -> precomputed_hash`](#436-auto-hash_fork-const-key-const---precomputed_hash)
+    - [4.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#437-auto-visitfwdit-first-fwdit-last-f-f---size_t)
+    - [4.3.8. `void merge(map& source)`](#438-void-mergemap-source)
+  - [4.4. Custom Container Types](#44-custom-container-types)
+  - [4.5. Custom Bucket Types](#45-custom-bucket-types)
+    - [4.5.1. `ankerl::unordered_dense::bucket_type::group`](#451-ankerlunordered_densebucket_typegroup)
+    - [4.5.2. `ankerl::unordered_dense::bucket_type::group_big`](#452-ankerlunordered_densebucket_typegroup_big)
+  - [4.6. Disabling the Vector Probe](#46-disabling-the-vector-probe)
+  - [4.7. LLDB Data Formatters](#47-lldb-data-formatters)
+  - [4.8. Huge Pages](#48-huge-pages)
+- [5. `segmented_map` and `segmented_set`](#5-segmented_map-and-segmented_set)
+- [6. Design](#6-design)
+  - [6.1. Inserts](#61-inserts)
+  - [6.2. Lookups](#62-lookups)
+  - [6.3. Removals](#63-removals)
+- [7. Real World Usage](#7-real-world-usage)
+  - [7.1. Databases and data engines](#71-databases-and-data-engines)
+  - [7.2. Games, emulators and game engines](#72-games-emulators-and-game-engines)
+  - [7.3. Graphics, rendering and GPU compute](#73-graphics-rendering-and-gpu-compute)
+  - [7.4. Maps and geospatial](#74-maps-and-geospatial)
+  - [7.5. CAD, 3D printing and simulation](#75-cad-3d-printing-and-simulation)
+  - [7.6. Bioinformatics](#76-bioinformatics)
+  - [7.7. Networking, media and security](#77-networking-media-and-security)
+  - [7.8. Finance and blockchain](#78-finance-and-blockchain)
+  - [7.9. Tools, libraries and machine learning](#79-tools-libraries-and-machine-learning)
+  - [7.10. Ports](#710-ports)
 
 ## 1. Overview
 
@@ -78,12 +79,95 @@ There's no free lunch, so there are a few disadvantages:
 * no `const Key` in `std::pair<Key, Value>`
 * Iterators and references are not stable on insert or erase.
 
-## 2. Installation
+## 2. Benchmarks
+
+Obviously this is my own map's README, so the bias is where you'd expect it. Rows are sorted by the geometric mean of all five panels, and one of the five is `iterate`, which a dense map wins by 5.5x to 13x. That column decides most of the order on its own. Sorted by `find` instead, this map is seventh of fourteen.
+
+Every map runs in the configuration you get by typing its type name, own hash included. Everything is relative to `ankerl::unordered_dense::map`, so 1.00 is level with it and 2.00 is twice the cost. Ryzen 9 7950X, clang 22.1.8, one binary per map, one million to two million entries. Raw numbers are in [doc/bench_readme.csv](doc/bench_readme.csv).
+
+![benchmark results, uint64_t keys](doc/bench-readme-u64.svg)
+
+![benchmark results, std::string keys](doc/bench-readme-str.svg)
+
+In short: iteration is what the dense layout buys, 0.19 ns per element against 5.5x to 13x for the flat maps and 110x for `std::unordered_map`. With `std::string` keys it builds and destroys 2.1x to 2.6x faster than any flat map. Integer `find` and `churn` are what that costs, 0.73 and 0.61 against `boost::unordered_flat_map`.
+
+<details>
+<summary><b>What each panel measures</b></summary>
+
+| panel | one operation is | `map<uint64_t, size_t>` |
+|---|---|---|
+| build + destroy | one insert into a map that starts empty with nothing reserved, plus that entry's share of destroying the map afterwards | 23.80 ns |
+| find | one lookup, half of them hitting | 29.29 ns |
+| churn | one erase and one insert at a fixed table size, with a key the map does not currently hold | 84.63 ns |
+| iterate | one element visited by a full pass, summing the mapped value | 0.19 ns |
+| peak memory | one live entry's share of the highest resident set the process reaches while the map is built, its baseline subtracted | 48.8 bytes |
+
+The `geomean` column is the sort key and nothing more. Every axis ends where its own bars do, except `iterate`, which stops at 10x: `std::unordered_map` needs 110x there, and an axis that fits that turns every other bar into a sliver. The bars that run past it are drawn torn off, with the real number next to them.
+
+</details>
+
+<details>
+<summary><b>What the graphs say</b></summary>
+
+**Iteration is what the dense layout buys.** One pass costs 0.19 ns per element with `uint64_t` keys. The elements sit in a `std::vector` and the pass never looks at the index at all. The flat maps need 5.5x to 13x of that because they walk metadata and skip empty slots, and `std::unordered_map` needs 110x because it chases a pointer per element. If you iterate often, no other panel here will matter as much.
+
+**With string keys it builds and destroys 2.1x to 2.6x faster than any flat map.** 93 ns per entry, against 192 ns for `absl::flat_hash_map` and 237 ns for `emilib`. Part of that is the hash: with `uint64_t` keys, where the hash is nearly free, `absl::flat_hash_map` is at 0.81 and `emilib` at 0.90, so the index is not what makes the string case fast.
+
+**The rest of it is the teardown, which is why that panel includes it.** Freeing a million `std::string` buffers costs this map 14 ns per entry and every flat map 64 to 68 ns. The strings are the same strings; what differs is the order they are released in. A dense map keeps its elements in insertion order, so the frees walk the heap the way it was filled, while a flat map holds them in hash order and frees them in a sequence unrelated to how they were allocated. For the node maps the teardown is not a detail at all: it is 58% to 62% of the whole lifetime with `uint64_t` keys, where for this map it is 6%. A panel that stopped at the last insert would report `absl node` at 1.46 rather than 3.64, and hide the difference entirely.
+
+**Integer find and churn are where it loses.** Against `boost::unordered_flat_map` a `uint64_t` lookup is 0.73 and a churn pair is 0.61. `indivi::flat_umap` churns at 0.66, `indivi::flat_wmap` finds at 0.71, and `absl::flat_hash_map` is the mildest of them at 0.81 on both. That is the design and not a bug. An erase has to find the element and then re-find the slot of the element that gets swapped into the hole, and a lookup pays one indirection that a flat map does not have. With `std::string` keys the same two numbers against boost are 1.15 and 0.91, so the hash pays most of it back.
+
+**Peak memory is measured as resident pages, and that is not the same as bytes asked for.** Every flat map here holds 1.04x to 1.28x per `uint64_t` entry, and the node maps 0.94x to 1.04x. The flat maps are not asking for more -- counted in bytes requested, `absl::flat_hash_map` is at 0.96 where resident pages put it at 1.11. The difference is what a doubling array leaves behind: each superseded block is freed but stays resident in glibc's arena, and the next one is twice its size, so it cannot be reused. A map that allocates a million uniform nodes leaves nothing behind, and its two numbers agree to 1%.
+
+Which number you want depends on the allocator. The ~30% is glibc's retention policy rather than a property of the map, and another allocator will not reproduce it; the bytes-requested figure is in [doc/bench_readme.csv](doc/bench_readme.csv) under `memory` if that is the question you have.
+
+**5.0.0 builds and destroys `uint64_t` 1.6x faster than 4.11.0.** 4.11.0 is on the charts above, in the middle of the field rather than beside 5.0.0, which is the honest place for it. It is the robin hood index that 5.0.0 replaced: it builds and destroys at 1.59, finds at 1.29, churns at 1.49 and holds 1.14x the peak memory. Unfortunately the same comparison with `std::string` keys is only 1.26, 1.13 and 1.09, and part of even that is not the index at all: 5.0.0 also mixes the string hash in independent 16 byte blocks instead of chaining them, which took one hash of these keys from 2.52 ns to 2.00 ns under clang.
+
+</details>
+
+<details>
+<summary><b>Huge pages and segmented values move more than the choice of library</b></summary>
+
+The same run and the same reference, for the shapes this one map can be asked to take: segmented values, huge pages, or both.
+
+![unordered_dense's own shapes, uint64_t keys](doc/bench-readme-udm-u64.svg)
+
+![unordered_dense's own shapes, std::string keys](doc/bench-readme-udm-str.svg)
+
+[Huge pages](#48-huge-pages) take a `uint64_t` build and destroy to 0.60 and a churn to 0.79, for a one word change of the type. That 1.66x is larger than the biggest single-panel gain any other library here offers, which is boost's 1.64x on integer churn. [`segmented_map`](#5-segmented_map-and-segmented_set) builds at 0.64 because it never reallocates and moves the values, and it holds the lowest peak memory of any map in this run, 28.4 bytes per entry against 48.8 -- it is the map that leaves nothing superseded behind at all. It pays 1.54 on iteration for the extra indirection, and 3.48 with string keys. Both are opt-in, neither is the default.
+
+</details>
+
+<details>
+<summary><b>How the numbers were taken, and what they do not say</b></summary>
+
+The charts cover 1 million to 2 million entries, which is past every cache level on this machine, and smaller tables sort the maps differently. Also `iterate` counts a full pass over every element, which plenty of programs never do. Treat anything under roughly 5% as a tie.
+
+The first panel times construction, the inserts and the destructor. The inserts on their own are in the CSV under `build`, and the difference between the two columns is what the teardown costs.
+
+One binary per map, because a binary with a dozen maps in it has a code layout that moves more than the differences being drawn. 5 table sizes spanning exactly one doubling, geometric mean over them: a load factor runs a sawtooth between doublings and two maps do not double at the same size, so a ratio at a single size compares two arbitrary points of two different cycles. For a pair from different families I measured that at up to 26%. 10 million operations per timed cell, and 3 rounds over the whole set of maps, median, each round preceded by an untimed warmup of that cell.
+
+Peak memory is the process's own high-water mark: `VmHWM` is reset through `/proc/self/clear_refs` before the fill and read after it, with the resident set beforehand subtracted so that the key pools and the binary are not charged. Each fill runs in a forked child, because glibc does not hand a grown arena back and a second fill in the same process would reuse resident pages and read far too low.
+
+The same run also counts bytes requested, by interposing `malloc`, `calloc`, `realloc`, `free`, `mmap` and `munmap` and charging each block `malloc_usable_size` plus glibc's chunk header. Those numbers are in the CSV under `memory`. The binary that counts is not the binary that times: interposing `malloc` costs a map that allocates per element a few percent and a dense map nothing, which is a bias that would land on one family only.
+
+The benchmarks behind the design notes ask a different question and hand every map the same hash, so that only the index differs. Here the hash is part of what a caller gets, so it stays in.
+
+Ryzen 9 7950X, Fedora 44, clang 22.1.8, `-O3`, transparent huge pages on `madvise`, the measured process pinned to one core. Boost 1.90, Abseil LTS 20250814, folly `65749da`, emhash and emilib `20a28e8`, indivi `27ff2ce`.
+
+```sh
+scripts/ab/bench_readme.sh            # 1h40m, writes doc/bench_readme.csv and the four SVGs
+scripts/ab/bench_readme.sh -w memory  # re-take a single panel
+```
+
+</details>
+
+## 3. Installation
 
 <!-- See https://github.com/bernedom/SI/blob/main/doc/installation-guide.md -->
 The default installation location is `/usr/local`.
 
-### 2.1. Installing using cmake 
+### 3.1. Installing using cmake 
 
 Clone the repository and run these commands in the cloned folder:
 
@@ -108,9 +192,9 @@ find_package(unordered_dense CONFIG REQUIRED)
 target_link_libraries(your_project_name unordered_dense::unordered_dense)
 ```
 
-## 3. Usage
+## 4. Usage
 
-### 3.1. Modules
+### 4.1. Modules
 
 `ankerl::unordered_dense` supports c++20 modules. Simply compile `src/ankerl.unordered_dense.cpp` and use the resulting module, e.g. like so:
 
@@ -133,10 +217,10 @@ clang++ -std=c++20 -fprebuilt-module-path=. ankerl.unordered_dense.o module_test
 
 A simple demo script can be found in `test/modules`.
 
-The module compares fingerprints without SSE2, see [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe). If you
+The module compares fingerprints without SSE2, see [4.6. Disabling the Vector Probe](#46-disabling-the-vector-probe). If you
 wrap the header in a module of your own and build it with gcc, you need to do the same.
 
-### 3.2. Hash
+### 4.2. Hash
 
 `ankerl::unordered_dense::hash` is a fast and high quality hash, based on [wyhash](https://github.com/wangyi-fudan/wyhash). The `ankerl::unordered_dense` map/set differentiates between high quality hashes (good [avalanching effect](https://en.wikipedia.org/wiki/Avalanche_effect)) and low quality hashes. High quality hashes contain a special marker:
 
@@ -146,9 +230,9 @@ using is_avalanching = void;
 
 This is the case for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, and `std::basic_string_view<C>`.
 
-Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation. The marker can also be spelled `using is_avalanching = std::true_type;`, and given for a hash you cannot edit — see [3.2.7](#327-marking-a-hash-avalanching-from-outside).
+Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation. The marker can also be spelled `using is_avalanching = std::true_type;`, and given for a hash you cannot edit — see [4.2.7](#427-marking-a-hash-avalanching-from-outside).
 
-#### 3.2.1. Simple Hash
+#### 4.2.1. Simple Hash
 
 Consider a simple custom key type:
 
@@ -179,7 +263,7 @@ auto ids = ankerl::unordered_dense::set<id, custom_hash_simple>();
 
 Since `custom_hash_simple` doesn't have a `using is_avalanching = void;` marker, it is considered to be of low quality and additional mixing of `x.value` is automatically provided inside the set.
 
-#### 3.2.2. High Quality Hash
+#### 4.2.2. High Quality Hash
 
 Back to the `id` example, we can easily implement a higher quality hash:
 
@@ -195,8 +279,7 @@ struct custom_hash_avalanching {
 
 We know `wyhash::hash` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
 
-
-#### 3.2.3. Specialize `ankerl::unordered_dense::hash`
+#### 4.2.3. Specialize `ankerl::unordered_dense::hash`
 
 Instead of creating a new class you can also specialize `ankerl::unordered_dense::hash`:
 
@@ -211,7 +294,7 @@ struct ankerl::unordered_dense::hash<id> {
 };
 ```
 
-#### 3.2.4. Heterogeneous Overloads using `is_transparent`
+#### 4.2.4. Heterogeneous Overloads using `is_transparent`
 
 This map/set supports heterogeneous overloads as described in [P2363 Extending associative containers with the remaining heterogeneous overloads](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html) which is [targeted for C++26](https://wg21.link/p2077r2). This has overloads for `find`, `count`, `contains`, `equal_range` (see [P0919R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0919r3.html)), `erase` (see [P2077R2](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2077r2.html)), and  `try_emplace`, `insert_or_assign`, `operator[]`, `at`, and `insert` & `emplace` for sets (see [P2363R3](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2363r3.html)).
 
@@ -238,12 +321,11 @@ auto map = ankerl::unordered_dense::map<std::string, size_t, string_hash, std::e
 
 For more information see the examples in `test/unit/transparent.cpp`.
 
-
-#### 3.2.5. Automatic Fallback to `std::hash`
+#### 4.2.5. Automatic Fallback to `std::hash`
 
 When an implementation for `std::hash` of a custom type is available, it is automatically used and assumed to be of low quality (thus `std::hash` is used, but an additional mixing step is performed).
 
-If your `std::hash` specialization is a high quality one, say so there and it is taken at its word — the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`. The fallback asks `hash_is_avalanching` like everything else, so either spelling of the marker works, and a `std::hash` you cannot edit can be named from outside ([3.2.7](#327-marking-a-hash-avalanching-from-outside)):
+If your `std::hash` specialization is a high quality one, say so there and it is taken at its word — the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`. The fallback asks `hash_is_avalanching` like everything else, so either spelling of the marker works, and a `std::hash` you cannot edit can be named from outside ([4.2.7](#427-marking-a-hash-avalanching-from-outside)):
 
 ```cpp
 template <>
@@ -256,8 +338,7 @@ struct std::hash<id> {
 };
 ```
 
-
-#### 3.2.6. Hash the Whole Memory
+#### 4.2.6. Hash the Whole Memory
 
 When the type [has a unique object representation](https://en.cppreference.com/w/cpp/types/has_unique_object_representations) (no padding, trivially copyable), one can just hash the object's memory. Consider a simple class
 
@@ -285,7 +366,7 @@ struct custom_hash_unique_object_representation {
 };
 ```
 
-#### 3.2.7. Marking a Hash Avalanching From Outside
+#### 4.2.7. Marking a Hash Avalanching From Outside
 
 `using is_avalanching = void;` is a member of the hash, which is no help when the hash comes from a library you cannot edit. `hash_is_avalanching` is what the map and set actually ask, and it can be answered from outside:
 
@@ -305,7 +386,7 @@ using is_avalanching = std::false_type;  // says the opposite
 
 Boost calls `= void` deprecated; here it stays the ordinary spelling, since it is what this library has always documented and what every hash in the header uses. Writing anything else there — a stray `int`, say — is a compile error rather than a silent yes or no.
 
-#### 3.2.8. Requiring an Avalanching Hash
+#### 4.2.8. Requiring an Avalanching Hash
 
 In a codebase where every hash is meant to be a high quality one, forgetting to say so is the easy mistake, and nothing complains — the map just quietly mixes. Wrap the hash to make it a build error instead:
 
@@ -318,21 +399,21 @@ The requirement is written into the alias rather than next to the hash, so it is
 
 The hash must not be `final`, since the wrapper derives from it — for one that is, specialize `hash_is_avalanching` instead. A stateful hash goes in either braced or by value: `require_avalanching<my_hash>{my_hash{seed}}`.
 
-### 3.3. Container API
+### 4.3. Container API
 
 In addition to the standard `std::unordered_map` API (see https://en.cppreference.com/w/cpp/container/unordered_map), we have additional API that is somewhat similar to the node API, but leverages the fact that we're using a random access container internally:
 
-#### 3.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`
+#### 4.3.1. `auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`
 
 Updates the key of an element in-place without changing its position in the underlying container. This operation maintains iterator and reference stability - all existing iterators and references remain valid after the update.
 
 Note that this can also be used as an optimization for `unordered_dense::set` when you want to `erase` one element and then `insert` a new element, this should be quite a bit faster.
 
-#### 3.3.2. `auto extract() && -> value_container_type`
+#### 4.3.2. `auto extract() && -> value_container_type`
 
 Extracts the internally used container. `*this` is emptied.
 
-#### 3.3.3. `extract()` Single Elements
+#### 4.3.3. `extract()` Single Elements
 
 Similar to `erase()`, there is an API call `extract()`. It behaves exactly the same as `erase`, except that the return value is the moved element that is removed from the container:
 
@@ -342,16 +423,16 @@ Similar to `erase()`, there is an API call `extract()`. It behaves exactly the s
 
 Note that the `extract(key)` API returns an `std::optional<value_type>` that is empty when the key is not found.
 
-#### 3.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
+#### 4.3.4. `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
 
 Exposes the underlying values container.
 
-#### 3.3.5. `auto replace(value_container_type&& container)`
+#### 4.3.5. `auto replace(value_container_type&& container)`
 
 Discards the internally held container and replaces it with the one passed. Non-unique elements are
 removed, and the container will be partly reordered when non-unique elements are found.
 
-#### 3.3.6. `auto hash_for(K const& key) const -> precomputed_hash`
+#### 4.3.6. `auto hash_for(K const& key) const -> precomputed_hash`
 
 Hashing a key is usually the largest part of a lookup, and looking up the same key over and over hashes it every time. `hash_for()` does it once, and `find`, `contains`, `count`, `equal_range` and `at` each take what it returns as a second argument:
 
@@ -394,7 +475,7 @@ auto it = map.find("status"s, h);
 
 Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason — it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
 
-#### 3.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`
+#### 4.3.7. `auto visit(FwdIt first, FwdIt last, F f) -> size_t`
 
 Looks up a whole range of keys, calls `f` on each one that is there, and returns how many that was.
 
@@ -433,7 +514,7 @@ for (auto const& k : batch) { auto it = map.find(k); }
 
 That is a property of loops and memory parallelism rather than of this map, and it is the larger of the two effects. `visit` is what is left on top once the loop is already shaped that way.
 
-#### 3.3.8. `void merge(map& source)`
+#### 4.3.8. `void merge(map& source)`
 
 This is the standard container's `merge`, with the guarantees a container without nodes can give. Every element of `source` whose key is not here already moves over, and the rest stay behind. An element whose key is already here is **not** overwritten -- the value already in this map wins, as with `insert` and `try_emplace`. `source` may hash and compare differently; the keys that move are re-hashed with this map's hasher. Both an lvalue and an rvalue `source` are accepted, and an rvalue one is still only emptied of what moved.
 
@@ -454,27 +535,27 @@ Two things differ from `std::unordered_map::merge`, and both follow from the ele
 
 `merge` is worth using over the loop it replaces: about **2x** when the two maps mostly do not overlap, which is what a merge is usually for.
 
-### 3.4. Custom Container Types
+### 4.4. Custom Container Types
 
 `unordered_dense` accepts a custom allocator, but you can also specify a custom container for that template argument. That way it is possible to replace the internally used `std::vector` with e.g. `std::deque` or any other container like `boost::interprocess::vector`. This supports fancy pointers (e.g. [offset_ptr](https://www.boost.org/doc/libs/1_80_0/doc/html/interprocess/offset_ptr.html)), so the container can be used with e.g. shared memory provided by `boost::interprocess`.
 
-### 3.5. Custom Bucket Types
+### 4.5. Custom Bucket Types
 
 The index is groups of sixteen slots; the bucket type chooses how wide a value index is. The
-default should be good for pretty much everyone. See [5. Design](#5-design) for how the index
+default should be good for pretty much everyone. See [6. Design](#6-design) for how the index
 works.
 
-#### 3.5.1. `ankerl::unordered_dense::bucket_type::group`
+#### 4.5.1. `ankerl::unordered_dense::bucket_type::group`
 
 * Up to 2^32 = 4.29 billion elements.
 * 5.5 bytes overhead per slot: one 88 byte block per group of sixteen slots, holding the sixteen fingerprints, the group's eight overflow counters and sixteen 4 byte value indices.
 
-#### 3.5.2. `ankerl::unordered_dense::bucket_type::group_big`
+#### 4.5.2. `ankerl::unordered_dense::bucket_type::group_big`
 
 * Up to 2^63 = 9,223,372,036,854,775,808 elements.
 * 9.5 bytes overhead per slot: the same block with 8 byte value indices instead of 4 byte ones, so 152 bytes per group.
 
-### 3.6. Disabling the Vector Probe
+### 4.6. Disabling the Vector Probe
 
 A probe compares a group's sixteen fingerprints at once: with one SSE2 instruction on x86-64, and
 with NEON on AArch64. Neither needs a compiler flag, because both are part of their target's
@@ -495,7 +576,7 @@ translation units that disagree about these macros still agree about every byte 
 share. On x86-64 the word-at-a-time fallback is within a few percent of SSE2 on the benchmark's
 workloads; on AArch64 it is not, which is why the NEON path exists.
 
-### 3.7. LLDB Data Formatters
+### 4.7. LLDB Data Formatters
 
 The repository ships a formatter script for LLDB in [`lldb/unordered_dense.py`](lldb/unordered_dense.py). It makes
 `map`, `set`, `segmented_map`, `segmented_set` (including the `pmr::` variants) and `segmented_vector` print like
@@ -526,10 +607,10 @@ children by key can be turned off with
 script unordered_dense.NAME_CHILDREN_BY_KEY = False
 ```
 
-Custom value containers (see [3.4](#34-custom-container-types)) fall back to whatever LLDB itself can display for
+Custom value containers (see [4.4](#44-custom-container-types)) fall back to whatever LLDB itself can display for
 them.
 
-### 3.8. Huge Pages
+### 4.8. Huge Pages
 
 A lookup touches two or three random addresses -- the group's block, the value it points at, and for a string key its body -- and on 4 KB pages each of them is an address translation. A first-level data TLB holds on the order of 64-96 entries, a few hundred KB, so any table larger than that pays an L2 TLB lookup per access, and on a dependent chain that lookup is latency. Measured on this library's own scored benchmark by running the same binary with its heap on 2 MB pages: **2.6% (gcc) to 3.6% (clang) over the whole score, 5-8% on churn and on random finds at 50000 entries, and 22% of a lookup past the last-level cache**. Nothing asks for huge pages by default, and on the common Linux setting (`/sys/kernel/mm/transparent_hugepage/enabled` = `madvise`) nothing gets them without asking. There are two ways to ask.
 
@@ -583,7 +664,7 @@ A segment holds a power of two of elements, rounded *down* to fit the byte size,
 
 On Windows and macOS the class exists with the same interface and forwards everything to `std::allocator`; `huge_page_allocator<T>::uses_huge_pages` says which you got. `scripts/ab/huge_pages.sh` measures it across sizes and workloads, and the measurements are in `notes/index-design.md`.
 
-## 4. `segmented_map` and `segmented_set`
+## 5. `segmented_map` and `segmented_set`
 
 `ankerl::unordered_dense` provides a custom container implementation that has lower memory requirements than the default `std::vector`. Memory is not contiguous, but it can allocate segments without having to reallocate and move all the elements. In summary, this leads to
 
@@ -614,13 +695,13 @@ The chart is drawn by `scripts/ab/alloc_timeline.sh`, which counts *every* alloc
 
 How much the remaining index spike matters depends on the size of your value. The index is 5.5 bytes per slot, so at the moment it doubles it needs about 16.5 bytes per slot transiently, against `sizeof(value_type)` bytes per element for the values. For `map<uint64_t, uint64_t>` that spike is roughly two thirds of the value storage; for a map with a large value it is a rounding error; for a `set<uint64_t>` it is larger than the values. If you need the index to grow smoothly as well, `reserve()` up front avoids the doubling entirely, which is worth doing for a large map whatever container it uses.
 
-## 5. Design
+## 6. Design
 
 The map/set has two data structures:
 * `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
 * An indexing structure, which is a flat array of blocks. Each block is one group of sixteen slots: their fingerprints, the group's overflow counters, and the sixteen value indices, all in the same 88 bytes.
 
-### 5.1. Inserts
+### 6.1. Inserts
 
 Whenever an element is added, it is `emplace_back`ed to the vector. The key is hashed, and the index
 records where the value went. The index is groups of sixteen slots:
@@ -638,7 +719,7 @@ that 0 can mean "empty" and the low three bits, which select one of the eight co
 unchanged. An insert takes the first free slot from the home group onwards, in a quadratic
 sequence over groups, and increments its counter in every full group it passed.
 
-### 5.2. Lookups
+### 6.2. Lookups
 
 The key is hashed, the group's sixteen fingerprints are loaded at once and compared against the
 key's fingerprint in one instruction, and the result is a 16 bit mask of candidate slots. For each
@@ -671,9 +752,9 @@ original build left away from home. A workload that only reads gets none of this
 rebuilds the index if you want the difference back that way.
 
 Without a vector compare the same sixteen bytes are compared eight at a time with ordinary
-arithmetic, see [3.6. Disabling the Vector Probe](#36-disabling-the-vector-probe).
+arithmetic, see [4.6. Disabling the Vector Probe](#46-disabling-the-vector-probe).
 
-### 5.3. Removals
+### 6.3. Removals
 
 Since all data is stored in a vector, removals are a bit more complicated:
 
@@ -684,11 +765,11 @@ Since all data is stored in a vector, removals are a bit more complicated:
 3. Replace that element in the vector with the last element in the vector.
 4. Update the slot of the moved element, which requires another lookup.
 
-## 6. Real World Usage
+## 7. Real World Usage
 
 Open source projects that use this map, grouped by what they do. The list was first put together on 2023-09-10 and last refreshed on 2026-08-06; every entry was confirmed by finding the include or the namespace in the project's own source on its default branch. Some authors have written in, the rest come from searching GitHub. Please send me a note if you want to be on that list!
 
-### 6.1. Databases and data engines
+### 7.1. Databases and data engines
 
 * [AliSQL](https://github.com/alibaba/AliSQL) - A MySQL branch originated from Alibaba Group.
 * [ArcticDB](https://github.com/man-group/ArcticDB) - A high performance, serverless DataFrame database built for the Python Data Science ecosystem.
@@ -699,7 +780,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [Percona XtraBackup](https://github.com/percona/percona-xtrabackup) - Open source hot backup tool for InnoDB and XtraDB databases.
 * [RonDB](https://github.com/logicalclocks/rondb) - A distribution of NDB Cluster for real-time applications with high availability.
 
-### 6.2. Games, emulators and game engines
+### 7.2. Games, emulators and game engines
 
 * [Citron](https://github.com/citron-neo/emulator) - A Nintendo Switch emulator.
 * [CrystalEngine](https://github.com/neilmewada/CrystalEngine) - A Vulkan game engine with FrameGraph, PBR rendering and a declarative UI framework.
@@ -717,7 +798,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [Unleashed Recompiled](https://github.com/hedge-dev/UnleashedRecomp) - An unofficial PC port of the Xbox 360 version of Sonic Unleashed, created via static recompilation.
 * [Visual Pinball](https://github.com/vpinball/vpinball) - An open source pinball table editor and simulator.
 
-### 6.3. Graphics, rendering and GPU compute
+### 7.3. Graphics, rendering and GPU compute
 
 * [AdaptiveCpp](https://github.com/AdaptiveCpp/AdaptiveCpp) - Compiler for multiple programming models (SYCL, C++ standard parallelism) for CPUs and GPUs from all vendors.
 * [CyberFSR2](https://github.com/PotatoOfDoom/CyberFSR2) - Drop-in DLSS replacement with FSR 2.0 for various games such as Cyberpunk 2077.
@@ -729,7 +810,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [Slang](https://github.com/shader-slang/slang) - A shading language that makes it easier to build and maintain large shader codebases in a modular and extensible fashion.
 * [WinUI](https://github.com/microsoft/microsoft-ui-xaml) - A modern UI framework with a rich set of controls and styles, the native UI layer of the Windows App SDK.
 
-### 6.4. Maps and geospatial
+### 7.4. Maps and geospatial
 
 * [Cloudini](https://github.com/facontidavide/cloudini) - A point cloud compression library, with ROS/PCL integration.
 * [CoMaps](https://codeberg.org/comaps/comaps) - Privacy-focused offline maps and navigation for Android and iOS, based on OpenStreetMap data.
@@ -737,14 +818,14 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [MapLibre Native](https://github.com/maplibre/maplibre-native) - Interactive vector tile maps for iOS, Android and other platforms.
 * [Valhalla](https://github.com/valhalla/valhalla) - Open source routing engine for OpenStreetMap data. Replaced robin-hood-hashing with this map and set in 3.6.0.
 
-### 6.5. CAD, 3D printing and simulation
+### 7.5. CAD, 3D printing and simulation
 
 * [Bambu Studio](https://github.com/bambulab/BambuStudio) - PC software for BambuLab and other 3D printers.
 * [Lethe](https://github.com/chaos-polymtl/lethe) - Open-source computational fluid dynamics (CFD) software which uses high-order continuous Galerkin formulations to solve the incompressible Navier–Stokes equations (among others).
 * [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) - G-code generator for 3D printers (RepRap, Makerbot, Ultimaker etc.).
 * [web-ifc](https://github.com/ThatOpen/engine_web-ifc) - Reading and writing IFC files with Javascript, at native speeds.
 
-### 6.6. Bioinformatics
+### 7.6. Bioinformatics
 
 * [GW](https://github.com/kcleal/gw) - Genome browser and variant annotation tool for interactive visualisation of sequencing data.
 * [kallisto](https://github.com/pachterlab/kallisto) - Near-optimal RNA-Seq quantification.
@@ -752,7 +833,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [metaMDBG](https://github.com/GaetanBenoitDev/metaMDBG) - A lightweight assembler for long and accurate metagenomics reads.
 * [wfmash](https://github.com/waveygang/wfmash) - Base-accurate DNA sequence alignments using WFA and mashmap3.
 
-### 6.7. Networking, media and security
+### 7.7. Networking, media and security
 
 * [Kismet](https://github.com/kismetwireless/kismet) - A sniffer, WIDS and wardriving tool for Wi-Fi, Bluetooth, Zigbee and RF, which runs on Linux and macOS.
 * [libossia](https://github.com/ossia/libossia) - A modern C++, cross-environment distributed object model for creative coding and interaction scoring.
@@ -761,7 +842,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [Rspamd](https://github.com/rspamd/rspamd) - Fast, free and open-source spam filtering system.
 * [YANET](https://github.com/yanet-platform/yanet) - A high performance framework for forwarding traffic based on DPDK.
 
-### 6.8. Finance and blockchain
+### 7.8. Finance and blockchain
 
 * [Cartesi Machine Emulator](https://github.com/cartesi/machine-emulator) - The off-chain RISC-V emulator implementation of the Cartesi Machine.
 * [Monad](https://github.com/category-labs/monad) - A high-performance EVM-compatible layer-1 blockchain client.
@@ -769,7 +850,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [RISC Zero](https://github.com/risc0/risc0) - A zero-knowledge verifiable general computing platform based on RISC-V.
 * [WonderTrader](https://github.com/wondertrader/wondertrader) - A one-stop quantitative research and trading framework.
 
-### 6.9. Tools, libraries and machine learning
+### 7.9. Tools, libraries and machine learning
 
 * [ArkScript](https://github.com/ArkScript-lang/Ark) - A small, fast, functional and scripting language for C++ projects.
 * [File Commander](https://github.com/VioletGiraffe/file-commander) - A cross-platform Total Commander-like orthodox file manager for Windows, Mac and Linux.
@@ -784,7 +865,7 @@ Open source projects that use this map, grouped by what they do. The list was fi
 * [STP](https://github.com/stp/stp) - Simple Theorem Prover, an efficient SMT solver for bitvectors.
 * [Tulip](https://github.com/Tulip-Dev/tulip) - Large graphs analysis, drawing and visualization framework.
 
-### 6.10. Ports
+### 7.10. Ports
 
 Reimplementations of this design in other languages. They are not maintained here, and are listed because people have found them useful.
 

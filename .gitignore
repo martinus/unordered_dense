@@ -27,9 +27,18 @@ __pycache__/
 core
 core.*
 
-# doc/ charts and the measurements behind them: everything under doc/ except the two
-# allocated_memory files is produced by scripts/ab/regen.sh, so it is derived and not tracked.
-# `regen.sh` measures and draws; `regen.sh --redraw` only draws, and needs the CSVs to be there.
+# doc/ charts and the measurements behind them: everything under doc/ is derived, so it is not
+# tracked. `regen.sh` measures and draws; `regen.sh --redraw` only draws, and needs the CSVs to be
+# there.
 /doc/*.csv
 /doc/*.svg
 /doc/charts.html
+
+# ... except what the README itself shows. A reader of the README on GitHub has no build directory
+# to draw from, so the two benchmark charts and the CSV they are drawn from are in the tree, the
+# same way doc/allocated_memory.png is. `scripts/ab/bench_readme.sh` regenerates all three.
+!/doc/bench_readme.csv
+!/doc/bench-readme-u64.svg
+!/doc/bench-readme-str.svg
+!/doc/bench-readme-udm-u64.svg
+!/doc/bench-readme-udm-str.svg

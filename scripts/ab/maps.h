@@ -14,6 +14,10 @@
 
 #include <ankerl/unordered_dense.h> // the group index, 5.0
 #include <base411.h>                // 4.11.0, renamed into namespace udmbase by maps.sh
+#if __has_include(<sys/mman.h>)
+#    define UDM_HAVE_HUGE 1
+#    include <ankerl/huge_page_allocator.h>
+#endif
 
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/unordered_node_map.hpp>
@@ -62,6 +66,23 @@
 #endif
 
 namespace udm_maps {
+// Whether every map is handed this project's hash or its own.
+//
+// The default here is the same hash for all of them, because what maps.cpp asks is which *index* is
+// faster and a hash is not an index. `-DUDM_DEFAULT_HASH` asks the other question -- what a caller
+// gets by typing the type name, which is the library's own hash and the configuration a README
+// graph is about. For a string key the two questions have different answers, which is why the
+// same-hash runs carry `boost-own` and `absl-own` as controls.
+#if defined(UDM_DEFAULT_HASH)
+#    define UDM_HASH(Key)
+// Spelled out for the one adapter whose hash is not its last argument, where leaving the slot empty
+// would shift everything after it along.
+#    define UDM_HASH_HERE(Key) ankerl::unordered_dense::hash<Key>
+#else
+#    define UDM_HASH(Key) , same_hash<Key>
+#    define UDM_HASH_HERE(Key) same_hash<Key>
+#endif
+
 // The one hash every map is given, so that what differs between them is the index.
 //
 // The two typedefs are how a map is told the hash is already well mixed and needs no further
@@ -144,35 +165,50 @@ struct stl_like {
     }
 };
 
-#define UDM_MAP(id, label, ...)                                                                    \
-    template <typename Key, typename Val>                                                          \
-    struct id : stl_like<__VA_ARGS__> {                                                            \
-        static constexpr char const* name = label;                                                 \
+#define UDM_MAP(id, label, ...)                    \
+    template <typename Key, typename Val>          \
+    struct id : stl_like<__VA_ARGS__> {            \
+        static constexpr char const* name = label; \
     }
 
-UDM_MAP(a_udm, "udm", ankerl::unordered_dense::map<Key, Val, same_hash<Key>>);
-UDM_MAP(a_udm411, "udm-4.11", udmbase::unordered_dense::map<Key, Val, same_hash<Key>>);
-UDM_MAP(a_boost, "boost", boost::unordered_flat_map<Key, Val, same_hash<Key>>);
+UDM_MAP(a_udm, "udm", ankerl::unordered_dense::map<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_udm411, "udm-4.11", udmbase::unordered_dense::map<Key, Val UDM_HASH(Key)>);
+// The two shapes of this map a caller can opt into: stable references through a segmented value
+// container, and every block of 2 MB and up on a huge page. Both are the shipped defaults of their
+// aliases, except the segment size, which is the one the README recommends for the page.
+UDM_MAP(a_udm_seg, "udm-segmented", ankerl::unordered_dense::segmented_map<Key, Val UDM_HASH(Key)>);
+#ifdef UDM_HAVE_HUGE
+UDM_MAP(a_udm_huge, "udm-huge", ankerl::unordered_dense::huge_page::map<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_udm_seghuge,
+        "udm-seg-huge",
+        ankerl::unordered_dense::huge_page::segmented_map<Key,
+                                                          Val,
+                                                          UDM_HASH_HERE(Key),
+                                                          std::equal_to<Key>,
+                                                          ankerl::unordered_dense::bucket_type::group,
+                                                          (std::size_t{16} << 20U)>);
+#endif
+UDM_MAP(a_boost, "boost", boost::unordered_flat_map<Key, Val UDM_HASH(Key)>);
 UDM_MAP(a_boost_own, "boost-own", boost::unordered_flat_map<Key, Val>);
-UDM_MAP(a_boost_node, "boost-node", boost::unordered_node_map<Key, Val, same_hash<Key>>);
-UDM_MAP(a_std, "std", std::unordered_map<Key, Val, same_hash<Key>>);
+UDM_MAP(a_boost_node, "boost-node", boost::unordered_node_map<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_std, "std", std::unordered_map<Key, Val UDM_HASH(Key)>);
 #ifdef UDM_HAVE_ABSL
-UDM_MAP(a_absl, "absl", absl::flat_hash_map<Key, Val, same_hash<Key>>);
+UDM_MAP(a_absl, "absl", absl::flat_hash_map<Key, Val UDM_HASH(Key)>);
 UDM_MAP(a_absl_own, "absl-own", absl::flat_hash_map<Key, Val>);
-UDM_MAP(a_absl_node, "absl-node", absl::node_hash_map<Key, Val, same_hash<Key>>);
+UDM_MAP(a_absl_node, "absl-node", absl::node_hash_map<Key, Val UDM_HASH(Key)>);
 #endif
 #ifdef UDM_HAVE_F14
-UDM_MAP(a_f14value, "f14-value", folly::F14ValueMap<Key, Val, same_hash<Key>>);
-UDM_MAP(a_f14vector, "f14-vector", folly::F14VectorMap<Key, Val, same_hash<Key>>);
-UDM_MAP(a_f14node, "f14-node", folly::F14NodeMap<Key, Val, same_hash<Key>>);
+UDM_MAP(a_f14value, "f14-value", folly::F14ValueMap<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_f14vector, "f14-vector", folly::F14VectorMap<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_f14node, "f14-node", folly::F14NodeMap<Key, Val UDM_HASH(Key)>);
 #endif
 #ifdef UDM_HAVE_EMHASH
-UDM_MAP(a_emhash8, "emhash8", emhash8::HashMap<Key, Val, same_hash<Key>>);
-UDM_MAP(a_emilib, "emilib", emilib::HashMap<Key, Val, same_hash<Key>>);
+UDM_MAP(a_emhash8, "emhash8", emhash8::HashMap<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_emilib, "emilib", emilib::HashMap<Key, Val UDM_HASH(Key)>);
 #endif
 #ifdef UDM_HAVE_INDIVI
-UDM_MAP(a_indivi_u, "indivi-u", indivi::flat_umap<Key, Val, same_hash<Key>>);
-UDM_MAP(a_indivi_w, "indivi-w", indivi::flat_wmap<Key, Val, same_hash<Key>>);
+UDM_MAP(a_indivi_u, "indivi-u", indivi::flat_umap<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_indivi_w, "indivi-w", indivi::flat_wmap<Key, Val UDM_HASH(Key)>);
 #endif
 #undef UDM_MAP
 
@@ -314,7 +350,7 @@ struct maps_for;
 // Leading commas, because every entry after the first four is conditional on a checkout being
 // there and a trailing comma before `>` is not a list.
 #ifdef UDM_HAVE_ABSL
-#    define UDM_LIST_ABSL(K, V) , a_absl<K, V>, a_absl_own<K, V>
+#    define UDM_LIST_ABSL(K, V) , a_absl<K, V> UDM_LIST_ABSL_OWN(K, V)
 #    define UDM_LIST_ABSL_NODE(K, V) , a_absl_node<K, V>
 #else
 #    define UDM_LIST_ABSL(K, V)
@@ -348,9 +384,33 @@ struct maps_for;
 #    define UDM_LIST_IHTAB(K, V)
 #endif
 
-#define UDM_LIST_FLAT(K, V)                                                                        \
-    a_udm<K, V>, a_udm411<K, V>, a_boost<K, V>, a_boost_own<K, V> UDM_LIST_ABSL(K, V)              \
-        UDM_LIST_F14(K, V) UDM_LIST_EMHASH(K, V) UDM_LIST_INDIVI(K, V)
+// The three shapes of this map a caller opts into, rather than three more indexes to compare. They
+// are off unless a harness asks for them, because maps.cpp's `memory` mode counts with mallinfo2(),
+// which cannot see the huge page allocator's raw mmap and would report those two rows at near zero
+// -- and because maps.sh's own numbers are a fixed list of maps that should not move under it.
+#if defined(UDM_VARIANTS)
+#    ifdef UDM_HAVE_HUGE
+#        define UDM_LIST_HUGE(K, V) , a_udm_huge<K, V>, a_udm_seghuge<K, V>
+#    else
+#        define UDM_LIST_HUGE(K, V)
+#    endif
+#    define UDM_LIST_VARIANTS(K, V) , a_udm_seg<K, V> UDM_LIST_HUGE(K, V)
+#else
+#    define UDM_LIST_VARIANTS(K, V)
+#endif
+// `boost-own` and `absl-own` are the same-hash run's controls -- the two maps whose own hash a
+// caller actually gets. With UDM_DEFAULT_HASH every row is already that, so they would be duplicates.
+#if defined(UDM_DEFAULT_HASH)
+#    define UDM_LIST_OWN(K, V)
+#    define UDM_LIST_ABSL_OWN(K, V)
+#else
+#    define UDM_LIST_OWN(K, V) , a_boost_own<K, V>
+#    define UDM_LIST_ABSL_OWN(K, V) , a_absl_own<K, V>
+#endif
+
+#define UDM_LIST_FLAT(K, V)                                                              \
+    a_udm<K, V> UDM_LIST_VARIANTS(K, V), a_udm411<K, V>, \
+        a_boost<K, V> UDM_LIST_OWN(K, V) UDM_LIST_ABSL(K, V) UDM_LIST_F14(K, V) UDM_LIST_EMHASH(K, V) UDM_LIST_INDIVI(K, V)
 #define UDM_LIST_NODE(K, V) a_std<K, V>, a_boost_node<K, V> UDM_LIST_ABSL_NODE(K, V) UDM_LIST_F14_NODE(K, V)
 
 template <typename Val>
@@ -358,9 +418,9 @@ struct maps_for<std::uint64_t, Val> {
     using key = std::uint64_t;
     // Verstable's value type is fixed by the macro template it is generated from, and ihtab's by
     // the element struct it is handed, so those two are in the list only for the eight byte value.
-    using fixed_value_maps =
-        std::conditional_t<std::is_same_v<Val, std::size_t>,
-                           std::tuple<int UDM_LIST_VERSTABLE(key, Val) UDM_LIST_IHTAB(key, Val)>, std::tuple<int>>;
+    using fixed_value_maps = std::conditional_t<std::is_same_v<Val, std::size_t>,
+                                                std::tuple<int UDM_LIST_VERSTABLE(key, Val) UDM_LIST_IHTAB(key, Val)>,
+                                                std::tuple<int>>;
     using type = decltype(std::tuple_cat(std::declval<std::tuple<UDM_LIST_FLAT(key, Val)>>(),
                                          // drop the `int` placeholder that made the leading commas legal
                                          std::declval<pop_front_t<fixed_value_maps>>(),
@@ -484,8 +544,12 @@ auto bump_present(Map& m, pools<Key> const& p, lookup_state& st, std::size_t n) 
 // never held: recycling keys out of a small spare pool halves the measured drift, because a key
 // that comes back soon tends to land in the home it just left.
 template <typename Map, typename Key>
-void churn(Map& m, std::vector<Key>& present, std::vector<Key>& spare, ankerl::nanobench::Rng& rng,
-           std::size_t ops, std::size_t& tick) {
+void churn(Map& m,
+           std::vector<Key>& present,
+           std::vector<Key>& spare,
+           ankerl::nanobench::Rng& rng,
+           std::size_t ops,
+           std::size_t& tick) {
     for (std::size_t i = 0; i < ops; ++i) {
         auto const slot = static_cast<std::size_t>(((rng() >> 32U) * present.size()) >> 32U);
         auto const j = tick++ % spare.size();
@@ -496,8 +560,7 @@ void churn(Map& m, std::vector<Key>& present, std::vector<Key>& spare, ankerl::n
 }
 
 template <typename Map, typename Key>
-auto insert_erase(Map& m, pools<Key>& p, ankerl::nanobench::Rng& rng, std::size_t ops, std::size_t& tick)
-    -> std::size_t {
+auto insert_erase(Map& m, pools<Key>& p, ankerl::nanobench::Rng& rng, std::size_t ops, std::size_t& tick) -> std::size_t {
     auto acc = std::size_t{0};
     for (std::size_t i = 0; i < ops; ++i) {
         auto const a = static_cast<std::size_t>(((rng() >> 32U) * p.present.size()) >> 32U);

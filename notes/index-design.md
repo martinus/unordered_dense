@@ -31,6 +31,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `build` measured the kernel's page fault handler as much as the map, until `tame_allocator()`
 - Nothing measured a table that only churns
 - Lookup benchmarks must not replay
+- Seventeen maps in their own default configurations, at a million entries: the dense layout wins iteration by 5.5x to 110x and the string build by 1.6x to 2.2x, and loses the integer find and churn to boost by 37% and 64%
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
@@ -311,6 +312,136 @@ and misses repeated and a TAGE-style predictor learned much of it: 0.6 mispredic
 where a random sequence costs the scalar probe 1.35. That under-reported the cost of branchy
 probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The workload now
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
+
+**Seventeen maps in their own default configurations, at a million entries: the dense layout wins
+iteration by 5.5x to 110x and the string build-and-destroy by 2.1x to 2.6x, and loses the integer find and churn
+to boost by 37% and 64%** (2026-09-12, issue #277, Ryzen 9 7950X, Fedora 44, clang 22.1.8, THP
+`madvise`, `scripts/ab/bench_readme.{cpp,sh}` and `scripts/ab/mapsplot.py readme`, one binary per
+map, five octave sizes from 1000000, ten million operations per timed cell, three rounds interleaved
+rounds-outermost with an untimed warm-up before each cell, median). This is the harness behind the
+README's four graphs: two per key type, one holding this map and 4.11.0 against the other libraries
+and one holding the shapes this map can be asked to take, because a reader choosing between
+libraries should not have to read past three rows that are one library configured three ways.
+
+Ratios to `ankerl::unordered_dense::map`, `uint64_t` keys (`build+destroy` 23.80 ns/entry, `find` 29.29
+ns/lookup at 50% hits, `churn` 84.63 ns/pair, `iterate` 0.19 ns/element, `peak RSS` 48.84 B/entry
+peak):
+
+| map | build+destroy | find | churn | iterate | peak RSS |
+|---|---|---|---|---|---|
+| huge pages | 0.60 | 0.91 | 0.79 | 0.84 | 0.78 |
+| segmented + huge | 0.57 | 0.94 | 0.95 | 1.38 | 0.66 |
+| segmented | 0.64 | 1.05 | 1.13 | 1.54 | 0.58 |
+| 4.11.0 | 1.59 | 1.29 | 1.49 | 1.02 | 1.14 |
+| boost flat | 0.97 | 0.73 | 0.61 | 9.51 | 1.21 |
+| absl flat | 0.81 | 0.81 | 0.81 | 13.33 | 1.11 |
+| indivi flat_umap | 1.21 | 0.81 | 0.66 | 5.69 | 1.18 |
+| indivi flat_wmap | 1.50 | 0.71 | 0.70 | 7.52 | 1.28 |
+| emilib | 0.90 | 0.82 | 0.73 | 5.47 | 1.04 |
+| F14Value | 1.22 | 1.15 | 1.08 | 6.75 | 1.20 |
+| F14Vector | 1.53 | 1.09 | 1.13 | 1.11 | 1.23 |
+| emhash8 | 1.38 | 0.97 | 1.08 | 0.89 | 0.97 |
+| absl node | 3.64 | 1.15 | 1.70 | 24.49 | 0.99 |
+| boost node | 3.82 | 1.08 | 1.35 | 45.12 | 1.04 |
+| F14Node | 3.77 | 1.17 | 2.05 | 35.07 | 0.99 |
+| `std::unordered_map` | 4.84 | 1.98 | 2.84 | 110.30 | 0.94 |
+
+`std::string` keys (`build+destroy` 92.84 ns, `find` 124.38 ns, `churn` 416.86 ns, `iterate` 0.65 ns,
+`peak RSS` 123.19 B/entry). The picture is a different one: the build-and-destroy lead is 2.1x to 2.6x over every
+flat map, and the two the integer key loses are much closer: boost finds at 1.15 and churns at 0.91
+where the integer key reads 0.73 and 0.61.
+
+| map | build+destroy | find | churn | iterate | peak RSS |
+|---|---|---|---|---|---|
+| huge pages | 0.71 | 0.97 | 0.95 | 1.00 | 0.98 |
+| segmented + huge | 0.63 | 0.97 | 0.96 | 1.05 | 0.91 |
+| segmented | 0.99 | 1.00 | 1.03 | 3.48 | 0.90 |
+| 4.11.0 | 1.26 | 1.13 | 1.09 | 1.01 | 1.05 |
+| boost flat | 2.35 | 1.15 | 0.91 | 3.04 | 1.22 |
+| absl flat | 2.07 | 0.96 | 0.92 | 4.03 | 1.14 |
+| indivi flat_umap | 2.12 | 0.97 | 0.91 | 2.96 | 1.16 |
+| indivi flat_wmap | 2.45 | 0.91 | 0.89 | 3.19 | 1.27 |
+| emilib | 2.56 | 1.34 | 0.95 | 2.75 | 1.13 |
+| F14Value | 2.46 | 1.03 | 0.97 | 3.36 | 1.14 |
+| F14Vector | 1.67 | 1.02 | 1.00 | 0.97 | 1.06 |
+| emhash8 | 2.34 | 1.38 | 1.43 | 0.95 | 1.00 |
+| absl node | 2.51 | 0.96 | 1.08 | 8.38 | 1.00 |
+| boost node | 3.08 | 1.18 | 1.11 | 15.32 | 1.02 |
+| F14Node | 2.26 | 0.97 | 1.05 | 11.57 | 1.00 |
+| `std::unordered_map` | 3.64 | 1.79 | 1.57 | 99.88 | 1.11 |
+
+**The `uint64_t` build corroborates #231 independently.** The huge page allocator reads 1/0.63 = 1.59x
+on the build at a million, against #231's 1.5-1.7x from 200000 upwards, through a harness that
+shares no code with it. The same row says `absl::flat_hash_map` builds at 0.82 with its own hash,
+so this map is not the fastest builder for integers either.
+
+**Five defects in this harness, each of which would have published a wrong number, and each found
+only by looking at a figure that made no sense.** The first three were found before publishing; the
+last two after, and they had already been published in the PR when they were caught. All five are
+the general shape of the rules already in `CLAUDE.md`, met again in a new tool.
+
+- *No warm-up.* The first of the five octave sizes read up to 2.3x the third: it is the size that
+  pays for the process's first touch of every page. One untimed round first.
+- *Cells of about a millisecond, and a loop with the maps outside the rounds.* Repeated runs of the
+  same configuration disagreed by 6-13%, which is larger than most of the ratios being drawn. Ten
+  million operations per cell and rounds outermost took that to 0.1-3.5%.
+- *A memory counter that could not see two of the three allocation paths.* Counting only global
+  `operator new` reported `emilib` at 0.00 B/entry (it calls `malloc` directly) and the huge-page
+  segmented map at 0.35x (its blocks come from `mmap`). Interposing `malloc`, `calloc`, `realloc`,
+  `free`, `mmap` and `munmap` fixed both.
+- *And then the fixed counter charged the request rather than the chunk.* glibc serves a 24 byte
+  node out of a 32 byte chunk, so counting `n` reported every node map as *cheaper* per `uint64_t`
+  entry than this map: `std::unordered_map` at 0.88 where `malloc_usable_size` plus the header says
+  1.06. `scripts/ab/alloc_timeline.cpp` had had the right policy since it was written.
+- ***Retraction, and the largest of the five: the whole chart was drawn from binaries that taxed
+  every allocation.*** The counter above was swapped in and only the `memory` panel re-measured, so
+  `build`, `find`, `churn` and `iterate` were still coming from binaries whose `malloc` kept a
+  sixteen byte header of its own. Reconstructing that binary reproduces the published figures
+  exactly -- `std::unordered_map` build 157.0 against the 155.69 that shipped, this map 23.6 against
+  23.97 -- and the same binary without the header reads 121. A 29% tax on a map that allocates per
+  element and 0% on a dense one. Worse, the *replacement* interposer is not free either: measured
+  three rounds, it costs `std::unordered_map` 4.4% of the integer build and this map 0.0%. The four
+  timed workloads now run from a binary with no counting layer compiled in (`-DUDM_COUNT_ALLOC`
+  gates it, and only the `memory` binary gets it). Alongside it, `maps.h`'s `build()` destroys the
+  map before returning, so the destructor was inside the clock: 33% of the timed region for
+  `std::unordered_map` and about 5% for this map. Together the two put `absl node`'s integer build
+  at 4.68 where it is 1.46, and `std::unordered_map`'s at 6.49 where it is 3.50. Every number in
+  this entry is from the re-run; the superseded ones are named here rather than deleted.
+
+**What this says and does not say.** It is one size band, one machine, one compiler and one workload
+shape, and the octave starts at a million, which is past every cache on this machine; the `doc/`
+size-axis charts are what orders these maps below cache. `iterate` is a full pass over every element
+and a program that never does one should read the chart without that column. The memory column is
+peak rather than steady, which is where a caller's ceiling is but not where its resident set sits.
+Nothing here is a paired A/B and none of it transfers to a header-against-header question: for that,
+`run.sh` and `solo.sh`, and five octave points rather than fifty are only enough when both sides are
+this header (#274).
+
+**Two of the five panels were the wrong measurement, and both were changed after the first
+publication.**
+
+*Peak memory is now the process's resident high-water mark, not the bytes the map asked for.* The
+two disagree systematically: every flat map reads 1.04-1.28x per `uint64_t` entry under RSS where
+counted bytes put `absl` and `emilib` *below* this map at 0.96, and the node maps read 0.94-1.04
+against 1.06-1.18 counted. The mechanism is visible in which families move. A flat map that doubles
+leaves every superseded array freed but resident in glibc's arena, and the next allocation is twice
+its size so it cannot be reused; a node map allocates a million uniform blocks that are all
+reusable, and its two numbers agree to 1%. The huge page variants go the other way, 0.85, because
+the counter charges the whole `mmap` length and RSS only the pages touched. Both numbers are in the
+CSV (`rss` and `memory`); the ~30% is glibc's retention policy rather than a property of the map and
+another allocator will not reproduce it. Measuring RSS needs a fork per fill: the first version read
+the second fill in the same process, and since glibc does not hand a grown arena back, that reused
+resident pages and read below the bytes the map demonstrably allocated.
+
+*The first panel is build **and destroy**.* Timing only the inserts hid the largest difference
+between the designs on this chart. Teardown is 62% of a node map's `uint64_t` lifetime and 6% of
+this one's, so `absl node` reads 1.46 on inserts alone and 3.64 on the whole thing. With string
+keys the split is sharper still and it is not about node versus flat: freeing a million
+`std::string` buffers costs this map 14 ns per entry and every flat map 64-68 ns. The
+strings are identical; a dense map holds them in insertion order and frees them in the order the
+heap was filled, a flat map holds them in hash order and frees them in an order unrelated to how
+they were allocated. `build` on its own stays in the CSV, and the difference between the columns is
+the teardown.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 **`probe_result`'s shape swept two ways, a third argued down from the return sequence, and the one that ships is the best of them** (2026-09-12,
