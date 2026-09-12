@@ -121,11 +121,11 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
 - **A benchmark with a small per-epoch batch must advance its own randomness.** A replayed key
   sequence is learned by the branch predictor and flatters the branchiest probe by up to 2.7x. This
   mistake has been made twice, in two different tools.
-- **A benchmark that picks its variant inside the measured loop is measuring the dispatch.**
-  `prefetch_lines.cpp` chose what to prefetch with `how == "pair"`, a `std::string` compare per
-  iteration and a different number of them per mode: two modes naming the *identical* pair of
-  addresses read 14.11 and 13.43 ns/block. Make the variant a template parameter — the same reason a
-  gated loop needs two instantiations rather than a branch.
+- **A benchmark that picks its variant inside the measured loop is measuring the dispatch.** Two
+  modes of `prefetch_lines.cpp` naming the *identical* pair of addresses read 14.11 and 13.43
+  ns/block, because the `how == "pair"` compare was in the loop. Make the variant a template
+  parameter, the same reason a gated loop needs two instantiations rather than a branch, and re-take
+  anything the old harness published (#250's ordering survived, #252).
 - **A benchmark that rebuilds its subject every round is measuring the allocator too, and bimodally.**
   `replace_bulk.cpp` read 4.40, 2.85, 2.88, 4.76, 5.19, 2.76 ns/element for the *same* binary because
   each round built a fresh map and the index allocation landed inside the clock. Replacing into the
@@ -268,10 +268,9 @@ because the index they read is the answer rather than an address to load from (#
 misses at 4M. A quarter of those blocks span three cache lines, and `prefetch_block` steps
 by 64 from the start rather than asking for the first and the last — same instruction count, 3.3%,
 because it takes the middle line (counters and fingerprints) over the tail. Naming all three lines
-is *slower* than either (#250, `scripts/ab/prefetch_lines.cpp`). `prefetch_index` says the same thing
-from the other end: it skips the line being read and asks for the two after it, clamped into the
-block, which is what it always did for `group` and is 4% for `group_big`'s 152 bytes — where naming
-the line it used to miss buys nothing (#252). Splitting fingerprints from counters: a tie. Cache-line-aligning the indices: 0.993.
+is *slower* than either (#250, `scripts/ab/prefetch_lines.cpp`). Both helpers ask for **two
+consecutive lines from where they start, clamped into the block** — unchanged code for `group`, 4%
+and 2% for `group_big`'s 152 bytes, where naming the line they each used to miss buys nothing (#252). Splitting fingerprints from counters: a tie. Cache-line-aligning the indices: 0.993.
 A second fingerprint in the index's spare bits: 0.975. 16-bit indices for small maps: 0.986. A
 12-slot 64 byte block: 0.9888.
 

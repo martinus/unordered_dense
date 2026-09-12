@@ -310,9 +310,12 @@ Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh`).
 `slot_of_value` and `repoint_value` each opened a group with `prefetch_index`, inherited from
 `probe_from` and never measured in place. The shapes are not the same. In the probe the index a group
 hands back is an *address*: `m_values[value_idx]` is a second miss queued behind the first, so pulling
-the rest of the block in early shortens a two-miss chain. In these two walks the index **is** the
-answer -- it feeds a compare, and in `repoint_value` a store that ends the function. Nothing waits
-behind it, so the prefetch pays two instructions for a line the loop is about to read anyway.
+the rest of the block in early takes one level off a two-level chain. In these two walks the index
+**ends** the chain -- it feeds a compare, and in `repoint_value` a store that ends the function. It is
+still a dependent load, and for a block that spans three lines it is still often on a line the
+prefetch would have started; what is gone is the second level, and with it about as much as the two
+instructions cost. Which is what a 0.3-0.6% instruction win and a time inside the noise floor look
+like.
 
 Deleting both, one header per binary, per-workload instructions from the score itself
 (candidate / baseline, below 1.00 means less work):
@@ -328,9 +331,17 @@ Deleting both, one header per binary, per-workload instructions from the score i
 | every build, find and iterate workload | 1.0000 | 1.0000 |
 
 Exactly the erase-heavy workloads, nothing else, on both compilers. The score reads **1.0039** under
-gcc (5 of 5 rounds) and **0.9991** under clang, whose rounds scatter either side of 1.00 -- so: a
-small gcc win, no measurable clang change, and an instruction count that moves in one direction on
-both.
+gcc (5 of 5 rounds) and **0.9991** under clang, whose rounds scatter either side of 1.00 -- `solo.sh`
+prints baseline/candidate, so above 1.00 is the candidate being faster, the opposite of `run.sh`'s
+convention. A small gcc win, no measurable clang change, and an instruction count that moves in one
+direction on both: **this ships on the instruction count.**
+
+One cost that the score cannot see. In a translation unit that calls `erase` itself rather than
+building the whole test binary, clang stops inlining `do_erase` into its four entry points: a six
+function TU over `map<uint64_t, uint64_t>` goes from one out-of-line `do_erase` to three and from
+7880 to 8211 bytes of text, +4.2%. A caller in that position pays the call boundary's documented 15
+instructions on the erase entry points, against the 0.3-0.6% the walk itself saves. gcc does not move
+(28162 to 28065 bytes).
 
 **The scratch benchmark said the opposite and was wrong.** A one-map translation unit that erases
 every key read 114.36 instructions per erase with the prefetches and **126.82** without under clang --
@@ -347,37 +358,61 @@ a bigger gcc loss, and that is a different function with a dependent load behind
 
 `prefetch_index` asked for `p + 64` and `p + sizeof(Block) - 1`, skipping the first line because the
 probe is reading the fingerprints out of it. For the 88 byte `group` those two addresses cover every
-line a block can have past the first -- enumerating all 64 alignments, nothing is missed -- which is
-why #251 left this function alone when it fixed `prefetch_block`. `group_big` is 152 bytes and spans
-*four* lines whenever `p % 64 > 40`, 36% of blocks, and first-and-last then skips the middle: at
-`p % 64 == 48` that line holds `m_index[7..14]`, eight of the sixteen value indices.
+line a block can have past the first -- enumerating every alignment, nothing is missed -- which is why
+#250 left this function alone when it fixed `prefetch_block`. `group_big` is 152 bytes and reaches a
+*fourth* line whenever `p % 64 > 40`. `152 % 64 == 24` and `gcd(24, 64) == 8`, so `p % 64` only takes
+the eight multiples of eight and that is 2 of them, **a quarter of blocks** -- the same fraction, by
+the same argument, that `prefetch_block`'s comment gives for the 88 byte block. First-and-last then
+skips the middle line: at `p % 64 == 48` it holds `m_index[7..14]`, eight of the sixteen value
+indices.
 
 The obvious repair -- name the third line too -- does nothing. 152 byte blocks, 304 MiB, probe-shaped
-reads, sixteen-deep lookahead, medians of seven rounds:
+reads, sixteen-deep lookahead, medians of seven interleaved rounds from one binary:
 
-| what is asked for | clang | gcc |
-|---|---|---|
-| `p + 64`, `p + 151` (first and last, as shipped) | 15.64 | 15.60 |
-| `p + 64`, `p + 128`, `p + 151` (every line) | 15.65 | 15.54 |
-| **`p + 64`, `p + 128`** (two consecutive lines) | **15.01** | **15.00** |
+| what is asked for | ns/block |
+|---|---|
+| `p + 64`, `p + 151` (first and last, as shipped) | 15.664 |
+| `p + 64`, `p + 128`, `p + 151` (every line) | 15.664 |
+| **`p + 64`, `p + 128`** (two consecutive lines) | **15.006** |
 
 Same answer as #250 gave `prefetch_block`, for the same reason: the hardware fetches what it can see
 coming, so the job is to start it in the right place rather than to name every line. The third
-prefetch buys back nothing and occupies a slot.
+prefetch buys back nothing and occupies a slot. It holds across the cache boundary -- the same two
+modes read 2.881 against 2.980 at 50k blocks, 5.173 against 5.265 at 200k and 13.226 against 13.854 at
+800k -- and gcc agrees at 2M, 15.00 against 15.60 in its own build.
 
-So the second address is `min(128, sizeof(Block) - 1)`: **the two lines after the one being read,
-clamped into the block**. 88 bytes never reaches 128, so for the default type this is the `p + 87` it
-already asked for, and the object file of a `map<uint64_t, uint64_t>` translation unit is byte
-identical before and after. For `group_big` it is `p + 128`. On the 88 byte block the same four
-variants read 12.56 (pair) / 12.57 (all lines) / 12.56 (clamped) / 13.22 (`p + 64` alone), so the
-clamp costs the default type nothing and dropping the second prefetch entirely would cost it 5%.
+**`prefetch_block` had the same bug and this entry created it.** Its loop runs from the block's start,
+which is two prefetches at 88 bytes and *three* at 152, so for one release the two helpers asked for
+opposite things about the same block and `prefetch_block`'s comment claimed "the loop is what makes it
+right for group_big too". Capping the loop at two lines reads **15.814 against 16.169**. The one place
+it goes the other way is a rehash-shaped read of every byte, 18.887 against 18.707, and that is the
+minority of its call sites: five of the six are lookups, and the rehash issues one prefetch per
+*element* rather than per block.
+
+So both helpers ask for **two consecutive lines from where they start, clamped into the block**. For
+`group` that is what they already asked for: a six function `map<uint64_t, uint64_t>` translation
+unit compiles byte identical before and after under clang *and* gcc, which is the evidence that this
+costs the default type nothing -- stronger than any timing. For `group_big` it is `p + 64, p + 128`
+and `p, p + 64`. Dropping the second prefetch entirely rather than clamping it would cost the 88 byte
+block 5%: 13.231 against 12.582.
+
+The 88 byte block is also where the harness checks itself. `pair` and `steptail` name the *same two
+addresses* there, and they read 12.582 and 12.578 -- so on this build the floor is a few hundredths of
+a nanosecond. It is not always that good: the modes are separate instantiations, and between two
+builds of the file the same mode moves by a percent or two, which is why every comparison here is
+interleaved inside one binary.
+
+End to end, one header per binary against `main` under clang: the `group_big` score
+(`bench_quick_overall_udm_bigbucket`, the fifteen workloads nothing else in the tree runs) reads
+**1.0042** over five rounds, and the default score **1.0033** over five, both candidate-faster.
 
 **The harness was charging its own dispatch to the prefetch shape.** `prefetch_lines.cpp` chose what
 to prefetch with `how == "pair"` inside the measured loop -- a `std::string` compare per iteration,
 and a different number of them per mode. Two modes that name the *identical* pair of addresses on the
-88 byte block read 14.11 and 13.43 ns/block. The mode and the read shape are template parameters now
-and those two agree to 0.1%. #250's ratios were between modes with the same number of compares, so
-its conclusion stands, but its absolute ns/block figures carried this.
+88 byte block read 14.11 and 13.43 ns/block. The mode and the read shape are template parameters now.
+#250's numbers all carried that overhead, so they were re-taken on the fixed harness: `p, p + 64`
+12.336, `p, p + 87` 12.719, all three lines 12.736, `p` alone 13.153 -- the same ordering and the same
+3% #250 reported (12.28 against 12.67), so its conclusion survives its harness being wrong.
 
 **`finish_erase` packed a slot that the store took straight back apart** (2026-09-11, issue #260,
 Ryzen 9 7950X, clang 22 and gcc 16, `perf stat`, single-header binaries).
