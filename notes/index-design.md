@@ -32,6 +32,8 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- The #260/#262 sweep run over find and churn, and it comes back empty
+- The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses for it
 - Nothing holds a flat slot number any more, and gcc was the one paying for it
 - The two value walks do not want the index prefetch the probe wants
 - `prefetch_index` was a line short for `group_big`, and covering that line is not the fix
@@ -305,6 +307,128 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**The #260/#262 sweep run over find and churn, and it comes back empty** (2026-09-12, issue #268,
+Ryzen 9 7950X, gcc 16 and clang 22, `scripts/ab/solo.sh`, `perf record` and `perf stat`).
+
+#260 and #262 were both found by reading a hot path's disassembly and asking which instructions
+correspond to nothing the caller wanted, and both were paid by gcc alone. #268 asked for the same
+sweep over the paths those two did not touch: `find` at 50% hits for both key types, the churn
+insert path, and the two placement walks. Three candidates came out of it and none of them is worth
+anything.
+
+**Two were already closed by this file**, which is the cheapest possible outcome and the reason the
+index at the top exists. The SSE probe itself was audited on 2026-09-07 -- `movdqu`, `pcmpeqb`
+against a broadcast both compilers hoist, `pmovmskb`, `test`, with `blsr` and `tzcnt` for the lane
+loop -- and has nothing left in it. The one redundancy that audit did find, `prefetch_index` naming
+`p + 64` and `p + 87`, which land on the same cache line for six of the eight offsets an 88 byte
+stride can have, was measured then and deliberately kept: removing it is a clang win and a 12% gcc
+loss at four million entries.
+
+**The third is real and measures nothing.** `move_home(found_in, from_lane, mh)` took the whole
+hash and re-derived `group_idx_from_hash(mh)` -- a load of `m_shifts` and a shift -- on its
+early-exit path, plus `fingerprint_words[mh & 0xFF] & 7` on the walking one, while all three of its
+writing callers (`do_try_emplace`, `do_insert_hashed`, `do_merge`'s walk) had just taken the hash
+apart to probe with and were holding both pieces. That is the #260 shape exactly, and the mechanism
+is visible: gcc emits 26 full out-of-line copies of `move_home` in the benchmark binary, so the
+early exit costs a call and nine instructions; passing `home_idx` and `counter` instead turns the
+condition into a compare of two arguments, `-fpartial-inlining` splits it, and all 32 copies become
+`.part.0` clones reached only when the element is *not* at home. clang inlines it everywhere either
+way and has nothing to gain.
+
+Per-workload instructions from the score binaries, one header per binary, candidate over baseline
+under gcc, and the two runs were bit-identical, so these are not noise:
+
+| workload | gcc |
+|---|---|
+| `uint64_t` churn at a fixed size | 1.0075 |
+| `std::string` random insert erase | 1.0048 |
+| `uint64_t` `big_value` build from empty | 1.0048 |
+| `uint64_t` `big_value` churn | 0.9846 |
+| `std::string` 50% probability to find | 0.9962 |
+| the other ten | 1.0000 +- 0.0002 |
+
+**The workloads that moved are the ones that cannot call it.** Churn's `map[next]` takes a counter
+key it has never held, build is all misses and find is read-only, so `move_home` never runs in any
+of the three largest movements. What moved is gcc's inliner: one `churn` instantiation in the
+benchmark object went from 7065 to 10384 bytes. The score agrees with the instruction counts --
+0.9957 over five rounds under gcc, inside the layout band. Reverted.
+
+**Why the ceiling was 0.2% and could have been read off in one command.** `perf record` on the
+baseline score binary does not show `move_home` at all above 0.2%: the hot workload functions have
+`do_try_emplace` inlined into them and `move_home` with it, and the out-of-line copies serve the
+cold instantiations. An out-of-line symbol in the binary is not evidence that the hot call site pays
+for it, and counting symbols is not counting calls. Profile first, then read the disassembly of what
+the profile named.
+
+**And the one candidate that looked best came from a scratch translation unit and was an artifact.**
+`place_group`'s loop stores `group.m_overflows[counter]`, a `std::uint8_t` store that may alias
+anything, and then calls `next_group`, which reads `m_group_mask` through `this` -- the exact hazard
+`uncount` was refactored for and `fill_buckets_from_values` is written out by hand to avoid. In a
+one-map translation unit gcc emits `and 0x38(%r10),%r9d`, a reload on every step of the walk. In the
+benchmark binary, where the walk is inlined into `workloads::build`, the same loop reads
+`and %r13d,%r10d` with the mask and the group pointer both hoisted across the store. gcc
+disambiguates it where it matters. **A scratch TU can invent a redundancy as well as hide one**,
+which is the other half of #254's rule.
+
+**The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses for it** (2026-09-12, found
+while closing #268; Ryzen 9 7950X, gcc 16 and clang 22, glibc 2.43, THP mode `madvise`).
+
+The 2026-09-06 huge page entry measured hits against a warm 200000 entry map, read 7.18 to 7.10 ns,
+and concluded huge pages live "in the one regime the score cannot see". That measurement was the
+one shape of workload that cannot see them. A hit loop is throughput-bound: its lookups are
+independent, so an L1 dTLB miss served by the L2 TLB overlaps the next lookup's work. `churn` and
+`insert_erase` are chains -- probe, then value, then the erase's second walk -- and a translation
+on a chain is latency.
+
+The geometry is the whole argument. Zen 4's L1 dTLB holds 72 entries, which is 288 KB of 4 KB
+pages. `iterate` works on about 125 KB and fits. Everything else in the score does not: `insert_erase`
+peaks near 0.3-0.6 MB, `find_50` and `churn` sit on about 1.2 MB, `build` reaches 4.6 MB. So every
+random access to the index or the values in those twelve workloads is an L1 dTLB miss served by the
+L2 TLB, about seven cycles, and a lookup does two of them.
+
+**Zero-code A/B.** glibc 2.43's `GLIBC_TUNABLES=glibc.malloc.hugetlb=1` keeps the heap top 2 MB
+aligned and `madvise(MADV_HUGEPAGE)`s every extension of at least 2 MB (observed:
+`madvise(0x11a00000, 8388608, MADV_HUGEPAGE)` on an 8 MB block); `tame_allocator()` already routes
+every block the score allocates through that heap. So the *same binary* runs twice, alternating,
+and only the environment differs -- no second build, no code layout, no ±3% band. The score process
+held 24 MB of `AnonHugePages` mid-run.
+
+Score, `bench_quick_overall_udm`, 4 KB over 2 MB, above 1.00 meaning huge pages are faster:
+
+| round | gcc | clang |
+|---|---|---|
+| 1 | 1.0218 | 1.0285 |
+| 2 | 1.0262 | 1.0454 |
+| 3 | 1.0221 | 1.0407 |
+| 4 | 1.0379 | 1.0246 |
+| 5 | 1.0203 | 1.0429 |
+| geomean | **1.0256** | **1.0364** |
+
+Per workload under gcc, ns/op, same ratio:
+
+| | `uint64_t` | `std::string` | `big_value` |
+|---|---|---|---|
+| iterate while adding then removing | 0.9996 | 1.0002 | 0.9990 |
+| random insert erase | 1.0010 | 1.0226 | 1.0011 |
+| build from empty | 1.0430 | 1.0050 | 1.0161 |
+| churn at a fixed size | **1.0713** | **1.0700** | **1.0822** |
+| 50% probability to find | **1.0559** | **1.0553** | **1.0708** |
+
+The three `iterate` rows are the control and read 1.000 to the third decimal: the only workloads
+whose working set fits the L1 dTLB are the only ones that do not move. `perf stat` over a whole
+score pass, gcc: `ls_l1_d_tlb_miss.tlb_reload_4k_l2_hit` **1,595,516,981 to 14,881,142**, page walks
+(`all_l2_miss`) 6,121,399 to 294,657, and 230.5 G instructions retired against 222.2 G in the same
+~104 G cycles, which is nanobench's time budget doing 3.7% more work.
+
+**What this says and does not say.** It is the largest measured, unclaimed lever left on the score
+and it is not in the map's code: the header cannot ask for a page size, an allocator can (#231), and
+so can a user's environment. It also says two more things about the benchmark itself. A machine
+whose THP mode is `always` scores 2.6-3.6% higher than one on `madvise`, and none of the nine bench
+runners records its mode, so cross-runner absolutes were already meaningless and this is one more
+reason. And the paired harness cannot measure it: both sides share one process, so an environment
+variable cancels out of the ratio -- this needs two whole runs of one binary, which is the method
+above.
+
 **Nothing holds a flat slot number any more, and gcc was the one paying for it** (2026-09-12,
 issue #262, Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh` and `perf stat`).
 
@@ -2472,6 +2596,12 @@ to 7.58**, both about 22%; at 200000, 7.18 to 7.10 and 5.47 to 5.29, which is no
 speed in exactly the regime the score cannot see -- 200000 entries is the largest thing the score
 builds -- and it does not change the ranking, since it helps both equally. Worth doing as an opt-in
 allocator and worth documenting; not worth pretending it closes the gap to boost.
+
+**Retracted in part, 2026-09-12:** "the regime the score cannot see" was wrong. The 200000 figure
+above is hits against a warm map, which is the one shape that is throughput-bound and overlaps its
+translations. The score itself moves 2.6% under gcc and 3.6% under clang on 2 MB pages, and churn
+and the 50% find move 5-8%: see "The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses
+for it" below.
 
 **Merging the group metadata with its own value indices: measured, and kept.** The claim above that
 it had never been tried was wrong -- the split's own comment in the header recorded trying it and
