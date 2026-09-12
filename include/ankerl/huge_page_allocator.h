@@ -215,14 +215,38 @@ namespace huge_page {
 template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
 using map = detail::table<Key, T, Hash, KeyEqual, huge_page_allocator<std::pair<Key, T>>, Bucket, false>;
 
-template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
-using segmented_map = detail::table<Key, T, Hash, KeyEqual, huge_page_allocator<std::pair<Key, T>>, Bucket, true>;
+// The segment size is worth setting here: a segment of 16 MB is at least one whole huge page for any
+// element size, where the 4096 byte default is far below the allocator's threshold and gets none.
+template <class Key,
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Bucket = bucket_type::group,
+          std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
+using segmented_map = detail::table<
+    Key,
+    T,
+    Hash,
+    KeyEqual,
+    detail::segmented_container_for<std::pair<Key, T>, huge_page_allocator<std::pair<Key, T>>, MaxSegmentSizeBytes>,
+    Bucket,
+    true>;
 
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
 using set = detail::table<Key, void, Hash, KeyEqual, huge_page_allocator<Key>, Bucket, false>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
-using segmented_set = detail::table<Key, void, Hash, KeyEqual, huge_page_allocator<Key>, Bucket, true>;
+template <class Key,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Bucket = bucket_type::group,
+          std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
+using segmented_set = detail::table<Key,
+                                    void,
+                                    Hash,
+                                    KeyEqual,
+                                    detail::segmented_container_for<Key, huge_page_allocator<Key>, MaxSegmentSizeBytes>,
+                                    Bucket,
+                                    true>;
 
 } // namespace huge_page
 

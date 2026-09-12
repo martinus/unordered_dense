@@ -558,3 +558,49 @@ TEST_CASE("segmented_vector_free_swap_forwards_to_the_member") {
         REQUIRE(b[static_cast<size_t>(i)] == i);
     }
 }
+
+// The segment size the alias takes, against the two things it must not disturb: the default names
+// the type it always named, and a caller who brought their own container keeps it.
+TEST_CASE("segmented_map_segment_size_reaches_the_container_and_defaults_unchanged") {
+    namespace udm = ankerl::unordered_dense;
+
+    static_assert(std::is_same_v<udm::segmented_map<int, int>,
+                                 udm::detail::table<int,
+                                                    int,
+                                                    udm::hash<int>,
+                                                    std::equal_to<int>,
+                                                    std::allocator<std::pair<int, int>>,
+                                                    udm::bucket_type::group,
+                                                    true>>,
+                  "the default spelling has to stay the type it has always been");
+
+    using sized = udm::segmented_map<int,
+                                     int,
+                                     udm::hash<int>,
+                                     std::equal_to<int>,
+                                     std::allocator<std::pair<int, int>>,
+                                     udm::bucket_type::group,
+                                     (std::size_t{1} << 20U)>;
+    static_assert(std::is_same_v<sized::value_container_type,
+                                 udm::segmented_vector<std::pair<int, int>, std::allocator<std::pair<int, int>>, 1U << 20U>>);
+    static_assert(!std::is_same_v<sized, udm::segmented_map<int, int>>, "a different segment size is a different container");
+
+    // A container in the allocator slot is passed through whatever the size argument says, because
+    // the size is then the caller's to have set on the container they brought.
+    using own = udm::segmented_vector<std::pair<int, int>, std::allocator<std::pair<int, int>>, 8192>;
+    static_assert(std::is_same_v<udm::segmented_map<int,
+                                                    int,
+                                                    udm::hash<int>,
+                                                    std::equal_to<int>,
+                                                    own,
+                                                    udm::bucket_type::group,
+                                                    (std::size_t{1} << 20U)>::value_container_type,
+                                 own>);
+
+    auto map = sized();
+    for (int i = 0; i < 10000; ++i) {
+        map[i] = i;
+    }
+    REQUIRE(map.size() == 10000);
+    REQUIRE(map.find(9999)->second == 9999);
+}
