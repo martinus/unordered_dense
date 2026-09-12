@@ -2063,6 +2063,14 @@ private:
     // returns without reaching it, and a group that does fall through was about to call next_group
     // anyway: one compare, on the walking path only.
     //
+    // No prefetch_index here, unlike the probe, and none in repoint_value either. There the index a
+    // group hands back is an address to load from -- `m_values[value_idx]`, a second miss behind the
+    // first -- so pulling the rest of the block in early shortens a chain. Here the index is the
+    // answer: it feeds a compare, and in the twin a store that ends the function. Dropping the two
+    // prefetches takes 0.3-0.6% of the instructions off every erase-heavy workload of the score under
+    // both compilers and nothing off any other one, with the time gcc 1.0039 and clang 0.9991 --
+    // one header per binary, scripts/ab/solo.sh. #263.
+    //
     // It measured 10% *faster* than the unbounded version under clang, and that is an artifact, not
     // a reason -- see notes/index-design.md. Forcing this function out of line makes the difference
     // vanish and gcc never had it. The reason to bound the loop is that it hangs.
@@ -2072,7 +2080,6 @@ private:
         auto const* groups = m_buckets.data();
         value_idx_type delta = 0;
         while (true) {
-            prefetch_index(groups, group_idx);
             auto const& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {
@@ -2107,7 +2114,6 @@ private:
         auto* groups = m_buckets.data();
         value_idx_type delta = 0;
         while (true) {
-            prefetch_index(groups, group_idx);
             auto& group = groups[group_idx];
             auto lanes = match_fingerprint(group, word);
             while (lanes != 0) {

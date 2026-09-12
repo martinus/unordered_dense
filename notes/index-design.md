@@ -32,6 +32,8 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- The two value walks do not want the index prefetch the probe wants
+- `prefetch_index` was a line short for `group_big`, and covering that line is not the fix
 - `finish_erase` packed a slot that the store took straight back apart
 - An unbounded probe that hangs -- and the 10% speedup that came with it is an inlining artifact
 - `replace()`'s gate was re-measured on a fixed harness and kept, and the harness is the finding
@@ -302,6 +304,81 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**The two value walks do not want the index prefetch the probe wants** (2026-09-12, issue #263,
+Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh`).
+
+`slot_of_value` and `repoint_value` each opened a group with `prefetch_index`, inherited from
+`probe_from` and never measured in place. The shapes are not the same. In the probe the index a group
+hands back is an *address*: `m_values[value_idx]` is a second miss queued behind the first, so pulling
+the rest of the block in early shortens a two-miss chain. In these two walks the index **is** the
+answer -- it feeds a compare, and in `repoint_value` a store that ends the function. Nothing waits
+behind it, so the prefetch pays two instructions for a line the loop is about to read anyway.
+
+Deleting both, one header per binary, per-workload instructions from the score itself
+(candidate / baseline, below 1.00 means less work):
+
+| workload | gcc | clang |
+|---|---|---|
+| `uint64_t` random insert erase | 0.9966 | 0.9970 |
+| `uint64_t` churn at a fixed size | 0.9967 | 0.9942 |
+| `std::string` random insert erase | 0.9988 | 0.9989 |
+| `std::string` churn | 0.9979 | 0.9988 |
+| `big_value` random insert erase | 1.0000 | 0.9946 |
+| `big_value` churn | 0.9971 | 0.9946 |
+| every build, find and iterate workload | 1.0000 | 1.0000 |
+
+Exactly the erase-heavy workloads, nothing else, on both compilers. The score reads **1.0039** under
+gcc (5 of 5 rounds) and **0.9991** under clang, whose rounds scatter either side of 1.00 -- so: a
+small gcc win, no measurable clang change, and an instruction count that moves in one direction on
+both.
+
+**The scratch benchmark said the opposite and was wrong.** A one-map translation unit that erases
+every key read 114.36 instructions per erase with the prefetches and **126.82** without under clang --
+removing two instructions appeared to add twelve, because in that small TU it moved an inlining
+decision. That is #254's lesson arriving from the other side: the same change, measured in the real
+build, takes instructions *off* every erase workload. Two binaries of the actual score, not a
+scratch TU, is what the rule in `CLAUDE.md` means.
+
+The probe's own prefetches stay. Removing either of those was measured in 2026-09 as a clang win and
+a bigger gcc loss, and that is a different function with a dependent load behind it.
+
+**`prefetch_index` was a line short for `group_big`, and covering that line is not the fix**
+(2026-09-12, issue #252, same machine, `scripts/ab/prefetch_lines.cpp`).
+
+`prefetch_index` asked for `p + 64` and `p + sizeof(Block) - 1`, skipping the first line because the
+probe is reading the fingerprints out of it. For the 88 byte `group` those two addresses cover every
+line a block can have past the first -- enumerating all 64 alignments, nothing is missed -- which is
+why #251 left this function alone when it fixed `prefetch_block`. `group_big` is 152 bytes and spans
+*four* lines whenever `p % 64 > 40`, 36% of blocks, and first-and-last then skips the middle: at
+`p % 64 == 48` that line holds `m_index[7..14]`, eight of the sixteen value indices.
+
+The obvious repair -- name the third line too -- does nothing. 152 byte blocks, 304 MiB, probe-shaped
+reads, sixteen-deep lookahead, medians of seven rounds:
+
+| what is asked for | clang | gcc |
+|---|---|---|
+| `p + 64`, `p + 151` (first and last, as shipped) | 15.64 | 15.60 |
+| `p + 64`, `p + 128`, `p + 151` (every line) | 15.65 | 15.54 |
+| **`p + 64`, `p + 128`** (two consecutive lines) | **15.01** | **15.00** |
+
+Same answer as #250 gave `prefetch_block`, for the same reason: the hardware fetches what it can see
+coming, so the job is to start it in the right place rather than to name every line. The third
+prefetch buys back nothing and occupies a slot.
+
+So the second address is `min(128, sizeof(Block) - 1)`: **the two lines after the one being read,
+clamped into the block**. 88 bytes never reaches 128, so for the default type this is the `p + 87` it
+already asked for, and the object file of a `map<uint64_t, uint64_t>` translation unit is byte
+identical before and after. For `group_big` it is `p + 128`. On the 88 byte block the same four
+variants read 12.56 (pair) / 12.57 (all lines) / 12.56 (clamped) / 13.22 (`p + 64` alone), so the
+clamp costs the default type nothing and dropping the second prefetch entirely would cost it 5%.
+
+**The harness was charging its own dispatch to the prefetch shape.** `prefetch_lines.cpp` chose what
+to prefetch with `how == "pair"` inside the measured loop -- a `std::string` compare per iteration,
+and a different number of them per mode. Two modes that name the *identical* pair of addresses on the
+88 byte block read 14.11 and 13.43 ns/block. The mode and the read shape are template parameters now
+and those two agree to 0.1%. #250's ratios were between modes with the same number of compares, so
+its conclusion stands, but its absolute ns/block figures carried this.
+
 **`finish_erase` packed a slot that the store took straight back apart** (2026-09-11, issue #260,
 Ryzen 9 7950X, clang 22 and gcc 16, `perf stat`, single-header binaries).
 
