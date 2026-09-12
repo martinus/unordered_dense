@@ -207,14 +207,9 @@ private:
 #endif
 };
 
-// The map and set with this allocator already in place, so that opting in is one word rather than
-// five template arguments -- the same shape `pmr::` has in unordered_dense.h, and for the same
-// reason. What it is worth and what it costs is in notes/index-design.md under "the opt-in huge page
-// allocator": 1.5-1.7x on a build from about 200000 entries, 1.33x on churn at 800000, and nothing
-// at 50000, where no block is big enough to reach the threshold.
-//
-// No deduction guides: they are C++20 for alias templates, which is what the note above the guides
-// in unordered_dense.h says about `pmr::` too.
+// The four containers with this allocator already in the allocator slot, so that opting in is one
+// word rather than five template arguments -- the shape `pmr::` has in unordered_dense.h. The
+// threshold stays at its default here; a different one is still the allocator written out.
 namespace huge_page {
 
 template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
