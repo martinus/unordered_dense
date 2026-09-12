@@ -154,6 +154,25 @@ Each of these was learned by getting an answer wrong first; `notes/index-design.
   demonstration of the layout band: gcc scored it 1.0017, clang 0.9975 and 0.9956 on one pair of
   binaries and **1.0052** on a pair built with `-falign-functions=32`. Two runs of the same two
   binaries are one layout sample.
+- **Profile first; an out-of-line symbol is not a hot call site, and a scratch TU can invent a
+  redundancy as well as hide one.** #268 swept find and churn for more of #260's shape and found one:
+  `move_home` re-derived the home group and the counter from `mh` that all three writing callers were
+  already holding. gcc emitted 26 out-of-line copies of it, the fix made all 32 into `.part.0` clones
+  with the early exit inlined, and it was worth **nothing** — `perf record` on the baseline never
+  shows `move_home` above 0.2%, because the hot workloads inline it and the out-of-line copies serve
+  the cold instantiations. The per-workload counts that did move were `churn`, `build` and `find`,
+  none of which can call it: one `churn` instantiation grew 7065 → 10384 bytes, so that was the
+  inliner. The other candidate, a `m_group_mask` reload in `place_group` forced by the `uint8_t`
+  counter store, is real in a one-map TU (`and 0x38(%r10),%r9d`) and absent in the benchmark binary
+  (`and %r13d,%r10d`, hoisted). One `perf record` would have retired both in a minute.
+- **The score runs on 4 KB pages, and the page size is worth more than anything left in the code.**
+  Zen 4's L1 dTLB reaches 288 KB; every scored workload except `iterate` works on more, so each random
+  access to the index or the values is an L2 TLB lookup, and on `churn`'s dependent chain that is
+  latency: 1.6 billion of them per score pass, 107x fewer on 2 MB pages, 2.6-3.6% of the score. Two
+  consequences. A runner whose THP mode is `always` scores higher than one on `madvise` for no reason
+  in the code, so record the mode before comparing machines. And an environment variable cannot be
+  measured by the paired harness, which runs both sides in one process -- it takes two whole runs of
+  the *same* binary, alternating, which also has no layout band to argue with. #268, #231.
 - **Do not edit a shell script while it is running.** bash re-reads the file at its old byte offset.
 
 ### Rules the workloads themselves must obey
@@ -319,7 +338,18 @@ maintains, which no caller can break. The miss probe got its bound after a fuzz 
 got one after a five-line hang a mutable key could reach (#254). The bound costs one compare on the
 next-group path and nothing on a home-group hit.
 
-*Still open.* Huge pages (22% of a large lookup, nothing asks for them).
+*Audited and empty -- in the code.* The #260/#262 disassembly sweep over find, churn and the two
+placement walks: one real round trip (`move_home` re-deriving what its callers held), worth 0.2% at
+the ceiling and 0.0% measured, plus two candidates this file had already closed. #268. What the same
+session did find is below the code.
+
+*Huge pages.* **2.6% of the score under gcc and 3.6% under clang, 5-8% of churn and the 50% find**,
+measured by running one binary twice with `GLIBC_TUNABLES=glibc.malloc.hugetlb=1` on and off; 22%
+of a lookup past L3. The old line here said the score could not see them; it was measuring hits on a
+warm map, the one shape that overlaps its translations. Nothing in the header can ask for a page
+size. An opt-in allocator can (#231), and so can a user's environment; both are worth documenting.
+
+*Still open.* The opt-in huge page allocator itself (#231).
 A built-in probe-length statistics facility like boost's. The string erase's ~50 ns second hash.
 
 *Bulk lookups.* `visit(first, last, f)` is 1.07-1.14x over the same batch looked up one key at a
