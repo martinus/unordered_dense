@@ -4,13 +4,15 @@ Every experiment run on this map's index, hash and benchmarks, with the numbers 
 `CLAUDE.md` carries the rules that came out of this; this file is the evidence, and it is here so
 that the rules can be checked and so that a rejected idea is not proposed a second time.
 
-**How to use it.** Do not read it front to back -- it is ~2400 lines. Search it for the thing you
+**How to use it.** Do not read it front to back -- it is ~4600 lines. Search it for the thing you
 are about to try, by the phrase in the index below (`grep -n "double hashing" notes/index-design.md`)
 or by a symbol (`grep -n move_home notes/index-design.md`). Each entry opens with a bold sentence
-saying what was tried and what happened, and the paragraph under it is the evidence.
+saying what was tried and what happened, and the paragraph under it is the evidence; bold sentences
+inside an entry are its sub-results and are not indexed. The index is kept by hand: one line per
+entry, the entry's opening sentence, added in the same commit as the entry.
 
-**Read it before proposing an optimization.** 149 ideas are recorded here and most of them lost.
-Several were proposed twice because the first rejection was not looked up.
+**Read it before proposing an optimization.** About 170 entries are recorded here and most of them
+lost. Several were proposed twice because the first rejection was not looked up.
 
 **Dates are load-bearing.** An entry is true of the header on the day it was measured. Anything
 older than the change it is about has to be re-measured, and entries that were retracted say so in
