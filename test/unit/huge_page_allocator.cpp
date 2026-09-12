@@ -132,3 +132,45 @@ TEST_CASE("huge_page_aliases_name_the_same_types_as_the_arguments_they_replace")
             udm::huge_page::map<int, int, udm::hash<int>, std::equal_to<int>, udm::bucket_type::group_big>,
             udm::map<int, int, udm::hash<int>, std::equal_to<int>, huge<std::pair<int, int>>, udm::bucket_type::group_big>>);
 }
+
+// A segment sized for the page, which is the recipe the README gives and the one the segment-size
+// parameter exists for: the 4096 byte default is far below the allocator's 2 MB threshold, so a
+// segmented map gets no huge page at all without it.
+TEST_CASE("huge_page_segmented_map_with_a_16mb_segment_round_trips") {
+    namespace udm = ankerl::unordered_dense;
+    using huge_seg_map_t = udm::huge_page::segmented_map<std::uint64_t,
+                                                         std::uint64_t,
+                                                         udm::hash<std::uint64_t>,
+                                                         std::equal_to<std::uint64_t>,
+                                                         udm::bucket_type::group,
+                                                         (std::size_t{16} << 20U)>;
+
+    // The parameter reaches the container it is about, rather than being accepted and dropped.
+    static_assert(std::is_same_v<huge_seg_map_t::value_container_type,
+                                 udm::segmented_vector<std::pair<std::uint64_t, std::uint64_t>,
+                                                       huge<std::pair<std::uint64_t, std::uint64_t>>,
+                                                       (std::size_t{16} << 20U)>>);
+
+    // 200000 entries is 3.2 MB of values, so the first segment is whole and the second is begun.
+    auto map = huge_seg_map_t();
+    constexpr std::uint64_t n = 200000;
+    for (std::uint64_t i = 0; i < n; ++i) {
+        map[i] = i * 7;
+    }
+    REQUIRE(map.size() == n);
+    REQUIRE(map.find(n - 1)->second == (n - 1) * 7);
+
+    // A segmented container's references survive growth, which is the reason to have one.
+    auto const& pinned = map[12345];
+    for (std::uint64_t i = n; i < n * 2; ++i) {
+        map[i] = i;
+    }
+    REQUIRE(pinned == 12345 * 7);
+    REQUIRE(map.size() == n * 2);
+
+    for (std::uint64_t i = 0; i < n; ++i) {
+        REQUIRE(map.erase(i) == 1);
+    }
+    REQUIRE(map.size() == n);
+    REQUIRE(map.find(n * 2 - 1)->second == n * 2 - 1);
+}

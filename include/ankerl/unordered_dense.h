@@ -870,12 +870,18 @@ struct require_avalanching : Hash {
     using is_avalanching = void;
 };
 
+// How many bytes of elements a segment holds by default. It is the *maximum*: a segment is a power
+// of two of elements that fits inside it, rounded down, so 4096 bytes is 256 pairs of eight-byte
+// halves and 51 of them for a 80 byte value -- 32 after the rounding. See segmented_map's parameter
+// of the same name for when that rounding is the thing that matters.
+inline constexpr std::size_t default_segment_size_bytes = 4096;
+
 // Very much like std::deque, but faster for indexing (in most cases). As of now this doesn't implement the full std::vector
 // API, but merely what's necessary to work as an underlying container for ankerl::unordered_dense::{map, set}.
 // It allocates blocks of equal size and puts them into the m_blocks vector. That means it can grow simply by adding a new
 // block to the back of m_blocks, and doesn't double its size like an std::vector. The disadvantage is that memory is not
 // linear and thus there is one more indirection necessary for indexing.
-template <typename T, typename Allocator = std::allocator<T>, std::size_t MaxSegmentSizeBytes = 4096>
+template <typename T, typename Allocator = std::allocator<T>, std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
 class segmented_vector {
     template <bool IsConst>
     class iter_t;
@@ -4220,6 +4226,22 @@ public:
     }
 };
 
+// What a segmented alias puts in the container slot, so that the segment size can be chosen there.
+//
+// `table` builds `segmented_vector<value_type, Alloc>` itself from its IsSegmented flag, and that
+// spelling has no room for a size. Resolving the container in the alias instead reaches it without
+// another `table` parameter, which would change `erase_if`'s deduction and every mangled name.
+//
+// Two cases pass the argument straight through: a caller who supplied their own container -- the
+// size is then theirs to set and not ours to wrap -- and the default size, where `table` builds
+// exactly this type anyway, so passing the allocator keeps `segmented_map<K, V>` the type it has
+// always been rather than a second spelling of it.
+template <class Value, class AllocatorOrContainer, std::size_t MaxSegmentSizeBytes>
+using segmented_container_for = std::conditional_t<is_detected_v<detect_iterator, AllocatorOrContainer> ||
+                                                       MaxSegmentSizeBytes == default_segment_size_bytes,
+                                                   AllocatorOrContainer,
+                                                   segmented_vector<Value, AllocatorOrContainer, MaxSegmentSizeBytes>>;
+
 } // namespace detail
 
 template <class Key,
@@ -4235,8 +4257,16 @@ template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-          class Bucket = bucket_type::group>
-using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
+          class Bucket = bucket_type::group,
+          std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
+using segmented_map =
+    detail::table<Key,
+                  T,
+                  Hash,
+                  KeyEqual,
+                  detail::segmented_container_for<std::pair<Key, T>, AllocatorOrContainer, MaxSegmentSizeBytes>,
+                  Bucket,
+                  true>;
 
 template <class Key,
           class Hash = hash<Key>,
@@ -4249,8 +4279,15 @@ template <class Key,
           class Hash = hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::allocator<Key>,
-          class Bucket = bucket_type::group>
-using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
+          class Bucket = bucket_type::group,
+          std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
+using segmented_set = detail::table<Key,
+                                    void,
+                                    Hash,
+                                    KeyEqual,
+                                    detail::segmented_container_for<Key, AllocatorOrContainer, MaxSegmentSizeBytes>,
+                                    Bucket,
+                                    true>;
 
 #    if defined(ANKERL_UNORDERED_DENSE_PMR)
 
@@ -4260,16 +4297,39 @@ template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equa
 using map =
     detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, false>;
 
-template <class Key, class T, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
+template <class Key,
+          class T,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Bucket = bucket_type::group,
+          std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
 using segmented_map =
-    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, true>;
+    detail::table<Key,
+                  T,
+                  Hash,
+                  KeyEqual,
+                  detail::segmented_container_for<std::pair<Key, T>,
+                                                  ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>,
+                                                  MaxSegmentSizeBytes>,
+                  Bucket,
+                  true>;
 
 template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
 using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, false>;
 
-template <class Key, class Hash = hash<Key>, class KeyEqual = std::equal_to<Key>, class Bucket = bucket_type::group>
-using segmented_set =
-    detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, true>;
+template <class Key,
+          class Hash = hash<Key>,
+          class KeyEqual = std::equal_to<Key>,
+          class Bucket = bucket_type::group,
+          std::size_t MaxSegmentSizeBytes = default_segment_size_bytes>
+using segmented_set = detail::table<
+    Key,
+    void,
+    Hash,
+    KeyEqual,
+    detail::segmented_container_for<Key, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, MaxSegmentSizeBytes>,
+    Bucket,
+    true>;
 
 } // namespace pmr
 

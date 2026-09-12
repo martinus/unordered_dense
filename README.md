@@ -572,12 +572,11 @@ A build gains more than the TLB explains: a vector that doubles faults in every 
 * **It only helps once the blocks themselves reach 2 MB**, which is the index from about 370000 entries and the values from `2 MB / sizeof(value_type)` entries. A huge page is 2 MB whole, and an allocator that owns only its own blocks has no neighbour to share one with -- that is what the environment route has and this one does not. Below that size, use the environment.
 * **Every block is rounded up to 2 MB, and the rounding is resident memory**, because touching one byte of an `MADV_HUGEPAGE`d extent populates all of it. The map doubles both regions, so the loss is at most half a doubling step per region, while that region sits between doublings. The threshold is the second template parameter (`huge_page_allocator<T, 4 << 20>`), and it cannot go below 2 MB; the `huge_page::` aliases use the default, so a different threshold is the allocator written out.
 
-**With `segmented_vector`, size the segment for the page.** A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. The segment size is chosen through the container slot rather than the `huge_page::segmented_map` alias:
+**With `segmented_vector`, size the segment for the page.** A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. `segmented_map`, `segmented_set` and their `pmr::` and `huge_page::` twins take the segment size as a trailing parameter, after the bucket:
 
 ```cpp
-ankerl::unordered_dense::map<K, V, ankerl::unordered_dense::hash<K>, std::equal_to<K>,
-    ankerl::unordered_dense::segmented_vector<std::pair<K, V>,
-        ankerl::unordered_dense::huge_page_allocator<std::pair<K, V>>, 16 << 20>>
+ankerl::unordered_dense::huge_page::segmented_map<K, V, ankerl::unordered_dense::hash<K>, std::equal_to<K>,
+                                                  ankerl::unordered_dense::bucket_type::group, 16 << 20>
 ```
 
 A segment holds a power of two of elements, rounded *down* to fit the byte size, so a 2 MB segment is exactly one huge page for a 16 byte pair and 1.28 MB -- below the threshold, no huge page -- for a 40 byte one. 16 MB segments bound that rounding at 2 MB each for any element size, and are the setting to use unless `sizeof(value_type)` is a power of two. Measured at 800000 entries, ns per operation, `std::vector` on `std::allocator` / segmented on this allocator with 16 MB segments: build `uint64_t` 22.0 / 14.7, `std::string` 85.6 / **63.3**, 64 byte values 77.1 / **20.5**; churn `uint64_t` 16.1 / 14.5, `std::string` 101.0 / 95.6. The segmented container costs 10-20% on lookups and churn for its extra indirection, and huge pages do not take that back; on builds it is the fastest thing here, because it neither copies nor faults.
