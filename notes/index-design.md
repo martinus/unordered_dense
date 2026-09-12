@@ -34,6 +34,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- `probe_result`'s shape swept three ways, and the one that ships is the best of them
 - A slot back-pointer, re-tested across the cache boundary: the win is real, and it is cancelled by the inserts that put the elements there
 - Fifty points draw the load-factor sawtooth that five average out, and five points are worth 26% of a cross-family ratio
 - The #260/#262 sweep run over find and churn, and it comes back empty
@@ -312,6 +313,70 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**`probe_result`'s shape swept three ways, and the one that ships is the best of them** (2026-09-12,
+issue #267, Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/solo.sh` and `scripts/ab/perwl.sh`, one
+header per binary).
+
+#262 repacked `probe_result` and the `std::string` 50%-find row moved 0.9749 in instructions under
+gcc; this file also records the opposite, a `probe_result` returned from an inner function costing
+gcc 26% of an integer hit. Two accidents, opposite signs, no sweep. #267 asked for the sweep: does
+the caller need `value_idx` back, is `found` better as a sentinel, is an out-parameter or a single
+word better, and does the out-of-line `probe_past_home` want a different shape from the inlined
+`probe_from`.
+
+**Instructions per operation, candidate over baseline, so below 1.00 is fewer.** The two variants
+are the whole struct narrowed (`value_idx` dropped, the caller re-reading `m_index[lane]` from the
+slot the probe stopped at -- twelve bytes to eight, two return registers to one) and `found` folded
+into `lane` as a `0xFF` sentinel (still twelve bytes; the bool sat in padding, so what this tests is
+the store and the caller's test of it):
+
+| | no `value_idx`, clang | gcc | `found` as sentinel, clang | gcc |
+|---|---|---|---|---|
+| `std::string` 50% find | **1.0407** | 1.0041 | **1.0109** | 1.0038 |
+| `std::string` churn | 1.0130 | 1.0087 | 0.9978 | 1.0014 |
+| `std::string` insert erase | 0.9976 | 1.0185 | 1.0032 | 0.9985 |
+| `uint64_t` build | 1.0136 | 1.0154 | 1.0000 | 1.0000 |
+| `uint64_t` churn | 1.0064 | 1.0142 | 1.0000 | 0.9971 |
+| **`uint64_t` 50% find** | **1.0000** | **1.0001** | **0.9998** | **1.0001** |
+| score, one header per binary | 0.9956 | 1.0001 | 0.9954 | 0.9970 |
+
+**Both cost the string find and neither buys anything anywhere.** Dropping `value_idx` is the worse
+of the two and by the larger margin under clang: 4.1% more instructions on the workload the issue is
+about, because `find()` is the shape's biggest consumer and re-reading the slot costs more than the
+return register it saves -- and the insert paths, which also take `value_idx` out of a probe, pay
+1.4-1.5% on an integer build for the same reason. The sentinel is a smaller version of the same
+answer, 1.1% under clang.
+
+**Why there was nothing to win, from the binary rather than from reasoning.** The return sequence of
+`probe_past_home` for a string key, in the shipped baseline:
+
+    shl $0x20,%r12 ; or %rsi,%r12      group_idx and value_idx into one register
+    or  $0x100,%r13d                   lane and found into the other
+    mov %r12,%rax ; mov %r13d,%edx ; ret
+
+Clang already packs the twelve bytes into the two registers the ABI allows, with two ALU ops and no
+memory at all. So there is no hidden pointer to remove, no spill to save, and the only thing a
+narrower struct can do is make the caller re-derive what it stopped carrying. That is also the
+answer to the third variant the issue lists and the reason it was not built: an out-parameter
+replaces two register moves with a store and a load, which is the same trade as the narrowing in a
+more expensive currency.
+
+**The two probes do want different things, and it is not a shape.** Every effect in the table landed
+on the string find; the integer find reads **1.0000, 1.0001, 0.9998, 1.0001** across all four
+variant-by-compiler cells. A key whose compare needs no call never goes through `probe_past_home` at
+all -- `probe_from` is force-inlined into the caller and no return value is ever formed -- so the
+struct's shape is free there by construction. The delicacy the file records is the *call boundary*,
+not the struct: it is worth something only where a boundary exists, and what it is worth there is
+negative for both ways of making the struct smaller.
+
+**What this says and does not say.** It says the shipped `probe_result` is a local optimum on the
+two axes anyone has proposed, that the 26% and the 0.9749 in this file were both about crossing the
+call boundary rather than about the struct's fields, and that `uint64_t` lookups cannot be moved
+from here at all. It does not say the boundary itself is optimal -- `probe_past_home` exists because
+a string compare is a call, and whether *that* split is still right is a different question from how
+its result is packed. And it is instructions: the score moved 0.9954 to 1.0001 across the four cells,
+which is inside this harness's layout band and is not evidence of anything on its own.
+
 **A slot back-pointer, re-tested across the cache boundary: the win is real, and it is cancelled by
 the inserts that put the elements there** (2026-09-12, issue #266, Ryzen 9 7950X, clang 22 and
 gcc 16, `scripts/ab/back_pointer.sh`, `scripts/ab/solo.sh`, `scripts/ab/run.sh`, `scripts/ab/perwl.sh`).
