@@ -34,6 +34,7 @@ place rather than being deleted, because the retraction is usually the more usef
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
+- A slot back-pointer, re-tested across the cache boundary: the win is real, and it is cancelled by the inserts that put the elements there
 - Fifty points draw the load-factor sawtooth that five average out, and five points are worth 26% of a cross-family ratio
 - The #260/#262 sweep run over find and churn, and it comes back empty
 - The opt-in huge page allocator, measured across the size axis
@@ -311,6 +312,94 @@ probing and rewarded the opposite, and it hid most of the SSE2 probe's gain. The
 decides every lookup with an rng of its own. `find_random.cpp` still replays.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
+**A slot back-pointer, re-tested across the cache boundary: the win is real, and it is cancelled by
+the inserts that put the elements there** (2026-09-12, issue #266, Ryzen 9 7950X, clang 22 and
+gcc 16, `scripts/ab/back_pointer.sh`, `scripts/ab/solo.sh`, `scripts/ab/run.sh`, `scripts/ab/perwl.sh`).
+
+`finish_erase` moves the last value into the hole an erase leaves and hashes that element's key a
+second time to find the slot pointing at it. For an integer key that is free; for a string key it is
+about 50 ns, and the entry that measured it said so while noting that the back-pointer which removes
+it had been rejected on a suite whose string tables are cache-resident -- the regime where the second
+hash costs least. #266 asked for the re-test on the size axis. The decision rule was fixed before
+looking, from the issue: a win only in the large-string regime, paid for by memory everywhere and by
+`build64`, is a knob and not a default; #248's principle rules out guessing at the caller's data.
+
+**The win is exactly where it was predicted, and it is the only one.** One packed slot per value in
+a vector parallel to `m_values`; ns per operation, one variant per binary, three rounds, medians,
+`std::string` keys, and `find` as the control because the change cannot reach it:
+
+| n | erase by key | churn (erase+insert) | erase by iterator | build | find (control) |
+|---|---|---|---|---|---|
+| 50000 | **0.915** | 0.957 | 0.936 | 1.067 | 1.016 |
+| 200000 | **0.921** | 1.022 | 1.008 | 1.058 | 1.016 |
+| 800000 | **0.877** | 1.011 | 0.978 | 1.047 | 1.010 |
+| 2000000 | **0.894** | 1.008 | 0.975 | 1.066 | 1.003 |
+| 4000000 | **0.887** | 0.999 | 0.970 | 1.054 | 1.003 |
+
+Erasing a string key by key is 8-12% cheaper at every size, and the *absolute* saving grows with the
+table exactly as the 50 ns figure implied: 5.2 ns at fifty thousand entries and **46.5 ns at four
+million**, where nothing the second hash touches is in cache. That is the largest single cost the
+notes had named in the churn workloads, and the back-pointer does remove it.
+
+**It does not survive the insert.** Every element erased had to be inserted, and the back-pointer
+charges every insert a store and the value vector a parallel growth: `build` is 4.7-6.7% slower for
+strings at every size, and the instruction counts -- which no code layout can move -- put the cost
+at **+12.8% per operation on `build64`**, +10.4% on `buildbig` and +2.6% on `buildstr`, against
+-3.8% on `churn64`, -4.5% on `churnstr` and -4.9% on `iestr`. So the mechanism is confirmed from
+both sides, and a workload that holds a table at a fixed size by erasing one and inserting one --
+`churn`, the shape a real cache has -- comes out **0.957 to 1.022, a wash at every size from fifty
+thousand to four million**. The erase win and the insert tax are the same size.
+
+**`erase(iterator)` gains nothing, which is the half the issue expected most from.** 0.970 to 1.008
+for strings against a control at 1.003-1.016. The reason is structural and worth recording: the
+back-pointer hands `finish_erase` its slot, but `erase(iterator)` still has to hash the key for
+`erase_group_slot`, which needs the counter class and the *home group* to walk the counters back
+from. The fingerprint byte in the slot would give the counter class; only a stored distance gives
+the home. So the back-pointer alone removes one hash from the backfill and none from the locate,
+and the no-hash erase needs the nibbles the same entry already measured at 0.959 on the score.
+
+**The score, three ways, and they agree.** One header per binary, five alternating rounds:
+**0.9870 under clang** (rounds 0.9862, 0.9832, 0.9904, 0.9904, 0.9846 -- no round disagrees) and
+**0.9729 under gcc**. Paired in one process: 0.988 over the fifteen, builds 0.961, churn 0.983,
+insert-and-erase 1.020. Per workload, paired: `build64` 0.930, `buildstr` 0.977, `buildbig` 0.976,
+`churnbig` 0.930 against `churnstr` 1.031 and `iestr` 1.041 -- the same shape the 2025 rejection
+recorded (`churnstr` 1.045, `iestr` 1.024, `build64` 0.953), at the same sizes, from a different
+harness.
+
+**Memory, quoted next to the speed as the issue required.** Live bytes per entry, counted through a
+replaced global `operator new`: an integer key and an 8 byte value goes **56.4 to 66.9, +18.6%**;
+a string key 167.5 to 178.0, +6.3%, because the key bodies on the heap dilute it. The 2025 note's
+"19% more memory for an 8 byte value" reproduces exactly.
+
+**So it is rejected, and this time the size axis is covered.** Not a default: it loses the score on
+both compilers and costs a fifth of the memory of an integer map. Not a knob either, and the reason
+is sharper than "it loses on balance": the regime where it wins is *erasing without inserting*, and
+there is no such workload -- a caller who drains a table paid the build tax to fill it, and a caller
+who holds one at a fixed size pays the insert tax on every erase they save. The issue's own terms
+said that if the re-test came back negative the nibble variant could not rescue it. It cannot: the
+nibbles pay for `erase(iterator)`, which is the half measured here at nothing.
+
+**Two things found on the way.**
+
+*The harness measured its own inlining until it was split.* With both variants in one translation
+unit the integer erase-by-iterator cell reads 1.77; with one variant per binary it reads 1.27, and
+the `find` control moves from 1.01 to 0.95. Two headers in one unit share an inlining budget --
+`scripts/ab/window.cpp` says so at the top and `CLAUDE.md` makes it a rule -- and this change alters
+`finish_erase`'s size, so it is exactly the case the rule is about. The numbers above are all one
+variant per binary. The two harnesses agree on everything large (`erasekey` at 2M: 0.896 and 0.894)
+and disagree on everything small, which is the useful summary of what each is good for.
+
+*The back-pointer makes a documented diagnosis impossible.* `mutated_key_found_by_the_backfill_terminates`
+requires that a key changed through an iterator be caught when the backfill walks to the moved
+element's slot. There is no walk any more, so the backfill repoints the mutated element correctly
+and nothing throws -- four test cases fail, and they are the only ones that do out of 835, under
+clang, gcc and ASan+UBSan. It is a better behaviour reached by removing the need for the check, and
+it is recorded because a future re-test will see the same four failures and should not read them as
+a bug.
+
+The experiment is `scripts/ab/back_pointer.patch` -- ten maintenance sites, listed at the top of it
+-- with `scripts/ab/back_pointer.cpp` and `.sh` to re-take any of these numbers.
+
 **Fifty points draw the load-factor sawtooth that five average out, and five points are worth 26% of
 a cross-family ratio** (2026-09-12, issue #274, Ryzen 9 7950X, clang 22, `scripts/ab/run.sh -p`,
 `scripts/ab/ab.cpp`, `test/bench/workloads.h`).

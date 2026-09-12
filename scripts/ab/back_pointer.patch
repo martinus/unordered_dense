@@ -1,0 +1,312 @@
+# The slot back-pointer of issue #266, as a patch against include/ankerl/unordered_dense.h.
+#
+# It lives here and not in the header because it lost: see notes/index-design.md, "A slot
+# back-pointer, re-tested across the cache boundary". The header keeps one configuration, the way
+# scripts/ab/window.cpp keeps the sliding window out of it -- and this stays so the numbers can be
+# re-taken rather than believed.
+#
+# What it does: one packed slot number per value, parallel to m_values, so that finish_erase can
+# repoint the moved element's slot directly instead of hashing its key a second time and walking to
+# it. Ten maintenance sites: place_group, move_home, the rehash, place_element_at, emplace,
+# increase_size's two failure paths, replace and its pipelined half, extract, and the copy, move and
+# swap. Guarded by ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER, which defaults to 0, so applying the
+# patch alone changes nothing; scripts/ab/back_pointer.sh defines it for its own copy of the header.
+#
+#   git apply scripts/ab/back_pointer.patch      # to run the unit tests against it:
+#   CXXFLAGS=-DANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER=1 meson setup builddir/bp && ninja -C builddir/bp
+#
+# 831 of 835 test cases pass that way, under clang, gcc and ASan+UBSan. The four that do not are
+# `mutated_key_found_by_the_backfill_terminates`, which requires the backfill to diagnose a key the
+# caller mutated through an iterator -- a walk that cannot go wrong when there is no walk.
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index 371e2af..01a7186 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -120,6 +120,18 @@
+ #    error "ANKERL_UNORDERED_DENSE_HAS_SSE2 and ANKERL_UNORDERED_DENSE_HAS_NEON cannot both be on"
+ #endif
+ 
++// An experiment, off by default and measured in notes/index-design.md under issue #266: keep a slot
++// number per value, parallel to the values, so that closing the hole an erase leaves can repoint the
++// moved element's slot directly instead of hashing its key again and walking to it. It costs four
++// bytes per entry and a store on every insert, and it buys the second hash of every erase -- which
++// is free for an integer key and about 50 ns for a string one behind a heap pointer.
++//
++// A macro rather than a template parameter because it is not shipped: two translation units that
++// disagree about it have incompatible tables, and nothing here tries to catch that.
++#if !defined(ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER)
++#    define ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER 0 // NOLINT(cppcoreguidelines-macro-usage)
++#endif
++
+ #if defined(__clang__) && defined(__has_attribute)
+ #    if __has_attribute(__no_sanitize__)
+ #        define ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK \
+@@ -1568,6 +1580,16 @@ private:
+     static_assert(std::is_trivially_copyable_v<Bucket>, "assert we can just memset / memcpy");
+ 
+     value_container_type m_values{}; // Contains all the key-value pairs in one densely stored container. No holes.
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++    // One packed slot number per value, same order and same length as m_values.
++    //
++    // On the default allocator and not the map's, which a shipped version could not get away with:
++    // an allocator without a default constructor (boost::interprocess') cannot initialise it, and
++    // plumbing it through every constructor is work this experiment does not need. It means a
++    // caller counting through the map's allocator cannot see these bytes -- scripts/ab's memory
++    // figures count a replaced global operator new instead. See the macro.
++    std::vector<value_idx_type> m_slots{};
++#    endif
+     bucket_container_type m_buckets{};
+     std::size_t m_max_bucket_capacity = 0;
+     value_idx_type m_group_mask = 0; // groups - 1; works because the number of groups is a power of two
+@@ -1609,6 +1631,69 @@ private:
+         std::uint8_t lane;
+     };
+ 
++    // Keeping the back-pointers in step with the values, when there are any. Each of these is empty
++    // in a default build, so every call site below reads the same either way; see the macro.
++    static constexpr bool has_back_pointer = ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER != 0;
++
++    // Which slot this is, as one number, the way the back-pointer array stores it. The pair is what
++    // every other consumer wants (#260), so the packing lives here and nowhere else.
++    void note_slot([[maybe_unused]] value_idx_type value_idx,
++                   [[maybe_unused]] value_idx_type group_idx,
++                   [[maybe_unused]] std::size_t lane) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots[value_idx] = static_cast<value_idx_type>(group_idx * slots_per_group + lane);
++#    endif
++    }
++
++    void slots_grow_by_one() {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots.emplace_back();
++#    endif
++    }
++
++    void slots_pop_back() {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots.pop_back();
++#    endif
++    }
++
++    void slots_resize([[maybe_unused]] std::size_t n) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots.resize(n);
++#    endif
++    }
++
++    void slots_reserve([[maybe_unused]] std::size_t n) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots.reserve(n);
++#    endif
++    }
++
++    void slots_clear() {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots.clear();
++#    endif
++    }
++
++    void slots_copy_from([[maybe_unused]] table const& other) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots = other.m_slots;
++#    endif
++    }
++
++    void slots_move_from([[maybe_unused]] table& other) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots = std::move(other.m_slots);
++        other.m_slots.clear();
++#    endif
++    }
++
++    void slots_swap([[maybe_unused]] table& other) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++        m_slots.swap(other.m_slots);
++#    endif
++    }
++
+     // Where the probe stopped, as the group and the lane inside it. Not as one flat slot number:
+     // every consumer wants the pair back, and packing `group_idx * slots_per_group + lane` here made
+     // erase_group_slot and move_home divide it apart again -- which gcc never folded (#262). The
+@@ -1972,6 +2057,7 @@ private:
+                 auto const lane = first_lane(empties);
+                 group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
+                 group.m_index[lane] = value_idx;
++                note_slot(value_idx, group_idx, lane);
+                 return;
+             }
+             if (group.m_overflows[counter] != 255) {
+@@ -2050,6 +2136,7 @@ private:
+         auto& from = groups[found_in];
+         home.m_fingerprints[lane] = from.m_fingerprints[from_lane];
+         home.m_index[lane] = from.m_index[from_lane];
++        note_slot(from.m_index[from_lane], home_idx, lane);
+         from.m_fingerprints[from_lane] = 0;
+         uncount(groups, mask, home_idx, counter, found_in);
+     }
+@@ -2234,6 +2321,7 @@ private:
+         }
+ 
+         m_values = other.m_values;
++        slots_copy_from(other);
+         m_max_load_factor = other.m_max_load_factor;
+         m_hash = other.m_hash;
+         m_equal = other.m_equal;
+@@ -2246,6 +2334,7 @@ private:
+     void move_everything_from(table&& other) {
+         m_values = std::move(other.m_values);
+         other.m_values.clear();
++        slots_move_from(other);
+ 
+         // we can only reuse m_buckets when both maps have the same allocator!
+         if (get_allocator() == other.get_allocator()) {
+@@ -2433,6 +2522,7 @@ private:
+             fetch(i);
+         }
+         auto const n = m_values.size();
++        slots_resize(n);
+         for (auto value_idx = std::size_t{}; value_idx < n; ++value_idx) {
+             auto const mh = ring[value_idx % ahead];
+             if (it != end) {
+@@ -2450,6 +2540,7 @@ private:
+                     auto const lane = first_lane(empties);
+                     group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
+                     group.m_index[lane] = static_cast<value_idx_type>(value_idx);
++                    note_slot(static_cast<value_idx_type>(value_idx), group_idx, lane);
+                     break;
+                 }
+                 if (group.m_overflows[counter] != 255) {
+@@ -2464,6 +2555,7 @@ private:
+         if (m_max_bucket_capacity == max_bucket_count()) {
+             // remove the value again, we can't add it!
+             m_values.pop_back();
++            slots_pop_back();
+             on_error_bucket_overflow();
+         }
+         // Both callers have already appended the new element to m_values, which is why the branch
+@@ -2477,6 +2569,7 @@ private:
+                 allocate_buckets_from_shift(static_cast<std::uint8_t>(m_shifts - 1));
+             } catch (...) {
+                 m_values.pop_back();
++                slots_pop_back();
+                 throw;
+             }
+         } else {
+@@ -2497,10 +2590,22 @@ private:
+ 
+             // update the value index of the moved entry
+             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
+-            auto const mh = mixed_hash(get_key(val));
+-            repoint_value(mh, values_idx_back, value_idx_to_remove);
++            if constexpr (has_back_pointer) {
++#    if ANKERL_UNORDERED_DENSE_SLOT_BACK_POINTER
++                // The slot is known, so neither the second hash of the moved key nor the walk that
++                // finds its slot happens at all. This is the experiment; see the macro.
++                auto const slot = m_slots[values_idx_back];
++                auto& group = m_buckets.data()[slot / slots_per_group];
++                group.m_index[slot % slots_per_group] = value_idx_to_remove;
++                m_slots[value_idx_to_remove] = slot;
++#    endif
++            } else {
++                auto const mh = mixed_hash(get_key(val));
++                repoint_value(mh, values_idx_back, value_idx_to_remove);
++            }
+         }
+         m_values.pop_back();
++        slots_pop_back();
+     }
+ 
+     // `at` is the slot that points at the value; mh is the value's mixed hash, which the counters
+@@ -2599,6 +2704,7 @@ private:
+         -> std::pair<iterator, bool> {
+         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
+         m_values.emplace_back(std::forward<Args>(args)...);
++        slots_grow_by_one();
+ 
+         auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
+         if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full()))
+@@ -2720,6 +2826,7 @@ private:
+                 // loop's self-move guard cannot be needed.
+                 *read = std::move(m_values.back());
+                 m_values.pop_back();
++                slots_pop_back();
+                 fetch(slot, *read);
+             } else {
+                 place_group(word, counter, home_idx, static_cast<value_idx_type>(value_idx));
+@@ -3186,6 +3293,7 @@ public:
+         , m_max_load_factor(other.m_max_load_factor)
+         , m_hash(other.m_hash)
+         , m_equal(other.m_equal) {
++        slots_copy_from(other);
+         copy_buckets(other);
+     }
+ 
+@@ -3220,6 +3328,7 @@ public:
+         // still holds them. Either way it has to come out of this as an empty, usable table, which
+         // the exchanges above have already made the rest of it -- and an empty table needs no
+         // buckets, so this hands nothing back to it.
++        slots_move_from(other);
+         other.m_values.clear();
+         other.m_buckets.clear();
+     }
+@@ -3348,6 +3457,7 @@ public:
+     void clear() {
+         if (!empty()) {
+             m_values.clear();
++            slots_clear();
+             clear_buckets();
+         }
+     }
+@@ -3413,6 +3523,7 @@ public:
+         // them here is what makes "*this is emptied" true: without it the table looks empty -- size() is 0, find()
+         // returns end() -- and then the next insert probes a bucket pointing at an element that is no longer there.
+         m_values.clear();
++        slots_clear();
+         clear_buckets();
+         return values;
+     }
+@@ -3431,6 +3542,7 @@ public:
+         clear_buckets();
+ 
+         m_values = std::move(container);
++        slots_resize(m_values.size());
+ 
+         // can't use fill_buckets_from_values() because container elements might not be unique
+         //
+@@ -3501,6 +3613,7 @@ public:
+                     *read = std::move(m_values.back());
+                 }
+                 m_values.pop_back();
++                slots_pop_back();
+             } else {
+                 place_group(mh, static_cast<value_idx_type>(value_idx));
+                 ++read;
+@@ -3575,10 +3688,12 @@ public:
+         // we have to instantiate the value_type to be able to access the key.
+         // 1. emplace_back the object so it is constructed. 2. If the key is already there, pop it later in the loop.
+         auto& key = get_key(m_values.emplace_back(std::forward<Args>(args)...));
++        slots_grow_by_one();
+         auto const mh = mixed_hash(key);
+         auto r = probe(key, mh);
+         if (r.found) {
+             m_values.pop_back(); // value was already there, so get rid of it
++            slots_pop_back();
+             move_home(r.group_idx, r.lane, mh);
+             return {begin() + static_cast<difference_type>(r.value_idx), false};
+         }
+@@ -3786,6 +3901,7 @@ public:
+         // some other namespace cannot quietly fall back to the three-move std::swap: every
+         // container is required to have the member, none is required to have the free function.
+         m_values.swap(other.m_values);
++        slots_swap(other);
+         m_buckets.swap(other.m_buckets);
+         using std::swap;
+         swap(m_max_bucket_capacity, other.m_max_bucket_capacity);
+@@ -4156,6 +4272,7 @@ public:
+             // std::deque doesn't have reserve(). Make sure we only call when available
+             m_values.reserve(capa);
+         }
++        slots_reserve(capa);
+         auto shifts = calc_shifts_for_size((std::max)(capa, size()));
+         if (0 == bucket_count() || shifts < m_shifts) {
+             allocate_buckets_from_shift(shifts);
