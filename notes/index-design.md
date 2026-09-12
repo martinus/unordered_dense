@@ -404,6 +404,34 @@ not a cycle. A five-point sweep puts two points below it and three above, a fift
 and forty-five, and the geomean moves by the difference. It is the "sweep across the cache boundary"
 rule arriving in a workload that was never thought of as a size sweep.
 
+**The sizes are template arguments, and that is worth at most 1.4%, which is the layout band.**
+Asked on 2026-09-12: does making every swept size a compile-time constant buy anything? The premise
+`workloads.h` states -- "turning a literal loop bound into a runtime value is a change even when the
+value is the same" -- had never been measured. Two builds of the harness from one source, the second
+with every size passed through `asm volatile("" : "+r"(v))` before use, which is exactly what a
+function argument would do to the compiler's knowledge of it and changes nothing else. Candidate
+time, opaque over constant, five sizes each:
+
+| `build64` | `churn64` | `ie64` | `find64` | `buildstr` | `churnstr` | `rhit64` | `rmissstr` |
+|---|---|---|---|---|---|---|---|
+| 0.959 | 1.014 | 1.006 | 1.006 | 1.010 | 0.995 | **0.998** | **0.986** |
+
+The last two are the control: `rhit*`/`rmiss*` take their trip count from a body constant, not from
+the template parameter, so their code is identical in both binaries -- and they read 0.998 and 0.986,
+which is the two-binary layout band. Every workload that did change is inside it, in both directions.
+`build64`'s 0.959 is the largest number in the table and it says the *opaque* build was faster, which
+is what layout luck looks like.
+
+So the rule holds where it was written -- the scored instantiation must keep compiling the literal it
+always did, because silently editing the benchmark is the thing to avoid -- and buys nothing
+measurable for the swept points. What it costs there is compile time that scales with the point
+count: 17.4 s at fifty sizes against 3.6 s at five, where runtime sizes would compile in the
+five-size time whatever P is. Within one run the per-point control ratios scatter by 0.25-0.92%
+standard deviation, mostly under nanobench's own interval, so fifty separate instantiations are not
+adding noise either; the geomean's standard error from that scatter is 0.04-0.33%. **If a grid finer
+than fifty is ever wanted, passing the swept sizes at runtime is the change to make, and this is the
+measurement that says it is safe.**
+
 **The growth is measured now, not assumed.** An octave is one whole turn of the cycle only because
 the bucket array doubles, which is this map's policy and not a law -- a growth factor under two is a
 knob this file already records. So before anything is timed the harness inserts into each map in the
