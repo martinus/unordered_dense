@@ -1,8 +1,12 @@
 # Benchmarks
 
-Obviously this is my own map's documentation, so the bias is where you'd expect it. Rows are sorted by the geometric mean of all five panels, and one of the five is `iterate`, which a dense map wins by 5.5x to 13x. That column decides most of the order on its own. Sorted by `find` instead, this map is seventh of fourteen.
+[README](../README.md) · [Usage](usage.md) · [Design](design.md) · **Benchmarks** · [Real world usage](users.md)
 
-Every map runs in the configuration you get by typing its type name, own hash included. Everything is relative to `ankerl::unordered_dense::map`, so 1.00 is level with it and 2.00 is twice the cost. Ryzen 9 7950X, clang 22.1.8, one binary per map, one million to two million entries. Raw numbers are in [bench_readme.csv](bench_readme.csv).
+The long version of the two graphs in the [README](../README.md#benchmarks): what each panel
+measures, what the graphs say, what `ankerl::unordered_dense`'s two opt-in shapes do to the same
+numbers, and how it was all taken. Obviously I wrote both the map and the benchmark, so the bias is
+where you'd expect it. Everything is relative to `ankerl::unordered_dense::map`, so 1.00 is level
+with it and 2.00 is twice the cost. Raw numbers are in [bench_readme.csv](bench_readme.csv).
 
 ![benchmark results, uint64_t keys](bench-readme-u64.svg)
 
@@ -20,8 +24,7 @@ Every map runs in the configuration you get by typing its type name, own hash in
 
 The `geomean` column is the sort key and nothing more. Every axis ends where its own bars do, except `iterate`, which stops at 10x: `std::unordered_map` needs 110x there, and an axis that fits that turns every other bar into a sliver. The bars that run past it are drawn torn off, with the real number next to them.
 
-
-## What the graphs say
+## Iteration is what the dense layout buys, integer find is what it costs
 
 **Iteration is what the dense layout buys.** One pass costs 0.19 ns per element with `uint64_t` keys. The elements sit in a `std::vector` and the pass never looks at the index at all. The flat maps need 5.5x to 13x of that because they walk metadata and skip empty slots, and `std::unordered_map` needs 110x because it chases a pointer per element. If you iterate often, no other panel here will matter as much.
 

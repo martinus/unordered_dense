@@ -1,8 +1,11 @@
 # Usage
 
-Everything `std::unordered_map` and `std::unordered_set` have is here and works the way it does
-there, so this page is about the rest: the hash, the API that a vector of values makes possible,
-and the shapes the containers can be asked to take. The index itself is in [Design](design.md).
+[README](../README.md) · **Usage** · [Design](design.md) · [Benchmarks](benchmarks.md) · [Real world usage](users.md)
+
+Almost everything `std::unordered_map` and `std::unordered_set` have is here, and works the same
+way. This page is about the rest: the hash, the API a vector of values makes possible, and the
+shapes `ankerl::unordered_dense::map` and `set` can be asked to take. The index itself is in
+[Design](design.md).
 
 ## Modules
 
@@ -13,7 +16,7 @@ clang++ -std=c++20 -I include --precompile -x c++-module src/ankerl.unordered_de
 clang++ -std=c++20 -c ankerl.unordered_dense.pcm
 ```
 
-To use the module, for example in `module_test.cpp`, use 
+To use the module, e.g. in `module_test.cpp`, use 
 
 ```cpp
 import ankerl.unordered_dense;
@@ -40,7 +43,7 @@ using is_avalanching = void;
 
 This is the case for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, and `std::basic_string_view<C>`.
 
-Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation. The marker can also be spelled `using is_avalanching = std::true_type;`, and given for a hash you cannot edit - see [Marking a Hash Avalanching From Outside](#marking-a-hash-avalanching-from-outside).
+Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation. The marker can also be spelled `using is_avalanching = std::true_type;`, and given for a hash you cannot edit -- see [Marking a Hash Avalanching From Outside](#marking-a-hash-avalanching-from-outside).
 
 ### Simple Hash
 
@@ -65,7 +68,7 @@ struct custom_hash_simple {
     }
 };
 ```
-This can be used, for example, with 
+This can be used, e.g. with 
 
 ```cpp
 auto ids = ankerl::unordered_dense::set<id, custom_hash_simple>();
@@ -135,7 +138,7 @@ For more information see the examples in `test/unit/transparent.cpp`.
 
 When an implementation for `std::hash` of a custom type is available, it is automatically used and assumed to be of low quality (thus `std::hash` is used, but an additional mixing step is performed).
 
-If your `std::hash` specialization is a high quality one, say so there and it is taken at its word - the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`. The fallback asks `hash_is_avalanching` like everything else, so either spelling of the marker works, and a `std::hash` you cannot edit can be named from outside ([Marking a Hash Avalanching From Outside](#marking-a-hash-avalanching-from-outside)):
+If your `std::hash` specialization is a high quality one, say so there and it is taken at its word -- the extra mixing is then skipped, exactly as for a hash written in `ankerl::unordered_dense`. The fallback asks `hash_is_avalanching` like everything else, so either spelling of the marker works, and a `std::hash` you cannot edit can be named from outside ([Marking a Hash Avalanching From Outside](#marking-a-hash-avalanching-from-outside)):
 
 ```cpp
 template <>
@@ -185,7 +188,7 @@ template <>
 struct ankerl::unordered_dense::hash_is_avalanching<their::good_hash> : std::true_type {};
 ```
 
-The extra mixing is now skipped for `their::good_hash` everywhere, without touching it. The specialization also works the other way - `std::false_type` makes the map mix a hash's output whatever the hash claims about itself, which is the escape hatch for one that promises more than it delivers.
+The extra mixing is now skipped for `their::good_hash` everywhere, without touching it. The specialization also works the other way -- `std::false_type` makes the map mix a hash's output whatever the hash claims about itself, which is the escape hatch for one that promises more than it delivers.
 
 This is deliberately the same name, the same two ways of answering, and the same meaning as [`boost::hash_is_avalanching`](https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered/reference/hash_traits.html), so a hash annotated for Boost.Unordered is read correctly here and the other way around. The member may therefore also be written as a compile time bool, which is the spelling Boost's documentation asks for:
 
@@ -194,20 +197,20 @@ using is_avalanching = std::true_type;   // same as `= void`
 using is_avalanching = std::false_type;  // says the opposite
 ```
 
-Boost calls `= void` deprecated; here it stays the ordinary spelling, since it is what this library has always documented and what every hash in the header uses. Writing anything else there - a stray `int`, say - is a compile error rather than a silent yes or no.
+Boost calls `= void` deprecated; here it stays the ordinary spelling, since it is what this library has always documented and what every hash in the header uses. Writing anything else there -- a stray `int`, say -- is a compile error rather than a silent yes or no.
 
 ### Requiring an Avalanching Hash
 
-In a codebase where every hash is meant to be a high quality one, forgetting to say so is the easy mistake, and nothing complains - the map just quietly mixes. Wrap the hash to make it a build error instead:
+In a codebase where every hash is meant to be a high quality one, forgetting to say so is the easy mistake, and nothing complains -- the map just quietly mixes. Wrap the hash to make it a build error instead:
 
 ```cpp
 template <class Key, class T>
 using my_map = ankerl::unordered_dense::map<Key, T, ankerl::unordered_dense::require_avalanching<my_hash<Key>>>;
 ```
 
-The requirement is written into the alias rather than next to the hash, so it is part of what `my_map` *is*, and survives `my_hash` being reimplemented without its marker - which a `static_assert` next to the hash does not. (It does not follow a map that is given a different hash outright: `map<K, V, other_hash>` names no requirement, so there is none.) It accepts a hash marked either way, by its own member typedef or by a `hash_is_avalanching` specialization.
+The requirement is written into the alias rather than next to the hash, so it is part of what `my_map` *is*, and survives `my_hash` being reimplemented without its marker -- which a `static_assert` next to the hash does not. (It does not follow a map that is given a different hash outright: `map<K, V, other_hash>` names no requirement, so there is none.) It accepts a hash marked either way, by its own member typedef or by a `hash_is_avalanching` specialization.
 
-The hash must not be `final`, since the wrapper derives from it - for one that is, specialize `hash_is_avalanching` instead. A stateful hash goes in either braced or by value: `require_avalanching<my_hash>{my_hash{seed}}`.
+The hash must not be `final`, since the wrapper derives from it -- for one that is, specialize `hash_is_avalanching` instead. A stateful hash goes in either braced or by value: `require_avalanching<my_hash>{my_hash{seed}}`.
 
 ## Container API
 
@@ -257,7 +260,7 @@ auto const status_hash = map.hash_for("status");
 auto it = map.find("status", status_hash);
 ```
 
-The key is still needed - a lookup that lands on a bucket still has to compare keys to know it found the right one. What is skipped is the hashing, so the longer the key the more there is to gain (clang 18, x86-64, half hits and half misses):
+The key is still needed -- a lookup that lands on a bucket still has to compare keys to know it found the right one. What is skipped is the hashing, so the longer the key the more there is to gain (clang 18, x86-64, half hits and half misses):
 
 | key length | `find(key)` | `find(key, hash)` | |
 | ---------: | ----------: | ----------------: | ---: |
@@ -265,16 +268,16 @@ The key is still needed - a lookup that lands on a bucket still has to compare k
 | 32 bytes | 7.1 ns | 4.3 ns | 1.7x |
 | 200 bytes | 22.5 ns | 7.4 ns | 3.0x |
 
-`precomputed_hash` is a distinct type rather than a plain integer, because the number a lookup wants is *not* what `hash_function()` returns - the table finalizes that further - and an integer parameter would happily accept the wrong one. An integer does not convert to it; the value inside stays reachable, so a hash can be stored or moved around freely.
+`precomputed_hash` is a distinct type rather than a plain integer, because the number a lookup wants is *not* what `hash_function()` returns -- the table finalizes that further -- and an integer parameter would happily accept the wrong one. An integer does not convert to it; the value inside stays reachable, so a hash can be stored or moved around freely.
 
-A hash belongs to the hasher, not to the table it came from. It stays valid across insertions, erasures, `rehash()` and moves, and every table using the same hasher takes it - so one hash can serve a map and a set together:
+A hash belongs to the hasher, not to the table it came from. It stays valid across insertions, erasures, `rehash()` and moves, and every table using the same hasher takes it -- so one hash can serve a map and a set together:
 
 ```cpp
 auto set = ankerl::unordered_dense::set<std::string>();
 auto found = set.find("status", status_hash); // the hash from the map above
 ```
 
-What it does not survive is the key changing. Looking up a key with the hash of a different key does not throw or crash - it just quietly reports the key as not present.
+What it does not survive is the key changing. Looking up a key with the hash of a different key does not throw or crash -- it just quietly reports the key as not present.
 
 Heterogeneous lookup works as usual when the hash and equality are transparent, and the hash may be taken from one key type and used with another:
 
@@ -283,7 +286,7 @@ auto const h = map.hash_for(std::string_view("status"));
 auto it = map.find("status"s, h);
 ```
 
-Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason - it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
+Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason -- it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
 
 ### `auto visit(FwdIt first, FwdIt last, F f) -> size_t`
 
@@ -297,7 +300,7 @@ auto found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += 
 
 `f` receives `value_type&`, or `value_type const&` on a `const` map, so a visit can modify what it finds. Keys that are absent are not reported; the count says how many were there.
 
-**Why it is faster than the same loop of `find()`.** A lookup on a table past the cache is two dependent memory accesses - the group's block, and then the value the slot points at - and a loop doing one lookup at a time can only overlap them as far as the processor's own reordering reaches past a whole loop body. `visit` works a chunk at a time in three passes: every key's block is asked for, then the fingerprints are matched once the blocks have arrived, then the keys are compared. Every block in the chunk is in flight at once.
+**Why it is faster than the same loop of `find()`.** A lookup on a table past the cache is two dependent memory accesses -- the group's block, and then the value the slot points at -- and a loop doing one lookup at a time can only overlap them as far as the processor's own reordering reaches past a whole loop body. `visit` works a chunk at a time in three passes: every key's block is asked for, then the fingerprints are matched once the blocks have arrived, then the keys are compared. Every block in the chunk is in flight at once.
 
 `map<uint64_t, size_t>`, clang 22 on a 7950X, ns per lookup, against the same batch looked up one key at a time:
 
@@ -310,7 +313,7 @@ auto found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += 
 
 **It needs a table past the cache to be worth anything**, like every other memory-level trick here: on a map that fits in L2 there is nothing to overlap and the extra passes are a small loss.
 
-**And the batching itself matters more than `visit` does.** If the keys are being fetched from somewhere in the same loop that looks them up - a random index into another array, say - then the key's own cache miss sits in front of the map's and neither overlaps with anything. Collecting the keys first and looking them up afterwards is worth **1.5x** at four million entries before `visit` is involved at all:
+**And the batching itself matters more than `visit` does.** If the keys are being fetched from somewhere in the same loop that looks them up -- a random index into another array, say -- then the key's own cache miss sits in front of the map's and neither overlaps with anything. Collecting the keys first and looking them up afterwards is worth **1.5x** at four million entries before `visit` is involved at all:
 
 ```cpp
 for (size_t i = 0; i < n; ++i) {              // 51 ns per lookup
@@ -348,6 +351,40 @@ Two things differ from `std::unordered_map::merge`, and both follow from the ele
 ## Custom Container Types
 
 `unordered_dense` accepts a custom allocator, but you can also specify a custom container for that template argument. That way it is possible to replace the internally used `std::vector` with e.g. `std::deque` or any other container like `boost::interprocess::vector`. This supports fancy pointers (e.g. [offset_ptr](https://www.boost.org/doc/libs/1_80_0/doc/html/interprocess/offset_ptr.html)), so the container can be used with e.g. shared memory provided by `boost::interprocess`.
+
+## `segmented_map` and `segmented_set`
+
+`ankerl::unordered_dense` provides a custom container implementation that has lower memory requirements than the default `std::vector`. Memory is not contiguous, but it can allocate segments without having to reallocate and move all the elements. In summary, this leads to
+
+* Much smoother memory usage of the values, which increases continuously.
+* No high peak memory usage from the values.
+* Faster insertion because elements never need to be moved to newly allocated blocks
+* Slightly slower indexing compared to `std::vector` because an additional indirection is needed.
+
+Here is what each of four maps holds while 10 million `uint64_t -> uint64_t` pairs are inserted into it:
+![allocated memory](allocated_memory.png)
+
+| inserting 10M pairs | held at the end | peak while filling |
+|---|---|---|
+| `ankerl::unordered_dense::map` | 361 MB | 495 MB |
+| `ankerl::unordered_dense::segmented_map` | **253 MB** | **253 MB** |
+| `boost::unordered_flat_map` | 268 MB | 403 MB |
+| `absl::flat_hash_map` | 285 MB | 428 MB |
+
+Every flat and dense map in that chart has the same sawtooth, and for the same reason: growing means allocating the new array before releasing the old one, so the transient is what a caller has to have room for even though nothing ever reports it. `ankerl::unordered_dense::map` has the tallest one, because a dense map grows a vector of values as well as an index.
+
+`segmented_map` is the line without a sawtooth. Its values live in fixed-size segments, so growing adds a segment instead of copying everything into a bigger block, and the memory it holds only ever goes up. The one step still visible in that line is the index doubling, which segmenting does not remove -- but it happens while the values are still small, so on this run it never rises above where the map ends up, and the peak and the steady state are the same number.
+
+The segmenting is about the values: it is those that grow smoothly and whose references stay valid. The index is one plain contiguous array either way, and growing it still allocates the new one beside the old. Since 5.0.0 that is a change from before, when the index was segmented too.
+
+Each line runs to the end of its own fill and then drops to zero, which is that map being destroyed -- for the dense maps in two steps, the index and then the values. So where a line falls off is how long that map took to fill: 0.41 s for boost, 0.47 s for abseil, 0.50 s for `segmented_map` and 0.57 s for `map` on this machine. Do not read that as a build benchmark, though. This chart deliberately does not raise glibc's mmap threshold the way the benchmark suite does, so every large block here is faulted in from the kernel a page at a time, and it is measuring memory rather than speed.
+
+The chart is drawn by `scripts/ab/alloc_timeline.sh`, which counts *every* allocation the process makes by replacing global `operator new` -- an allocator handed to a container sees only what that container asks for through it -- charges each one what the allocator really gave away (`malloc_usable_size` plus glibc's chunk header, so the rounding up is counted rather than guessed at), and takes a `std::chrono::steady_clock` reading at each change. The runtimes on the x axis are from one machine and one run; the byte counts are exact.
+
+How much the remaining index spike matters depends on the size of your value. The index is 5.5 bytes per slot, so at the moment it doubles it needs about 16.5 bytes per slot transiently, against `sizeof(value_type)` bytes per element for the values. For `map<uint64_t, uint64_t>` that spike is roughly two thirds of the value storage; for a map with a large value it is a rounding error; for a `set<uint64_t>` it is larger than the values. If you need the index to grow smoothly as well, `reserve()` up front avoids the doubling entirely, which is worth doing for a large map whatever container it uses.
+
+The size of a segment is a template parameter, and it defaults to 4096 bytes, which is small. A map
+that is going on huge pages wants it set: see [Sizing a segment for a huge page](#sizing-a-segment-for-a-huge-page).
 
 ## Custom Bucket Types
 
@@ -408,7 +445,7 @@ command script import /path/to/unordered_dense/lldb/unordered_dense.py
 ```
 
 or put that line into `~/.lldbinit` to always have it. Elements are the densely stored values in the container's
-iteration order - insertion order until something is erased - and children are named after their key when the key
+iteration order -- insertion order until something is erased -- and children are named after their key when the key
 renders as a short scalar or string (`v map[2]` works by index regardless). The script only reads memory, so it is
 safe on core dumps, and `frame variable -R <var>` still shows the raw members whenever they are wanted. Naming
 children by key can be turned off with
@@ -419,37 +456,6 @@ script unordered_dense.NAME_CHILDREN_BY_KEY = False
 
 Custom value containers (see [Custom Container Types](#custom-container-types)) fall back to whatever LLDB itself can display for
 them.
-
-## `segmented_map` and `segmented_set`
-
-`ankerl::unordered_dense` provides a custom container implementation that has lower memory requirements than the default `std::vector`. Memory is not contiguous, but it can allocate segments without having to reallocate and move all the elements. In summary, this leads to
-
-* Much smoother memory usage of the values, which increases continuously.
-* No high peak memory usage from the values.
-* Faster insertion because elements never need to be moved to newly allocated blocks
-* Slightly slower indexing compared to `std::vector` because an additional indirection is needed.
-
-Here is what each of four maps holds while 10 million `uint64_t -> uint64_t` pairs are inserted into it:
-![allocated memory](allocated_memory.png)
-
-| inserting 10M pairs | held at the end | peak while filling |
-|---|---|---|
-| `ankerl::unordered_dense::map` | 361 MB | 495 MB |
-| `ankerl::unordered_dense::segmented_map` | **253 MB** | **253 MB** |
-| `boost::unordered_flat_map` | 268 MB | 403 MB |
-| `absl::flat_hash_map` | 285 MB | 428 MB |
-
-Every flat and dense map in that chart has the same sawtooth, and for the same reason: growing means allocating the new array before releasing the old one, so the transient is what a caller has to have room for even though nothing ever reports it. `ankerl::unordered_dense::map` has the tallest one, because a dense map grows a vector of values as well as an index.
-
-`segmented_map` is the line without a sawtooth. Its values live in fixed-size segments, so growing adds a segment instead of copying everything into a bigger block, and the memory it holds only ever goes up. The one step still visible in that line is the index doubling, which segmenting does not remove -- but it happens while the values are still small, so on this run it never rises above where the map ends up, and the peak and the steady state are the same number.
-
-The segmenting is about the values: it is those that grow smoothly and whose references stay valid. The index is one plain contiguous array either way, and growing it still allocates the new one beside the old. Since 5.0.0 that is a change from before, when the index was segmented too.
-
-Each line runs to the end of its own fill and then drops to zero, which is that map being destroyed -- for the dense maps in two steps, the index and then the values. So where a line falls off is how long that map took to fill: 0.41 s for boost, 0.47 s for abseil, 0.50 s for `segmented_map` and 0.57 s for `map` on this machine. Do not read that as a build benchmark, though. This chart deliberately does not raise glibc's mmap threshold the way the benchmark suite does, so every large block here is faulted in from the kernel a page at a time, and it is measuring memory rather than speed.
-
-The chart is drawn by `scripts/ab/alloc_timeline.sh`, which counts *every* allocation the process makes by replacing global `operator new` -- an allocator handed to a container sees only what that container asks for through it -- charges each one what the allocator really gave away (`malloc_usable_size` plus glibc's chunk header, so the rounding up is counted rather than guessed at), and takes a `std::chrono::steady_clock` reading at each change. The runtimes on the x axis are from one machine and one run; the byte counts are exact.
-
-How much the remaining index spike matters depends on the size of your value. The index is 5.5 bytes per slot, so at the moment it doubles it needs about 16.5 bytes per slot transiently, against `sizeof(value_type)` bytes per element for the values. For `map<uint64_t, uint64_t>` that spike is roughly two thirds of the value storage; for a map with a large value it is a rounding error; for a `set<uint64_t>` it is larger than the values. If you need the index to grow smoothly as well, `reserve()` up front avoids the doubling entirely, which is worth doing for a large map whatever container it uses.
 
 ## Huge Pages
 
@@ -494,7 +500,9 @@ A build gains more than the TLB explains: a vector that doubles faults in every 
 * **It only helps once the blocks themselves reach 2 MB**, which is the index from about 370000 entries and the values from `2 MB / sizeof(value_type)` entries. A huge page is 2 MB whole, and an allocator that owns only its own blocks has no neighbour to share one with -- that is what the environment route has and this one does not. Below that size, use the environment.
 * **Every block is rounded up to 2 MB, and the rounding is resident memory**, because touching one byte of an `MADV_HUGEPAGE`d extent populates all of it. The map doubles both regions, so the loss is at most half a doubling step per region, while that region sits between doublings. The threshold is the second template parameter (`huge_page_allocator<T, 4 << 20>`), and it cannot go below 2 MB; the `huge_page::` aliases use the default, so a different threshold is the allocator written out.
 
-**Size the segment for the page.** A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. `segmented_map`, `segmented_set` and their `pmr::` and `huge_page::` twins take the segment size as a trailing parameter, after the bucket. It defaults to `default_segment_size_bytes`, which is 4096 -- far below the allocator's threshold, so a segmented map wants it set:
+### Sizing a segment for a huge page
+
+A segmented map never reallocates its values, so a segment on a huge page has no rounding loss to amortize and no copy to pay. `segmented_map`, `segmented_set` and their `pmr::` and `huge_page::` twins take the segment size as a trailing parameter, after the bucket. It defaults to `default_segment_size_bytes`, which is 4096 -- far below the allocator's threshold, so a segmented map wants it set:
 
 ```cpp
 ankerl::unordered_dense::huge_page::segmented_map<K, V, ankerl::unordered_dense::hash<K>, std::equal_to<K>,

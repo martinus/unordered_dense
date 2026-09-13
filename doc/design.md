@@ -1,5 +1,10 @@
 # Design
 
+[README](../README.md) · [Usage](usage.md) · **Design** · [Benchmarks](benchmarks.md) · [Real world usage](users.md)
+
+How `ankerl::unordered_dense::map` and `set` store their elements and find them again. The API is
+in [Usage](usage.md), the numbers in [Benchmarks](benchmarks.md).
+
 The map/set has two data structures:
 * `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
 * An indexing structure, which is a flat array of blocks. Each block is one group of sixteen slots: their fingerprints, the group's overflow counters, and the sixteen value indices, all in the same 88 bytes.

@@ -520,7 +520,8 @@ template <typename Hash>
 //
 // Deliberately the same name, the same two ways of answering and the same meaning as Boost's
 // boost::hash_is_avalanching, so that a hash annotated for either library is read correctly by the
-// other. See "Marking a Hash Avalanching From Outside" in doc/usage.md.
+// other. See "Marking a Hash Avalanching From Outside" in
+// https://github.com/martinus/unordered_dense/blob/main/doc/usage.md
 template <typename Hash>
 struct hash_is_avalanching : std::bool_constant<detail::is_avalanching_member<Hash>()> {};
 
@@ -692,7 +693,8 @@ namespace bucket_type {
 // sixteen at a time, and eight overflow counters that record how many entries with those low three
 // fingerprint bits had to probe past it. An erase decrements them, so nothing ever moves after it
 // is placed and no tombstone is left behind. The value indices sit in the same block as the group
-// they belong to: 24 + 64 bytes per sixteen slots, 5.5 bytes per slot. See doc/design.md, and
+// they belong to: 24 + 64 bytes per sixteen slots, 5.5 bytes per slot. See
+// https://github.com/martinus/unordered_dense/blob/main/doc/design.md and
 // group_storage::block below for why one block rather than two arrays.
 //
 // The width of the value index is the one thing the two bucket types differ in: `group` indexes
