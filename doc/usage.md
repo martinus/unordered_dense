@@ -409,11 +409,6 @@ This one copies every unique string once, into the set's storage, and it leaves 
 alone: all n strings are still there to be destroyed afterwards. That is work either way, so the
 measurements below charge every version for it.
 
-Which of the two to reach for is the duplicate rate, and the answer is in the second table further
-down. `replace()` is 4.7x to 7.2x faster when there is nothing to remove, still 1.5x to 2.1x at half
-duplicates up to a hundred thousand elements, and behind only when nine tenths of the input is
-duplicates.
-
 A set that is not dense keeps its elements in its own storage, so every unique string is copied into
 it and copied out of it again:
 
@@ -447,6 +442,18 @@ auto unique_views(std::vector<std::string>&& v) -> std::vector<std::string> {
     return std::move(v);
 }
 ```
+
+**Which one to use.**
+
+* `replace()` + `extract()` for nearly everything. It needs the vector to be yours to consume, and
+  with no duplicates in it that is 4.7x to 7.2x over building the same set from the range, and 1.8x
+  to 3.0x over the fastest thing you can write by hand that copies no string either.
+* The range constructor + `extract()` when the vector is not yours to take, or when nine tenths of
+  it is duplicates: at a million elements that case reads 27.87 against 43.78.
+* A set of `std::string_view` and a compaction afterwards if you are stuck with a set that is not
+  dense. It copies no string either and pays an index per unique element for it.
+* `std::sort` + `std::unique` only when you wanted the result sorted anyway. With no duplicates it
+  is 9x to 23x the `replace()` version, and it hashes nothing.
 
 Nanoseconds per element of the input vector, with no duplicates in it, `scripts/ab/unique.cpp`,
 clang 22 on a Ryzen 9 7950X, keys 8 to 135 bytes skewed short, median of 31 rounds or more. Every
