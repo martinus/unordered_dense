@@ -79,7 +79,8 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 // (`GLIBC_TUNABLES=glibc.malloc.hugetlb=1`, glibc 2.35 and later) -- an allocator that owns only its
 // own blocks has no neighbour to share with. So this pays off once the blocks themselves are 2 MB:
 // an index of about 370000 entries and up, a `std::vector` of values from 2 MB / sizeof(value_type)
-// entries and up. Below that, the environment route is the one that works, and doc/usage.md says so.
+// entries and up. Below that, the environment route is the one that works, and the "Huge Pages"
+// section of https://github.com/martinus/unordered_dense/blob/main/doc/usage.md says so.
 //
 // What it costs. Every block is rounded up to 2 MB, and under `MADV_HUGEPAGE` touching one byte of
 // an aligned 2 MB extent populates all of it, so the rounding is resident memory, not just address
@@ -219,7 +220,7 @@ using map = detail::table<Key, T, Hash, KeyEqual, huge_page_allocator<std::pair<
 // allocated whole, so a 16 MB default would cost a map with ten elements 16 MB. The default gets
 // this allocator for the index and not for the values, which is the right floor for a small map and
 // the wrong answer for a large one -- 16 MB is at least one whole huge page after the rounding for
-// any element size, and is what doc/usage.md recommends.
+// any element size, and is what doc/usage.md recommends in the repository.
 template <class Key,
           class T,
           class Hash = hash<Key>,

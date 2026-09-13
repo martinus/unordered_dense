@@ -133,14 +133,14 @@ TEST_CASE("huge_page_aliases_name_the_same_types_as_the_arguments_they_replace")
             udm::map<int, int, udm::hash<int>, std::equal_to<int>, huge<std::pair<int, int>>, udm::bucket_type::group_big>>);
 }
 
-// A segment sized for the page, which is the recipe the README gives and the one the segment-size
+// A segment sized for the page, which is the recipe doc/usage.md gives and the one the segment-size
 // parameter exists for: the default segment is 4096 bytes, far below the allocator's 2 MB
 // threshold, so a segmented map gets huge pages for its index and none for its values without it.
 TEST_CASE("huge_page_segmented_map_with_a_sized_segment_round_trips") {
     namespace udm = ankerl::unordered_dense;
     using pair_t = std::pair<std::uint64_t, std::uint64_t>;
 
-    // 16 MB is the size the README recommends, because it is at least one whole huge page after the
+    // 16 MB is the size doc/usage.md recommends, because it is at least one whole huge page after the
     // rounding for any element size. The parameter has to reach the container it is about.
     static_assert(std::is_same_v<udm::huge_page::segmented_map<std::uint64_t,
                                                                std::uint64_t,

@@ -175,7 +175,7 @@ UDM_MAP(a_udm, "udm", ankerl::unordered_dense::map<Key, Val UDM_HASH(Key)>);
 UDM_MAP(a_udm411, "udm-4.11", udmbase::unordered_dense::map<Key, Val UDM_HASH(Key)>);
 // The two shapes of this map a caller can opt into: stable references through a segmented value
 // container, and every block of 2 MB and up on a huge page. Both are the shipped defaults of their
-// aliases, except the segment size, which is the one the README recommends for the page.
+// aliases, except the segment size, which is the one doc/usage.md recommends for the page.
 UDM_MAP(a_udm_seg, "udm-segmented", ankerl::unordered_dense::segmented_map<Key, Val UDM_HASH(Key)>);
 #ifdef UDM_HAVE_HUGE
 UDM_MAP(a_udm_huge, "udm-huge", ankerl::unordered_dense::huge_page::map<Key, Val UDM_HASH(Key)>);
