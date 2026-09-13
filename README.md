@@ -100,7 +100,7 @@ In short: iteration is what the dense layout buys, 0.19 ns per element against 5
 | find | one lookup, half of them hitting | 29.29 ns |
 | churn | one erase and one insert at a fixed table size, with a key the map does not currently hold | 84.63 ns |
 | iterate | one element visited by a full pass, summing the mapped value | 0.19 ns |
-| peak memory | one live entry's share of the highest resident set the process reaches while the map is built, its baseline subtracted | 48.8 bytes |
+| peak memory | one live entry's share of the highest resident set the process reaches while the map is built, its baseline subtracted | 48.7 bytes |
 
 The `geomean` column is the sort key and nothing more. Every axis ends where its own bars do, except `iterate`, which stops at 10x: `std::unordered_map` needs 110x there, and an axis that fits that turns every other bar into a sliver. The bars that run past it are drawn torn off, with the real number next to them.
 
@@ -134,7 +134,7 @@ The same run and the same reference, for the shapes this one map can be asked to
 
 ![unordered_dense's own shapes, std::string keys](doc/bench-readme-udm-str.svg)
 
-[Huge pages](#48-huge-pages) take a `uint64_t` build and destroy to 0.60 and a churn to 0.79, for a one word change of the type. That 1.66x is larger than the biggest single-panel gain any other library here offers, which is boost's 1.64x on integer churn. [`segmented_map`](#5-segmented_map-and-segmented_set) builds at 0.64 because it never reallocates and moves the values, and it holds the lowest peak memory of any map in this run, 28.4 bytes per entry against 48.8 -- it is the map that leaves nothing superseded behind at all. It pays 1.54 on iteration for the extra indirection, and 3.48 with string keys. Both are opt-in, neither is the default.
+[Huge pages](#48-huge-pages) take a `uint64_t` build and destroy to 0.60 and a churn to 0.79, for a one word change of the type. That 1.66x is larger than the biggest single-panel gain any other library here offers, which is boost's 1.64x on integer churn. [`segmented_map`](#5-segmented_map-and-segmented_set) builds at 0.64 because it never reallocates and moves the values, and it holds the lowest peak memory of any map in this run, 28.4 bytes per entry against 48.7 -- it is the map that leaves nothing superseded behind at all. It pays 1.54 on iteration for the extra indirection, and 3.48 with string keys. Both are opt-in, neither is the default.
 
 </details>
 

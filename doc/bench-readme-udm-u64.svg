@@ -124,12 +124,12 @@
   <text x="979.4" y="72" class="m" fill="#4b5563" text-anchor="middle">1.25</text>
   <line x1="959.3" y1="74" x2="959.3" y2="154" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
   <line x1="878.7" y1="74" x2="878.7" y2="154" class="base" stroke="#9ca3af"/>
-  <path d="M878.7,88.0 L939.0,88.0 Q941.5,88.0 941.5,90.5 L941.5,97.5 Q941.5,100.0 939.0,100.0 L878.7,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="947.5" y="96" class="m" fill="#4b5563" text-anchor="start">0.78</text>
-  <path d="M878.7,105.0 L929.7,105.0 Q932.2,105.0 932.2,107.5 L932.2,114.5 Q932.2,117.0 929.7,117.0 L878.7,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="938.2" y="113" class="m" fill="#4b5563" text-anchor="start">0.66</text>
-  <path d="M878.7,122.0 L923.1,122.0 Q925.6,122.0 925.6,124.5 L925.6,131.5 Q925.6,134.0 923.1,134.0 L878.7,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="931.6" y="130" class="m" fill="#4b5563" text-anchor="start">0.58</text>
+  <path d="M878.7,88.0 L939.2,88.0 Q941.7,88.0 941.7,90.5 L941.7,97.5 Q941.7,100.0 939.2,100.0 L878.7,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
+  <text x="947.7" y="96" class="m" fill="#4b5563" text-anchor="start">0.78</text>
+  <path d="M878.7,105.0 L929.8,105.0 Q932.3,105.0 932.3,107.5 L932.3,114.5 Q932.3,117.0 929.8,117.0 L878.7,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
+  <text x="938.3" y="113" class="m" fill="#4b5563" text-anchor="start">0.66</text>
+  <path d="M878.7,122.0 L923.2,122.0 Q925.7,122.0 925.7,124.5 L925.7,131.5 Q925.7,134.0 923.2,134.0 L878.7,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
+  <text x="931.7" y="130" class="m" fill="#4b5563" text-anchor="start">0.58</text>
   <path d="M878.7,139.0 L956.8,139.0 Q959.3,139.0 959.3,141.5 L959.3,148.5 Q959.3,151.0 956.8,151.0 L878.7,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
   <text x="965.3" y="147" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <text x="265.6" y="56" class="m" fill="#4b5563" text-anchor="end">geomean</text>

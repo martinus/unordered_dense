@@ -124,14 +124,14 @@
   <text x="979.4" y="72" class="m" fill="#4b5563" text-anchor="middle">1.25</text>
   <line x1="959.3" y1="74" x2="959.3" y2="154" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
   <line x1="878.7" y1="74" x2="878.7" y2="154" class="base" stroke="#9ca3af"/>
-  <path d="M878.7,88.0 L949.8,88.0 Q952.3,88.0 952.3,90.5 L952.3,97.5 Q952.3,100.0 949.8,100.0 L878.7,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="958.3" y="96" class="m" fill="#4b5563" text-anchor="start">0.91</text>
-  <path d="M878.7,105.0 L954.9,105.0 Q957.4,105.0 957.4,107.5 L957.4,114.5 Q957.4,117.0 954.9,117.0 L878.7,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="963.4" y="113" class="m" fill="#4b5563" text-anchor="start">0.98</text>
+  <path d="M878.7,88.0 L949.7,88.0 Q952.2,88.0 952.2,90.5 L952.2,97.5 Q952.2,100.0 949.7,100.0 L878.7,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
+  <text x="958.2" y="96" class="m" fill="#4b5563" text-anchor="start">0.91</text>
+  <path d="M878.7,105.0 L954.8,105.0 Q957.3,105.0 957.3,107.5 L957.3,114.5 Q957.3,117.0 954.8,117.0 L878.7,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
+  <text x="963.3" y="113" class="m" fill="#4b5563" text-anchor="start">0.98</text>
   <path d="M878.7,122.0 L956.8,122.0 Q959.3,122.0 959.3,124.5 L959.3,131.5 Q959.3,134.0 956.8,134.0 L878.7,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
   <text x="965.3" y="130" class="m" fill="#4b5563" text-anchor="start">1.00</text>
-  <path d="M878.7,139.0 L948.8,139.0 Q951.3,139.0 951.3,141.5 L951.3,148.5 Q951.3,151.0 948.8,151.0 L878.7,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="957.3" y="147" class="m" fill="#4b5563" text-anchor="start">0.90</text>
+  <path d="M878.7,139.0 L948.9,139.0 Q951.4,139.0 951.4,141.5 L951.4,148.5 Q951.4,151.0 948.9,151.0 L878.7,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
+  <text x="957.4" y="147" class="m" fill="#4b5563" text-anchor="start">0.90</text>
   <text x="265.6" y="56" class="m" fill="#4b5563" text-anchor="end">geomean</text>
   <text x="227.60000000000002" y="96" class="t" fill="#1f2937" text-anchor="end">unordered_dense segmented + huge</text>
   <text x="265.6" y="96" class="m" fill="#4b5563" text-anchor="end">0.89</text>
