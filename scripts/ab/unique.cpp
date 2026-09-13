@@ -7,7 +7,15 @@
 // copies each unique string into the set's storage, or copies it a second time to get it out
 // again, or compares strings O(n log n) times instead of hashing them once.
 //
-//   argv: <udm_replace|udm_insert|boost|boost_view|sort> <n> [rounds] [duplicate-percent]
+//   argv: <variant> <n> [rounds] [duplicate-percent] [min-key-length]
+//
+// Variants: udm_replace, udm_insert, udm_insert_move, boost, boost_move, boost_view, sort. The two
+// `_move` ones hand the range constructor a std::make_move_iterator pair, which is safe here
+// because do_insert_hashed probes before it constructs anything: a duplicate is found and returned
+// on without the value being touched, so only the unique elements are moved out of the caller's
+// vector. What that is worth depends on how many of the keys are longer than the small string
+// buffer, which is what min-key-length is for -- a move of a heap string steals a pointer, a move
+// of one that fits inline copies the same bytes a copy would.
 //
 // -DUDM_UNIQUE_U64 swaps std::string for std::uint64_t, which is how much of the duplicate-rate
 // reversal is the free that removing a duplicate string costs and how much is the dedup walk
@@ -70,11 +78,28 @@ auto udm_insert(vec_t&& v) -> vec_t {
     return std::move(set).extract();
 }
 
+// The same, with the copy into the set's vector turned into a move. Together with extract() that is
+// a unique with no string copy anywhere, which is what replace() gets by owning the vector outright.
+auto udm_insert_move(vec_t&& v) -> vec_t {
+    auto set = ankerl::unordered_dense::set<elem_t>(std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
+    v = vec_t();
+    return std::move(set).extract();
+}
+
 #if defined(UDM_AB_HAVE_BOOST)
 // What a caller writes with any set that is not dense: every unique string is copied into the set
 // and copied out of it again.
 auto boost_unique(vec_t&& v) -> vec_t {
     auto set = boost::unordered_flat_set<elem_t>(v.begin(), v.end());
+    auto out = vec_t(set.begin(), set.end());
+    v = vec_t();
+    return out;
+}
+
+// The same with the elements moved in. The way out stays a copy whatever the caller does, because a
+// set's elements are const -- only a dense set can hand its whole container over.
+auto boost_move(vec_t&& v) -> vec_t {
+    auto set = boost::unordered_flat_set<elem_t>(std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
     auto out = vec_t(set.begin(), set.end());
     v = vec_t();
     return out;
@@ -129,12 +154,18 @@ auto run(std::string const& how, vec_t&& v) -> vec_t {
     if (how == "udm_insert") {
         return udm_insert(std::move(v));
     }
+    if (how == "udm_insert_move") {
+        return udm_insert_move(std::move(v));
+    }
     if (how == "sort") {
         return sort_unique(std::move(v));
     }
 #if defined(UDM_AB_HAVE_BOOST)
     if (how == "boost") {
         return boost_unique(std::move(v));
+    }
+    if (how == "boost_move") {
+        return boost_move(std::move(v));
     }
 #    if !defined(UDM_UNIQUE_U64)
     if (how == "boost_view") {
@@ -154,6 +185,7 @@ int main(int argc, char** argv) {
     auto const n = static_cast<std::size_t>(argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 100000);
     auto const rounds = static_cast<std::size_t>(argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 11);
     auto const dup_pct = static_cast<std::size_t>(argc > 4 ? std::strtoull(argv[4], nullptr, 10) : 50);
+    auto const min_len = static_cast<std::size_t>(argc > 5 ? std::strtoull(argv[5], nullptr, 10) : 0);
 
     // n strings of which dup_pct% repeat one of the distinct ones, then shuffled, so the duplicates
     // are not adjacent and nothing about the order helps any variant.
@@ -164,6 +196,12 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < n; ++i) {
         auto const which = i < distinct ? i : ((rng() >> 32U) * distinct) >> 32U;
         pool.emplace_back(workloads::key_source<elem_t>::get(which * UINT64_C(0x9E3779B97F4A7C15)));
+#if !defined(UDM_UNIQUE_U64)
+        // Padded at the end, so what makes a key unique is untouched and only its length changes.
+        if (pool.back().size() < min_len) {
+            pool.back().resize(min_len, '.');
+        }
+#endif
     }
     rng.shuffle(pool);
 
@@ -195,13 +233,14 @@ int main(int argc, char** argv) {
     // same binary read 61.4 to 64.1. A median that does not say how wide its rounds were lets that
     // through, and it did.
     std::sort(times.begin(), times.end());
-    std::printf("%8.2f ns/element  [%7.2f %7.2f]  %-12s n=%-8zu dup=%-3zu%% unique=%-8zu checksum=%016llx\n",
+    std::printf("%8.2f ns/element  [%7.2f %7.2f]  %-16s n=%-8zu dup=%-3zu%% len>=%-4zu unique=%-8zu checksum=%016llx\n",
                 times[times.size() / 2],
                 times.front(),
                 times.back(),
                 how.c_str(),
                 n,
                 dup_pct,
+                min_len,
                 size,
                 static_cast<unsigned long long>(expected));
 }

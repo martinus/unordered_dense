@@ -395,22 +395,34 @@ auto unique(std::vector<std::string>&& v) -> std::vector<std::string> {
 No string is copied, none is allocated, and none is even moved except the ones that close the gaps
 the duplicates leave. The only allocation in the whole function is the set's index.
 
-Building the set from the range instead is the other way, and `extract()` is what makes it worth
-writing: the set is filled the ordinary way, and the result still comes out without a second copy.
+Building the set from the range is the other way, and it wants a `std::make_move_iterator` pair.
+With `extract()` on the way out, that is also a unique with no string copy anywhere:
 
 ```cpp
 auto unique_by_insertion(std::vector<std::string>&& v) -> std::vector<std::string> {
-    auto set = ankerl::unordered_dense::set<std::string>(v.begin(), v.end());
+    auto set = ankerl::unordered_dense::set<std::string>(std::make_move_iterator(v.begin()),
+                                                         std::make_move_iterator(v.end()));
     return std::move(set).extract();  // the set's own vector, handed over rather than copied
 }
 ```
 
-This one copies every unique string once, into the set's storage, and it leaves the caller's vector
-alone: all n strings are still there to be destroyed afterwards. That is work either way, so the
-measurements below charge every version for it.
+Moving out of the range is safe here, and not every container would let you: the range insert probes
+before it constructs anything, so a key that is already present is found and skipped with the element
+never touched. Only the elements that are kept are moved out of `v`, and the duplicates are left in
+it, intact, for the caller to drop. What it is worth is what a `std::string` move saves over a copy,
+so it grows with the key:
+
+| range constructor, no duplicates | 100000 | 1000000 |
+|---|---:|---:|
+| keys 8 to 135 bytes | 40.20 → 23.57 (**1.71x**) | 70.64 → 49.83 (**1.42x**) |
+| keys 200 bytes and up | 48.07 → 25.39 (**1.89x**) | 141.32 → 59.44 (**2.38x**) |
+
+At 200 bytes every key is on the heap and a move steals a pointer where a copy allocates and copies
+the bytes. Below the small string buffer a move *is* a copy, which is why the shorter keys gain less.
 
 A set that is not dense keeps its elements in its own storage, so every unique string is copied into
-it and copied out of it again:
+it and copied out of it again. The way out stays a copy however the caller writes it, because a set's
+elements are `const`:
 
 ```cpp
 auto unique_boost(std::vector<std::string>&& v) -> std::vector<std::string> {
@@ -445,11 +457,13 @@ auto unique_views(std::vector<std::string>&& v) -> std::vector<std::string> {
 
 **Which one to use.**
 
-* `replace()` + `extract()` for nearly everything. It needs the vector to be yours to consume, and
-  with no duplicates in it that is 4.7x to 7.2x over building the same set from the range, and 1.8x
-  to 3.0x over the fastest thing you can write by hand that copies no string either.
-* The range constructor + `extract()` when the vector is not yours to take, or when nine tenths of
-  it is duplicates: at a million elements that case reads 27.87 against 43.78.
+* `replace()` + `extract()` when most of the input survives. It needs the vector to be yours to
+  consume, and with no duplicates in it that is 2.7x to 5.1x over the range constructor and 2.1x to
+  3.0x over the fastest thing you can write by hand that copies no string either.
+* The range constructor + `extract()` when the vector is not yours to take, or once about half of it
+  is duplicates. At a hundred thousand elements and half duplicates the two read 24.07 against 27.16
+  and `replace()` is still ahead; at a million, 61.57 against 54.36 and it is not; at nine tenths,
+  43.84 against 28.60.
 * A set of `std::string_view` and a compaction afterwards if you are stuck with a set that is not
   dense. It copies no string either and pays an index per unique element for it.
 * `std::sort` + `std::unique` only when you wanted the result sorted anyway. With no duplicates it
@@ -461,56 +475,45 @@ variant releases the input inside the clock, because that is work the caller has
 
 | ns per input element | 1000 | 10000 | 100000 | 1000000 |
 |---|---:|---:|---:|---:|
-| `replace()` + `extract()` | **4.98** | **6.56** | **8.73** | **9.74** |
-| `set(first, last)` + `extract()` | 27.82 | 42.49 | 40.58 | 70.46 |
-| `boost::unordered_flat_set`, copied out | 58.38 | 88.25 | 87.45 | 265.27 |
-| `boost` set of views, then compacted | 9.16 | 14.52 | 16.87 | 29.49 |
-| `std::sort` + `std::unique` | 45.28 | 115.71 | 147.28 | 224.60 |
+| `replace()` + `extract()` | **4.97** | **6.48** | **8.62** | **9.73** |
+| range constructor + `extract()` | 14.82 | 23.68 | 23.57 | 49.83 |
+| `boost::unordered_flat_set`, copied out | 58.23 | 89.16 | 88.15 | 264.32 |
+| `boost` set of views, then compacted | 10.72 | 15.91 | 18.10 | 28.83 |
+| `std::sort` + `std::unique` | 44.90 | 115.12 | 146.80 | 222.62 |
 
-That is 1.8x to 3.0x over the hand-written version that copies nothing either, and 10x to 27x over
-the version a caller actually writes. Building the same set by insertion instead, which still saves
-the copy back out, is 4.7x to 7.2x behind, and all of that difference is one string copy per unique
-element plus the input the caller is still holding afterwards.
+That is 2.1x to 3.0x over the hand-written version that copies nothing either, and 10x to 27x over
+the version a caller writes with a set that is not dense. Neither of the top two rows copies a
+string, so what separates them is the container: `replace()` is handed a vector that is already the
+right size, where the range constructor grows its own by doubling and moves everything it holds at
+each step.
 
 Unfortunately the lead narrows as more of the input turns out to be duplicates, and at a million
 elements it runs out. At one million:
 
 | ns per input element | no duplicates | half duplicates | nine tenths duplicates |
 |---|---:|---:|---:|
-| `replace()` + `extract()` | **9.74** | 62.29 | 43.78 |
-| `set(first, last)` + `extract()` | 70.46 | 60.89 | **27.87** |
-| `boost::unordered_flat_set`, copied out | 265.27 | 135.93 | 38.55 |
-| `boost` set of views, then compacted | 29.49 | **59.55** | 40.59 |
-| `std::sort` + `std::unique` | 224.60 | 257.74 | 269.67 |
+| `replace()` + `extract()` | **9.73** | 61.57 | 43.84 |
+| range constructor + `extract()` | 49.83 | **54.36** | **28.60** |
+| `boost::unordered_flat_set`, copied out | 264.32 | 133.59 | 38.26 |
+| `boost` set of views, then compacted | 28.83 | 59.44 | 42.77 |
+| `std::sort` + `std::unique` | 222.62 | 256.39 | 267.38 |
 
-Both loops hash ahead of where they place, so the pipeline is not what differs. What differs is what
-a duplicate costs. `replace()` is handed the caller's whole vector, so it has to take the duplicate
-*out* of it: it moves the last element into the hole and pops the back. Insertion is handed a range
-it does not own, so a duplicate costs it a probe and nothing else.
-
-Two things cost `replace()` as the rate goes up, and swapping `std::string` for `std::uint64_t`
-separates them. With `uint64_t` elements at a million, `replace()` reads 3.81 / 6.97 / 4.93 ns
-against insertion's 8.72 / 8.45 / 4.91 at no, half and nine tenths duplicates: the lead erodes from
-2.3x to level and never turns over.
-
-The erosion is the dedup walk. Removing a duplicate pulls the last element into the hole it leaves,
+Part of that is the dedup walk. Removing a duplicate pulls the last element into the hole it leaves,
 and that element then has to be hashed one iteration before the probe that uses it, so alone among
 the elements in the walk its block arrives with no lookahead over it. A duplicate-heavy input is
-mostly made of those.
+mostly made of those. With `std::uint64_t` elements, where that is the only thing going on, a
+million elements read 3.81 / 6.97 / 4.93 ns for `replace()` against 8.72 / 8.45 / 4.91 for the range
+constructor: the lead erodes from 2.3x to level, and does not turn over.
 
-The turn-over on top of it is the `std::string` destructor. The pulled element is move-assigned over
-the duplicate, which releases the duplicate's buffer, so `replace()` pays one `free` per duplicate
-removed, where insertion pays none: it never copied the duplicate anywhere to begin with.
+The turn-over is what the two do with the strings, and it is not a difference in how many are
+released. Both release the same ones, `replace()` as it walks and the range constructor when the
+caller's vector goes. The gap seems to be that `replace()` releases them *inside* a walk whose probes
+go to random addresses, where the range constructor's happen afterwards in one sequential sweep with
+nothing to interleave with. That is a reading of the numbers rather than something measured directly.
 
-So the rule is the duplicate rate, and only at the top of it. `replace()` is ahead at a thousand,
-ten thousand and a hundred thousand elements at half duplicates (10.40, 15.36 and 22.56 against
-21.61, 32.57 and 34.89), level at a million, and behind only at nine tenths, where a million elements
-put it at 43.78 against 27.87. Either way `extract()` is what saves the copy back out, so a set built
-from the range is still worth having over a set that is not dense.
+What this does not say: it is one machine, one compiler and one key distribution, and `std::sort` is
+in the tables for reference rather than as a rival, since it also sorts the result.
 
-What this does not say: it is one machine, one compiler and one key distribution, the strings here
-are 8 to 135 bytes and a vector of 200 byte keys would move every row, and `std::sort` is in the
-table for reference rather than as a rival, since it also sorts the result.
 
 ## Custom Container Types
 
