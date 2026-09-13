@@ -131,6 +131,11 @@ for r in $(seq 1 "$rounds"); do
     for keys in u64 str; do
         mapfile -t sel < "$build/names_$keys"
         for work in "${work_list[@]}"; do
+            # rss and memory are counted, not timed: one build settles them to the page, and three
+            # runs of the same cell come back byte-identical. Measure them in the first round only.
+            if [ "$r" -gt 1 ] && { [ "$work" = rss ] || [ "$work" = memory ]; }; then
+                continue
+            fi
             for name in "${sel[@]}"; do
                 kind=one; [ "$work" = memory ] && kind=mem
                 line=$(${AB_CORE:+taskset -c $AB_CORE} "${bins[$kind/$keys/$name]}" "$work" "$base")

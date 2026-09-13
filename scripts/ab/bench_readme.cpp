@@ -18,12 +18,12 @@
 // sweeps a sawtooth between doublings and two maps double at different sizes, so a ratio taken at
 // one size is a ratio between two arbitrary points of two different cycles -- measured at up to 26%
 // for a cross-family pair (notes/index-design.md, "Fifty points draw the load-factor sawtooth").
+#include "max_rss.h"
+
 #include "maps.h"
 
 #include <dlfcn.h>
 #include <sys/mman.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include <array>
 #include <chrono>
@@ -161,37 +161,6 @@ using map_t = std::tuple_element_t<UDM_ONE_MAP, typename maps_for<one_key, one_v
 
 using clock_t_ = std::chrono::steady_clock;
 
-// The other way to ask what a map costs: peak resident set, which is what the kernel actually
-// handed the process. It differs from the counted bytes in both directions -- it includes the
-// allocator's slack, its arena rounding and whole huge pages, and it excludes anything asked for
-// and never touched -- so the two numbers answering differently is informative rather than a bug.
-auto status_kb(char const* field) -> std::size_t {
-    auto* f = std::fopen("/proc/self/status", "r");
-    if (f == nullptr) {
-        return 0;
-    }
-    char line[256];
-    auto const n = std::strlen(field);
-    auto out = std::size_t{0};
-    while (std::fgets(line, sizeof(line), f) != nullptr) {
-        if (std::strncmp(line, field, n) == 0) {
-            out = std::strtoull(line + n + 1, nullptr, 10);
-            break;
-        }
-    }
-    std::fclose(f);
-    return out;
-}
-
-// Linux resets the high-water mark to the current RSS when 5 is written here (CLEAR_REFS_MM_HIWATER_RSS).
-void reset_peak_rss() {
-    auto* f = std::fopen("/proc/self/clear_refs", "w");
-    if (f != nullptr) {
-        std::fputs("5\n", f);
-        std::fclose(f);
-    }
-}
-
 // One octave, log-spaced: the i-th of five points is base * 2^(i/5), so the set spans exactly one
 // doubling whatever the base is.
 auto octave_size(std::size_t base, std::size_t i) -> std::size_t {
@@ -234,35 +203,12 @@ auto one_size(std::string const& work, std::size_t n) -> double {
 #endif
         }
         if (work == "rss") {
-            // One fill per *process*, in a fork. A peak RSS taken after some earlier map has been
-            // built and freed reads whatever the allocator decided to keep rather than what this
-            // map costs: glibc does not return a grown arena, so the second fill reuses resident
-            // pages and the number comes out below the bytes the map actually asked for. The pools
-            // are built before the fork and only read, so they are resident in the baseline and
-            // never charged, and no page of theirs is copied.
-            auto fd = std::array<int, 2>{};
-            if (pipe(fd.data()) != 0) {
-                return 0.0;
-            }
-            auto const pid = fork();
-            if (pid == 0) {
-                close(fd[0]);
-                auto m = map_t();
-                auto const before = status_kb("VmRSS");
-                reset_peak_rss();
-                fill(m, p);
-                auto const peak = status_kb("VmHWM");
-                auto const v = static_cast<double>((peak - before) * 1024) / static_cast<double>(n);
-                auto const ignored = write(fd[1], &v, sizeof(v));
-                static_cast<void>(ignored);
-                _exit(0);
-            }
-            close(fd[1]);
-            auto v = 0.0;
-            auto const got = read(fd[0], &v, sizeof(v));
-            close(fd[0]);
-            waitpid(pid, nullptr, 0);
-            return got == sizeof(v) ? v : 0.0;
+            return max_rss::of([&] {
+                       auto m = map_t();
+                       fill(m, p);
+                       ankerl::nanobench::doNotOptimizeAway(m.size());
+                   }) /
+                   static_cast<double>(n);
         }
         if (work == "buildfree") {
             // Build *and* tear down: the same loop as `build` with the destructor left inside the

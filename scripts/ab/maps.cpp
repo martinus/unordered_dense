@@ -8,6 +8,8 @@
 //
 //   scripts/ab/maps.sh <check|speed|memory|names> [u64|str|big] [base]
 
+#include "max_rss.h"
+
 #include "maps.h"
 
 #include <cmath>
@@ -248,29 +250,30 @@ void sweep(std::size_t base) {
 
 // ------------------------------------------------------------------ memory
 #if defined(__GLIBC__)
-auto heap_bytes() -> std::size_t {
-    auto const mi = mallinfo2();
-    return mi.uordblks + mi.hblkhd;
-}
 
 template <typename Map, typename Key>
 void measure_memory(pools<Key> const& p, double& steady_out, double& churned_out) {
-    // The churn's own key vectors are allocated before the snapshot; counting them inside it would
-    // add eight bytes an entry to every map and hide what is being asked.
-    auto present = p.present;
-    auto spare = p.spare;
-    auto const before = heap_bytes();
-    {
-        auto m = Map();
-        fill(m, p);
-        auto const steady = heap_bytes();
-        auto rng = ankerl::nanobench::Rng(7);
-        auto tick = std::size_t{0};
-        churn(m, present, spare, rng, p.present.size(), tick);
-        auto const churned = heap_bytes();
-        steady_out = static_cast<double>(steady - before) / static_cast<double>(p.present.size());
-        churned_out = static_cast<double>(churned - before) / static_cast<double>(p.present.size());
-    }
+    // Peak resident set, not bytes requested: see scripts/ab/max_rss.h for why, and for why each
+    // measurement needs its own process. The churn's key vectors are copied before the child is
+    // forked, so they are in its baseline and not charged to the map.
+    auto const n = static_cast<double>(p.present.size());
+    steady_out = max_rss::of([&] {
+                     auto m = Map();
+                     fill(m, p);
+                     ankerl::nanobench::doNotOptimizeAway(m.size());
+                 }) /
+                 n;
+    churned_out = max_rss::of([&] {
+                      auto present = p.present;
+                      auto spare = p.spare;
+                      auto m = Map();
+                      fill(m, p);
+                      auto rng = ankerl::nanobench::Rng(7);
+                      auto tick = std::size_t{0};
+                      churn(m, present, spare, rng, p.present.size(), tick);
+                      ankerl::nanobench::doNotOptimizeAway(m.size());
+                  }) /
+                  n;
 }
 
 template <typename Key, typename Val>

@@ -72,12 +72,12 @@ draw_all() {
         draw "insert_erase_vs_size$k.csv" "insert_erase_vs_size$k.svg" \
             "Insert and erase" "nanoseconds per operator[] and erase pair, $kt" "$of"
         draw "memory_vs_value_size$k.csv" "memory_vs_value_size$k.svg" \
-            "Memory against mapped-value size" "megabytes held, $kt" \
-            "--panels=steady:steady state|peak:peak during growth" "--unit=MB" \
+            "Memory against mapped-value size" "peak resident megabytes, $kt" \
+            "--panels=steady:peak while filling|peak:peak while churning" "--unit=MB" \
             "--x=sizeof(mapped_type), bytes" "${of/, size_t/, T}" --bars
         draw "memory_vs_size$k.csv" "memory_vs_size$k.svg" \
-            "Memory against table size" "megabytes held, $kt" "$of" \
-            "--panels=steady:steady state|peak:peak during growth" "--unit=MB" --logy
+            "Memory against table size" "peak resident megabytes, $kt" "$of" \
+            "--panels=steady:peak while filling|peak:peak while churning" "--unit=MB" --logy
     done
     draw find_vs_size.csv find_ratio_vs_size.svg \
         "How much faster than robin hood" "times faster than the index this replaces, paired" ratio
