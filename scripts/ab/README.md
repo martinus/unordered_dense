@@ -861,3 +861,32 @@ repetition.
 
 `perf stat -e cycles,instructions,branch-misses` on a single-workload runner is what separates
 "more instructions" from "more mispredictions"; `perf record -e cycles:pp` for annotate.
+
+## Uniquing a vector: `replace()` + `extract()` against what a caller writes otherwise
+
+`scripts/ab/unique.cpp` times five ways of taking the duplicates out of a
+`std::vector<std::string>`: the dense set's `replace()` + `extract()`, which takes the caller's
+vector as its own storage and hands it back, the same set built from the range and then extracted,
+`boost::unordered_flat_set<std::string>` copied out into a fresh vector,
+`boost::unordered_flat_set<std::string_view>` over the caller's vector with the compaction done
+afterwards, and `std::sort` + `std::unique`. All five are checked against the same
+order-independent checksum and the same unique count, so a variant that gets the answer wrong says
+so instead of looking fast.
+
+```sh
+clang++ -O3 -DNDEBUG -std=c++17 -DUDM_AB_HAVE_BOOST -Iinclude -Itest -Itest/third-party \
+    scripts/ab/unique.cpp "$build/nanobench.o" -o uq          # nanobench.o from test/app/nanobench.cpp
+taskset -c 2 ./uq udm_replace 1000000 11 0                    # variant, n, rounds, duplicate percent
+```
+
+Variants: `udm_replace`, `udm_insert`, `boost`, `boost_view`, `sort`. Add `-DUDM_UNIQUE_U64` for a
+second binary with `std::uint64_t` elements, which is how the duplicate-rate reversal was split into
+the part that is the dedup walk and the part that is one `free` per duplicate removed: an integer has
+no buffer to release, and there `replace()`'s lead erodes but never reverses. `boost_view` has no
+meaning for integers and is not built.
+
+The input vector is consumed by every variant, so it is rebuilt from a pool of the same strings
+before each round, outside the clock, and the median round is reported with round zero dropped as
+the warmup: a rebuild that faults carries a mean. Sweep both axes. The size axis and the duplicate
+rate disagree about which variant wins, and a single cell is not an answer -- the numbers and what
+they decided are in `notes/index-design.md` under "the duplicate rate that turns it over".
