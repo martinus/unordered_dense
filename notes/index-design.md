@@ -32,6 +32,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Nothing measured a table that only churns
 - Lookup benchmarks must not replay
 - Seventeen maps in their own default configurations, at a million entries: the dense layout wins iteration by 5.5x to 110x and the string build by 1.6x to 2.2x, and loses the integer find and churn to boost by 37% and 64%
+- Peak memory across every harness is now the process's resident high-water mark, and one build of the map is enough to measure it
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
@@ -442,6 +443,42 @@ strings are identical; a dense map holds them in insertion order and frees them 
 heap was filled, a flat map holds them in hash order and frees them in an order unrelated to how
 they were allocated. `build` on its own stays in the CSV, and the difference between the columns is
 the teardown.
+
+**Peak memory across every harness is now the process's resident high-water mark, and one build of
+the map is enough to measure it** (2026-09-13, issue #277 follow-up, Ryzen 9 7950X, Fedora 44, clang
+22.1.8, THP `madvise`, `scripts/ab/max_rss.h` used by `bench_readme.cpp` and `maps.cpp`).
+
+`maps.cpp` had counted with `mallinfo2()`, which cannot see `mmap` at all and therefore read the
+huge page allocator's blocks as nothing; `bench_readme.cpp` had its own copy of an RSS reader. Both
+now call one header. What it does and why each part is load-*carrying*:
+
+- *Fork per measurement.* glibc does not hand a grown arena back, so a second fill in the same
+  process reuses resident pages. The first version of this read `boost` with string keys at 187.5
+  B/entry where a forked one reads 145.1, and several maps came out *below* the bytes they
+  demonstrably allocated.
+- *Reset `VmHWM` through `/proc/self/clear_refs`* (CLEAR_REFS_MM_HIWATER_RSS), or the mark is for
+  the life of the process and the pools dominate it.
+- *Subtract the resident set from just before.* The key pools are built in the parent, are only
+  read, and are therefore in the baseline and never copied.
+
+**Huge pages are counted correctly, checked rather than assumed.** A 1M-entry
+`huge_page::map<uint64_t,uint64_t>` reports 28 MB of `AnonHugePages` in `/proc/self/smaps_rollup`
+against 0 for the same map on 4 KB pages, and a `VmHWM` 2 MB higher -- the rounding up to a whole
+huge page, resident, which is what a caller pays. It also explains why the huge-page variants read
+*below* the plain map on this metric where counted bytes put them above: the allocator `munmap`s a
+superseded mapping and the kernel takes the pages back at once, where glibc keeps a freed arena
+block resident. The same mechanism, seen from the other side, is the ~⅓ that every doubling flat map
+carries.
+
+**One build is enough.** The result is deterministic to the page: three runs of the same cell come
+back byte-identical, so `bench_readme.sh` measures `rss` and `memory` in the first round only and
+the median has nothing to do. That is 5-6 minutes of a full run rather than 15.
+
+What this does not say: the ~30% a flat map carries is glibc's retention policy and another
+allocator will not reproduce it, which is why bytes-requested stays measured beside it in the CSV
+under `memory`. `alloc_timeline.cpp` still counts bytes, and should: its output is a timeline of
+individual allocations, which resident-set sampling cannot reproduce at that resolution.
+
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 **`probe_result`'s shape swept two ways, a third argued down from the return sequence, and the one that ships is the best of them** (2026-09-12,

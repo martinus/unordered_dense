@@ -136,9 +136,12 @@ one binary per map rather than one process holding them all, sweeps five sizes a
 a million entries at ten million operations a cell, and writes `doc/bench_readme.csv` plus four
 SVGs: per key type, one chart of this map and 4.11.0 against the other libraries, and one of the
 shapes this map can be asked to take. Seven workloads, five of them drawn: `buildfree` (construct,
-fill and destroy) and `rss` (peak resident set, one fork per fill) are the drawn ones, with `build`
-(inserts only) and `memory` (bytes requested, from interposed allocators) measured beside them as
-the controls the choice of each was made against. A full run is 1h45m; `-w memory` re-takes a single panel in about five minutes. It compiles
+fill and destroy) and `rss` (peak resident set) are the drawn ones, with `build` (inserts only) and
+`memory` (bytes requested, from interposed allocators) measured beside them as the controls the
+choice of each was made against. The two counted workloads run in the first round only: one build
+settles them to the page and repeats come back byte-identical.
+
+`maps.sh memory` reports peak resident set as well, through the same `scripts/ab/max_rss.h`. A full run is 1h45m; `-w memory` re-takes a single panel in about five minutes. It compiles
 with `-DUDM_DEFAULT_HASH -DUDM_VARIANTS`, which is what switches `maps.h` from one shared hash to
 each library's own and what adds `segmented_map` and the two huge-page shapes to the list -- so its
 binaries are *not* interchangeable with `maps.sh`'s, and it writes them under their own names inside
