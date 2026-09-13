@@ -4863,10 +4863,30 @@ duplicate, so it trades:
 
 Crossover at about 25-30% on both sizes, nothing either way at 0%, and at the top it takes a million
 strings at nine tenths duplicates from 44.2 to 29.2 and `uint64_t` from 4.93 to 3.68, which puts the
-integer case ahead of insertion at every rate measured. Destroying the leftover tail front to back
-(`erase(write, end)`) instead of `pop_back()` in a loop is worth a further 1.04x at 90% and 1.05x at
-50%, 29.2 to 28.3 and 47.5 to 45.6, but `segmented_vector` has only `pop_back` so it would be a new
-requirement on the value container.
+integer case ahead of insertion at every rate measured.
+
+**Destroying the leftover tail front to back is worth 1.04x at 90% and 1.05x at 50%** -- 29.2 to
+28.3 and 47.5 to 45.6 -- because that tail holds live duplicate strings and the order their buffers
+are released in is worth that much to glibc. It needs `erase(first, last)`, which `std::vector`,
+`std::deque` and `boost::interprocess::vector` have and `segmented_vector` does not, so calling it
+unconditionally would add a requirement the header deliberately does not make ("the container is
+only required to have pop_back", `drop_tail_and_reindex`).
+
+**And the other call site that has that same comment on it gains nothing from the change** (measured
+2026-09-13, `scripts/ab/merge.cpp -DUDM_MERGE_STR`, medians of nine, one header per binary).
+`merge()`'s `drop_tail_and_reindex` with `erase(keep, end)` instead of the `pop_back` loop: 23.414 to
+23.270 ns at 200000 and 0% overlap, 24.033 to 24.266 at 25%, 53.461 to 54.388 at a million and 0%,
+52.469 to 52.547 at 25%. Inside 2% everywhere with the sign flipping, so: a null. The reason is
+mechanical and worth keeping -- merge's tail is *moved-from* elements, and an empty `std::string`
+husk destructs without a `free`, so there is no release order to get right. Only a tail of live
+elements, which is what the dedup leaves, has anything to reorder.
+
+So a `segmented_vector::erase(first, last)` would today be built for one unapplied patch and nothing
+else. If the forward compaction ever lands, the cheap shape is an `if constexpr` on whether the value
+container has `erase(first, last)`: that covers `std::vector`, which is the default, without asking
+anything new of a custom container and without `segmented_vector` needing the cross-segment move that
+a general range erase implies. Both call sites only ever truncate a suffix, and `segmented_vector`
+already does exactly that, front to back, in its private `resize_shrink`.
 
 Not applied. It regresses the 5-25% band, which is the band a bulk load is most likely to be in, and
 it changes what `values()` returns afterwards from "partly reordered" to the input's own order,
