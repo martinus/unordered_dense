@@ -16,248 +16,248 @@
       .f-flat{fill:#5b9bf0}.f-dense{fill:#3cc492}.f-node{fill:#e070cd}
     }
   </style>
-  <rect class="surface" width="1030" height="382"/>
-  <text x="8" y="20" class="hd">relative to unordered_dense 5.0, std::string keys, every map in its default configuration</text>
-  <text x="8" y="38" class="sub">geometric mean over one octave from 1,000,000 entries; lower is better, and 1.00 is level with unordered_dense 5.0. Rows are sorted by the geomean of all five panels; a bar torn off at the right ran past the axis.</text>
-  <text x="192" y="56" class="t" font-weight="600">build + destroy</text>
-  <line x1="192.0" y1="74" x2="192.0" y2="324" class="ax"/>
-  <text x="192.0" y="72" class="m" text-anchor="middle">0</text>
-  <line x1="221.2" y1="74" x2="221.2" y2="324" class="ax"/>
-  <text x="221.2" y="72" class="m" text-anchor="middle">1</text>
-  <line x1="250.5" y1="74" x2="250.5" y2="324" class="ax"/>
-  <text x="250.5" y="72" class="m" text-anchor="middle">2</text>
-  <line x1="279.8" y1="74" x2="279.8" y2="324" class="ax"/>
-  <text x="279.8" y="72" class="m" text-anchor="middle">3</text>
-  <line x1="309.0" y1="74" x2="309.0" y2="324" class="ax"/>
-  <text x="309.0" y="72" class="m" text-anchor="middle">4</text>
-  <line x1="221.2" y1="74" x2="221.2" y2="324" class="ref"/>
-  <line x1="192.0" y1="74" x2="192.0" y2="324" class="base"/>
+  <rect class="surface" fill="#ffffff" width="1030" height="382"/>
+  <text x="8" y="20" class="hd" fill="#111827">relative to unordered_dense 5.0, std::string keys, every map in its default configuration</text>
+  <text x="8" y="38" class="sub" fill="#4b5563">geometric mean over one octave from 1,000,000 entries; lower is better, and 1.00 is level with unordered_dense 5.0. Rows are sorted by the geomean of all five panels; a bar torn off at the right ran past the axis.</text>
+  <text x="192" y="56" class="t" fill="#1f2937" font-weight="600">build + destroy</text>
+  <line x1="192.0" y1="74" x2="192.0" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="192.0" y="72" class="m" fill="#4b5563" text-anchor="middle">0</text>
+  <line x1="221.2" y1="74" x2="221.2" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="221.2" y="72" class="m" fill="#4b5563" text-anchor="middle">1</text>
+  <line x1="250.5" y1="74" x2="250.5" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="250.5" y="72" class="m" fill="#4b5563" text-anchor="middle">2</text>
+  <line x1="279.8" y1="74" x2="279.8" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="279.8" y="72" class="m" fill="#4b5563" text-anchor="middle">3</text>
+  <line x1="309.0" y1="74" x2="309.0" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="309.0" y="72" class="m" fill="#4b5563" text-anchor="middle">4</text>
+  <line x1="221.2" y1="74" x2="221.2" y2="324" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
+  <line x1="192.0" y1="74" x2="192.0" y2="324" class="base" stroke="#9ca3af"/>
   <path d="M192.0,88.0 L218.8,88.0 Q221.2,88.0 221.2,90.5 L221.2,97.5 Q221.2,100.0 218.8,100.0 L192.0,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
-  <text x="227.2" y="96" class="m" text-anchor="start">1.00</text>
+  <text x="227.2" y="96" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M192.0,105.0 L226.2,105.0 Q228.7,105.0 228.7,107.5 L228.7,114.5 Q228.7,117.0 226.2,117.0 L192.0,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="234.7" y="113" class="m" text-anchor="start">1.26</text>
+  <text x="234.7" y="113" class="m" fill="#4b5563" text-anchor="start">1.26</text>
   <path d="M192.0,122.0 L238.3,122.0 Q240.8,122.0 240.8,124.5 L240.8,131.5 Q240.8,134.0 238.3,134.0 L192.0,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="246.8" y="130" class="m" text-anchor="start">1.67</text>
+  <text x="246.8" y="130" class="m" fill="#4b5563" text-anchor="start">1.67</text>
   <path d="M192.0,139.0 L257.9,139.0 Q260.4,139.0 260.4,141.5 L260.4,148.5 Q260.4,151.0 257.9,151.0 L192.0,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="266.4" y="147" class="m" text-anchor="start">2.34</text>
+  <text x="266.4" y="147" class="m" fill="#4b5563" text-anchor="start">2.34</text>
   <path d="M192.0,156.0 L251.6,156.0 Q254.1,156.0 254.1,158.5 L254.1,165.5 Q254.1,168.0 251.6,168.0 L192.0,168.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="260.1" y="164" class="m" text-anchor="start">2.12</text>
+  <text x="260.1" y="164" class="m" fill="#4b5563" text-anchor="start">2.12</text>
   <path d="M192.0,173.0 L261.0,173.0 Q263.5,173.0 263.5,175.5 L263.5,182.5 Q263.5,185.0 261.0,185.0 L192.0,185.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="269.5" y="181" class="m" text-anchor="start">2.45</text>
+  <text x="269.5" y="181" class="m" fill="#4b5563" text-anchor="start">2.45</text>
   <path d="M192.0,190.0 L250.0,190.0 Q252.5,190.0 252.5,192.5 L252.5,199.5 Q252.5,202.0 250.0,202.0 L192.0,202.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="258.5" y="198" class="m" text-anchor="start">2.07</text>
+  <text x="258.5" y="198" class="m" fill="#4b5563" text-anchor="start">2.07</text>
   <path d="M192.0,207.0 L258.2,207.0 Q260.7,207.0 260.7,209.5 L260.7,216.5 Q260.7,219.0 258.2,219.0 L192.0,219.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="266.7" y="215" class="m" text-anchor="start">2.35</text>
+  <text x="266.7" y="215" class="m" fill="#4b5563" text-anchor="start">2.35</text>
   <path d="M192.0,224.0 L261.5,224.0 Q264.0,224.0 264.0,226.5 L264.0,233.5 Q264.0,236.0 261.5,236.0 L192.0,236.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="270.0" y="232" class="m" text-anchor="start">2.46</text>
+  <text x="270.0" y="232" class="m" fill="#4b5563" text-anchor="start">2.46</text>
   <path d="M192.0,241.0 L264.2,241.0 Q266.7,241.0 266.7,243.5 L266.7,250.5 Q266.7,253.0 264.2,253.0 L192.0,253.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="272.7" y="249" class="m" text-anchor="start">2.56</text>
+  <text x="272.7" y="249" class="m" fill="#4b5563" text-anchor="start">2.56</text>
   <path d="M192.0,258.0 L262.8,258.0 Q265.3,258.0 265.3,260.5 L265.3,267.5 Q265.3,270.0 262.8,270.0 L192.0,270.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="271.3" y="266" class="m" text-anchor="start">2.51</text>
+  <text x="271.3" y="266" class="m" fill="#4b5563" text-anchor="start">2.51</text>
   <path d="M192.0,275.0 L255.7,275.0 Q258.2,275.0 258.2,277.5 L258.2,284.5 Q258.2,287.0 255.7,287.0 L192.0,287.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="264.2" y="283" class="m" text-anchor="start">2.26</text>
+  <text x="264.2" y="283" class="m" fill="#4b5563" text-anchor="start">2.26</text>
   <path d="M192.0,292.0 L279.6,292.0 Q282.1,292.0 282.1,294.5 L282.1,301.5 Q282.1,304.0 279.6,304.0 L192.0,304.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="288.1" y="300" class="m" text-anchor="start">3.08</text>
+  <text x="288.1" y="300" class="m" fill="#4b5563" text-anchor="start">3.08</text>
   <path d="M192.0,309.0 L295.8,309.0 Q298.3,309.0 298.3,311.5 L298.3,318.5 Q298.3,321.0 295.8,321.0 L192.0,321.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="304.3" y="317" class="m" text-anchor="start">3.64</text>
-  <text x="360" y="56" class="t" font-weight="600">find, 50% hits</text>
-  <line x1="359.6" y1="74" x2="359.6" y2="324" class="ax"/>
-  <text x="359.6" y="72" class="m" text-anchor="middle">0</text>
-  <line x1="388.9" y1="74" x2="388.9" y2="324" class="ax"/>
-  <text x="388.9" y="72" class="m" text-anchor="middle">0.5</text>
-  <line x1="418.1" y1="74" x2="418.1" y2="324" class="ax"/>
-  <text x="418.1" y="72" class="m" text-anchor="middle">1</text>
-  <line x1="447.4" y1="74" x2="447.4" y2="324" class="ax"/>
-  <text x="447.4" y="72" class="m" text-anchor="middle">1.5</text>
-  <line x1="476.6" y1="74" x2="476.6" y2="324" class="ax"/>
-  <text x="476.6" y="72" class="m" text-anchor="middle">2</text>
-  <line x1="418.1" y1="74" x2="418.1" y2="324" class="ref"/>
-  <line x1="359.6" y1="74" x2="359.6" y2="324" class="base"/>
+  <text x="304.3" y="317" class="m" fill="#4b5563" text-anchor="start">3.64</text>
+  <text x="360" y="56" class="t" fill="#1f2937" font-weight="600">find, 50% hits</text>
+  <line x1="359.6" y1="74" x2="359.6" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="359.6" y="72" class="m" fill="#4b5563" text-anchor="middle">0</text>
+  <line x1="388.9" y1="74" x2="388.9" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="388.9" y="72" class="m" fill="#4b5563" text-anchor="middle">0.5</text>
+  <line x1="418.1" y1="74" x2="418.1" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="418.1" y="72" class="m" fill="#4b5563" text-anchor="middle">1</text>
+  <line x1="447.4" y1="74" x2="447.4" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="447.4" y="72" class="m" fill="#4b5563" text-anchor="middle">1.5</text>
+  <line x1="476.6" y1="74" x2="476.6" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="476.6" y="72" class="m" fill="#4b5563" text-anchor="middle">2</text>
+  <line x1="418.1" y1="74" x2="418.1" y2="324" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
+  <line x1="359.6" y1="74" x2="359.6" y2="324" class="base" stroke="#9ca3af"/>
   <path d="M359.6,88.0 L415.6,88.0 Q418.1,88.0 418.1,90.5 L418.1,97.5 Q418.1,100.0 415.6,100.0 L359.6,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
-  <text x="424.1" y="96" class="m" text-anchor="start">1.00</text>
+  <text x="424.1" y="96" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M359.6,105.0 L423.3,105.0 Q425.8,105.0 425.8,107.5 L425.8,114.5 Q425.8,117.0 423.3,117.0 L359.6,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="431.8" y="113" class="m" text-anchor="start">1.13</text>
+  <text x="431.8" y="113" class="m" fill="#4b5563" text-anchor="start">1.13</text>
   <path d="M359.6,122.0 L416.7,122.0 Q419.2,122.0 419.2,124.5 L419.2,131.5 Q419.2,134.0 416.7,134.0 L359.6,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="425.2" y="130" class="m" text-anchor="start">1.02</text>
+  <text x="425.2" y="130" class="m" fill="#4b5563" text-anchor="start">1.02</text>
   <path d="M359.6,139.0 L438.1,139.0 Q440.6,139.0 440.6,141.5 L440.6,148.5 Q440.6,151.0 438.1,151.0 L359.6,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="446.6" y="147" class="m" text-anchor="start">1.38</text>
+  <text x="446.6" y="147" class="m" fill="#4b5563" text-anchor="start">1.38</text>
   <path d="M359.6,156.0 L413.9,156.0 Q416.4,156.0 416.4,158.5 L416.4,165.5 Q416.4,168.0 413.9,168.0 L359.6,168.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="422.4" y="164" class="m" text-anchor="start">0.97</text>
+  <text x="422.4" y="164" class="m" fill="#4b5563" text-anchor="start">0.97</text>
   <path d="M359.6,173.0 L410.5,173.0 Q413.0,173.0 413.0,175.5 L413.0,182.5 Q413.0,185.0 410.5,185.0 L359.6,185.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="419.0" y="181" class="m" text-anchor="start">0.91</text>
+  <text x="419.0" y="181" class="m" fill="#4b5563" text-anchor="start">0.91</text>
   <path d="M359.6,190.0 L413.5,190.0 Q416.0,190.0 416.0,192.5 L416.0,199.5 Q416.0,202.0 413.5,202.0 L359.6,202.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="422.0" y="198" class="m" text-anchor="start">0.96</text>
+  <text x="422.0" y="198" class="m" fill="#4b5563" text-anchor="start">0.96</text>
   <path d="M359.6,207.0 L424.5,207.0 Q427.0,207.0 427.0,209.5 L427.0,216.5 Q427.0,219.0 424.5,219.0 L359.6,219.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="433.0" y="215" class="m" text-anchor="start">1.15</text>
+  <text x="433.0" y="215" class="m" fill="#4b5563" text-anchor="start">1.15</text>
   <path d="M359.6,224.0 L417.4,224.0 Q419.9,224.0 419.9,226.5 L419.9,233.5 Q419.9,236.0 417.4,236.0 L359.6,236.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="425.9" y="232" class="m" text-anchor="start">1.03</text>
+  <text x="425.9" y="232" class="m" fill="#4b5563" text-anchor="start">1.03</text>
   <path d="M359.6,241.0 L435.4,241.0 Q437.9,241.0 437.9,243.5 L437.9,250.5 Q437.9,253.0 435.4,253.0 L359.6,253.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="443.9" y="249" class="m" text-anchor="start">1.34</text>
+  <text x="443.9" y="249" class="m" fill="#4b5563" text-anchor="start">1.34</text>
   <path d="M359.6,258.0 L413.2,258.0 Q415.7,258.0 415.7,260.5 L415.7,267.5 Q415.7,270.0 413.2,270.0 L359.6,270.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="421.7" y="266" class="m" text-anchor="start">0.96</text>
+  <text x="421.7" y="266" class="m" fill="#4b5563" text-anchor="start">0.96</text>
   <path d="M359.6,275.0 L413.8,275.0 Q416.3,275.0 416.3,277.5 L416.3,284.5 Q416.3,287.0 413.8,287.0 L359.6,287.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="422.3" y="283" class="m" text-anchor="start">0.97</text>
+  <text x="422.3" y="283" class="m" fill="#4b5563" text-anchor="start">0.97</text>
   <path d="M359.6,292.0 L426.1,292.0 Q428.6,292.0 428.6,294.5 L428.6,301.5 Q428.6,304.0 426.1,304.0 L359.6,304.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="434.6" y="300" class="m" text-anchor="start">1.18</text>
+  <text x="434.6" y="300" class="m" fill="#4b5563" text-anchor="start">1.18</text>
   <path d="M359.6,309.0 L461.7,309.0 Q464.2,309.0 464.2,311.5 L464.2,318.5 Q464.2,321.0 461.7,321.0 L359.6,321.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="470.2" y="317" class="m" text-anchor="start">1.79</text>
-  <text x="527" y="56" class="t" font-weight="600">churn</text>
-  <line x1="527.2" y1="74" x2="527.2" y2="324" class="ax"/>
-  <text x="527.2" y="72" class="m" text-anchor="middle">0</text>
-  <line x1="556.5" y1="74" x2="556.5" y2="324" class="ax"/>
-  <text x="556.5" y="72" class="m" text-anchor="middle">0.5</text>
-  <line x1="585.7" y1="74" x2="585.7" y2="324" class="ax"/>
-  <text x="585.7" y="72" class="m" text-anchor="middle">1</text>
-  <line x1="615.0" y1="74" x2="615.0" y2="324" class="ax"/>
-  <text x="615.0" y="72" class="m" text-anchor="middle">1.5</text>
-  <line x1="644.2" y1="74" x2="644.2" y2="324" class="ax"/>
-  <text x="644.2" y="72" class="m" text-anchor="middle">2</text>
-  <line x1="585.7" y1="74" x2="585.7" y2="324" class="ref"/>
-  <line x1="527.2" y1="74" x2="527.2" y2="324" class="base"/>
+  <text x="470.2" y="317" class="m" fill="#4b5563" text-anchor="start">1.79</text>
+  <text x="527" y="56" class="t" fill="#1f2937" font-weight="600">churn</text>
+  <line x1="527.2" y1="74" x2="527.2" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="527.2" y="72" class="m" fill="#4b5563" text-anchor="middle">0</text>
+  <line x1="556.5" y1="74" x2="556.5" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="556.5" y="72" class="m" fill="#4b5563" text-anchor="middle">0.5</text>
+  <line x1="585.7" y1="74" x2="585.7" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="585.7" y="72" class="m" fill="#4b5563" text-anchor="middle">1</text>
+  <line x1="615.0" y1="74" x2="615.0" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="615.0" y="72" class="m" fill="#4b5563" text-anchor="middle">1.5</text>
+  <line x1="644.2" y1="74" x2="644.2" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="644.2" y="72" class="m" fill="#4b5563" text-anchor="middle">2</text>
+  <line x1="585.7" y1="74" x2="585.7" y2="324" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
+  <line x1="527.2" y1="74" x2="527.2" y2="324" class="base" stroke="#9ca3af"/>
   <path d="M527.2,88.0 L583.2,88.0 Q585.7,88.0 585.7,90.5 L585.7,97.5 Q585.7,100.0 583.2,100.0 L527.2,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
-  <text x="591.7" y="96" class="m" text-anchor="start">1.00</text>
+  <text x="591.7" y="96" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M527.2,105.0 L588.5,105.0 Q591.0,105.0 591.0,107.5 L591.0,114.5 Q591.0,117.0 588.5,117.0 L527.2,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="597.0" y="113" class="m" text-anchor="start">1.09</text>
+  <text x="597.0" y="113" class="m" fill="#4b5563" text-anchor="start">1.09</text>
   <path d="M527.2,122.0 L583.5,122.0 Q586.0,122.0 586.0,124.5 L586.0,131.5 Q586.0,134.0 583.5,134.0 L527.2,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="592.0" y="130" class="m" text-anchor="start">1.00</text>
+  <text x="592.0" y="130" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M527.2,139.0 L608.5,139.0 Q611.0,139.0 611.0,141.5 L611.0,148.5 Q611.0,151.0 608.5,151.0 L527.2,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="617.0" y="147" class="m" text-anchor="start">1.43</text>
+  <text x="617.0" y="147" class="m" fill="#4b5563" text-anchor="start">1.43</text>
   <path d="M527.2,156.0 L577.7,156.0 Q580.2,156.0 580.2,158.5 L580.2,165.5 Q580.2,168.0 577.7,168.0 L527.2,168.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="586.2" y="164" class="m" text-anchor="start">0.91</text>
+  <text x="586.2" y="164" class="m" fill="#4b5563" text-anchor="start">0.91</text>
   <path d="M527.2,173.0 L576.9,173.0 Q579.4,173.0 579.4,175.5 L579.4,182.5 Q579.4,185.0 576.9,185.0 L527.2,185.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="585.4" y="181" class="m" text-anchor="start">0.89</text>
+  <text x="585.4" y="181" class="m" fill="#4b5563" text-anchor="start">0.89</text>
   <path d="M527.2,190.0 L578.4,190.0 Q580.9,190.0 580.9,192.5 L580.9,199.5 Q580.9,202.0 578.4,202.0 L527.2,202.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="586.9" y="198" class="m" text-anchor="start">0.92</text>
+  <text x="586.9" y="198" class="m" fill="#4b5563" text-anchor="start">0.92</text>
   <path d="M527.2,207.0 L578.1,207.0 Q580.6,207.0 580.6,209.5 L580.6,216.5 Q580.6,219.0 578.1,219.0 L527.2,219.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="586.6" y="215" class="m" text-anchor="start">0.91</text>
+  <text x="586.6" y="215" class="m" fill="#4b5563" text-anchor="start">0.91</text>
   <path d="M527.2,224.0 L581.2,224.0 Q583.7,224.0 583.7,226.5 L583.7,233.5 Q583.7,236.0 581.2,236.0 L527.2,236.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="589.7" y="232" class="m" text-anchor="start">0.97</text>
+  <text x="589.7" y="232" class="m" fill="#4b5563" text-anchor="start">0.97</text>
   <path d="M527.2,241.0 L580.0,241.0 Q582.5,241.0 582.5,243.5 L582.5,250.5 Q582.5,253.0 580.0,253.0 L527.2,253.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="588.5" y="249" class="m" text-anchor="start">0.95</text>
+  <text x="588.5" y="249" class="m" fill="#4b5563" text-anchor="start">0.95</text>
   <path d="M527.2,258.0 L587.8,258.0 Q590.3,258.0 590.3,260.5 L590.3,267.5 Q590.3,270.0 587.8,270.0 L527.2,270.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="596.3" y="266" class="m" text-anchor="start">1.08</text>
+  <text x="596.3" y="266" class="m" fill="#4b5563" text-anchor="start">1.08</text>
   <path d="M527.2,275.0 L586.2,275.0 Q588.7,275.0 588.7,277.5 L588.7,284.5 Q588.7,287.0 586.2,287.0 L527.2,287.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="594.7" y="283" class="m" text-anchor="start">1.05</text>
+  <text x="594.7" y="283" class="m" fill="#4b5563" text-anchor="start">1.05</text>
   <path d="M527.2,292.0 L589.4,292.0 Q591.9,292.0 591.9,294.5 L591.9,301.5 Q591.9,304.0 589.4,304.0 L527.2,304.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="597.9" y="300" class="m" text-anchor="start">1.11</text>
+  <text x="597.9" y="300" class="m" fill="#4b5563" text-anchor="start">1.11</text>
   <path d="M527.2,309.0 L616.3,309.0 Q618.8,309.0 618.8,311.5 L618.8,318.5 Q618.8,321.0 616.3,321.0 L527.2,321.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="624.8" y="317" class="m" text-anchor="start">1.57</text>
-  <text x="695" y="56" class="t" font-weight="600">iterate</text>
-  <line x1="694.8" y1="74" x2="694.8" y2="324" class="ax"/>
-  <text x="694.8" y="72" class="m" text-anchor="middle">0</text>
-  <line x1="716.9" y1="74" x2="716.9" y2="324" class="ax"/>
-  <text x="716.9" y="72" class="m" text-anchor="middle">2</text>
-  <line x1="739.0" y1="74" x2="739.0" y2="324" class="ax"/>
-  <text x="739.0" y="72" class="m" text-anchor="middle">4</text>
-  <line x1="761.2" y1="74" x2="761.2" y2="324" class="ax"/>
-  <text x="761.2" y="72" class="m" text-anchor="middle">6</text>
-  <line x1="783.3" y1="74" x2="783.3" y2="324" class="ax"/>
-  <text x="783.3" y="72" class="m" text-anchor="middle">8</text>
-  <line x1="805.4" y1="74" x2="805.4" y2="324" class="ax"/>
-  <text x="805.4" y="72" class="m" text-anchor="middle">10</text>
-  <line x1="705.9" y1="74" x2="705.9" y2="324" class="ref"/>
-  <line x1="694.8" y1="74" x2="694.8" y2="324" class="base"/>
+  <text x="624.8" y="317" class="m" fill="#4b5563" text-anchor="start">1.57</text>
+  <text x="695" y="56" class="t" fill="#1f2937" font-weight="600">iterate</text>
+  <line x1="694.8" y1="74" x2="694.8" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="694.8" y="72" class="m" fill="#4b5563" text-anchor="middle">0</text>
+  <line x1="716.9" y1="74" x2="716.9" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="716.9" y="72" class="m" fill="#4b5563" text-anchor="middle">2</text>
+  <line x1="739.0" y1="74" x2="739.0" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="739.0" y="72" class="m" fill="#4b5563" text-anchor="middle">4</text>
+  <line x1="761.2" y1="74" x2="761.2" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="761.2" y="72" class="m" fill="#4b5563" text-anchor="middle">6</text>
+  <line x1="783.3" y1="74" x2="783.3" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="783.3" y="72" class="m" fill="#4b5563" text-anchor="middle">8</text>
+  <line x1="805.4" y1="74" x2="805.4" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="805.4" y="72" class="m" fill="#4b5563" text-anchor="middle">10</text>
+  <line x1="705.9" y1="74" x2="705.9" y2="324" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
+  <line x1="694.8" y1="74" x2="694.8" y2="324" class="base" stroke="#9ca3af"/>
   <path d="M694.8,88.0 L703.4,88.0 Q705.9,88.0 705.9,90.5 L705.9,97.5 Q705.9,100.0 703.4,100.0 L694.8,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
-  <text x="711.9" y="96" class="m" text-anchor="start">1.00</text>
+  <text x="711.9" y="96" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M694.8,105.0 L703.5,105.0 Q706.0,105.0 706.0,107.5 L706.0,114.5 Q706.0,117.0 703.5,117.0 L694.8,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="712.0" y="113" class="m" text-anchor="start">1.01</text>
+  <text x="712.0" y="113" class="m" fill="#4b5563" text-anchor="start">1.01</text>
   <path d="M694.8,122.0 L703.0,122.0 Q705.5,122.0 705.5,124.5 L705.5,131.5 Q705.5,134.0 703.0,134.0 L694.8,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="711.5" y="130" class="m" text-anchor="start">0.97</text>
+  <text x="711.5" y="130" class="m" fill="#4b5563" text-anchor="start">0.97</text>
   <path d="M694.8,139.0 L702.8,139.0 Q705.3,139.0 705.3,141.5 L705.3,148.5 Q705.3,151.0 702.8,151.0 L694.8,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="711.3" y="147" class="m" text-anchor="start">0.95</text>
+  <text x="711.3" y="147" class="m" fill="#4b5563" text-anchor="start">0.95</text>
   <path d="M694.8,156.0 L725.0,156.0 Q727.5,156.0 727.5,158.5 L727.5,165.5 Q727.5,168.0 725.0,168.0 L694.8,168.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="733.5" y="164" class="m" text-anchor="start">2.96</text>
+  <text x="733.5" y="164" class="m" fill="#4b5563" text-anchor="start">2.96</text>
   <path d="M694.8,173.0 L727.6,173.0 Q730.1,173.0 730.1,175.5 L730.1,182.5 Q730.1,185.0 727.6,185.0 L694.8,185.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="736.1" y="181" class="m" text-anchor="start">3.19</text>
+  <text x="736.1" y="181" class="m" fill="#4b5563" text-anchor="start">3.19</text>
   <path d="M694.8,190.0 L736.8,190.0 Q739.3,190.0 739.3,192.5 L739.3,199.5 Q739.3,202.0 736.8,202.0 L694.8,202.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="745.3" y="198" class="m" text-anchor="start">4.03</text>
+  <text x="745.3" y="198" class="m" fill="#4b5563" text-anchor="start">4.03</text>
   <path d="M694.8,207.0 L725.9,207.0 Q728.4,207.0 728.4,209.5 L728.4,216.5 Q728.4,219.0 725.9,219.0 L694.8,219.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="734.4" y="215" class="m" text-anchor="start">3.04</text>
+  <text x="734.4" y="215" class="m" fill="#4b5563" text-anchor="start">3.04</text>
   <path d="M694.8,224.0 L729.5,224.0 Q732.0,224.0 732.0,226.5 L732.0,233.5 Q732.0,236.0 729.5,236.0 L694.8,236.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="738.0" y="232" class="m" text-anchor="start">3.36</text>
+  <text x="738.0" y="232" class="m" fill="#4b5563" text-anchor="start">3.36</text>
   <path d="M694.8,241.0 L722.7,241.0 Q725.2,241.0 725.2,243.5 L725.2,250.5 Q725.2,253.0 722.7,253.0 L694.8,253.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="731.2" y="249" class="m" text-anchor="start">2.75</text>
+  <text x="731.2" y="249" class="m" fill="#4b5563" text-anchor="start">2.75</text>
   <path d="M694.8,258.0 L785.0,258.0 Q787.5,258.0 787.5,260.5 L787.5,267.5 Q787.5,270.0 785.0,270.0 L694.8,270.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="793.5" y="266" class="m" text-anchor="start">8.38</text>
+  <text x="793.5" y="266" class="m" fill="#4b5563" text-anchor="start">8.38</text>
   <path d="M694.8,275.0 L805.4,275.0 L798.4,277.0 L805.4,279.0 L798.4,281.0 L805.4,283.0 L798.4,285.0 L805.4,287.0 L694.8,287.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="811.4" y="283" class="m" text-anchor="start">11.57</text>
+  <text x="811.4" y="283" class="m" fill="#4b5563" text-anchor="start">11.57</text>
   <path d="M694.8,292.0 L805.4,292.0 L798.4,294.0 L805.4,296.0 L798.4,298.0 L805.4,300.0 L798.4,302.0 L805.4,304.0 L694.8,304.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="811.4" y="300" class="m" text-anchor="start">15.32</text>
+  <text x="811.4" y="300" class="m" fill="#4b5563" text-anchor="start">15.32</text>
   <path d="M694.8,309.0 L805.4,309.0 L798.4,311.0 L805.4,313.0 L798.4,315.0 L805.4,317.0 L798.4,319.0 L805.4,321.0 L694.8,321.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="811.4" y="317" class="m" text-anchor="start">99.88</text>
-  <text x="862" y="56" class="t" font-weight="600">peak memory</text>
-  <line x1="862.4" y1="74" x2="862.4" y2="324" class="ax"/>
-  <text x="862.4" y="72" class="m" text-anchor="middle">0</text>
-  <line x1="901.4" y1="74" x2="901.4" y2="324" class="ax"/>
-  <text x="901.4" y="72" class="m" text-anchor="middle">0.5</text>
-  <line x1="940.4" y1="74" x2="940.4" y2="324" class="ax"/>
-  <text x="940.4" y="72" class="m" text-anchor="middle">1</text>
-  <line x1="979.4" y1="74" x2="979.4" y2="324" class="ax"/>
-  <text x="979.4" y="72" class="m" text-anchor="middle">1.5</text>
-  <line x1="940.4" y1="74" x2="940.4" y2="324" class="ref"/>
-  <line x1="862.4" y1="74" x2="862.4" y2="324" class="base"/>
+  <text x="811.4" y="317" class="m" fill="#4b5563" text-anchor="start">99.88</text>
+  <text x="862" y="56" class="t" fill="#1f2937" font-weight="600">peak memory</text>
+  <line x1="862.4" y1="74" x2="862.4" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="862.4" y="72" class="m" fill="#4b5563" text-anchor="middle">0</text>
+  <line x1="901.4" y1="74" x2="901.4" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="901.4" y="72" class="m" fill="#4b5563" text-anchor="middle">0.5</text>
+  <line x1="940.4" y1="74" x2="940.4" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="940.4" y="72" class="m" fill="#4b5563" text-anchor="middle">1</text>
+  <line x1="979.4" y1="74" x2="979.4" y2="324" class="ax" stroke="#e5e7eb"/>
+  <text x="979.4" y="72" class="m" fill="#4b5563" text-anchor="middle">1.5</text>
+  <line x1="940.4" y1="74" x2="940.4" y2="324" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>
+  <line x1="862.4" y1="74" x2="862.4" y2="324" class="base" stroke="#9ca3af"/>
   <path d="M862.4,88.0 L937.9,88.0 Q940.4,88.0 940.4,90.5 L940.4,97.5 Q940.4,100.0 937.9,100.0 L862.4,100.0 Z" class="f-dense" fill="#0e8f60" opacity="0.95"/>
-  <text x="946.4" y="96" class="m" text-anchor="start">1.00</text>
+  <text x="946.4" y="96" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M862.4,105.0 L941.4,105.0 Q943.9,105.0 943.9,107.5 L943.9,114.5 Q943.9,117.0 941.4,117.0 L862.4,117.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="949.9" y="113" class="m" text-anchor="start">1.05</text>
+  <text x="949.9" y="113" class="m" fill="#4b5563" text-anchor="start">1.05</text>
   <path d="M862.4,122.0 L942.6,122.0 Q945.1,122.0 945.1,124.5 L945.1,131.5 Q945.1,134.0 942.6,134.0 L862.4,134.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="951.1" y="130" class="m" text-anchor="start">1.06</text>
+  <text x="951.1" y="130" class="m" fill="#4b5563" text-anchor="start">1.06</text>
   <path d="M862.4,139.0 L938.1,139.0 Q940.6,139.0 940.6,141.5 L940.6,148.5 Q940.6,151.0 938.1,151.0 L862.4,151.0 Z" class="f-dense" fill="#0e8f60" opacity="0.8"/>
-  <text x="946.6" y="147" class="m" text-anchor="start">1.00</text>
+  <text x="946.6" y="147" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M862.4,156.0 L950.4,156.0 Q952.9,156.0 952.9,158.5 L952.9,165.5 Q952.9,168.0 950.4,168.0 L862.4,168.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="958.9" y="164" class="m" text-anchor="start">1.16</text>
+  <text x="958.9" y="164" class="m" fill="#4b5563" text-anchor="start">1.16</text>
   <path d="M862.4,173.0 L958.8,173.0 Q961.3,173.0 961.3,175.5 L961.3,182.5 Q961.3,185.0 958.8,185.0 L862.4,185.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="967.3" y="181" class="m" text-anchor="start">1.27</text>
+  <text x="967.3" y="181" class="m" fill="#4b5563" text-anchor="start">1.27</text>
   <path d="M862.4,190.0 L948.8,190.0 Q951.3,190.0 951.3,192.5 L951.3,199.5 Q951.3,202.0 948.8,202.0 L862.4,202.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="957.3" y="198" class="m" text-anchor="start">1.14</text>
+  <text x="957.3" y="198" class="m" fill="#4b5563" text-anchor="start">1.14</text>
   <path d="M862.4,207.0 L955.2,207.0 Q957.7,207.0 957.7,209.5 L957.7,216.5 Q957.7,219.0 955.2,219.0 L862.4,219.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="963.7" y="215" class="m" text-anchor="start">1.22</text>
+  <text x="963.7" y="215" class="m" fill="#4b5563" text-anchor="start">1.22</text>
   <path d="M862.4,224.0 L949.0,224.0 Q951.5,224.0 951.5,226.5 L951.5,233.5 Q951.5,236.0 949.0,236.0 L862.4,236.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="957.5" y="232" class="m" text-anchor="start">1.14</text>
+  <text x="957.5" y="232" class="m" fill="#4b5563" text-anchor="start">1.14</text>
   <path d="M862.4,241.0 L947.9,241.0 Q950.4,241.0 950.4,243.5 L950.4,250.5 Q950.4,253.0 947.9,253.0 L862.4,253.0 Z" class="f-flat" fill="#2563c9" opacity="0.8"/>
-  <text x="956.4" y="249" class="m" text-anchor="start">1.13</text>
+  <text x="956.4" y="249" class="m" fill="#4b5563" text-anchor="start">1.13</text>
   <path d="M862.4,258.0 L937.5,258.0 Q940.0,258.0 940.0,260.5 L940.0,267.5 Q940.0,270.0 937.5,270.0 L862.4,270.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="946.0" y="266" class="m" text-anchor="start">1.00</text>
+  <text x="946.0" y="266" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M862.4,275.0 L937.7,275.0 Q940.2,275.0 940.2,277.5 L940.2,284.5 Q940.2,287.0 937.7,287.0 L862.4,287.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="946.2" y="283" class="m" text-anchor="start">1.00</text>
+  <text x="946.2" y="283" class="m" fill="#4b5563" text-anchor="start">1.00</text>
   <path d="M862.4,292.0 L939.4,292.0 Q941.9,292.0 941.9,294.5 L941.9,301.5 Q941.9,304.0 939.4,304.0 L862.4,304.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="947.9" y="300" class="m" text-anchor="start">1.02</text>
+  <text x="947.9" y="300" class="m" fill="#4b5563" text-anchor="start">1.02</text>
   <path d="M862.4,309.0 L946.3,309.0 Q948.8,309.0 948.8,311.5 L948.8,318.5 Q948.8,321.0 946.3,321.0 L862.4,321.0 Z" class="f-node" fill="#a53393" opacity="0.8"/>
-  <text x="954.8" y="317" class="m" text-anchor="start">1.11</text>
-  <text x="184.0" y="56" class="m" text-anchor="end">geomean</text>
-  <text x="146.0" y="96" class="t" text-anchor="end" font-weight='600'>unordered_dense 5.0</text>
-  <text x="184.0" y="96" class="m" text-anchor="end">1.00</text>
-  <text x="146.0" y="113" class="t" text-anchor="end">unordered_dense 4.11</text>
-  <text x="184.0" y="113" class="m" text-anchor="end">1.10</text>
-  <text x="146.0" y="130" class="t" text-anchor="end">F14Vector</text>
-  <text x="184.0" y="130" class="m" text-anchor="end">1.12</text>
-  <text x="146.0" y="147" class="t" text-anchor="end">emhash8</text>
-  <text x="184.0" y="147" class="m" text-anchor="end">1.35</text>
-  <text x="146.0" y="164" class="t" text-anchor="end">indivi flat_umap</text>
-  <text x="184.0" y="164" class="m" text-anchor="end">1.45</text>
-  <text x="146.0" y="181" class="t" text-anchor="end">indivi flat_wmap</text>
-  <text x="184.0" y="181" class="m" text-anchor="end">1.52</text>
-  <text x="146.0" y="198" class="t" text-anchor="end">absl flat</text>
-  <text x="184.0" y="198" class="m" text-anchor="end">1.53</text>
-  <text x="146.0" y="215" class="t" text-anchor="end">boost flat</text>
-  <text x="184.0" y="215" class="m" text-anchor="end">1.56</text>
-  <text x="146.0" y="232" class="t" text-anchor="end">F14Value</text>
-  <text x="184.0" y="232" class="m" text-anchor="end">1.57</text>
-  <text x="146.0" y="249" class="t" text-anchor="end">emilib</text>
-  <text x="184.0" y="249" class="m" text-anchor="end">1.59</text>
-  <text x="146.0" y="266" class="t" text-anchor="end">absl node</text>
-  <text x="184.0" y="266" class="m" text-anchor="end">1.85</text>
-  <text x="146.0" y="283" class="t" text-anchor="end">F14Node</text>
-  <text x="184.0" y="283" class="m" text-anchor="end">1.93</text>
-  <text x="146.0" y="300" class="t" text-anchor="end">boost node</text>
-  <text x="184.0" y="300" class="m" text-anchor="end">2.29</text>
-  <text x="146.0" y="317" class="t" text-anchor="end">std::unordered_map</text>
-  <text x="184.0" y="317" class="m" text-anchor="end">4.08</text>
+  <text x="954.8" y="317" class="m" fill="#4b5563" text-anchor="start">1.11</text>
+  <text x="184.0" y="56" class="m" fill="#4b5563" text-anchor="end">geomean</text>
+  <text x="146.0" y="96" class="t" fill="#1f2937" text-anchor="end" font-weight='600'>unordered_dense 5.0</text>
+  <text x="184.0" y="96" class="m" fill="#4b5563" text-anchor="end">1.00</text>
+  <text x="146.0" y="113" class="t" fill="#1f2937" text-anchor="end">unordered_dense 4.11</text>
+  <text x="184.0" y="113" class="m" fill="#4b5563" text-anchor="end">1.10</text>
+  <text x="146.0" y="130" class="t" fill="#1f2937" text-anchor="end">F14Vector</text>
+  <text x="184.0" y="130" class="m" fill="#4b5563" text-anchor="end">1.12</text>
+  <text x="146.0" y="147" class="t" fill="#1f2937" text-anchor="end">emhash8</text>
+  <text x="184.0" y="147" class="m" fill="#4b5563" text-anchor="end">1.35</text>
+  <text x="146.0" y="164" class="t" fill="#1f2937" text-anchor="end">indivi flat_umap</text>
+  <text x="184.0" y="164" class="m" fill="#4b5563" text-anchor="end">1.45</text>
+  <text x="146.0" y="181" class="t" fill="#1f2937" text-anchor="end">indivi flat_wmap</text>
+  <text x="184.0" y="181" class="m" fill="#4b5563" text-anchor="end">1.52</text>
+  <text x="146.0" y="198" class="t" fill="#1f2937" text-anchor="end">absl flat</text>
+  <text x="184.0" y="198" class="m" fill="#4b5563" text-anchor="end">1.53</text>
+  <text x="146.0" y="215" class="t" fill="#1f2937" text-anchor="end">boost flat</text>
+  <text x="184.0" y="215" class="m" fill="#4b5563" text-anchor="end">1.56</text>
+  <text x="146.0" y="232" class="t" fill="#1f2937" text-anchor="end">F14Value</text>
+  <text x="184.0" y="232" class="m" fill="#4b5563" text-anchor="end">1.57</text>
+  <text x="146.0" y="249" class="t" fill="#1f2937" text-anchor="end">emilib</text>
+  <text x="184.0" y="249" class="m" fill="#4b5563" text-anchor="end">1.59</text>
+  <text x="146.0" y="266" class="t" fill="#1f2937" text-anchor="end">absl node</text>
+  <text x="184.0" y="266" class="m" fill="#4b5563" text-anchor="end">1.85</text>
+  <text x="146.0" y="283" class="t" fill="#1f2937" text-anchor="end">F14Node</text>
+  <text x="184.0" y="283" class="m" fill="#4b5563" text-anchor="end">1.93</text>
+  <text x="146.0" y="300" class="t" fill="#1f2937" text-anchor="end">boost node</text>
+  <text x="184.0" y="300" class="m" fill="#4b5563" text-anchor="end">2.29</text>
+  <text x="146.0" y="317" class="t" fill="#1f2937" text-anchor="end">std::unordered_map</text>
+  <text x="184.0" y="317" class="m" fill="#4b5563" text-anchor="end">4.08</text>
   <rect x="192.0" y="341" width="11" height="11" class="f-flat" fill="#2563c9" opacity="0.85"/>
-  <text x="208.0" y="350" class="m">flat</text>
+  <text x="208.0" y="350" class="m" fill="#4b5563">flat</text>
   <rect x="266.0" y="341" width="11" height="11" class="f-dense" fill="#0e8f60" opacity="0.85"/>
-  <text x="282.0" y="350" class="m">dense</text>
+  <text x="282.0" y="350" class="m" fill="#4b5563">dense</text>
   <rect x="340.0" y="341" width="11" height="11" class="f-node" fill="#a53393" opacity="0.85"/>
-  <text x="356.0" y="350" class="m">node</text>
-  <text x="424.0" y="350" class="m">relative to unordered_dense 5.0: time for the first four panels, peak bytes per entry for the last</text>
+  <text x="356.0" y="350" class="m" fill="#4b5563">node</text>
+  <text x="424.0" y="350" class="m" fill="#4b5563">relative to unordered_dense 5.0: time for the first four panels, peak bytes per entry for the last</text>
 </svg>

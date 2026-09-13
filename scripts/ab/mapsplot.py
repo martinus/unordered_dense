@@ -71,6 +71,10 @@ ROWH = 17
 GAP = 16
 
 
+# Light values are ordinary attributes so that any renderer shows the chart; the stylesheet only
+# overrides them for dark mode. GitHub sanitizes an SVG it serves as an image and can drop the
+# <style>, and a surface rect whose only fill lives there renders as a black rectangle over
+# everything -- which is the same trap scripts/ab/plot.py documents at its own head().
 def head(w, h, surface=False):
     # A condensed family, so that eighteen map names fit beside five panels. An SVG in an <img>
     # can only use fonts the *reader* has, so the stack names one condensed face per platform --
@@ -105,7 +109,7 @@ def head(w, h, surface=False):
               '    }\n')
     s += '  </style>\n'
     if surface:
-        s += f'  <rect class="surface" width="{w}" height="{h}"/>\n'
+        s += f'  <rect class="surface" fill="#ffffff" width="{w}" height="{h}"/>\n'
     return s
 
 
@@ -173,8 +177,8 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True, surface=Fals
     top = 86
     h = top + n * ROWH + 58
     s = head(width, h, surface)
-    s += f'  <text x="8" y="20" class="hd">{esc(title)}</text>\n'
-    s += f'  <text x="8" y="38" class="sub">{esc(sub)}</text>\n'
+    s += f'  <text x="8" y="20" class="hd" fill="#111827">{esc(title)}</text>\n'
+    s += f'  <text x="8" y="38" class="sub" fill="#4b5563">{esc(sub)}</text>\n'
     for ci, (ck, ch) in enumerate(cols):
         x0 = label + ci * (pw + GAP)
         vmax = max(vals.get((m, ck), 0.0) for m in order) * 1.02
@@ -196,19 +200,19 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True, surface=Fals
         # ink dark enough for the inside of a mid-tone bar either. ~6.4px per glyph at 11.5px Inter.
         lblw = max(len(f"{vals.get((m, ck), 0.0):.2f}") for m in order) * 6.4 + 9
         scale = (pw - lblw) / max(tk[-1], 1e-9)
-        s += f'  <text x="{x0:.0f}" y="{top - 30:.0f}" class="t" font-weight="600">{esc(ch)}</text>\n'
+        s += f'  <text x="{x0:.0f}" y="{top - 30:.0f}" class="t" fill="#1f2937" font-weight="600">{esc(ch)}</text>\n'
         for t in tk:
             x = x0 + t * scale
             if x > x0 + pw + 1:
                 continue
-            s += f'  <line x1="{x:.1f}" y1="{top - 12}" x2="{x:.1f}" y2="{top + n * ROWH}" class="ax"/>\n'
-            s += (f'  <text x="{x:.1f}" y="{top - 14}" class="m" text-anchor="middle">'
+            s += f'  <line x1="{x:.1f}" y1="{top - 12}" x2="{x:.1f}" y2="{top + n * ROWH}" class="ax" stroke="#e5e7eb"/>\n'
+            s += (f'  <text x="{x:.1f}" y="{top - 14}" class="m" fill="#4b5563" text-anchor="middle">'
                   f'{t:g}</text>\n')
         if ref_line:
             x = x0 + 1.0 * scale
-            s += f'  <line x1="{x:.1f}" y1="{top - 12}" x2="{x:.1f}" y2="{top + n * ROWH}" class="ref"/>\n'
+            s += f'  <line x1="{x:.1f}" y1="{top - 12}" x2="{x:.1f}" y2="{top + n * ROWH}" class="ref" stroke="#4b5563" stroke-dasharray="4 3"/>\n'
         s += (f'  <line x1="{x0:.1f}" y1="{top - 12}" x2="{x0:.1f}" y2="{top + n * ROWH}" '
-              f'class="base"/>\n')
+              f'class="base" stroke="#9ca3af"/>\n')
         for i, m in enumerate(order):
             v = vals.get((m, ck))
             if v is None:
@@ -220,26 +224,26 @@ def panels(out, title, sub, order, cols, vals, unit, ref_line=True, surface=Fals
             shape = torn(x0, y, w, ROWH - 5) if over else bar(x0, y, w, ROWH - 5)
             s += (f'  <path d="{shape}" class="f-{fam}"'
                   f' fill="{FAMILY[fam][0]}" opacity="{0.95 if m == REF else 0.8}"/>\n')
-            s += (f'  <text x="{x0 + w + 6:.1f}" y="{y + ROWH - 9:.0f}" class="m" '
+            s += (f'  <text x="{x0 + w + 6:.1f}" y="{y + ROWH - 9:.0f}" class="m" fill="#4b5563" '
                   f'text-anchor="start">{v:.2f}</text>\n')
     name_x = label - (46 if rank else 8)
     if rank:
-        s += f'  <text x="{label - 8}" y="{top - 30:.0f}" class="m" text-anchor="end">geomean</text>\n'
+        s += f'  <text x="{label - 8}" y="{top - 30:.0f}" class="m" fill="#4b5563" text-anchor="end">geomean</text>\n'
     for i, m in enumerate(order):
         y = top + i * ROWH + ROWH - 7
-        s += (f'  <text x="{name_x}" y="{y:.0f}" class="t" text-anchor="end"'
+        s += (f'  <text x="{name_x}" y="{y:.0f}" class="t" fill="#1f2937" text-anchor="end"'
               f'{" font-weight=\'600\'" if m == REF else ""}>{esc(PRETTY.get(m, m))}</text>\n')
         if rank:
-            s += (f'  <text x="{label - 8}" y="{y:.0f}" class="m" text-anchor="end">'
+            s += (f'  <text x="{label - 8}" y="{y:.0f}" class="m" fill="#4b5563" text-anchor="end">'
                   f'{rank[m]:.2f}</text>\n')
     ly = top + n * ROWH + 26
     lx = label
     for fam in [f for f in ("flat", "dense", "node") if any(OF[m] == f for m in order)]:
         s += (f'  <rect x="{lx}" y="{ly - 9}" width="11" height="11" class="f-{fam}" '
               f'fill="{FAMILY[fam][0]}" opacity="0.85"/>\n')
-        s += f'  <text x="{lx + 16}" y="{ly}" class="m">{fam}</text>\n'
+        s += f'  <text x="{lx + 16}" y="{ly}" class="m" fill="#4b5563">{fam}</text>\n'
         lx += 74
-    s += f'  <text x="{lx + 10}" y="{ly}" class="m">{esc(unit)}</text>\n'
+    s += f'  <text x="{lx + 10}" y="{ly}" class="m" fill="#4b5563">{esc(unit)}</text>\n'
     s += "</svg>\n"
     open(out, "w").write(s)
     print(out)
@@ -379,9 +383,9 @@ def cmd_octave(argv):
     vmax = max(v for s in series.values() for _, v in s) * 1.06
     tk = ticks(vmax)
     s = head(W2, H2)
-    s += (f'  <text x="8" y="22" class="hd">{esc(work)} against table size, across one doubling and '
+    s += (f'  <text x="8" y="22" class="hd" fill="#111827">{esc(work)} against table size, across one doubling and '
           f'a little past it, {key} keys</text>\n')
-    s += (f'  <text x="8" y="42" class="sub">the same {len(xs)} sizes for every map, {lo:,} to '
+    s += (f'  <text x="8" y="42" class="sub" fill="#4b5563">the same {len(xs)} sizes for every map, {lo:,} to '
           f'{hi:,} entries; the large dots are the five sizes every ratio in this post is '
           f'averaged over</text>\n')
 
@@ -392,18 +396,18 @@ def cmd_octave(argv):
         return T + (1 - v / tk[-1]) * (H2 - T - B)
 
     for t in tk:
-        s += f'  <line x1="{L}" y1="{py(t):.1f}" x2="{W2 - R}" y2="{py(t):.1f}" class="ax"/>\n'
-        s += f'  <text x="{L - 8}" y="{py(t) + 4:.1f}" class="m" text-anchor="end">{t:g}</text>\n'
-    s += f'  <line x1="{L}" y1="{py(0):.1f}" x2="{W2 - R}" y2="{py(0):.1f}" class="base"/>\n'
-    s += f'  <text x="{L}" y="{T - 14}" class="m">nanoseconds per operation</text>\n'
+        s += f'  <line x1="{L}" y1="{py(t):.1f}" x2="{W2 - R}" y2="{py(t):.1f}" class="ax" stroke="#e5e7eb"/>\n'
+        s += f'  <text x="{L - 8}" y="{py(t) + 4:.1f}" class="m" fill="#4b5563" text-anchor="end">{t:g}</text>\n'
+    s += f'  <line x1="{L}" y1="{py(0):.1f}" x2="{W2 - R}" y2="{py(0):.1f}" class="base" stroke="#9ca3af"/>\n'
+    s += f'  <text x="{L}" y="{T - 14}" class="m" fill="#4b5563">nanoseconds per operation</text>\n'
     for i, n in enumerate(xs):
         if i % stride and i != len(xs) - 1:
             continue
-        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 18:.0f}" class="m" text-anchor="middle">'
+        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 18:.0f}" class="m" fill="#4b5563" text-anchor="middle">'
               f'{n:,}</text>\n')
         s += (f'  <line x1="{px(n):.1f}" y1="{py(0):.1f}" x2="{px(n):.1f}" y2="{py(0) + 4:.1f}" '
-              f'class="base"/>\n')
-    s += f'  <text x="{(L + W2 - R) / 2:.0f}" y="{H2 - 14}" class="m" text-anchor="middle">entries</text>\n'
+              f'class="base" stroke="#9ca3af"/>\n')
+    s += f'  <text x="{(L + W2 - R) / 2:.0f}" y="{H2 - 14}" class="m" fill="#4b5563" text-anchor="middle">entries</text>\n'
 
     ends = []
     for m in want:
@@ -427,7 +431,7 @@ def cmd_octave(argv):
         last = y
         s += (f'  <line x1="{x + 8:.1f}" y1="{y:.1f}" x2="{x + 22:.1f}" y2="{y:.1f}" '
               f'stroke="{col}" stroke-width="2.4" stroke-linecap="round"/>\n')
-        s += f'  <text x="{x + 28:.1f}" y="{y + 4:.1f}" class="m">{esc(label)}</text>\n'
+        s += f'  <text x="{x + 28:.1f}" y="{y + 4:.1f}" class="m" fill="#4b5563">{esc(label)}</text>\n'
     s += "</svg>\n"
     open(out, "w").write(s)
     print(out)
@@ -478,10 +482,10 @@ def cmd_hashlat(argv):
     # would be drawn straight through the axis and out over the legend.
     s += (f'  <clipPath id="plot"><rect x="{L}" y="{T}" width="{W2 - R - L}" '
           f'height="{H2 - T - B}"/></clipPath>\n')
-    s += '  <text x="8" y="22" class="hd">What a string hash costs a lookup, by key length</text>\n'
-    s += ('  <text x="8" y="42" class="sub">nanoseconds per hash, each one waiting on the one '
+    s += '  <text x="8" y="22" class="hd" fill="#111827">What a string hash costs a lookup, by key length</text>\n'
+    s += ('  <text x="8" y="42" class="sub" fill="#4b5563">nanoseconds per hash, each one waiting on the one '
           'before it, which is the order a map pays them in</text>\n')
-    s += ('  <text x="8" y="60" class="sub">median of three runs, every hash interleaved in one '
+    s += ('  <text x="8" y="60" class="sub" fill="#4b5563">median of three runs, every hash interleaved in one '
           'process; about 1.5 ns of every line is the chain\'s own store and load</text>\n')
 
     def px(n):
@@ -493,19 +497,19 @@ def cmd_hashlat(argv):
     axis_y = py(0)
     s += (f'  <rect x="{px(8):.1f}" y="{T:.0f}" width="{px(135) - px(8):.1f}" '
           f'height="{py(0) - T:.1f}" fill="#f1f5f9"/>\n')
-    s += (f'  <text x="{(px(8) + px(135)) / 2:.0f}" y="{T + 14:.0f}" class="m" '
+    s += (f'  <text x="{(px(8) + px(135)) / 2:.0f}" y="{T + 14:.0f}" class="m" fill="#4b5563" '
           f'text-anchor="middle">the lengths this post\'s string keys use</text>\n')
     for tv in tk:
-        s += f'  <line x1="{L}" y1="{py(tv):.1f}" x2="{W2 - R}" y2="{py(tv):.1f}" class="ax"/>\n'
-        s += f'  <text x="{L - 8}" y="{py(tv) + 4:.1f}" class="m" text-anchor="end">{tv:g}</text>\n'
-    s += f'  <line x1="{L}" y1="{axis_y:.1f}" x2="{W2 - R}" y2="{axis_y:.1f}" class="base"/>\n'
-    s += f'  <text x="{L}" y="{T - 14}" class="m">nanoseconds per hash, chained</text>\n'
+        s += f'  <line x1="{L}" y1="{py(tv):.1f}" x2="{W2 - R}" y2="{py(tv):.1f}" class="ax" stroke="#e5e7eb"/>\n'
+        s += f'  <text x="{L - 8}" y="{py(tv) + 4:.1f}" class="m" fill="#4b5563" text-anchor="end">{tv:g}</text>\n'
+    s += f'  <line x1="{L}" y1="{axis_y:.1f}" x2="{W2 - R}" y2="{axis_y:.1f}" class="base" stroke="#9ca3af"/>\n'
+    s += f'  <text x="{L}" y="{T - 14}" class="m" fill="#4b5563">nanoseconds per hash, chained</text>\n'
     for n in (4, 8, 16, 32, 64, 128, 256, 512, 1024):
-        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 18:.0f}" class="m" text-anchor="middle">'
+        s += (f'  <text x="{px(n):.1f}" y="{H2 - B + 18:.0f}" class="m" fill="#4b5563" text-anchor="middle">'
               f'{n}</text>\n')
         s += (f'  <line x1="{px(n):.1f}" y1="{axis_y:.1f}" x2="{px(n):.1f}" y2="{axis_y + 4:.1f}" '
-              f'class="base"/>\n')
-    s += (f'  <text x="{(L + W2 - R) / 2:.0f}" y="{H2 - 14}" class="m" text-anchor="middle">'
+              f'class="base" stroke="#9ca3af"/>\n')
+    s += (f'  <text x="{(L + W2 - R) / 2:.0f}" y="{H2 - 14}" class="m" fill="#4b5563" text-anchor="middle">'
           f'key length in bytes</text>\n')
 
     ends = []
@@ -528,7 +532,7 @@ def cmd_hashlat(argv):
         da = "" if dash == "none" else f' stroke-dasharray="4 3"'
         s += (f'  <line x1="{x + 8:.1f}" y1="{y:.1f}" x2="{x + 24:.1f}" y2="{y:.1f}" '
               f'stroke="{col}" stroke-width="2.4" stroke-linecap="round"{da}/>\n')
-        s += f'  <text x="{x + 30:.1f}" y="{y + 4:.1f}" class="m">{esc(label)}</text>\n'
+        s += f'  <text x="{x + 30:.1f}" y="{y + 4:.1f}" class="m" fill="#4b5563">{esc(label)}</text>\n'
     s += "</svg>\n"
     open(out, "w").write(s)
     print(out)
