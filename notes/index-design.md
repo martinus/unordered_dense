@@ -198,6 +198,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The one outlier chased down, and it is the CPU rather than the code
 - NEON closed the ARM lookup gap, and it was the whole gap
 - `replace()` + `extract()` as the way to unique a vector, and the duplicate rate that turns it over
+- `visit()` re-measured across the cache boundary: the cache-resident loss is a hit-rate effect
 - Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way
 - lookups are behind main
 - `ie64` ties boost while executing 58% more instructions, and the counts say why
@@ -4790,6 +4791,39 @@ The same numbers say where the tie ends: on a table that does not fit in cache, 
 no coin flip, the memory chain dominates and boost's shorter one shows -- that is the 11% on
 lookups. And nothing here is spare on the instruction side: a change that lengthens the dependent
 chain costs at once, a change that only saves instructions on this workload is invisible.
+
+**`visit()` re-measured across the cache boundary: the cache-resident loss is a hit-rate effect**
+(2026-09-13, `scripts/ab/bulk_visit.cpp`, Ryzen 9 7950X, clang 22, `map<uint64_t, size_t>`, 4000000
+lookups per cell, `taskset -c 2`).
+
+The README documented `visit()` at 1.18x to 1.29x from two sizes, 4 million and 16 million entries,
+both past every cache on this machine, and said in prose that below the cache it is "a small loss".
+Two sizes on one side of a cache are one size, which is this file's own rule, so the claim was
+re-taken over six sizes and both hit rates. ns per lookup, `plain` (the batch looked up one key at a
+time) against `bulk` (`visit()` on the same batch):
+
+| entries | plain, all hits | bulk | | plain, half hits | bulk | |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1000 | 3.95 | 4.43 | 0.89x | 8.16 | 6.83 | 1.19x |
+| 10000 | 4.44 | 4.63 | 0.96x | 8.82 | 7.16 | 1.23x |
+| 100000 | 7.13 | 6.55 | 1.09x | 11.44 | 9.40 | 1.22x |
+| 1000000 | 18.41 | 15.35 | 1.20x | 23.03 | 20.10 | 1.15x |
+| 4000000 | 38.10 | 25.46 | 1.50x | 34.80 | 28.01 | 1.24x |
+| 16000000 | 36.49 | 29.03 | 1.26x | 37.35 | 30.68 | 1.22x |
+
+**The prose was half wrong.** The loss below the cache is real with every key present, 0.89x at a
+thousand entries and 0.96x at ten thousand, and it is gone the moment half the lookups miss: 1.19x
+and 1.23x at those same two sizes, and 1.15x to 1.24x at every size above them. So the gate on
+`visit()` is not the table's size alone, it is the size and the hit rate together, which is what
+`bulk_visit.cpp`'s own header comment says and what the documented two-size table could not show.
+The reading is that a miss the chunk absorbs is a branch the one-at-a-time loop mispredicts; that
+part is not measured separately.
+
+The batching underneath it, `inline` (fetch and look up in one loop body) against `plain`, is 1.30x
+at a million all hits, 1.32x at four million, 1.55x at sixteen million and 1.57x at four million with
+half missing. So the whole thing, the naive loop against a batch handed to `visit()`, is 50.26 to
+25.46 ns at four million entries: **1.97x**, of which the batch is the larger half. That is the
+number a caller sees and the reason `visit()`'s own column is the smaller one.
 
 **`replace()` + `extract()` as the way to unique a vector, and the duplicate rate that turns it
 over** (2026-09-13, `scripts/ab/unique.cpp`, also built `-DUDM_UNIQUE_U64`, Ryzen 9 7950X, clang 22,
