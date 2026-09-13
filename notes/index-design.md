@@ -4793,79 +4793,90 @@ chain costs at once, a change that only saves instructions on this workload is i
 
 **`replace()` + `extract()` as the way to unique a vector, and the duplicate rate that turns it
 over** (2026-09-13, `scripts/ab/unique.cpp`, also built `-DUDM_UNIQUE_U64`, Ryzen 9 7950X, clang 22,
-string keys 8 to 135 bytes skewed short, median round after a warmup round, `taskset -c 2`).
+string keys 8 to 135 bytes skewed short, median of 31 rounds or more, `taskset -c 2`).
 
 Taking the duplicates out of a `std::vector<std::string>` is the job a dense set's storage is
 already shaped for: `set.replace(std::move(v))` makes the caller's vector the set's own, and
-`std::move(set).extract()` hands it back, so no string is copied and none is allocated. The question
-was how far ahead that is of what a caller writes with a set that is not dense, and where it stops
-being ahead. Five variants, all checked against the same order-independent checksum and the same
-unique count: `replace()` + `extract()`, the same set built from the range and then extracted,
+`std::move(set).extract()` hands it back, so no string is copied and none is allocated. Five
+variants, all checked against the same order-independent checksum and the same unique count:
+`replace()` + `extract()`, the same set built from the range and then extracted,
 `boost::unordered_flat_set<std::string>` copied out into a fresh vector, a
 `boost::unordered_flat_set<std::string_view>` over the caller's vector with the compaction done
 afterwards (it has to be afterwards -- moving an element invalidates the view the set is holding),
 and `std::sort` + `std::unique`.
 
+**Every variant has to release the input inside the clock, and the first version of this harness let
+two of them off.** `replace()` consumes the caller's vector and destroys the duplicates in it; a
+variant that builds a separate set leaves the caller holding all n elements, and destroying those is
+work the caller still has to do to reach the same state. Left outside the clock it is a free per
+element charged to one variant and to none of the others. Correcting it moved the million-element
+insertion column from 40.07 to 70.46 ns at no duplicates and reversed which variant wins at half
+duplicates. It is the same trap as the README's build panel, one level down: a benchmark has to say
+what state each contestant ends in.
+
+**And eleven rounds was not enough to exclude an outlier.** The first sweep read 86.78 ns for
+`replace()` at a million elements and half duplicates; five later runs of the same binary read 61.4
+to 64.1, and a rebuild of the *old* binary read 61.0 to 62.3, so it was neither the build nor a real
+effect. The harness now prints the min and max beside the median, which is what would have caught it.
+
 Nanoseconds per element of the input vector, no duplicates:
 
 | | 1000 | 10000 | 100000 | 1000000 |
 |---|---:|---:|---:|---:|
-| `replace()` + `extract()` | 5.17 | 7.10 | 8.84 | 9.94 |
-| `set(first, last)` + `extract()` | 22.01 | 34.14 | 32.49 | 40.07 |
-| boost, copied out | 58.09 | 80.62 | 83.61 | 257.36 |
-| boost set of views, compacted after | 9.29 | 16.38 | 17.97 | 33.32 |
-| `std::sort` + `std::unique` | 44.12 | 123.73 | 147.44 | 232.27 |
+| `replace()` + `extract()` | 4.98 | 6.56 | 8.73 | 9.74 |
+| `set(first, last)` + `extract()` | 27.82 | 42.49 | 40.58 | 70.46 |
+| boost, copied out | 58.38 | 88.25 | 87.45 | 265.27 |
+| boost set of views, compacted after | 9.16 | 14.52 | 16.87 | 29.49 |
+| `std::sort` + `std::unique` | 45.28 | 115.71 | 147.28 | 224.60 |
 
-So 9.5x to 26x over the version a caller actually writes, and 2x to 3.4x over the hand-written one
-that copies no string either. The million-element column repeated twice more at 10.10 and 10.21
-against 31.02 and 31.46, so the 3.35x there is about 3.1x. Insertion into the same set is 3.7x to
-4.8x behind `replace()` and all of that gap is one string copy per unique element, which is the
-clearest single statement of what the dense layout is worth: it is not the index, it is not having
-to own a second copy of the element.
+So 10x to 27x over the version a caller actually writes, 1.8x to 3.0x over the hand-written one that
+copies no string either, and 4.7x to 7.2x over building the same set by insertion.
 
-The duplicate rate reverses it. At a million elements, ns per input element:
+The duplicate rate narrows it. At a million elements, ns per input element:
 
 | | 0% | 50% | 90% |
 |---|---:|---:|---:|
-| `replace()` + `extract()` | 9.94 | 86.78 | 50.93 |
-| `set(first, last)` + `extract()` | 40.07 | 59.02 | 20.08 |
-| boost, copied out | 257.36 | 153.28 | 29.14 |
-| boost set of views, compacted after | 33.32 | 64.15 | 50.76 |
-| `std::sort` + `std::unique` | 232.27 | 273.89 | 283.17 |
+| `replace()` + `extract()` | 9.74 | 62.29 | 43.78 |
+| `set(first, last)` + `extract()` | 70.46 | 60.89 | 27.87 |
+| boost, copied out | 265.27 | 135.93 | 38.55 |
+| boost set of views, compacted after | 29.49 | 59.55 | 40.59 |
+| `std::sort` + `std::unique` | 224.60 | 257.74 | 269.67 |
 
-Both loops hash ahead of where they place, so the ring is not the difference. What differs is that
-`replace()` owns the vector and has to take the duplicate out of it -- `*read = std::move(back());
-pop_back()` -- where the range insert is handed a range it does not own and a duplicate costs it a
-probe and nothing else.
+**Two costs, and the element type separates them.** With `std::uint64_t` elements at a million,
+`replace()` reads 3.81 / 6.97 / 4.93 against insertion's 8.72 / 8.45 / 4.91 at 0 / 50 / 90%: the lead
+erodes from 2.3x to level and never reverses. The erosion is the dedup walk -- removing a duplicate
+pulls `back()` into the hole and hashes it one iteration before the probe that uses it, so alone
+among the elements in the walk its block arrives with no lookahead over it. The reversal is one
+`free` per duplicate removed, which only a `std::string` has to pay and which insertion never pays,
+because it never copied the duplicate anywhere.
 
-**The two effects on top of each other separate by element type.** With `std::uint64_t` elements,
-where removing a duplicate frees nothing, at a million: `replace()` 4.01 / 7.13 / 4.94 ns against
-insertion's 8.84 / 8.37 / 4.97 at 0 / 50 / 90% duplicates, and at a hundred thousand 3.64 / 6.19 /
-3.15 against 6.65 / 7.55 / 3.61. The lead erodes from 2.2x to level and **never reverses**. So the
-erosion is the walk and the reversal is the destructor.
+**A forward compaction removes the re-hash entirely, and is not a free win** (`scripts/ab/replace_forward.patch`,
+measured 2026-09-13, one header per binary). Stepping over a duplicate and moving the survivors down
+on top of it means every element is hashed exactly once with the full lookahead, and it also makes
+the result order-stable. It moves one element per element *kept* where the pull moves one per
+duplicate, so it trades:
 
-The erosion has two sources, both readable in `do_replace_pipelined`: the element pulled in from
-`back()` is hashed and then consumed by the very next iteration ("there is no distance to prefetch
-over", the comment says), so alone among the elements in the walk its block arrives uncovered; and
-the table insertion builds holds only the unique elements, so its probes stay in a smaller index.
-Neither was isolated with a control binary -- the integer run bounds their total, which is all the
-recommendation needs.
+| duplicates | 5% | 10% | 20% | 30% | 40% | 50% | 60% | 75% | 90% |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100000 elements | 0.83 | 0.84 | 0.89 | 1.02 | 1.02 | 1.10 | 1.15 | 1.24 | 1.27 |
+| 1000000 elements | 0.92 | 0.93 | 0.98 | 1.07 | 1.18 | 1.33 | 1.41 | 1.51 | 1.47 |
 
-The reversal is one `free` per duplicate removed: the move-assignment over the duplicate releases
-its buffer, and insertion pays none because it never copied the duplicate anywhere. Nine hundred
-thousand of those is 50.93 against 20.08. The crossover is therefore on both axes: at half
-duplicates `replace()` is still ahead at 100000 (22.52 against 26.71) and behind at a million (86.78
-against 59.02); at nine tenths it is behind at every size, and at a million even the version that
-copies every string twice passes it (29.14 against 50.93).
+Crossover at about 25-30% on both sizes, nothing either way at 0%, and at the top it takes a million
+strings at nine tenths duplicates from 44.2 to 29.2 and `uint64_t` from 4.93 to 3.68, which puts the
+integer case ahead of insertion at every rate measured. Destroying the leftover tail front to back
+(`erase(write, end)`) instead of `pop_back()` in a loop is worth a further 1.04x at 90% and 1.05x at
+50%, 29.2 to 28.3 and 47.5 to 45.6, but `segmented_vector` has only `pop_back` so it would be a new
+requirement on the value container.
 
-What this says and does not say: it is one machine, one compiler and one key distribution, and a
-vector of 200 byte keys would move every row, since the share of the time that is hashing goes up
-and the share that is `free` goes down. It says nothing about `map`, only about `set`, and nothing
-about a table past this size. `std::sort` is in the tables for reference and not as a rival -- it
-also sorts the result, which none of the others do. The documented recommendation in
-`doc/usage.md` is the one this supports: `replace()` when there is little to remove, the range
-constructor when there is a lot, and `extract()` either way.
+Not applied. It regresses the 5-25% band, which is the band a bulk load is most likely to be in, and
+it changes what `values()` returns afterwards from "partly reordered" to the input's own order,
+which four tests in `test/unit/replace.cpp` and `fuzz_replace_map` pin. Worth revisiting if a caller
+turns up whose input really is mostly duplicates.
 
+What this says and does not say: one machine, one compiler, one key distribution, and a vector of
+200 byte keys would move every row, since the share that is hashing goes up and the share that is
+`free` goes down. It says nothing about `map`, only about `set`. `std::sort` is in the tables for
+reference and not as a rival -- it also sorts the result.
 
 ## The robin hood index this replaced, and its dead ends
 

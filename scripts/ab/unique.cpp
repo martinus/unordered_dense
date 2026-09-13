@@ -18,6 +18,13 @@
 // it is rebuilt from a pool of the same strings before each round, outside the clock, and the
 // median round is reported rather than the mean: a rebuild that faults carries a mean.
 //
+// **Every variant releases the input inside the clock**, and getting that wrong is what the first
+// version of this file did. `replace()` takes the caller's vector and destroys the duplicates in it;
+// a variant that builds a separate set leaves the caller holding all n elements, and destroying them
+// is work the caller still has to do to reach the same state. Left outside the clock it is a free
+// per duplicate charged to one variant and to none of the others, which at nine tenths duplicates
+// was most of the difference between them.
+//
 // The keys are workloads::key_source<std::string>, 8 to 135 bytes skewed short, which is what the
 // scored benchmark uses. A fixed length would make the hash's length dispatch perfectly predicted
 // and put every key on the heap.
@@ -55,9 +62,11 @@ auto udm_replace(vec_t&& v) -> vec_t {
 }
 
 // The same set built the ordinary way: every unique string is copied once into the set's vector,
-// and extract() is what saves the copy back out.
+// and extract() is what saves the copy back out. The caller's vector is released here rather than
+// on the way out of the round, because the variants that consume it release it inside the clock.
 auto udm_insert(vec_t&& v) -> vec_t {
     auto set = ankerl::unordered_dense::set<elem_t>(v.begin(), v.end());
+    v = vec_t();
     return std::move(set).extract();
 }
 
@@ -66,7 +75,9 @@ auto udm_insert(vec_t&& v) -> vec_t {
 // and copied out of it again.
 auto boost_unique(vec_t&& v) -> vec_t {
     auto set = boost::unordered_flat_set<elem_t>(v.begin(), v.end());
-    return vec_t(set.begin(), set.end());
+    auto out = vec_t(set.begin(), set.end());
+    v = vec_t();
+    return out;
 }
 
 // The version that copies no string at all: a set of views over the caller's vector decides which
@@ -179,9 +190,15 @@ int main(int argc, char** argv) {
             times.push_back(std::chrono::duration<double, std::nano>(took).count() / static_cast<double>(n));
         }
     }
+    // The median with the spread beside it, because a single round of this workload can land 40%
+    // off: an 11 round run of the million-element cell read 86.78 once where five later runs of the
+    // same binary read 61.4 to 64.1. A median that does not say how wide its rounds were lets that
+    // through, and it did.
     std::sort(times.begin(), times.end());
-    std::printf("%8.2f ns/element  %-12s n=%-8zu dup=%-3zu%% unique=%-8zu checksum=%016llx\n",
+    std::printf("%8.2f ns/element  [%7.2f %7.2f]  %-12s n=%-8zu dup=%-3zu%% unique=%-8zu checksum=%016llx\n",
                 times[times.size() / 2],
+                times.front(),
+                times.back(),
                 how.c_str(),
                 n,
                 dup_pct,
