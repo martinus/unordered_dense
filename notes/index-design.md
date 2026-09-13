@@ -197,6 +197,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Windows had never been measured at all
 - The one outlier chased down, and it is the CPU rather than the code
 - NEON closed the ARM lookup gap, and it was the whole gap
+- `replace()` + `extract()` as the way to unique a vector, and the duplicate rate that turns it over
 - Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way
 - lookups are behind main
 - `ie64` ties boost while executing 58% more instructions, and the counts say why
@@ -4789,6 +4790,82 @@ The same numbers say where the tie ends: on a table that does not fit in cache, 
 no coin flip, the memory chain dominates and boost's shorter one shows -- that is the 11% on
 lookups. And nothing here is spare on the instruction side: a change that lengthens the dependent
 chain costs at once, a change that only saves instructions on this workload is invisible.
+
+**`replace()` + `extract()` as the way to unique a vector, and the duplicate rate that turns it
+over** (2026-09-13, `scripts/ab/unique.cpp`, also built `-DUDM_UNIQUE_U64`, Ryzen 9 7950X, clang 22,
+string keys 8 to 135 bytes skewed short, median round after a warmup round, `taskset -c 2`).
+
+Taking the duplicates out of a `std::vector<std::string>` is the job a dense set's storage is
+already shaped for: `set.replace(std::move(v))` makes the caller's vector the set's own, and
+`std::move(set).extract()` hands it back, so no string is copied and none is allocated. The question
+was how far ahead that is of what a caller writes with a set that is not dense, and where it stops
+being ahead. Five variants, all checked against the same order-independent checksum and the same
+unique count: `replace()` + `extract()`, the same set built from the range and then extracted,
+`boost::unordered_flat_set<std::string>` copied out into a fresh vector, a
+`boost::unordered_flat_set<std::string_view>` over the caller's vector with the compaction done
+afterwards (it has to be afterwards -- moving an element invalidates the view the set is holding),
+and `std::sort` + `std::unique`.
+
+Nanoseconds per element of the input vector, no duplicates:
+
+| | 1000 | 10000 | 100000 | 1000000 |
+|---|---:|---:|---:|---:|
+| `replace()` + `extract()` | 5.17 | 7.10 | 8.84 | 9.94 |
+| `set(first, last)` + `extract()` | 22.01 | 34.14 | 32.49 | 40.07 |
+| boost, copied out | 58.09 | 80.62 | 83.61 | 257.36 |
+| boost set of views, compacted after | 9.29 | 16.38 | 17.97 | 33.32 |
+| `std::sort` + `std::unique` | 44.12 | 123.73 | 147.44 | 232.27 |
+
+So 9.5x to 26x over the version a caller actually writes, and 2x to 3.4x over the hand-written one
+that copies no string either. The million-element column repeated twice more at 10.10 and 10.21
+against 31.02 and 31.46, so the 3.35x there is about 3.1x. Insertion into the same set is 3.7x to
+4.8x behind `replace()` and all of that gap is one string copy per unique element, which is the
+clearest single statement of what the dense layout is worth: it is not the index, it is not having
+to own a second copy of the element.
+
+The duplicate rate reverses it. At a million elements, ns per input element:
+
+| | 0% | 50% | 90% |
+|---|---:|---:|---:|
+| `replace()` + `extract()` | 9.94 | 86.78 | 50.93 |
+| `set(first, last)` + `extract()` | 40.07 | 59.02 | 20.08 |
+| boost, copied out | 257.36 | 153.28 | 29.14 |
+| boost set of views, compacted after | 33.32 | 64.15 | 50.76 |
+| `std::sort` + `std::unique` | 232.27 | 273.89 | 283.17 |
+
+Both loops hash ahead of where they place, so the ring is not the difference. What differs is that
+`replace()` owns the vector and has to take the duplicate out of it -- `*read = std::move(back());
+pop_back()` -- where the range insert is handed a range it does not own and a duplicate costs it a
+probe and nothing else.
+
+**The two effects on top of each other separate by element type.** With `std::uint64_t` elements,
+where removing a duplicate frees nothing, at a million: `replace()` 4.01 / 7.13 / 4.94 ns against
+insertion's 8.84 / 8.37 / 4.97 at 0 / 50 / 90% duplicates, and at a hundred thousand 3.64 / 6.19 /
+3.15 against 6.65 / 7.55 / 3.61. The lead erodes from 2.2x to level and **never reverses**. So the
+erosion is the walk and the reversal is the destructor.
+
+The erosion has two sources, both readable in `do_replace_pipelined`: the element pulled in from
+`back()` is hashed and then consumed by the very next iteration ("there is no distance to prefetch
+over", the comment says), so alone among the elements in the walk its block arrives uncovered; and
+the table insertion builds holds only the unique elements, so its probes stay in a smaller index.
+Neither was isolated with a control binary -- the integer run bounds their total, which is all the
+recommendation needs.
+
+The reversal is one `free` per duplicate removed: the move-assignment over the duplicate releases
+its buffer, and insertion pays none because it never copied the duplicate anywhere. Nine hundred
+thousand of those is 50.93 against 20.08. The crossover is therefore on both axes: at half
+duplicates `replace()` is still ahead at 100000 (22.52 against 26.71) and behind at a million (86.78
+against 59.02); at nine tenths it is behind at every size, and at a million even the version that
+copies every string twice passes it (29.14 against 50.93).
+
+What this says and does not say: it is one machine, one compiler and one key distribution, and a
+vector of 200 byte keys would move every row, since the share of the time that is hashing goes up
+and the share that is `free` goes down. It says nothing about `map`, only about `set`, and nothing
+about a table past this size. `std::sort` is in the tables for reference and not as a rival -- it
+also sorts the result, which none of the others do. The documented recommendation in
+`doc/usage.md` is the one this supports: `replace()` when there is little to remove, the range
+constructor when there is a lot, and `extract()` either way.
+
 
 ## The robin hood index this replaced, and its dead ends
 
