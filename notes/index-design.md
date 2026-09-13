@@ -4819,36 +4819,60 @@ what state each contestant ends in.
 to 64.1, and a rebuild of the *old* binary read 61.0 to 62.3, so it was neither the build nor a real
 effect. The harness now prints the min and max beside the median, which is what would have caught it.
 
-Nanoseconds per element of the input vector, no duplicates:
+**The range constructor wants a `std::make_move_iterator` pair, and that is worth 1.4x to 2.4x.**
+The range insert probes before it constructs anything, so a key already present is skipped with the
+element never touched: only the kept elements are moved out of the caller's range and the duplicates
+are left intact. With `extract()` on the way out that is a unique with no string copy anywhere.
+Range constructor, no duplicates, ns per element: 40.20 to 23.57 at a hundred thousand and 70.64 to
+49.83 at a million for keys of 8 to 135 bytes, 48.07 to 25.39 and 141.32 to 59.44 for keys of 200
+bytes and up. It grows with the key because below the small string buffer a move is a copy. Not
+symmetric: a set's elements are `const`, so the way *out* of one that is not dense stays a copy
+whatever the caller writes, which is the thing `extract()` is for.
+
+Nanoseconds per element of the input vector, no duplicates, one run:
 
 | | 1000 | 10000 | 100000 | 1000000 |
 |---|---:|---:|---:|---:|
-| `replace()` + `extract()` | 4.98 | 6.56 | 8.73 | 9.74 |
-| `set(first, last)` + `extract()` | 27.82 | 42.49 | 40.58 | 70.46 |
-| boost, copied out | 58.38 | 88.25 | 87.45 | 265.27 |
-| boost set of views, compacted after | 9.16 | 14.52 | 16.87 | 29.49 |
-| `std::sort` + `std::unique` | 45.28 | 115.71 | 147.28 | 224.60 |
+| `replace()` + `extract()` | 4.97 | 6.48 | 8.62 | 9.73 |
+| range constructor (moved) + `extract()` | 14.82 | 23.68 | 23.57 | 49.83 |
+| boost, copied out | 58.23 | 89.16 | 88.15 | 264.32 |
+| boost set of views, compacted after | 10.72 | 15.91 | 18.10 | 28.83 |
+| `std::sort` + `std::unique` | 44.90 | 115.12 | 146.80 | 222.62 |
 
-So 10x to 27x over the version a caller actually writes, 1.8x to 3.0x over the hand-written one that
-copies no string either, and 4.7x to 7.2x over building the same set by insertion.
+So 10x to 27x over the version a caller writes with a set that is not dense, 2.1x to 3.0x over the
+hand-written one that copies no string either, and 2.7x to 5.1x over the range constructor. Neither
+of the top two rows copies a string, so what is left between them is the container: `replace()` is
+handed a vector already the right size, the range constructor doubles its own and moves everything
+it holds at each step.
 
 The duplicate rate narrows it. At a million elements, ns per input element:
 
 | | 0% | 50% | 90% |
 |---|---:|---:|---:|
-| `replace()` + `extract()` | 9.74 | 62.29 | 43.78 |
-| `set(first, last)` + `extract()` | 70.46 | 60.89 | 27.87 |
-| boost, copied out | 265.27 | 135.93 | 38.55 |
-| boost set of views, compacted after | 29.49 | 59.55 | 40.59 |
-| `std::sort` + `std::unique` | 224.60 | 257.74 | 269.67 |
+| `replace()` + `extract()` | 9.73 | 61.57 | 43.84 |
+| range constructor (moved) + `extract()` | 49.83 | 54.36 | 28.60 |
+| boost, copied out | 264.32 | 133.59 | 38.26 |
+| boost set of views, compacted after | 28.83 | 59.44 | 42.77 |
+| `std::sort` + `std::unique` | 222.62 | 256.39 | 267.38 |
 
-**Two costs, and the element type separates them.** With `std::uint64_t` elements at a million,
-`replace()` reads 3.81 / 6.97 / 4.93 against insertion's 8.72 / 8.45 / 4.91 at 0 / 50 / 90%: the lead
-erodes from 2.3x to level and never reverses. The erosion is the dedup walk -- removing a duplicate
-pulls `back()` into the hole and hashes it one iteration before the probe that uses it, so alone
-among the elements in the walk its block arrives with no lookahead over it. The reversal is one
-`free` per duplicate removed, which only a `std::string` has to pay and which insertion never pays,
-because it never copied the duplicate anywhere.
+Across sizes at half duplicates `replace()` reads 10.41 / 16.36 / 24.07 / 61.57 against the moved
+range constructor's 14.83 / 26.71 / 27.16 / 54.36, so it is ahead to a hundred thousand and behind at
+a million; at nine tenths, 15.86 / 20.00 / 27.50 / 43.84 against 14.10 / 21.32 / 23.79 / 28.60.
+
+**Retracted, 2026-09-13, same day it was written: "insertion pays no `free` for a duplicate, because
+it never copied it anywhere."** That was the explanation given here for the turn-over and it does not
+survive the harness's own accounting. Both versions release every duplicate -- `replace()` as it
+walks, the range constructor when the caller's vector goes -- and the corrected harness charges both
+for it. What is left is *when*: `replace()` releases them inside a walk whose probes go to random
+addresses, the range constructor afterwards in one sequential sweep with nothing to interleave with.
+That is a reading of the numbers and not something measured directly, and it is written here as one.
+
+**The erosion is the dedup walk, and the element type shows it on its own.** With `std::uint64_t`
+elements at a million, `replace()` reads 3.81 / 6.97 / 4.93 against insertion's 8.72 / 8.45 / 4.91 at
+0 / 50 / 90%: the lead erodes from 2.3x to level and never reverses. Removing a duplicate pulls
+`back()` into the hole and hashes it one iteration before the probe that uses it, so alone among the
+elements in the walk its block arrives with no lookahead over it, and a duplicate-heavy input is
+mostly made of those.
 
 **A forward compaction removes the re-hash entirely, and is not a free win** (`scripts/ab/replace_forward.patch`,
 measured 2026-09-13, one header per binary). Stepping over a duplicate and moving the survivors down
