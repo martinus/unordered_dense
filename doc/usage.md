@@ -27,6 +27,7 @@ shapes `ankerl::unordered_dense::map` and `set` can be asked to take. The index 
   - [`auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#auto-visitfwdit-first-fwdit-last-f-f---size_t)
   - [`void merge(map& source)`](#void-mergemap-source)
 - [Taking the duplicates out of a vector](#taking-the-duplicates-out-of-a-vector)
+- [`std::erase_if`, and the version macros](#stderase_if-and-the-version-macros)
 - [Custom Container Types](#custom-container-types)
 - [`segmented_map` and `segmented_set`](#segmented_map-and-segmented_set)
 - [Custom Bucket Types](#custom-bucket-types)
@@ -250,7 +251,14 @@ In addition to the standard `std::unordered_map` API (see https://en.cppreferenc
 
 Updates the key of an element in-place without changing its position in the underlying container. This operation maintains iterator and reference stability - all existing iterators and references remain valid after the update.
 
-Note that this can also be used as an optimization for `unordered_dense::set` when you want to `erase` one element and then `insert` a new element, this should be quite a bit faster.
+```cpp
+auto map = ankerl::unordered_dense::map<std::string, int>{{"old", 1}};
+auto it = map.find("old");
+auto const& [pos, replaced] = map.replace_key(it, "new");
+// replaced is true, pos->first is "new", pos->second is still 1, and pos == it
+```
+
+`replaced` is `false` when the new key is already in the map, and then nothing happens. Note that this can also be used as an optimization for `unordered_dense::set` when you want to `erase` one element and then `insert` a new element, this should be quite a bit faster.
 
 ### `auto extract() && -> value_container_type`
 
@@ -263,6 +271,13 @@ Similar to `erase()`, there is an API call `extract()`. It behaves exactly the s
 * `auto extract(const_iterator it) -> value_type`
 * `auto extract(Key const& key) -> std::optional<value_type>`
 * `template <class K> auto extract(K&& key) -> std::optional<value_type>`
+
+```cpp
+auto map = ankerl::unordered_dense::map<std::string, int>{{"a", 1}};
+if (auto taken = map.extract("a")) {
+    // taken->first is "a", taken->second is 1, and the map no longer has it
+}
+```
 
 Note that the `extract(key)` API returns an `std::optional<value_type>` that is empty when the key is not found.
 
@@ -323,39 +338,61 @@ Only lookups take a precomputed hash, and insertion never will: a lookup given t
 Looks up a whole range of keys, calls `f` on each one that is there, and returns how many that was.
 
 ```cpp
-auto const keys = std::vector<std::string>{"alpha", "beta", "gamma"};
-auto total = 0;
-auto found = map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += kv.second; });
+auto total_of(ankerl::unordered_dense::map<std::string, std::size_t> const& map,
+              std::vector<std::string> const& keys) -> std::size_t {
+    auto total = std::size_t{0};
+    map.visit(keys.begin(), keys.end(), [&](auto const& kv) { total += kv.second; });
+    return total;
+}
 ```
 
-`f` receives `value_type&`, or `value_type const&` on a `const` map, so a visit can modify what it finds. Keys that are absent are not reported; the count says how many were there.
+`f` receives `value_type&`, or `value_type const&` on a `const` map, so a visit can modify what it
+finds. Keys that are absent are not reported; the count says how many were there.
 
-**Why it is faster than the same loop of `find()`.** A lookup on a table past the cache is two dependent memory accesses -- the group's block, and then the value the slot points at -- and a loop doing one lookup at a time can only overlap them as far as the processor's own reordering reaches past a whole loop body. `visit` works a chunk at a time in three passes: every key's block is asked for, then the fingerprints are matched once the blocks have arrived, then the keys are compared. Every block in the chunk is in flight at once.
+**Why it is faster than the same loop of `find()`.** A lookup on a table past the cache is two
+dependent memory accesses, the group's block and then the value the slot points at, and a loop doing
+one lookup at a time can only overlap them as far as the processor's own reordering reaches past a
+whole loop body. `visit` works a chunk at a time in three passes: every key's block is asked for,
+then the fingerprints are matched once the blocks have arrived, then the keys are compared. Every
+block in the chunk is in flight at once.
 
-`map<uint64_t, size_t>`, clang 22 on a 7950X, ns per lookup, against the same batch looked up one key at a time:
+`map<uint64_t, size_t>`, `scripts/ab/bulk_visit.cpp`, clang 22 on a Ryzen 9 7950X, ns per lookup,
+against the same batch looked up one key at a time:
 
-| entries | | one at a time | `visit` | |
-| ------: | :--- | ----: | ----: | ---: |
-| 4 000 000 | all hits | 34.0 | 26.3 | 1.29x |
-| 4 000 000 | half hits | 34.4 | 28.4 | 1.21x |
-| 16 000 000 | all hits | 36.5 | 30.4 | 1.20x |
-| 16 000 000 | half hits | 37.3 | 31.5 | 1.18x |
+| entries | one at a time | `visit` | | half missing | `visit` | |
+| ------: | ----: | ----: | ---: | ----: | ----: | ---: |
+| 1 000 | 3.95 | 4.43 | 0.89x | 8.16 | 6.83 | 1.19x |
+| 10 000 | 4.44 | 4.63 | 0.96x | 8.82 | 7.16 | 1.23x |
+| 100 000 | 7.13 | 6.55 | 1.09x | 11.44 | 9.40 | 1.22x |
+| 1 000 000 | 18.41 | 15.35 | 1.20x | 23.03 | 20.10 | 1.15x |
+| 4 000 000 | 38.10 | 25.46 | **1.50x** | 34.80 | 28.01 | 1.24x |
+| 16 000 000 | 36.49 | 29.03 | 1.26x | 37.35 | 30.68 | 1.22x |
 
-**It needs a table past the cache to be worth anything**, like every other memory-level trick here: on a map that fits in L2 there is nothing to overlap and the extra passes are a small loss.
+**On a table that fits in cache it only pays when the lookups miss.** With every key present it is a
+small loss below ten thousand entries, since there is nothing to overlap and the extra passes are
+not free. With half the keys missing it is 1.15x to 1.23x at every size measured, cache-resident
+ones included, because a miss that the chunk absorbs is a branch the one-at-a-time loop mispredicts.
 
-**And the batching itself matters more than `visit` does.** If the keys are being fetched from somewhere in the same loop that looks them up -- a random index into another array, say -- then the key's own cache miss sits in front of the map's and neither overlaps with anything. Collecting the keys first and looking them up afterwards is worth **1.5x** at four million entries before `visit` is involved at all:
+**And the batching itself matters more than `visit` does.** If the keys are being fetched from
+somewhere in the same loop that looks them up, a random index into another array say, then the key's
+own cache miss sits in front of the map's and neither overlaps with anything. Collecting the keys
+first and looking them up afterwards is worth 1.30x to 1.55x past a million entries before `visit`
+is involved at all:
 
 ```cpp
-for (size_t i = 0; i < n; ++i) {              // 51 ns per lookup
+for (size_t i = 0; i < n; ++i) {              // 50.3 ns per lookup at 4M entries
     auto it = map.find(keys[indices[i]]);
 }
 
-std::vector<key_type> batch;                  // 33 ns per lookup
+std::vector<key_type> batch;                  // 38.1 ns per lookup
 for (size_t i = 0; i < n; ++i) { batch.push_back(keys[indices[i]]); }
 for (auto const& k : batch) { auto it = map.find(k); }
 ```
 
-That is a property of loops and memory parallelism rather than of this map, and it is the larger of the two effects. `visit` is what is left on top once the loop is already shaped that way.
+That is a property of loops and memory parallelism rather than of this map, and it is the larger of
+the two effects. `visit` is what is left on top once the loop is already shaped that way, and the two
+together take that 4 million entry lookup from 50.3 ns to 25.5, which is **1.97x**.
+
 
 ### `void merge(map& source)`
 
@@ -435,6 +472,28 @@ elements are `const`, so every unique string is copied out of it on the way back
 `boost::unordered_flat_set` filled and copied into a fresh vector costs 10x to 27x the `replace()`
 version here.
 
+
+## `std::erase_if`, and the version macros
+
+`std::erase_if` is specialized for the map and the set, so the C++20 spelling for erasing by a
+predicate works and erases in one pass rather than one lookup per element:
+
+```cpp
+auto erased = std::erase_if(map, [](auto const& kv) { return kv.second < 0; });
+```
+
+The header's version is three macros, which is what to test against when a feature here is newer
+than the copy someone else has:
+
+```cpp
+#if ANKERL_UNORDERED_DENSE_VERSION_MAJOR >= 5
+// hash_for(), visit() and merge() exist
+#endif
+```
+
+They are `ANKERL_UNORDERED_DENSE_VERSION_MAJOR`, `_MINOR` and `_PATCH`, and they are also what the
+inline namespace is built from, so two versions of this header in one binary do not silently share
+types.
 
 ## Custom Container Types
 
