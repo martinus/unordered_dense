@@ -395,6 +395,25 @@ auto unique(std::vector<std::string>&& v) -> std::vector<std::string> {
 No string is copied, none is allocated, and none is even moved except the ones that close the gaps
 the duplicates leave. The only allocation in the whole function is the set's index.
 
+Building the set from the range instead is the other way, and `extract()` is what makes it worth
+writing: the set is filled the ordinary way, and the result still comes out without a second copy.
+
+```cpp
+auto unique_by_insertion(std::vector<std::string>&& v) -> std::vector<std::string> {
+    auto set = ankerl::unordered_dense::set<std::string>(v.begin(), v.end());
+    return std::move(set).extract();  // the set's own vector, handed over rather than copied
+}
+```
+
+This one copies every unique string once, into the set's storage, and it leaves the caller's vector
+alone: all n strings are still there to be destroyed afterwards. That is work either way, so the
+measurements below charge every version for it.
+
+Which of the two to reach for is the duplicate rate, and the answer is in the second table further
+down. `replace()` is 4.7x to 7.2x faster when there is nothing to remove, still 1.5x to 2.1x at half
+duplicates up to a hundred thousand elements, and behind only when nine tenths of the input is
+duplicates.
+
 A set that is not dense keeps its elements in its own storage, so every unique string is copied into
 it and copied out of it again:
 
