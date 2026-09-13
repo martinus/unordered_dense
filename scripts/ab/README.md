@@ -887,6 +887,17 @@ meaning for integers and is not built.
 
 The input vector is consumed by every variant, so it is rebuilt from a pool of the same strings
 before each round, outside the clock, and the median round is reported with round zero dropped as
-the warmup: a rebuild that faults carries a mean. Sweep both axes. The size axis and the duplicate
-rate disagree about which variant wins, and a single cell is not an answer -- the numbers and what
-they decided are in `notes/index-design.md` under "the duplicate rate that turns it over".
+the warmup: a rebuild that faults carries a mean. **Every variant releases the input inside the
+clock**, which the first version of this file got wrong: a variant that builds a separate set leaves
+the caller holding all n elements, and destroying them is work the caller still has to do. Left
+outside the clock it charges one variant a free per element and the others none, and it reversed a
+column.
+
+Use 31 rounds or more and read the `[min max]` the line prints beside the median. Eleven rounds read
+86.78 ns for one cell that five later runs of the same binary put at 61.4 to 64.1, and a median with
+no spread beside it let that through.
+
+Sweep both axes. The size axis and the duplicate rate disagree about which variant wins, and a
+single cell is not an answer -- the numbers and what they decided are in `notes/index-design.md`
+under "the duplicate rate that turns it over". `scripts/ab/replace_forward.patch` is the dedup walk
+rewritten as a forward compaction, measured there and not applied.
