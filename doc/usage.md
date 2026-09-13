@@ -7,6 +7,36 @@ way. This page is about the rest: the hash, the API a vector of values makes pos
 shapes `ankerl::unordered_dense::map` and `set` can be asked to take. The index itself is in
 [Design](design.md).
 
+- [Modules](#modules)
+- [Hash](#hash)
+  - [Simple Hash](#simple-hash)
+  - [High Quality Hash](#high-quality-hash)
+  - [Specialize `ankerl::unordered_dense::hash`](#specialize-ankerlunordered_densehash)
+  - [Heterogeneous Overloads using `is_transparent`](#heterogeneous-overloads-using-is_transparent)
+  - [Automatic Fallback to `std::hash`](#automatic-fallback-to-stdhash)
+  - [Hash the Whole Memory](#hash-the-whole-memory)
+  - [Marking a Hash Avalanching From Outside](#marking-a-hash-avalanching-from-outside)
+  - [Requiring an Avalanching Hash](#requiring-an-avalanching-hash)
+- [Container API](#container-api)
+  - [`auto replace_key(iterator it, K&& new_key) -> std::pair<iterator, bool>`](#auto-replace_keyiterator-it-k-new_key---stdpairiterator-bool)
+  - [`auto extract() && -> value_container_type`](#auto-extract---value_container_type)
+  - [`extract()` Single Elements](#extract-single-elements)
+  - [`[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#nodiscard-auto-values-const-noexcept---value_container_type-const)
+  - [`auto replace(value_container_type&& container)`](#auto-replacevalue_container_type-container)
+  - [`auto hash_for(K const& key) const -> precomputed_hash`](#auto-hash_fork-const-key-const---precomputed_hash)
+  - [`auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#auto-visitfwdit-first-fwdit-last-f-f---size_t)
+  - [`void merge(map& source)`](#void-mergemap-source)
+- [Taking the duplicates out of a vector](#taking-the-duplicates-out-of-a-vector)
+- [Custom Container Types](#custom-container-types)
+- [`segmented_map` and `segmented_set`](#segmented_map-and-segmented_set)
+- [Custom Bucket Types](#custom-bucket-types)
+  - [`ankerl::unordered_dense::bucket_type::group`](#ankerlunordered_densebucket_typegroup)
+  - [`ankerl::unordered_dense::bucket_type::group_big`](#ankerlunordered_densebucket_typegroup_big)
+- [Disabling the Vector Probe](#disabling-the-vector-probe)
+- [LLDB Data Formatters](#lldb-data-formatters)
+- [Huge Pages](#huge-pages)
+  - [Sizing a segment for a huge page](#sizing-a-segment-for-a-huge-page)
+
 ## Modules
 
 `ankerl::unordered_dense` supports c++20 modules. Simply compile `src/ankerl.unordered_dense.cpp` and use the resulting module, e.g. like so:
@@ -347,6 +377,113 @@ Two things differ from `std::unordered_map::merge`, and both follow from the ele
 `a.merge(a)` has no effect. If an operation throws -- a hash, a key comparison, or an element's move -- both containers are left valid and usable, `source` keeps everything not yet taken, and the one element that was being moved at the time may be lost.
 
 `merge` is worth using over the loop it replaces: about **2x** when the two maps mostly do not overlap, which is what a merge is usually for.
+
+## Taking the duplicates out of a vector
+
+A `std::vector<std::string>` with repeats in it, and you want each string once. A dense set keeps
+its elements in exactly such a vector, so it can take the caller's, drop the duplicates in place,
+and hand it back:
+
+```cpp
+auto unique(std::vector<std::string>&& v) -> std::vector<std::string> {
+    auto set = ankerl::unordered_dense::set<std::string>();
+    set.replace(std::move(v));        // the set's storage is now the caller's vector
+    return std::move(set).extract();  // and the caller gets it back
+}
+```
+
+No string is copied, none is allocated, and none is even moved except the ones that close the gaps
+the duplicates leave. The only allocation in the whole function is the set's index.
+
+A set that is not dense keeps its elements in its own storage, so every unique string is copied into
+it and copied out of it again:
+
+```cpp
+auto unique_boost(std::vector<std::string>&& v) -> std::vector<std::string> {
+    auto set = boost::unordered_flat_set<std::string>(v.begin(), v.end());
+    return std::vector<std::string>(set.begin(), set.end());
+}
+```
+
+The copies are avoidable by hand, with a set of `std::string_view` over the caller's vector and a
+compaction afterwards. The compaction has to come afterwards: moving an element invalidates the view
+of it the set is holding.
+
+```cpp
+auto unique_views(std::vector<std::string>&& v) -> std::vector<std::string> {
+    auto seen = boost::unordered_flat_set<std::string_view>();
+    seen.reserve(v.size());
+    auto keep = std::vector<std::uint32_t>();
+    for (std::uint32_t i = 0; i < v.size(); ++i) {
+        if (seen.insert(std::string_view(v[i])).second) {
+            keep.push_back(i);
+        }
+    }
+    for (std::uint32_t j = 0; j < keep.size(); ++j) {
+        if (keep[j] != j) {
+            v[j] = std::move(v[keep[j]]);
+        }
+    }
+    v.resize(keep.size());
+    return std::move(v);
+}
+```
+
+Nanoseconds per element of the input vector, with no duplicates in it, `scripts/ab/unique.cpp`,
+clang 22 on a Ryzen 9 7950X, keys 8 to 135 bytes skewed short, median round after a warmup round:
+
+| ns per input element | 1000 | 10000 | 100000 | 1000000 |
+|---|---:|---:|---:|---:|
+| `replace()` + `extract()` | **5.17** | **7.10** | **8.84** | **9.94** |
+| `set(first, last)` + `extract()` | 22.01 | 34.14 | 32.49 | 40.07 |
+| `boost::unordered_flat_set`, copied out | 58.09 | 80.62 | 83.61 | 257.36 |
+| `boost` set of views, then compacted | 9.29 | 16.38 | 17.97 | 33.32 |
+| `std::sort` + `std::unique` | 44.12 | 123.73 | 147.44 | 232.27 |
+
+That is roughly 2x to 3x over the hand-written version that copies nothing either, and 9.5x to 26x
+over the version a caller actually writes. Building the same set by insertion instead, which still
+saves the copy back out, is 3.7x to 4.8x behind `replace()`, and all of that difference is the string
+copy into the set's own vector. The million-element column is the one worth repeating, and it does:
+two further runs read 10.10 and 10.21 for `replace()` against 31.02 and 31.46 for the views.
+
+Unfortunately the picture turns over once most of the input is duplicates, and it turns over
+against `replace()`. At one million elements:
+
+| ns per input element | no duplicates | half duplicates | nine tenths duplicates |
+|---|---:|---:|---:|
+| `replace()` + `extract()` | **9.94** | 86.78 | 50.93 |
+| `set(first, last)` + `extract()` | 40.07 | **59.02** | **20.08** |
+| `boost::unordered_flat_set`, copied out | 257.36 | 153.28 | 29.14 |
+| `boost` set of views, then compacted | 33.32 | 64.15 | 50.76 |
+| `std::sort` + `std::unique` | 232.27 | 273.89 | 283.17 |
+
+Both loops hash ahead of where they place, so the pipeline is not what differs. What differs is what
+a duplicate costs. `replace()` is handed the caller's whole vector, so it has to take the duplicate
+*out* of it: it moves the last element into the hole and pops the back. Insertion is handed a range
+it does not own, so a duplicate costs it a probe and nothing else.
+
+That is two effects on top of each other, and swapping `std::string` for `std::uint64_t` separates
+them. With `uint64_t` elements at a million, `replace()` reads 4.01 / 7.13 / 4.94 ns against
+insertion's 8.84 / 8.37 / 4.97 at no, half and nine tenths duplicates: the lead shrinks from 2.2x to
+level, and it never turns over. Two things shrink it. The element moved in from the back has to be
+hashed, and it is read by the very next iteration, so alone among the elements in the walk its block
+arrives with no lookahead to cover the miss. And the table insertion builds holds only the unique
+elements, so its probes stay in a smaller index.
+
+The turn-over is the `std::string` destructor on top of that. Moving the last element over a
+duplicate releases the duplicate's own buffer, so `replace()` pays one `free` per duplicate removed
+where insertion pays none: it never copied the duplicate anywhere to begin with. Nine hundred
+thousand of those is what puts 50.93 against 20.08.
+
+So the rule is the duplicate rate. With half the input duplicated `replace()` is still ahead at a
+hundred thousand elements, 22.52 against 26.71, and behind at a million, 86.78 against 59.02. With
+nine tenths duplicated it is behind at every size measured, and at a million even the version that
+copies every string twice passes it, 29.14 against 50.93. Either way `extract()` is what saves the
+copy back out, so a set built from the range is still worth having over a set that is not dense.
+
+What this does not say: it is one machine, one compiler and one key distribution, the strings here
+are 8 to 135 bytes and a vector of 200 byte keys would move every row, and `std::sort` is in the
+table for reference rather than as a rival, since it also sorts the result.
 
 ## Custom Container Types
 
