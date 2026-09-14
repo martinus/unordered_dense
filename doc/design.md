@@ -9,6 +9,14 @@ The map/set has two data structures:
 * `std::vector<value_type>` which holds all data. map/set iterators are just `std::vector<value_type>::iterator`!
 * An indexing structure, which is a flat array of blocks. Each block is one group of sixteen slots: their fingerprints, the group's overflow counters, and the sixteen value indices, all in the same 88 bytes.
 
+![The 88 byte block: sixteen fingerprints, eight overflow counters, sixteen value indices, and the values vector they point into](group-block.svg)
+
+This index is one of eighteen taken apart in
+[The Index Structures of Fast C++ Hash Maps](https://martin.ankerl.com/2026/09/09/hash-map-index-structures/),
+which compares it against SwissTable, boost, F14, emhash8, emilib, indivi, Verstable and ihtab on
+the same workloads and the same machine. [The group index](https://martin.ankerl.com/2026/09/09/hash-map-index-structures/#group-index)
+is the chapter on this one, and the figure above is from it.
+
 ## Inserts
 
 Whenever an element is added, it is `emplace_back`ed to the vector. The key is hashed, and the index
