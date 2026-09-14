@@ -55,7 +55,7 @@ namespace {
 
 } // namespace
 
-// One length per branch of wyhash::hash and both sides of every boundary it switches on: 3/4 (the
+// One length per branch of hash_bytes and both sides of every boundary it switches on: 3/4 (the
 // 3-byte read), 7/8 (the 4-byte pair), 16/17 (the 8-byte pair vs the blocks), every 16 byte step
 // of the independent block range (32/33 ... 128/129), 144/145 (the blocks vs the chained lanes)
 // and 192/193 (the six-lane loop). A mutated bound moves one of these onto the wrong branch.
@@ -101,7 +101,7 @@ TEST_CASE("wyhash_golden_values_by_length") {
         auto const len = entry.first;
         auto const want = entry.second;
         INFO("length ", len);
-        REQUIRE(ankerl::unordered_dense::detail::wyhash::hash(data.data(), len) == want);
+        REQUIRE(ankerl::unordered_dense::detail::hash_bytes(data.data(), len) == want);
     }
 }
 
@@ -118,8 +118,8 @@ TEST_CASE("wyhash_reads_only_the_bytes_it_was_given") {
         // The same prefix inside a larger buffer, and inside one sized exactly to it. A read that
         // runs past the end is the same value in the first and something else in the second.
         auto const exact = std::vector<std::uint8_t>(data.begin(), data.begin() + static_cast<long>(len));
-        REQUIRE(ankerl::unordered_dense::detail::wyhash::hash(data.data(), len) ==
-                ankerl::unordered_dense::detail::wyhash::hash(exact.data(), len));
+        REQUIRE(ankerl::unordered_dense::detail::hash_bytes(data.data(), len) ==
+                ankerl::unordered_dense::detail::hash_bytes(exact.data(), len));
     }
 }
 
@@ -137,7 +137,7 @@ TEST_CASE("wyhash_golden_values_for_the_integer_overload") {
         auto const input = entry.first;
         auto const want = entry.second;
         INFO("input ", input);
-        REQUIRE(ankerl::unordered_dense::detail::wyhash::hash(input) == want);
+        REQUIRE(ankerl::unordered_dense::detail::hash_int(input) == want);
     }
 }
 

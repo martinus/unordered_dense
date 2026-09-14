@@ -170,7 +170,7 @@ TEST_CASE("the_member_typedef_may_be_spelled_the_way_boost_asks") {
     // And it decides what the table does, not just what the trait reports.
     REQUIRE(finalized<boost_style_yes>(7) == 7);
     REQUIRE(finalized<home_grown_marker>(7) == 7);
-    REQUIRE(finalized<boost_style_no>(7) == ankerl::unordered_dense::detail::wyhash::hash(7));
+    REQUIRE(finalized<boost_style_no>(7) == ankerl::unordered_dense::detail::hash_int(7));
 }
 
 // Part one of the issue: specializing std::hash rather than moving the hash into ankerl's namespace
@@ -206,14 +206,14 @@ TEST_CASE("saying_a_hash_is_avalanching_from_outside_stops_the_mixing") {
     REQUIRE(ankerl::unordered_dense::hash_is_avalanching_v<quiet_but_good_hash>);
 
     REQUIRE(finalized<quiet_but_good_hash>(7) == 7);
-    REQUIRE(finalized<quiet_hash>(7) == ankerl::unordered_dense::detail::wyhash::hash(7));
+    REQUIRE(finalized<quiet_hash>(7) == ankerl::unordered_dense::detail::hash_int(7));
     REQUIRE(finalized<quiet_hash>(7) != 7);
 }
 
 // And the other direction: a hash that claims to be good can be overruled.
 TEST_CASE("saying_a_hash_is_not_avalanching_from_outside_starts_the_mixing") {
     REQUIRE_FALSE(ankerl::unordered_dense::hash_is_avalanching_v<boastful_hash>);
-    REQUIRE(finalized<boastful_hash>(7) == ankerl::unordered_dense::detail::wyhash::hash(7));
+    REQUIRE(finalized<boastful_hash>(7) == ankerl::unordered_dense::detail::hash_int(7));
 }
 
 // The third thing mixed_hash can do, and the one nothing was asking for. An avalanching hash that
@@ -225,7 +225,7 @@ namespace {} // namespace
 
 TEST_CASE("a_narrow_avalanching_hash_is_spread_into_the_high_bits") {
     // Not wyhash -- it said it avalanches and is believed.
-    REQUIRE(finalized<test::narrow_avalanching_hash>(7) != ankerl::unordered_dense::detail::wyhash::hash(7));
+    REQUIRE(finalized<test::narrow_avalanching_hash>(7) != ankerl::unordered_dense::detail::hash_int(7));
 
     // ... but not used as it is either, which is what the third branch is for.
     auto const raw = static_cast<uint64_t>(test::narrow_avalanching_hash{}(7));
@@ -322,7 +322,7 @@ TEST_CASE("require_avalanching_can_be_given_a_hash_to_copy") {
         uint64_t m_seed{};
 
         [[nodiscard]] auto operator()(int x) const noexcept -> uint64_t {
-            return ankerl::unordered_dense::detail::wyhash::hash(static_cast<uint64_t>(x) + m_seed);
+            return ankerl::unordered_dense::detail::hash_int(static_cast<uint64_t>(x) + m_seed);
         }
     };
 
@@ -331,5 +331,5 @@ TEST_CASE("require_avalanching_can_be_given_a_hash_to_copy") {
     auto two = map_with<required>(0, required{seeded_hash{2}});
 
     REQUIRE(one.hash_for(7).m_mixed_hash != two.hash_for(7).m_mixed_hash);
-    REQUIRE(one.hash_for(7).m_mixed_hash == ankerl::unordered_dense::detail::wyhash::hash(8));
+    REQUIRE(one.hash_for(7).m_mixed_hash == ankerl::unordered_dense::detail::hash_int(8));
 }

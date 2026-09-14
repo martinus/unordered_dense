@@ -130,13 +130,13 @@ void one_length(std::size_t len, double targetWidth, bool emit) {
         "main",
         [&] {
             ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                return udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+                return udmbase::unordered_dense::detail::hash_bytes(s.data(), s.size());
             }));
         },
         "this",
         [&] {
             ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                return ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+                return ankerl::unordered_dense::detail::hash_bytes(s.data(), s.size());
             }));
         }
 #ifdef UDM_AB_HAVE_JAN
@@ -144,7 +144,7 @@ void one_length(std::size_t len, double targetWidth, bool emit) {
         "jan",
         [&] {
             ankerl::nanobench::doNotOptimizeAway(throughput(ck, [](std::string const& s) {
-                return udmjan::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+                return udmjan::unordered_dense::detail::hash_bytes(s.data(), s.size());
             }));
         }
 #endif
@@ -164,13 +164,13 @@ void one_length(std::size_t len, double targetWidth, bool emit) {
         "main",
         [&] {
             ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                return udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+                return udmbase::unordered_dense::detail::hash_bytes(s.data(), s.size());
             }));
         },
         "this",
         [&] {
             ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                return ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+                return ankerl::unordered_dense::detail::hash_bytes(s.data(), s.size());
             }));
         }
 #ifdef UDM_AB_HAVE_JAN
@@ -178,7 +178,7 @@ void one_length(std::size_t len, double targetWidth, bool emit) {
         "jan",
         [&] {
             ankerl::nanobench::doNotOptimizeAway(latency(keys, [](std::string const& s) {
-                return udmjan::unordered_dense::detail::wyhash::hash(s.data(), s.size());
+                return udmjan::unordered_dense::detail::hash_bytes(s.data(), s.size());
             }));
         }
 #endif

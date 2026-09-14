@@ -240,11 +240,16 @@ namespace detail {
 
 // hash ///////////////////////////////////////////////////////////////////////
 
-// Descended from wyhash: https://github.com/wangyi-fudan/wyhash -- its reads, its multiply-and-xor
-// mix, its short path and its chained lanes for long keys -- with the middle lengths restructured
-// into independent blocks, which the comment on hash() explains. No big-endian support (because
-// different values on different machines don't matter), hardcodes seed and the secret.
-namespace detail::wyhash {
+// This is no longer wyhash and does not produce wyhash's values, so it is not named after it. It is
+// descended from it: https://github.com/wangyi-fudan/wyhash gives the reads, the multiply-and-xor
+// mix, the short path and the chained lanes for long keys. What changed is the middle lengths,
+// restructured into independent blocks, which the comment on hash_bytes() explains. If it ever
+// leaves this header as something callers can use on its own it will be called `ankerlhash`; until
+// then the entry points are `detail::hash_bytes` and `detail::hash_int` and the name is not needed.
+//
+// No big-endian support, because different values on different machines do not matter here.
+// The seed and the secret are hardcoded, so there is nothing to salt a table with.
+namespace detail::hash_impl {
 
 inline void mum(std::uint64_t* a, std::uint64_t* b) {
 #    if defined(__SIZEOF_INT128__)
@@ -323,7 +328,7 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 // hash. Sixteen pairs cover 144 bytes, and past that the chained lanes take over, where reuse is
 // harmless because the chain carries the position. The secrets have wyhash's property, every
 // byte with four bits set, odd, and were drawn once from a fixed seed.
-[[maybe_unused]] [[nodiscard]] inline auto hash(void const* key, std::size_t len) -> std::uint64_t {
+[[maybe_unused]] [[nodiscard]] inline auto hash_bytes(void const* key, std::size_t len) -> std::uint64_t {
     static constexpr auto secret = std::array{
         UINT64_C(0xa0761d6478bd642f), UINT64_C(0xe7037ed1a0b428db), UINT64_C(0x8ebc6af09c88c6e3), UINT64_C(0x589965cc75374cc3),
         UINT64_C(0x2d358dccaa6c78a5), UINT64_C(0x8bb84b93962eacc9), UINT64_C(0x4b33a62ed433d4a3), UINT64_C(0xa693c93927d87217),
@@ -442,11 +447,20 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
     return mix(secret[1] ^ len, seed ^ tail);
 }
 
-[[nodiscard]] inline auto hash(std::uint64_t x) -> std::uint64_t {
-    return detail::wyhash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
+[[nodiscard]] inline auto hash_int(std::uint64_t x) -> std::uint64_t {
+    return mix(x, UINT64_C(0x9E3779B97F4A7C15));
 }
 
-} // namespace detail::wyhash
+} // namespace detail::hash_impl
+
+namespace detail {
+
+// The two entry points, at `detail` scope because that is where callers writing their own hash for
+// their own type reach for them, and doc/usage.md shows exactly that.
+using hash_impl::hash_bytes;
+using hash_impl::hash_int;
+
+} // namespace detail
 
 namespace detail {
 
@@ -553,7 +567,7 @@ template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string<CharT> const& str) const noexcept -> std::uint64_t {
-        return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
+        return detail::hash_bytes(str.data(), sizeof(CharT) * str.size());
     }
 };
 
@@ -561,7 +575,7 @@ template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
     auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> std::uint64_t {
-        return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
+        return detail::hash_bytes(sv.data(), sizeof(CharT) * sv.size());
     }
 };
 
@@ -570,7 +584,7 @@ struct hash<T*> {
     using is_avalanching = void;
     auto operator()(T* ptr) const noexcept -> std::uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<std::uintptr_t>(ptr));
+        return detail::hash_int(reinterpret_cast<std::uintptr_t>(ptr));
     }
 };
 
@@ -579,7 +593,7 @@ struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
     auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> std::uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<std::uintptr_t>(ptr.get()));
+        return detail::hash_int(reinterpret_cast<std::uintptr_t>(ptr.get()));
     }
 };
 
@@ -588,7 +602,7 @@ struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
     auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> std::uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        return detail::wyhash::hash(reinterpret_cast<std::uintptr_t>(ptr.get()));
+        return detail::hash_int(reinterpret_cast<std::uintptr_t>(ptr.get()));
     }
 };
 
@@ -597,7 +611,7 @@ struct hash<Enum, typename std::enable_if_t<std::is_enum_v<Enum>>> {
     using is_avalanching = void;
     auto operator()(Enum e) const noexcept -> std::uint64_t {
         using underlying = std::underlying_type_t<Enum>;
-        return detail::wyhash::hash(static_cast<std::uint64_t>(static_cast<underlying>(e)));
+        return detail::hash_int(static_cast<std::uint64_t>(static_cast<underlying>(e)));
     }
 };
 
@@ -617,12 +631,12 @@ struct tuple_hash_helper {
     [[nodiscard]] ANKERL_UNORDERED_DENSE_DISABLE_UBSAN_UNSIGNED_INTEGER_CHECK static auto mix64(std::uint64_t state,
                                                                                                 std::uint64_t v)
         -> std::uint64_t {
-        return detail::wyhash::mix(state + v, std::uint64_t{0x9ddfea08eb382d69});
+        return detail::hash_impl::mix(state + v, std::uint64_t{0x9ddfea08eb382d69});
     }
 
     // Creates a buffer that holds all the data from each element of the tuple. If possible we memcpy the data directly. If
     // not, we hash the object and use this for the array. Size of the array is known at compile time, and memcpy is optimized
-    // away, so filling the buffer is highly efficient. Finally, call wyhash with this buffer.
+    // away, so filling the buffer is highly efficient. Finally, call hash_bytes with this buffer.
     template <typename T, std::size_t... Idx>
     [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...> /*unused*/) noexcept -> std::uint64_t {
         auto h = std::uint64_t{};
@@ -648,13 +662,13 @@ struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
 };
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
-#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                         \
-        template <>                                                           \
-        struct hash<T> {                                                      \
-            using is_avalanching = void;                                      \
-            auto operator()(T const& obj) const noexcept -> std::uint64_t {   \
-                return detail::wyhash::hash(static_cast<std::uint64_t>(obj)); \
-            }                                                                 \
+#    define ANKERL_UNORDERED_DENSE_HASH_STATICCAST(T)                       \
+        template <>                                                         \
+        struct hash<T> {                                                    \
+            using is_avalanching = void;                                    \
+            auto operator()(T const& obj) const noexcept -> std::uint64_t { \
+                return detail::hash_int(static_cast<std::uint64_t>(obj));   \
+            }                                                               \
         }
 
 #    if defined(__GNUC__) && !defined(__clang__)
@@ -1599,8 +1613,8 @@ private:
                 return m_hash(key);
             }
         } else {
-            // not is_avalanching => apply wyhash
-            return wyhash::hash(m_hash(key));
+            // not is_avalanching => run it through this library's own hash
+            return detail::hash_int(m_hash(key));
         }
     }
 

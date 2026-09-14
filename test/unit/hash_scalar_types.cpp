@@ -22,7 +22,7 @@ namespace {
 // cast here rather than a mask is deliberate, so a change to that cast shows up as a failure.
 template <typename T>
 void require_hashes_as_wyhash_of(T value) {
-    auto const expected = ankerl::unordered_dense::detail::wyhash::hash(static_cast<std::uint64_t>(value));
+    auto const expected = ankerl::unordered_dense::detail::hash_int(static_cast<std::uint64_t>(value));
     REQUIRE(ankerl::unordered_dense::hash<T>{}(value) == expected);
 }
 
