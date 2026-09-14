@@ -21,7 +21,7 @@ Stdlib only.
     scripts/ab/mapsplot.py table  <csv> <key> <base>            markdown, ratios to the group index
     scripts/ab/mapsplot.py htmltable <csv> <key> <base>         the same, tinted by distance from parity
     scripts/ab/mapsplot.py swing  <maps.txt> <key> <base> <workload>   dearest / cheapest point
-    scripts/ab/mapsplot.py merge  <out.csv> <csv>...   geometric mean of independent runs
+    scripts/ab/mapsplot.py merge  <out.csv> <csv>...   median of independent runs (geomean of two)
 """
 import csv
 import math
@@ -331,21 +331,31 @@ def cmd_readme(argv):
 
 
 def cmd_memory(argv):
+    """Both memory answers side by side: what the map asked for, and what the kernel backed.
+
+    Two panels rather than four, because the pair that carries the argument is the two *steady*
+    columns -- a flat map is 1.5 to 2.0x its counted bytes in resident pages and a dense one 1.05
+    to 1.55x, and putting the churned columns beside them buries that under twice as many bars.
+    Pass `churned` as a fifth argument for the other pair.
+    """
     csvp, key, base, out = argv[0], argv[1], int(argv[2]), argv[3]
+    col = "b" if len(argv) > 4 and argv[4] == "churned" else "a"
     rows = read(csvp)
     vals = {}
     present = set()
     for r in rows:
-        if r["key"] == key and r["base"] == base and r["work"] == "memory":
-            vals[(r["map"], "steady")] = r["a"]
-            vals[(r["map"], "churned")] = r["b"]
+        if r["key"] == key and r["base"] == base and r["work"] in ("memory", "asked"):
+            vals[(r["map"], r["work"])] = r[col]
             present.add(r["map"])
-    order = sorted(present, key=lambda m: vals[(m, "steady")])
+    # Every map has to have both, or a bar is missing rather than short.
+    present = {m for m in present if (m, "memory") in vals and (m, "asked") in vals}
+    order = sorted(present, key=lambda m: vals[(m, "asked")])
     what = {"u64": "uint64_t key, 8 byte value", "str": "std::string key, 8 byte value",
             "big": "uint64_t key, 64 byte value"}.get(key, key)
+    when = "after a full turnover of churn" if col == "b" else "after building"
     panels(out, f"bytes per entry, {what}",
-           f"geometric mean over one octave from {base:,} entries, from a counting allocator",
-           order, [("steady", "after building"), ("churned", "after churning")], vals,
+           f"geometric mean over one octave from {base:,} entries, {when}",
+           order, [("asked", "asked for"), ("memory", "resident")], vals,
            "bytes per live entry", ref_line=False)
 
 
@@ -538,6 +548,22 @@ def cmd_hashlat(argv):
     print(out)
 
 
+def combine(xs):
+    """The middle of a set of independent runs: the median, and the geometric mean of the middle
+    two when there is an even number of them.
+
+    A mean over every run lets one bad cell drag the answer -- and a bad cell is exactly what a
+    third and fourth run are taken to find. Two runs cannot tell an outlier from a real value, so
+    for them this is the geometric mean of the pair, which is what it always was; from three runs
+    on it is a median and an outlier stops counting.
+    """
+    ys = sorted(xs)
+    n = len(ys)
+    if n % 2:
+        return ys[n // 2]
+    return math.exp((math.log(ys[n // 2 - 1]) + math.log(ys[n // 2])) / 2)
+
+
 def cmd_merge(argv):
     """Combine independent runs point by point, and say how far apart the worst of them was.
 
@@ -550,17 +576,39 @@ def cmd_merge(argv):
         for r in read(path):
             acc.setdefault((r["key"], r["work"], r["base"], r["map"]), []).append((r["a"], r["b"]))
     worst, worst_at = 1.0, None
+    spreads = []
     with open(out, "w") as f:
         for k, vs in acc.items():
             for i in (0, 1):
                 xs = [v[i] for v in vs]
-                if min(xs) > 0 and max(xs) / min(xs) > worst:
-                    worst, worst_at = max(xs) / min(xs), (k, xs)
-            a = math.exp(sum(math.log(v[0]) for v in vs) / len(vs))
-            b = math.exp(sum(math.log(v[1]) for v in vs) / len(vs))
+                if min(xs) > 0:
+                    spread = max(xs) / min(xs)
+                    if i == 1:
+                        spreads.append(spread)
+                    if spread > worst:
+                        worst, worst_at = spread, (k, xs)
+            a = combine([v[0] for v in vs])
+            b = combine([v[1] for v in vs])
             f.write(f"{k[0]},{k[1]},{k[2]},{k[3]},{a:.4f},{b:.4f}\n")
+    within = sum(1 for s in spreads if s < 1.05)
     print(f"{out}: {len(acc)} points from {len(ins)} runs, worst spread {worst:.3f} at "
-          f"{worst_at[0] if worst_at else '--'}")
+          f"{worst_at[0] if worst_at else '--'}; {within}/{len(spreads)} ratios spread under 5%")
+    # How much the published number itself depends on having taken these particular runs: recompute
+    # every ratio with one run left out, and report how far the answer moves. max/min over the runs
+    # gets *wider* the more runs are taken, which makes it useless for comparing a five-run campaign
+    # with a two-run one; this does not, and it is the question a reader actually has.
+    if len(ins) >= 3:
+        moved, moved_at = 1.0, None
+        for k, vs in acc.items():
+            xs = [v[1] for v in vs]
+            full = combine(xs)
+            for i in range(len(xs)):
+                out_i = combine(xs[:i] + xs[i + 1:])
+                d = max(out_i, full) / min(out_i, full)
+                if d > moved:
+                    moved, moved_at = d, k
+        print(f"  jackknife: dropping any one run moves no ratio by more than {(moved - 1) * 100:.1f}%"
+              f"{f', worst at {moved_at}' if moved_at else ''}")
 
 
 WORKS = [("build", "build"), ("hit", "hit"), ("miss", "miss"), ("half", "50% hits"),

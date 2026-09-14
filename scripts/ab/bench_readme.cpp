@@ -18,6 +18,7 @@
 // sweeps a sawtooth between doublings and two maps double at different sizes, so a ratio taken at
 // one size is a ratio between two arbitrary points of two different cycles -- measured at up to 26%
 // for a cross-family pair (notes/index-design.md, "Fifty points draw the load-factor sawtooth").
+#include "count_alloc.h"
 #include "max_rss.h"
 
 #include "maps.h"
@@ -38,115 +39,7 @@
 #    define UDM_ONE_MAP 0
 #endif
 
-#if defined(UDM_COUNT_ALLOC)
-// Only the `memory` binary is built with this. Interposing malloc is not free: measured on the
-// integer build at a million entries, it costs std::unordered_map 4.4% and this map 0.0%, because
-// the cost is per allocation and a dense map makes a handful where a node map makes a million. A
-// bias that lands on one family and not the other is exactly the shape of error a chart like this
-// must not have, so the four timed workloads run from a binary that has none of this compiled in.
-// (An earlier version kept a sixteen byte header of its own on every block instead of reading
-// glibc's, and that one cost std::unordered_map 29%.)
-namespace {
-
-// Live and peak bytes, counted at the two places the maps in this chart actually ask for memory:
-// `malloc` (emilib calls it directly, and every `operator new` in libstdc++ goes through it) and
-// `mmap` (the huge page allocator maps its own blocks and no heap counter can see them). Counting
-// only `operator new` reported emilib at 0.00 bytes per entry and the huge-page segmented map at
-// 0.35x the plain one, which is what a counter that cannot see an allocator looks like.
-//
-// Peak rather than steady, because peak is where a caller's ceiling is: a map that doubles holds
-// the old array and the new one at the same moment.
-std::size_t g_live = 0;
-std::size_t g_peak = 0;
-bool g_counting = false;
-
-// What a block really costs, rather than what was asked for: glibc serves a request out of a chunk
-// rounded to sixteen bytes with an eight byte header, so a node map asking a million times for
-// twenty-four bytes is charged thirty-two each time. Counting the request instead reported every
-// node map as *cheaper* per entry than this one. `malloc_usable_size` plus the header is the same
-// policy scripts/ab/alloc_timeline.cpp already measures by, and it is the reason there is no header
-// of our own here: the size is recoverable from the pointer, so free() needs no bookkeeping and
-// blocks from aligned_alloc -- which an over-aligned `operator new` uses and this never sees the
-// allocation of -- pass through correctly.
-auto charged(void* p) -> std::size_t {
-    return p == nullptr ? 0 : malloc_usable_size(p) + sizeof(std::size_t);
-}
-
-// The g_counting test lives here rather than in each of the six interposers below.
-void counted(void* p) {
-    if (g_counting) {
-        g_live += charged(p);
-        g_peak = g_live > g_peak ? g_live : g_peak;
-    }
-}
-
-void counted_bytes(std::size_t n) {
-    if (g_counting) {
-        g_live += n;
-        g_peak = g_live > g_peak ? g_live : g_peak;
-    }
-}
-
-void released(std::size_t n) {
-    if (g_counting) {
-        g_live -= n < g_live ? n : g_live;
-    }
-}
-
-} // namespace
-
-extern "C" {
-
-// glibc's own, which is what keeps the interposers below from recursing into themselves.
-void* __libc_malloc(std::size_t n);
-void* __libc_calloc(std::size_t count, std::size_t size);
-void* __libc_realloc(void* p, std::size_t n);
-void __libc_free(void* p);
-
-void* malloc(std::size_t n) {
-    auto* p = __libc_malloc(n);
-    counted(p);
-    return p;
-}
-
-void* calloc(std::size_t count, std::size_t size) {
-    auto* p = __libc_calloc(count, size);
-    counted(p);
-    return p;
-}
-
-void free(void* p) noexcept {
-    released(charged(p));
-    __libc_free(p);
-}
-
-void* realloc(void* p, std::size_t n) {
-    released(charged(p));
-    auto* fresh = __libc_realloc(p, n);
-    counted(fresh);
-    return fresh;
-}
-
-// The huge page allocator's blocks, which never touch the heap at all.
-void* mmap(void* addr, std::size_t len, int prot, int flags, int fd, off_t offset) {
-    // dlsym rather than a __ alias: glibc exports mmap64 under several names and the alias that
-    // exists is not the same on every build.
-    static auto* real = reinterpret_cast<void* (*)(void*, std::size_t, int, int, int, off_t)>(dlsym(RTLD_NEXT, "mmap"));
-    auto* p = real(addr, len, prot, flags, fd, offset);
-    if (p != MAP_FAILED) { // NOLINT(cppcoreguidelines-pro-type-cstyle-cast,performance-no-int-to-ptr)
-        counted_bytes(len);
-    }
-    return p;
-}
-
-int munmap(void* addr, std::size_t len) {
-    released(len);
-    static auto* real = reinterpret_cast<int (*)(void*, std::size_t)>(dlsym(RTLD_NEXT, "munmap"));
-    return real(addr, len);
-}
-
-} // extern "C"
-#endif // UDM_COUNT_ALLOC
+// The allocation counter is scripts/ab/count_alloc.h, shared with maps.cpp.
 
 namespace {
 using namespace udm_maps;
@@ -185,22 +78,18 @@ auto one_size(std::string const& work, std::size_t n) -> double {
 
     auto once = [&]() -> double {
         if (work == "memory") {
-#if !defined(UDM_COUNT_ALLOC)
-            std::fprintf(stderr, "this binary was built without UDM_COUNT_ALLOC and cannot count bytes\n");
-            std::exit(2);
-#else
+            if (!count_alloc::available()) {
+                std::fprintf(stderr, "this binary was built without UDM_COUNT_ALLOC and cannot count bytes\n");
+                std::exit(2);
+            }
             // The keys are built before the counter goes true, so the pools are not charged to the
-            // map. What is counted is the peak of the build, which includes the doubling: the
+            // map. What is reported is the peak of the build, which includes the doubling: the
             // moment the old array and the new one are both alive is where a caller's ceiling is.
-            auto m = map_t();
-            g_live = 0;
-            g_peak = 0;
-            g_counting = true;
-            fill(m, p);
-            auto const peak = g_peak;
-            g_counting = false;
-            return static_cast<double>(peak) / static_cast<double>(n);
-#endif
+            return count_alloc::of([&] {
+                       auto m = map_t();
+                       fill(m, p);
+                   }).peak /
+                   static_cast<double>(n);
         }
         if (work == "rss") {
             return max_rss::of([&] {

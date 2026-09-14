@@ -32,6 +32,8 @@ place rather than being deleted, because the retraction is usually the more usef
 - Nothing measured a table that only churns
 - Lookup benchmarks must not replay
 - Seventeen maps in their own default configurations, at a million entries: the dense layout wins iteration by 5.5x to 110x and the string build by 1.6x to 2.2x, and loses the integer find and churn to boost by 37% and 64%
+- Comparing today's runs against a stored CSV invented a 2-3% regression that does not exist
+- `max_rss::of` was charging every map 128 KB of its own, and the counter beside it could not see `aligned_alloc`
 - Peak memory across every harness is now the process's resident high-water mark, and one build of the map is enough to measure it
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
@@ -445,6 +447,102 @@ strings are identical; a dense map holds them in insertion order and frees them 
 heap was filled, a flat map holds them in hash order and frees them in an order unrelated to how
 they were allocated. `build` on its own stays in the CSV, and the difference between the columns is
 the teardown.
+
+**Comparing today's runs against a stored CSV invented a 2-3% regression that does not exist**
+(2026-09-14, while re-taking the index-structures post, `scripts/ab/maps.sh -r REV`).
+
+Re-measuring the post meant asking whether the map had moved since its numbers were taken at
+`fab7984`. The obvious way -- run the sweep now, diff against `scripts/ab/data/maps_*.csv` -- said
+`map<uint64_t, big_value>` lookups had got 2-3% slower: `hit` +2.4%, `half` +3.1%, `ie` +2.9%,
+`miss` +2.8% at the 32000 octave, all one direction, and stable across five runs whose own spread
+was 0.5-1.6%. Five runs made each side precise and did nothing about the axis between them.
+
+**Both headers in one process says the opposite.** `maps.sh -r fab7984` renames any revision into
+its own namespace and puts it in the second-map slot, so the two are interleaved epoch by epoch by
+`compare()`. Current over post-era, three rounds, below 1.00 meaning the current header is faster:
+`big` hit 1.005, miss 1.011, half 1.001, **ie 0.977**, churn 0.993, build 0.989 at 32000. The cell
+the CSV method was most confident about is 2.3% *faster*, not 2.8% slower. The same run also found a
+real gain the CSV method had hidden: integer `ie` **0.957-0.976** across the three octaves, which is
+the #260/#262/#268 erase work, and string `miss` **0.916-0.951**, which is the probe split.
+
+**So the rule already in `CLAUDE.md` -- never compare runs from different times -- is not about
+drift within an afternoon.** A week-old CSV and a fresh run differ by a systematic few percent from
+machine state that no number of repetitions on either side can see. When the question is "did this
+header move", the instrument is both headers in one process, and `maps.sh -r` has been able to do it
+all along.
+
+**What could not do it is `solo.sh -r fab7984`.** It copies the tree and swaps only
+`unordered_dense.h`, so the old header is compiled against today's tests, and
+`huge_page_allocator.h` needs `default_segment_size_bytes` and `detail::segmented_container_for`,
+neither of which existed on 2026-09-07. That harness reaches back exactly as far as the test suite
+does, which is worth knowing before planning a long-range A/B with it.
+
+**`max_rss::of` was charging every map 128 KB of its own, and the counter beside it could not see
+`aligned_alloc`** (2026-09-14, while re-taking the index-structures post, Ryzen 9 7950X, Fedora 44,
+clang 22.1.8, `scripts/ab/max_rss.h`, `scripts/ab/count_alloc.h`, `scripts/ab/maps.cpp`).
+
+Three defects in the memory panels, found by asking why cells at a thousand entries read 200-500
+bytes per entry for a map holding 16 KB of data and disagreed by up to 1.64x between runs.
+
+**The instrument has a floor and was not subtracting it.** `of()` returned `VmHWM - VmRSS` measured
+in a forked child, and a child that does nothing at all does not read zero: forking, writing
+`/proc/self/clear_refs` and reading `/proc/self/status` fault in ~128 KB of their own. Measured on
+an empty closure, five repetitions: 128.0 KB every time, and still 128.0 KB after the parent grew by
+256 MB. So it is a constant, not drift -- the entry above's claim that the measurement is
+deterministic to the page is right, and it was deterministically 128 KB too high. Against known
+work: 1 MB read 1172 KB, 16 MB read 16532, 64 MB read 65684, a constant +148. Subtracting a
+same-shaped empty child leaves a ~20 KB residual, which is 0.1% at 16 MB and the whole answer at
+16 KB. **Two hypotheses were wrong before this one**, and both were disproven by measurement rather
+than argument: copy-on-write faults from the parent (an empty closure would then drift, and it does
+not) and the child inheriting a warm arena (a 1 MB cell read 1424 KB cold and 1408 KB after the
+parent had freed 64 MB).
+
+**So there is no thousand-entry memory column any more.** After the floor comes off, the n=1000
+cells get *relatively* worse -- worst spread between two runs 1.217 before and 1.307 after -- because
+the absolute error is unchanged and the subject is 16 KB. n=32000 improved 1.042 to 1.032 and
+n=500000 1.003 to 1.002. The method needs the subject large against the residual; the header says so
+now.
+
+**Adding a counted column re-broke the resident one, which is the same fork lesson from the other
+side.** The counted pass filled a map in the *caller's* process, and glibc does not hand the arena
+back, so every later `max_rss::of` child served its whole allocation out of already-resident freed
+space: every map after the first read 2 to 20 resident bytes per entry against a true 50 to 70, and
+emilib read 2.0. `count_alloc::of` forks too, for that reason alone -- it counts requests, so a warm
+arena cannot flatter it directly.
+
+**`aligned_alloc` and `posix_memalign` were not interposed.** ihtab asks for its whole group array
+with `std::aligned_alloc`, so it reported **8.3 bytes per entry against a true 35.3**, with its
+element array counted and its index invisible. `free` had always charged those blocks correctly
+through `malloc_usable_size`, so the counter leaked in one direction only, which produces a
+plausible wrong number rather than an obvious one. This is the same failure as counting only
+`operator new` and missing emilib's direct `malloc`, already recorded above.
+
+**And `measure_memory` charged the benchmark's own key vectors to the map.** The churn closure
+copied `present` and `spare` *inside* the measured region -- two vectors of n keys, 16 bytes an entry
+for an integer key -- so every map's churned column, in both metrics, was that much too high at once.
+The comment above it claimed they were copied before the fork. With them hoisted out, the asked
+column goes flat across a turnover for every tombstone-free map (udm 31.8 to 31.8, boost 28.5 to
+28.5) and ihtab doubles 35.3 to 70.6, which is the property the panel exists to show and which the
+inflated numbers had buried.
+
+**The check that the fixed counter is right**: it reproduces the `mallinfo2` figures this file
+replaced, to the decimal, on all eighteen maps at the 32000 octave -- absl 26.4/30.3, boost 28.5,
+udm 31.8, emhash8 37.1, std 44.4, boost-node 47.4. Two independent accountings agreeing to 0.1 is
+what makes either believable.
+
+**What the two metrics say that neither says alone.** Resident over asked sorts the field by family
+more cleanly than anything else measured for the post: node maps 0.85-1.04x, dense 1.05-1.55x, flat
+1.50-1.97x at an eight byte value, and 0.90-1.00 / 1.41-1.63 / 1.86-1.97 at a 64 byte one. A
+doubling flat map supersedes its whole slot array at `sizeof(value_type)` a slot and glibc keeps all
+of it resident; a dense map supersedes a 5.5 byte index. So abseil asks for 26.4 bytes an entry and
+occupies 48.8, where this map asks for 31.8 and occupies 42.0 -- the verdict inverts, and quoting
+either column alone answers a different question than a reader thinks it does.
+
+**And clang elides the obvious benchmark.** Both diagnostics above first read "no effect at all",
+because `auto v = std::vector<char>(n); memset(v.data(), 1, n); if (v[0] == 0) ...` folds to a
+constant and the allocation disappears: a touched 16 MB measured the same as an empty closure, and a
+1 MB `malloc`/`free` counted zero bytes. Anything that measures allocation needs a `volatile` sink
+or an accumulation the compiler cannot see through. This cost two false starts in one session.
 
 **Peak memory across every harness is now the process's resident high-water mark, and one build of
 the map is enough to measure it** (2026-09-13, issue #277 follow-up, Ryzen 9 7950X, Fedora 44, clang
