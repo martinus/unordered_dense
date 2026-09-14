@@ -8,6 +8,7 @@
 //
 //   scripts/ab/maps.sh <check|speed|memory|names> [u64|str|big] [base]
 
+#include "count_alloc.h"
 #include "max_rss.h"
 
 #include "maps.h"
@@ -251,8 +252,22 @@ void sweep(std::size_t base) {
 // ------------------------------------------------------------------ memory
 #if defined(__GLIBC__)
 
+// Both answers, because they disagree and the disagreement is the finding. `max_rss.h` counts what
+// the kernel backed -- the allocator's slack, its rounding, and every superseded array a doubling
+// container left resident -- and `count_alloc.h` counts what the map asked for, which is the number
+// a design argument is made in (5.5 bytes of metadata per slot at load 0.8). A flat map's resident
+// set is about 2.5x its counted bytes and a dense map's about 1.7x, and either one alone answers a
+// different question than a reader thinks it does.
+//
+// The counted half is compiled away unless the binary was built with -DUDM_COUNT_ALLOC, which
+// maps.sh does only for the `memory` subcommand, because interposing malloc costs a node map 4.4%
+// of a build and this map 0.0% -- a bias that lands on one family and not the other.
 template <typename Map, typename Key>
-void measure_memory(pools<Key> const& p, double& steady_out, double& churned_out) {
+void measure_memory(pools<Key> const& p,
+                    double& steady_out,
+                    double& churned_out,
+                    double& asked_steady_out,
+                    double& asked_churned_out) {
     // Peak resident set, not bytes requested: see scripts/ab/max_rss.h for why, and for why each
     // measurement needs its own process. The churn's key vectors are copied before the child is
     // forked, so they are in its baseline and not charged to the map.
@@ -263,9 +278,14 @@ void measure_memory(pools<Key> const& p, double& steady_out, double& churned_out
                      ankerl::nanobench::doNotOptimizeAway(m.size());
                  }) /
                  n;
+    // The churn needs its own mutable copies of the key vectors, and they are made **here**, in the
+    // parent, before either measurement forks. Made inside the closure they were charged to the map:
+    // two vectors of n keys is 16 bytes an entry for an integer key, and both churned columns came
+    // out that much too high for every map at once. The comment that used to sit here claimed they
+    // were already outside; they were not.
+    auto present = p.present;
+    auto spare = p.spare;
     churned_out = max_rss::of([&] {
-                      auto present = p.present;
-                      auto spare = p.spare;
                       auto m = Map();
                       fill(m, p);
                       auto rng = ankerl::nanobench::Rng(7);
@@ -274,6 +294,25 @@ void measure_memory(pools<Key> const& p, double& steady_out, double& churned_out
                       ankerl::nanobench::doNotOptimizeAway(m.size());
                   }) /
                   n;
+    // `mark()` is called while the map is still alive, so the figure is what the container holds
+    // rather than what was outstanding after it was torn down.
+    asked_steady_out = count_alloc::of([&] {
+                           auto m = Map();
+                           fill(m, p);
+                           ankerl::nanobench::doNotOptimizeAway(m.size());
+                           count_alloc::mark();
+                       }).live /
+                       n;
+    asked_churned_out = count_alloc::of([&] {
+                            auto m = Map();
+                            fill(m, p);
+                            auto rng = ankerl::nanobench::Rng(7);
+                            auto tick = std::size_t{0};
+                            churn(m, present, spare, rng, p.present.size(), tick);
+                            ankerl::nanobench::doNotOptimizeAway(m.size());
+                            count_alloc::mark();
+                        }).live /
+                        n;
 }
 
 template <typename Key, typename Val>
@@ -283,6 +322,8 @@ void memory(std::size_t base) {
     static auto const names = names_of<Tuple>(std::make_index_sequence<k>{});
     auto ls = std::vector<double>(k, 0.0);
     auto lc = std::vector<double>(k, 0.0);
+    auto as = std::vector<double>(k, 0.0);
+    auto ac = std::vector<double>(k, 0.0);
     for (std::size_t i = 0; i < g_points; ++i) {
         auto const p = pools<Key>(octave_size(base, i));
         [&]<std::size_t... I>(std::index_sequence<I...>) {
@@ -290,21 +331,33 @@ void memory(std::size_t base) {
                 [&] {
                     double s = 0;
                     double c = 0;
-                    measure_memory<std::tuple_element_t<I, Tuple>>(p, s, c);
+                    double qs = 0;
+                    double qc = 0;
+                    measure_memory<std::tuple_element_t<I, Tuple>>(p, s, c, qs, qc);
                     ls[I] += std::log(s);
                     lc[I] += std::log(c);
+                    if (qs > 0 && qc > 0) {
+                        as[I] += std::log(qs);
+                        ac[I] += std::log(qc);
+                    }
                 }(),
                 ...);
         }(std::make_index_sequence<k>{});
     }
+    auto const pts = static_cast<double>(g_points);
     std::printf("# bytes per entry, %s key, 8 byte value, octave geomean from n=%zu\n", g_keyname, base);
-    std::printf("%-12s %10s %10s\n", "map", "steady", "churned");
+    std::printf("# resident = peak RSS (max_rss.h); asked = peak bytes requested (count_alloc.h)%s\n",
+                count_alloc::available() ? "" : " -- NOT BUILT, asked columns are zero");
+    std::printf("%-12s %10s %10s %10s %10s\n", "map", "resident", "res-churn", "asked", "ask-churn");
     for (std::size_t a = 0; a < k; ++a) {
-        auto const s = std::exp(ls[a] / static_cast<double>(g_points));
-        auto const c = std::exp(lc[a] / static_cast<double>(g_points));
-        std::printf("%-12s %10.1f %10.1f\n", names[a], s, c);
+        auto const s = std::exp(ls[a] / pts);
+        auto const c = std::exp(lc[a] / pts);
+        auto const qs = as[a] > 0 ? std::exp(as[a] / pts) : 0.0;
+        auto const qc = ac[a] > 0 ? std::exp(ac[a] / pts) : 0.0;
+        std::printf("%-12s %10.1f %10.1f %10.1f %10.1f\n", names[a], s, c, qs, qc);
         if (g_csv != nullptr) {
             std::fprintf(g_csv, "%s,memory,%zu,%s,%.4f,%.4f\n", g_keyname, base, names[a], s, c);
+            std::fprintf(g_csv, "%s,asked,%zu,%s,%.4f,%.4f\n", g_keyname, base, names[a], qs, qc);
         }
     }
     std::fflush(stdout);

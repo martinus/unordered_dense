@@ -103,9 +103,20 @@ if [ $san = 1 ]; then
     libs=()
 fi
 
+# The `memory` subcommand alone is built with the allocation counter, into its own binary. An
+# interposed malloc costs a node map 4.4% of a build and this map 0.0%, so it must never be linked
+# into the binary that measures time -- and the two binaries then have different code, which is why
+# they have different names rather than one being rebuilt over the other.
+bin=maps
+if [ "${1:-}" = memory ]; then
+    flags+=(-DUDM_COUNT_ALLOC)
+    libs+=(-ldl)
+    bin=maps_mem
+fi
+
 nbo="$build/nanobench_$(basename "$cxx").o"
 [ -f "$nbo" ] || (cd "$build" && printf '#define ANKERL_NANOBENCH_IMPLEMENT\n#include <third-party/nanobench.h>\n' > nb.cpp && "$cxx" -O2 -DNDEBUG -std=c++20 -w -I"$nb" -c nb.cpp -o "$nbo")
 
 echo "maps: udm udm-4.11($rev) boost std ${have[*]:-} | missing: ${missing[*]:-none} | $cxx, $build" >&2
-"$cxx" "${flags[@]}" "$root/scripts/ab/maps.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$build/maps"
-exec "$build/maps" "$@"
+"$cxx" "${flags[@]}" "$root/scripts/ab/maps.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$build/$bin"
+exec "$build/$bin" "$@"

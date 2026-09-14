@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -56,9 +57,9 @@ inline void reset_peak() {
     }
 }
 
-// Bytes of peak resident set that `work` is responsible for, or 0 if the child could not report.
+// Bytes of peak resident set that a piece of work drives, before the floor below is taken off.
 template <typename F>
-auto of(F&& work) -> double {
+auto gross(F&& work) -> double {
     int fd[2];
     if (pipe(fd) != 0) {
         return 0.0;
@@ -81,6 +82,29 @@ auto of(F&& work) -> double {
     close(fd[0]);
     waitpid(pid, nullptr, 0);
     return got == static_cast<ssize_t>(sizeof(v)) ? v : 0.0;
+}
+
+// Bytes of peak resident set that `work` is responsible for.
+//
+// A child that does nothing at all does not read zero: forking, writing /proc/self/clear_refs and
+// reading /proc/self/status fault in about 128 KB of their own, and that floor is charged to
+// whatever is being measured. It is a constant rather than drift -- five repetitions of a cell come
+// back byte-identical, and growing the parent by 256 MB does not move it -- so the honest thing is
+// to measure it next to every cell and take it off. Before this was done the panel read 200-500
+// bytes per entry for a thousand-entry map holding 16 KB of data, and cells at that size disagreed
+// by up to 1.22x between two runs of the same binary while cells at half a million agreed to 0.5%.
+//
+// What survives is a residual of about 20 KB, because the floor is mildly work-dependent, plus a
+// few tens of KB of variation between processes. So this measures a map of a few megabytes well and
+// a map of a few kilobytes not at all: quote it where the subject is large against the residual,
+// which for the octaves this repository sweeps means 32000 entries and up, and do not report a
+// thousand-entry column from it.
+template <typename F>
+auto of(F&& work) -> double {
+    auto const loaded = gross(std::forward<F>(work));
+    auto const floor_of_the_instrument = gross([] {});
+    auto const v = loaded - floor_of_the_instrument;
+    return v > 0.0 ? v : 0.0;
 }
 
 } // namespace max_rss
