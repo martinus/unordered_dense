@@ -42,3 +42,8 @@ core.*
 !/doc/bench-readme-str.svg
 !/doc/bench-readme-udm-u64.svg
 !/doc/bench-readme-udm-str.svg
+
+# ... and the layout figure doc/design.md shows, for the same reason. `scripts/ab/diagrams.py
+# --surface doc` regenerates it; the --surface flag is what makes it readable on GitHub's dark
+# theme, and is off for the copies that go on the blog.
+!/doc/group-block.svg
