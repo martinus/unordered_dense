@@ -87,6 +87,7 @@ test_sources = [
     'unit/probe_termination.cpp',
     'unit/probe_wrap.cpp',
     'unit/pmr.cpp',
+    'unit/qt_keywords.cpp',
     'unit/reentrant.cpp',
     'unit/rehash.cpp',
     'unit/replace_key.cpp',
