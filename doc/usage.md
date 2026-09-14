@@ -66,7 +66,7 @@ wrap the header in a module of your own and build it with gcc, you need to do th
 
 ## Hash
 
-`ankerl::unordered_dense::hash` is a fast and high quality hash, based on [wyhash](https://github.com/wangyi-fudan/wyhash). The `ankerl::unordered_dense` map/set differentiates between high quality hashes (good [avalanching effect](https://en.wikipedia.org/wiki/Avalanche_effect)) and low quality hashes. High quality hashes contain a special marker:
+`ankerl::unordered_dense::hash` is a fast and high quality hash, descended from [wyhash](https://github.com/wangyi-fudan/wyhash) and rewritten for latency, so it does not produce wyhash's values. The `ankerl::unordered_dense` map/set differentiates between high quality hashes (good [avalanching effect](https://en.wikipedia.org/wiki/Avalanche_effect)) and low quality hashes. High quality hashes contain a special marker:
 
 ```cpp
 using is_avalanching = void;
@@ -116,12 +116,12 @@ struct custom_hash_avalanching {
     using is_avalanching = void;
 
     auto operator()(id const& x) const noexcept -> uint64_t {
-        return ankerl::unordered_dense::detail::wyhash::hash(x.value);
+        return detail::hash_int(x.value);
     }
 };
 ```
 
-We know `wyhash::hash` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
+We know `hash_bytes` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
 
 ### Specialize `ankerl::unordered_dense::hash`
 
@@ -133,7 +133,7 @@ struct ankerl::unordered_dense::hash<id> {
     using is_avalanching = void;
 
     [[nodiscard]] auto operator()(id const& x) const noexcept -> uint64_t {
-        return detail::wyhash::hash(x.value);
+        return detail::hash_int(x.value);
     }
 };
 ```
@@ -177,7 +177,7 @@ struct std::hash<id> {
     using is_avalanching = void;
 
     auto operator()(id const& x) const noexcept -> size_t {
-        return ankerl::unordered_dense::detail::wyhash::hash(x.value);
+        return detail::hash_int(x.value);
     }
 };
 ```
@@ -205,7 +205,7 @@ struct custom_hash_unique_object_representation {
 
     [[nodiscard]] auto operator()(point const& f) const noexcept -> uint64_t {
         static_assert(std::has_unique_object_representations_v<point>);
-        return ankerl::unordered_dense::detail::wyhash::hash(&f, sizeof(f));
+        return detail::hash_bytes(&f, sizeof(f));
     }
 };
 ```

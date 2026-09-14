@@ -116,7 +116,7 @@ struct row {
 // Every hasher interleaved round by round in one process, so machine drift cancels out of the
 // comparison instead of landing on whichever ran first.
 #define UDM_EACH_HASH(WRAP)                                                                                                 \
-    "udm5", WRAP(ankerl::unordered_dense::detail::wyhash::hash(s.data(), s.size())), "floor",                               \
+    "udm5", WRAP(ankerl::unordered_dense::detail::hash_bytes(s.data(), s.size())), "floor",                               \
         WRAP(static_cast<std::uint64_t>(s.size()) ^ static_cast<std::uint64_t>(s[0])) UDM_BASE(WRAP) UDM_BOOST(WRAP)        \
             UDM_ABSL(WRAP) UDM_FOLLY(WRAP),                                                                                 \
         "foldhash", WRAP(udm_ab::foldhash::fast(s.data(), s.size())), "foldhash-q",                                         \
@@ -124,7 +124,7 @@ struct row {
             UDM_GX(WRAP)
 
 #ifdef UDM_AB_HAVE_BASE
-#    define UDM_BASE(WRAP) , "udm4", WRAP(udmbase::unordered_dense::detail::wyhash::hash(s.data(), s.size()))
+#    define UDM_BASE(WRAP) , "udm4", WRAP(udmbase::unordered_dense::detail::hash_bytes(s.data(), s.size()))
 #else
 #    define UDM_BASE(WRAP)
 #endif

@@ -504,10 +504,10 @@
 # bits -- which is where group_idx_from_hash takes the index from. Without it every small integer
 # key lands in the same handful of buckets.
 <<<
-            // not is_avalanching => apply wyhash
-            return wyhash::hash(m_hash(key));
+            // not is_avalanching => run it through this library's own hash
+            return detail::hash_int(m_hash(key));
 ===
-            // not is_avalanching => apply wyhash
+            // not is_avalanching => run it through this library's own hash
             return m_hash(key);
 >>>
 
