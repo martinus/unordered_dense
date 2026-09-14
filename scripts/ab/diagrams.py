@@ -14,7 +14,7 @@ not to scale, and it is the one that makes the figures readable.
 
 Stdlib only, no dependency, and the output renders in a README or a GitHub-flavoured page.
 
-    scripts/ab/diagrams.py [outdir]
+    scripts/ab/diagrams.py [--surface] [outdir]\n\n--surface gives every figure its own background, switched with the reader's colour\nscheme. Use it for a figure that goes in a README, not for one that goes on the blog.
 """
 import os
 import sys
@@ -54,10 +54,31 @@ def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+# Whether a figure carries its own background and switches it with the reader's colour scheme.
+#
+# Off by default, which is what the blog wants: that page's background is hard-coded #FFFFFF, and an
+# SVG in an `<img>` follows the *reader's* scheme rather than the page's, so a switching figure turns
+# dark on a white page for a dark-mode reader. On for a figure that goes in a README, where GitHub
+# darkens the page underneath and a transparent figure puts #1f2937 ink on #0d1117 at 1.2:1. The
+# rule is one or the other and never a scheme block without a surface to go with it -- that shipped
+# once and gave a dark-mode reader the title at 1.05:1 on white.
+SURFACE = False
+
+
 def svg(height, body, width=W):
+    extra = ""
+    rect = ""
+    if SURFACE:
+        extra = ('    .surface{fill:#ffffff}\n'
+                 '    @media (prefers-color-scheme: dark){\n'
+                 '      .surface{fill:#0d1117}\n'
+                 '      .muted{fill:#9ca3af}.lbl{fill:#e6edf3}.hd{fill:#f0f6fc}\n'
+                 '      .cell{stroke:#8b949e}.thin{stroke:#6e7681}\n'
+                 '    }\n')
+        rect = f'  <rect class="surface" width="{width}" height="{height}"/>\n'
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
             f'font-family="Inter, system-ui, sans-serif" font-size="13">\n'
-            f'  <style>{STYLE}  </style>\n  <defs>{DEFS}  </defs>\n{body}</svg>\n')
+            f'  <style>{STYLE}{extra}  </style>\n  <defs>{DEFS}  </defs>\n{rect}{body}</svg>\n')
 
 
 def text(x, y, s, cls="lbl", anchor="start", weight=None):
@@ -671,7 +692,10 @@ def cover(path, w, h, byte, gap, pitch, cellh, label_w, f1, f2, pad, labels=True
 
 
 def main():
-    outdir = sys.argv[1] if len(sys.argv) > 1 else "doc/hashmap-index"
+    global SURFACE
+    args = [a for a in sys.argv[1:] if a != "--surface"]
+    SURFACE = "--surface" in sys.argv[1:]
+    outdir = args[0] if args else "doc/hashmap-index"
     os.makedirs(outdir, exist_ok=True)
     for name, fn in FIGURES.items():
         path = os.path.join(outdir, name + ".svg")
