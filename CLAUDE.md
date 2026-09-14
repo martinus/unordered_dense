@@ -141,6 +141,8 @@ THP-`always` runner scores 2.6–3.6% above a `madvise` one for no reason in the
 ### Rules (each one cost a wrong answer first; grep the phrase)
 
 - Release builds only. Baseline first, then 2–3 comparisons. **Never compare runs from different times** -- including a fresh sweep against a stored CSV, which is a systematic few percent and invented a 2-3% big-value regression that `maps.sh -r REV` (both headers, one process, interleaved) showed was 2.3% the other way. `solo.sh -r` cannot reach a header older than the test suite: `fab7984` will not build against today's `huge_page_allocator.h`. grep "Comparing today's runs"
+- **A lookup harness here measures throughput, not latency** (`lookups()` draws its key from an rng, so several are in flight). A dependent chain is 1.3x slower for this map at a million entries and **3.0x** for boost, and the two rank the maps oppositely: boost wins the independent hit 1.69x and loses the chain 22.0 to 16.6. Label which one a number is. `scripts/ab/latency.cpp` runs both; its independent loop must not pick keys by reading an array, or it measures that array's misses. grep "measure throughput"
+- **A million entries is not past the cache on this machine**: 64 MB of L3 in two 32 MB slices, `AB_CORE` pins to one, and `map<uint64_t, uint64_t>` at 1M is 26 MB here and 32 MB in boost. Two million is the first size clearly out. grep "not past the cache"
 - **Never quote a ratio from one table size.** Load factor sawtooths ½→max between doublings and two
   indexes double at different sizes: 11 slots read 1.384 at one size, 1.039 over the octave; churn64
   reversed sign. Every boost ratio not labelled "octave geomean" is a point measurement. grep "octave".

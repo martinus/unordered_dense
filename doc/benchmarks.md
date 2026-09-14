@@ -52,7 +52,9 @@ The same run and the same reference, for the shapes this one map can be asked to
 
 ## How the numbers were taken, and what they do not say
 
-The charts cover 1 million to 2 million entries, which is past every cache level on this machine, and smaller tables sort the maps differently. Also `iterate` counts a full pass over every element, which plenty of programs never do. Treat anything under roughly 5% as a tie.
+The charts cover 1 million to 2 million entries. That spans the last level cache rather than sitting past it: this machine has 64 MB of L3 as two 32 MB slices and the measured process is pinned to one core, so a million entries of `map<uint64_t, size_t>` is 26 MB of group index and values and still mostly L3-resident, while two million is 53 MB and is not. Smaller tables sort the maps differently again. Also `iterate` counts a full pass over every element, which plenty of programs never do. Treat anything under roughly 5% as a tie.
+
+`find` measures **throughput, not latency**. Each lookup draws its key from an rng, so several are in flight at once, which is what a program that looks up in a loop gets. A dependent chain, where each key comes from the value the last lookup returned, is slower: at a million entries 16.6 ns against 12.2 for this map and 22.0 against 7.3 for `boost::unordered_flat_map`. The overlap is worth more to a flat map, which has one region and one dependent load, than to a dense one whose second load is already on the chain, so the ranking on the two is not the same. Ratios between maps on this page are all throughput and all measured the same way.
 
 The first panel times construction, the inserts and the destructor. The inserts on their own are in the CSV under `build`, and the difference between the two columns is what the teardown costs.
 

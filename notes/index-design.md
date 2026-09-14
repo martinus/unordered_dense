@@ -33,6 +33,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Lookup benchmarks must not replay
 - Seventeen maps in their own default configurations, at a million entries: the dense layout wins iteration by 5.5x to 110x and the string build by 1.6x to 2.2x, and loses the integer find and churn to boost by 37% and 64%
 - Comparing today's runs against a stored CSV invented a 2-3% regression that does not exist
+- The lookup harnesses measure throughput, and a million entries is not past the cache here
 - `max_rss::of` was charging every map 128 KB of its own, and the counter beside it could not see `aligned_alloc`
 - Peak memory across every harness is now the process's resident high-water mark, and one build of the map is enough to measure it
 
@@ -476,6 +477,49 @@ all along.
 `huge_page_allocator.h` needs `default_segment_size_bytes` and `detail::segmented_container_for`,
 neither of which existed on 2026-09-07. That harness reaches back exactly as far as the test suite
 does, which is worth knowing before planning a long-range A/B with it.
+
+**The lookup harnesses measure throughput, and a million entries is not past the cache here**
+(2026-09-14, both raised by a reader of the index-structures post, `scripts/ab/latency.cpp`).
+
+One claim that was wrong and one that was never made, neither of them about a number in a table.
+The distinction matters: nothing published said these were latency figures, so the second half is a
+missing label rather than a correction.
+
+**A million entries is L3-resident on this machine.** 64 MB of L3 in two 32 MB slices, and `AB_CORE`
+pins to one core, so 32 MB is what a measured process gets. `map<uint64_t, uint64_t>` at a million
+entries: this map is 11.0 MB of index plus 15.3 MB of values = **26.3 MB**, and
+`boost::unordered_flat_map` is 2.0 MB of metadata plus 30.0 MB of slots = **32.0 MB**, sitting
+exactly on the line. Two million is the first size clearly past it (52.5 and 64.0). `doc/benchmarks.md`
+said the README charts were "past every cache level" and that was wrong at the bottom of their range.
+
+**Every lookup workload here is reciprocal throughput, and nothing said so either way.** `lookups()`
+in `maps.h` draws its key from `st.rng()`, so nothing stops several lookups being in flight. A
+program looking up in a loop gets the same overlap, so it is worth measuring. It is not the latency
+of one lookup. Checked before writing this: every use of the word "latency" in the post is about the
+hash, the rehash loop or tail latency, and none is about a map lookup, so this is an omission and
+not an error.
+ns per hit, same map and keys, chain = each key is the value the last lookup returned:
+
+| | 1M chain | 1M indep | 4M chain | 4M indep | 16M chain | 16M indep |
+|---|---|---|---|---|---|---|
+| this map | 16.63 | 12.24 | 56.62 | 38.73 | 93.33 | 45.25 |
+| boost | 22.02 | 7.26 | 81.27 | 20.45 | 101.21 | 27.79 |
+
+**The two do not rank the maps the same way, and the published one is the unflattering one.** Boost
+takes an independent hit **1.69x** faster at a million and loses the chain, 22.02 against 16.63. A
+flat map has one region and one dependent load and so has more to overlap; a dense map's second load
+is already on the chain. So the throughput framing understates this map, which is not a reason to
+keep it unlabelled.
+
+**And the trap in measuring it.** The independent loop has to do the same work per lookup as the
+chain apart from the dependency. The first version picked its key by reading a shuffled index array,
+which at a million entries is 8 MB: it measured that array's cache misses and came out **slower**
+than the chain (udm 30.45 indep against 18.32 chain). Keys are `mix(1..n)` now, so an in-register
+rng reaches a present key with no memory access of its own.
+
+**What this does not change.** Every ratio in the post and in `doc/` is between two maps measured the
+same way, so none of them moves. What moves is what a single number means when it is quoted out of
+one.
 
 **`max_rss::of` was charging every map 128 KB of its own, and the counter beside it could not see
 `aligned_alloc`** (2026-09-14, while re-taking the index-structures post, Ryzen 9 7950X, Fedora 44,
