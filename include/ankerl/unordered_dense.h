@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::{map, set} /////////////////////////
 
 // A fast & densely stored hashmap and hashset.
-// Version 5.0.0
+// Version 5.0.1
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
@@ -32,7 +32,7 @@
 // see https://semver.org/spec/v2.0.0.html
 #define ANKERL_UNORDERED_DENSE_VERSION_MAJOR 5 // NOLINT(cppcoreguidelines-macro-usage) incompatible API changes
 #define ANKERL_UNORDERED_DENSE_VERSION_MINOR 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible functionality
-#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 0 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
+#define ANKERL_UNORDERED_DENSE_VERSION_PATCH 1 // NOLINT(cppcoreguidelines-macro-usage) backwards compatible bug fixes
 
 // API versioning with inline namespace, see https://www.foonathan.net/2018/11/inline-namespaces/
 
@@ -1377,7 +1377,11 @@ namespace detail {
 // Alloc is the table's value allocator; the block array rebinds it.
 template <typename Group, typename Alloc>
 class group_storage {
-    static constexpr std::size_t slots = std::tuple_size_v<decltype(Group::m_fingerprints)>;
+    // `slots_per_group`, the name the table below already gives the same constant, and not
+    // `slots`: Qt defines `slots` as an empty macro unless the build sets QT_NO_KEYWORDS, so a
+    // member of that name does not survive a translation unit that has seen a Qt header (#289).
+    // test/unit/qt_keywords.cpp compiles the header with those macros defined.
+    static constexpr std::size_t slots_per_group = std::tuple_size_v<decltype(Group::m_fingerprints)>;
 
 public:
     using value_idx_type = typename Group::value_idx_type;
@@ -1385,7 +1389,7 @@ public:
     // Inherits so that every use of a group's fingerprints and counters reads unchanged, and so a
     // block converts to the Group const& that match_fingerprint takes.
     struct block : Group {
-        std::array<value_idx_type, slots> m_index;
+        std::array<value_idx_type, slots_per_group> m_index;
     };
 
     using allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<block>;
