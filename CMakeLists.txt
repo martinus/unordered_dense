@@ -7,7 +7,7 @@ endif()
 
 cmake_minimum_required(VERSION ${CMAKEVER})
 project("unordered_dense"
-    VERSION 5.0.0
+    VERSION 5.0.1
     DESCRIPTION "A fast & densely stored hashmap and hashset based on robin-hood backward shift deletion"
     HOMEPAGE_URL "https://github.com/martinus/unordered_dense"
     LANGUAGES CXX)
