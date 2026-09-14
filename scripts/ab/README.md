@@ -219,6 +219,30 @@ than a total, because building a twelve-million-entry table is most of what `per
 size: measured as totals, a miss came out at 300 instructions and the fill order appeared to change
 the cost of a workload that never reads a value.
 
+`scripts/ab/latency.cpp` answers a question a reader of the index-structures post asked, and the
+answer was that they were right. Every lookup harness in this directory draws its next key from an
+rng, so several lookups are in flight and what it reports is reciprocal **throughput**. This one runs
+the same map both ways: independently, and as a chain where each key is the value the last lookup
+returned. At a million entries the chain is 1.3x slower for this map and **3.0x** for
+`boost::unordered_flat_map`, because a flat map has one region and one dependent load and so has
+more to overlap. The two orderings are not the same: boost takes the independent hit 1.69x faster
+and loses the chain, 22.0 ns against 16.6. Throughput is the right thing to measure for a program
+that looks up in a loop, and it has to be labelled.
+
+It also fixes a trap worth knowing: the independent loop must do the same work per lookup as the
+chain, minus the dependency. Picking the key by reading a shuffled index array adds that array's own
+cache misses -- 8 MB at a million entries -- and then the "independent" loop measures those and comes
+out *slower* than the chain.
+
+```sh
+clang++ -O3 -DNDEBUG -std=c++20 -Iinclude scripts/ab/latency.cpp -o lat
+taskset -c 2 ./lat 1000000 10000000        # both modes, both maps
+```
+
+And the sizes this directory sweeps are not all past the cache. This machine has 64 MB of L3 in two
+32 MB slices and `AB_CORE` pins to one core, so a million entries of `map<uint64_t, uint64_t>` is
+26 MB here and 32 MB in boost, both inside it. Two million is the first size that is clearly out.
+
 `scripts/ab/mapsplot.py` draws the CSVs (`bars`, `readme`, `memory`, `octave`) and prints them
 (`table`, `swing`); `scripts/ab/diagrams.py` draws the byte-level layout figures of every index in
 one house style. Both are stdlib only.
