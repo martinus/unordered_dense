@@ -1,0 +1,243 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 468" font-family="Inter, system-ui, sans-serif" font-size="13">
+  <style>
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px}
+    .muted{fill:#6b7280}
+    .lbl{fill:#1f2937;font-size:12px}
+    .hd{fill:#1f2937;font-weight:600}
+    .cell{fill:#fff;stroke:#1f2937;stroke-width:1.2}
+    .fp{fill:#ccfbf1}
+    .dist{fill:#e0f2fe}
+    .idx{fill:#fef3c7}
+    .ovf{fill:#ede9fe}
+    .payload{fill:#f1f5f9}
+    .sent{fill:url(#hatch);stroke:#9ca3af;stroke-width:1.2}
+    .arrow{stroke:#0f766e;stroke-width:1.6;fill:none;marker-end:url(#head)}
+    .thin{stroke:#9ca3af;stroke-width:1;fill:none}
+    .surface{fill:#ffffff}
+    @media (prefers-color-scheme: dark){
+      .surface{fill:#0d1117}
+      .muted{fill:#9ca3af}.lbl{fill:#e6edf3}.hd{fill:#f0f6fc}
+      .cell{stroke:#8b949e}.thin{stroke:#6e7681}
+    }
+  </style>
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#d1d5db" stroke-width="2"/>
+    </pattern>
+    <marker id="head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+  <rect class="surface" width="760" height="468"/>
+  <text x="20" y="24" class="hd" text-anchor="start">unordered_dense 5.0: an 88 byte block for 16 slots, in one allocation</text>
+  <rect x="132.0" y="40" width="109.1" height="16" class="cell fp"/>
+  <text x="186.5" y="52" class="mono" text-anchor="middle" font-size="9">fingerprints</text>
+  <rect x="241.1" y="40" width="54.5" height="16" class="cell ovf"/>
+  <text x="268.4" y="52" class="mono" text-anchor="middle" font-size="9">overflow</text>
+  <rect x="295.6" y="40" width="436.4" height="16" class="cell idx"/>
+  <text x="513.8" y="52" class="mono" text-anchor="middle" font-size="9">value index</text>
+  <line x1="132.0" y1="56" x2="132.0" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="138.8" y1="56" x2="138.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="145.6" y1="56" x2="145.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="152.5" y1="56" x2="152.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="159.3" y1="56" x2="159.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="166.1" y1="56" x2="166.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="172.9" y1="56" x2="172.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="179.7" y1="56" x2="179.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="186.5" y1="56" x2="186.5" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="193.4" y1="56" x2="193.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="200.2" y1="56" x2="200.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="207.0" y1="56" x2="207.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="213.8" y1="56" x2="213.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="220.6" y1="56" x2="220.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="227.5" y1="56" x2="227.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="234.3" y1="56" x2="234.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="241.1" y1="56" x2="241.1" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="247.9" y1="56" x2="247.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="254.7" y1="56" x2="254.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="261.5" y1="56" x2="261.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="268.4" y1="56" x2="268.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="275.2" y1="56" x2="275.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="282.0" y1="56" x2="282.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="288.8" y1="56" x2="288.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="295.6" y1="56" x2="295.6" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="302.5" y1="56" x2="302.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="309.3" y1="56" x2="309.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="316.1" y1="56" x2="316.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="322.9" y1="56" x2="322.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="329.7" y1="56" x2="329.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="336.5" y1="56" x2="336.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="343.4" y1="56" x2="343.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="350.2" y1="56" x2="350.2" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="357.0" y1="56" x2="357.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="363.8" y1="56" x2="363.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="370.6" y1="56" x2="370.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="377.5" y1="56" x2="377.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="384.3" y1="56" x2="384.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="391.1" y1="56" x2="391.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="397.9" y1="56" x2="397.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="404.7" y1="56" x2="404.7" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="411.5" y1="56" x2="411.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="418.4" y1="56" x2="418.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="425.2" y1="56" x2="425.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="432.0" y1="56" x2="432.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="438.8" y1="56" x2="438.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="445.6" y1="56" x2="445.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="452.5" y1="56" x2="452.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="459.3" y1="56" x2="459.3" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="466.1" y1="56" x2="466.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="472.9" y1="56" x2="472.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="479.7" y1="56" x2="479.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="486.5" y1="56" x2="486.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="493.4" y1="56" x2="493.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="500.2" y1="56" x2="500.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="507.0" y1="56" x2="507.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="513.8" y1="56" x2="513.8" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="520.6" y1="56" x2="520.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="527.5" y1="56" x2="527.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="534.3" y1="56" x2="534.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="541.1" y1="56" x2="541.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="547.9" y1="56" x2="547.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="554.7" y1="56" x2="554.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="561.5" y1="56" x2="561.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="568.4" y1="56" x2="568.4" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="575.2" y1="56" x2="575.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="582.0" y1="56" x2="582.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="588.8" y1="56" x2="588.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="595.6" y1="56" x2="595.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="602.5" y1="56" x2="602.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="609.3" y1="56" x2="609.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="616.1" y1="56" x2="616.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="622.9" y1="56" x2="622.9" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="629.7" y1="56" x2="629.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="636.5" y1="56" x2="636.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="643.4" y1="56" x2="643.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="650.2" y1="56" x2="650.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="657.0" y1="56" x2="657.0" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="663.8" y1="56" x2="663.8" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="670.6" y1="56" x2="670.6" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="677.5" y1="56" x2="677.5" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <line x1="684.3" y1="56" x2="684.3" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="691.1" y1="56" x2="691.1" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="697.9" y1="56" x2="697.9" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="704.7" y1="56" x2="704.7" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="711.5" y1="56" x2="711.5" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="718.4" y1="56" x2="718.4" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="725.2" y1="56" x2="725.2" y2="61" stroke="#9ca3af" stroke-width="0.6"/>
+  <line x1="732.0" y1="56" x2="732.0" y2="64" stroke="#9ca3af" stroke-width="1"/>
+  <text x="132.0" y="77" class="muted" text-anchor="start" font-size="10">0</text>
+  <text x="241.1" y="77" class="muted" text-anchor="middle" font-size="10">16</text>
+  <text x="295.6" y="77" class="muted" text-anchor="middle" font-size="10">24</text>
+  <text x="732.0" y="77" class="muted" text-anchor="end" font-size="10">88</text>
+  <rect x="132" y="118" width="26" height="30" class="cell fp"/>
+  <text x="145" y="137" class="mono" text-anchor="middle" font-size="11">9C</text>
+  <rect x="158" y="118" width="26" height="30" class="cell fp"/>
+  <text x="171" y="137" class="mono" text-anchor="middle" font-size="11">--</text>
+  <rect x="184" y="118" width="26" height="30" class="cell fp"/>
+  <text x="197" y="137" class="mono" text-anchor="middle" font-size="11">41</text>
+  <rect x="210" y="118" width="26" height="30" class="cell fp"/>
+  <text x="223" y="137" class="mono" text-anchor="middle" font-size="11">9C</text>
+  <rect x="236" y="118" width="26" height="30" class="cell fp"/>
+  <text x="249" y="137" class="mono" text-anchor="middle" font-size="11">07</text>
+  <rect x="262" y="118" width="26" height="30" class="cell fp"/>
+  <text x="275" y="137" class="mono" text-anchor="middle" font-size="11">--</text>
+  <rect x="288" y="118" width="26" height="30" class="cell fp"/>
+  <text x="301" y="137" class="mono" text-anchor="middle" font-size="11">B3</text>
+  <rect x="314" y="118" width="26" height="30" class="cell fp"/>
+  <text x="327" y="137" class="mono" text-anchor="middle" font-size="11">5A</text>
+  <rect x="340" y="118" width="26" height="30" class="cell fp"/>
+  <text x="353" y="137" class="mono" text-anchor="middle" font-size="11">--</text>
+  <rect x="366" y="118" width="26" height="30" class="cell fp"/>
+  <text x="379" y="137" class="mono" text-anchor="middle" font-size="11">22</text>
+  <rect x="392" y="118" width="26" height="30" class="cell fp"/>
+  <text x="405" y="137" class="mono" text-anchor="middle" font-size="11">9C</text>
+  <rect x="418" y="118" width="26" height="30" class="cell fp"/>
+  <text x="431" y="137" class="mono" text-anchor="middle" font-size="11">8E</text>
+  <rect x="444" y="118" width="26" height="30" class="cell fp"/>
+  <text x="457" y="137" class="mono" text-anchor="middle" font-size="11">--</text>
+  <rect x="470" y="118" width="26" height="30" class="cell fp"/>
+  <text x="483" y="137" class="mono" text-anchor="middle" font-size="11">6D</text>
+  <rect x="496" y="118" width="26" height="30" class="cell fp"/>
+  <text x="509" y="137" class="mono" text-anchor="middle" font-size="11">F1</text>
+  <rect x="522" y="118" width="26" height="30" class="cell fp"/>
+  <text x="535" y="137" class="mono" text-anchor="middle" font-size="11">--</text>
+  <text x="120" y="138" class="muted" text-anchor="end">fingerprints</text>
+  <path d="M132,148 L132,154 L548,154 L548,148" class="thin"/>
+  <text x="340" y="166" class="muted" text-anchor="middle">one byte per slot: 0 is empty, otherwise the low byte of the hash</text>
+  <rect x="132" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="158" y="221" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="184" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="210" y="221" class="mono" text-anchor="middle" font-size="11">1</text>
+  <rect x="236" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="262" y="221" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="288" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="314" y="221" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="340" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="366" y="221" class="mono" text-anchor="middle" font-size="11">2</text>
+  <rect x="392" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="418" y="221" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="444" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="470" y="221" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="496" y="202" width="52" height="30" class="cell ovf"/>
+  <text x="522" y="221" class="mono" text-anchor="middle" font-size="11">0</text>
+  <text x="120" y="222" class="muted" text-anchor="end">overflow</text>
+  <path d="M132,232 L132,238 L548,238 L548,232" class="thin"/>
+  <text x="340" y="250" class="muted" text-anchor="middle">8 counters, one per fingerprint class, drawn across the sixteen slots they cover</text>
+  <rect x="132" y="286" width="26" height="30" class="cell idx"/>
+  <text x="145" y="305" class="mono" text-anchor="middle" font-size="11">7</text>
+  <rect x="158" y="286" width="26" height="30" class="cell idx"/>
+  <text x="171" y="305" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="184" y="286" width="26" height="30" class="cell idx"/>
+  <text x="197" y="305" class="mono" text-anchor="middle" font-size="11">3</text>
+  <rect x="210" y="286" width="26" height="30" class="cell idx"/>
+  <text x="223" y="305" class="mono" text-anchor="middle" font-size="11">12</text>
+  <rect x="236" y="286" width="26" height="30" class="cell idx"/>
+  <text x="249" y="305" class="mono" text-anchor="middle" font-size="11">5</text>
+  <rect x="262" y="286" width="26" height="30" class="cell idx"/>
+  <text x="275" y="305" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="288" y="286" width="26" height="30" class="cell idx"/>
+  <text x="301" y="305" class="mono" text-anchor="middle" font-size="11">1</text>
+  <rect x="314" y="286" width="26" height="30" class="cell idx"/>
+  <text x="327" y="305" class="mono" text-anchor="middle" font-size="11">9</text>
+  <rect x="340" y="286" width="26" height="30" class="cell idx"/>
+  <text x="353" y="305" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="366" y="286" width="26" height="30" class="cell idx"/>
+  <text x="379" y="305" class="mono" text-anchor="middle" font-size="11">4</text>
+  <rect x="392" y="286" width="26" height="30" class="cell idx"/>
+  <text x="405" y="305" class="mono" text-anchor="middle" font-size="11">2</text>
+  <rect x="418" y="286" width="26" height="30" class="cell idx"/>
+  <text x="431" y="305" class="mono" text-anchor="middle" font-size="11">8</text>
+  <rect x="444" y="286" width="26" height="30" class="cell idx"/>
+  <text x="457" y="305" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="470" y="286" width="26" height="30" class="cell idx"/>
+  <text x="483" y="305" class="mono" text-anchor="middle" font-size="11">6</text>
+  <rect x="496" y="286" width="26" height="30" class="cell idx"/>
+  <text x="509" y="305" class="mono" text-anchor="middle" font-size="11">11</text>
+  <rect x="522" y="286" width="26" height="30" class="cell idx"/>
+  <text x="535" y="305" class="mono" text-anchor="middle" font-size="11">0</text>
+  <text x="120" y="306" class="muted" text-anchor="end">value index</text>
+  <path d="M132,316 L132,322 L548,322 L548,316" class="thin"/>
+  <text x="340" y="334" class="muted" text-anchor="middle">a uint32_t per slot, four bytes each</text>
+  <rect x="132" y="394" width="52" height="30" class="cell payload"/>
+  <text x="158" y="413" class="mono" text-anchor="middle" font-size="11">0</text>
+  <rect x="184" y="394" width="52" height="30" class="cell payload"/>
+  <text x="210" y="413" class="mono" text-anchor="middle" font-size="11">1</text>
+  <rect x="236" y="394" width="52" height="30" class="cell payload"/>
+  <text x="262" y="413" class="mono" text-anchor="middle" font-size="11">2</text>
+  <rect x="288" y="394" width="52" height="30" class="cell payload"/>
+  <text x="314" y="413" class="mono" text-anchor="middle" font-size="11">3</text>
+  <rect x="340" y="394" width="52" height="30" class="cell payload"/>
+  <text x="366" y="413" class="mono" text-anchor="middle" font-size="11">4</text>
+  <rect x="392" y="394" width="52" height="30" class="cell payload"/>
+  <text x="418" y="413" class="mono" text-anchor="middle" font-size="11">5</text>
+  <rect x="444" y="394" width="52" height="30" class="cell payload"/>
+  <text x="470" y="413" class="mono" text-anchor="middle" font-size="11">6</text>
+  <rect x="496" y="394" width="52" height="30" class="cell payload"/>
+  <text x="522" y="413" class="mono" text-anchor="middle" font-size="11">7</text>
+  <text x="120" y="414" class="muted" text-anchor="end">m_values</text>
+  <path d="M132,424 L132,430 L548,430 L548,424" class="thin"/>
+  <text x="340" y="442" class="muted" text-anchor="middle">a std::vector&lt;std::pair&lt;Key, T&gt;&gt; in insertion order</text>
+  <path d="M145.0,348 C145.0,372 522,372 522,392" class="arrow"/>
+  <path d="M197.0,348 C197.0,372 314,372 314,392" class="arrow"/>
+  <path d="M379.0,348 C379.0,372 366,372 366,392" class="arrow"/>
+</svg>
