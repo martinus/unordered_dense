@@ -116,12 +116,12 @@ struct custom_hash_avalanching {
     using is_avalanching = void;
 
     auto operator()(id const& x) const noexcept -> uint64_t {
-        return detail::hash_int(x.value);
+        return ankerl::unordered_dense::detail::hash_int(x.value);
     }
 };
 ```
 
-We know `hash_bytes` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
+We know `hash_int` is of high quality, so we can add `using is_avalanching = void;` which makes the map/set directly use the returned value.
 
 ### Specialize `ankerl::unordered_dense::hash`
 
@@ -177,7 +177,7 @@ struct std::hash<id> {
     using is_avalanching = void;
 
     auto operator()(id const& x) const noexcept -> size_t {
-        return detail::hash_int(x.value);
+        return ankerl::unordered_dense::detail::hash_int(x.value);
     }
 };
 ```
@@ -205,7 +205,7 @@ struct custom_hash_unique_object_representation {
 
     [[nodiscard]] auto operator()(point const& f) const noexcept -> uint64_t {
         static_assert(std::has_unique_object_representations_v<point>);
-        return detail::hash_bytes(&f, sizeof(f));
+        return ankerl::unordered_dense::detail::hash_bytes(&f, sizeof(f));
     }
 };
 ```

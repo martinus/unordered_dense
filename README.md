@@ -66,7 +66,7 @@ In short: iteration is what the dense layout buys, 0.19 ns per element against 5
 
 ## Installation
 
-The map is header-only. Copy `include/ankerl/unordered_dense.h` and `include/ankerl/stl.h` into your project, keeping them in the same directory, and include `unordered_dense.h`. `stl.h` holds nothing but the standard includes, split out so that a build using `import std` can skip it.
+The map is header-only. Copy `include/ankerl/unordered_dense.h` and `include/ankerl/stl.h` into your project, keeping them in the same directory, and include `unordered_dense.h`. `stl.h` holds nothing but the standard includes, split out so that a build using `import std` can skip it. `include/ankerl/huge_page_allocator.h` is a third, optional header: nothing references it, and you only need it if you want [huge pages](doc/usage.md#huge-pages).
 
 <!-- See https://github.com/bernedom/SI/blob/main/doc/installation-guide.md -->
 Or install it. The default installation location is `/usr/local`. Clone the repository and run these commands in the cloned folder:
