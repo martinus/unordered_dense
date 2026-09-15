@@ -1,0 +1,44 @@
+# The rehash loop with its pipeline removed, as a patch against include/ankerl/unordered_dense.h.
+#
+# The control for scripts/ab/rehash_size.sh. `fill_buckets_from_values` hashes sixteen elements
+# ahead of the one it places and prefetches the group each will land in; this takes the ring and the
+# prefetch out and leaves everything else exactly as it is -- the iterator walk, the hoisted group
+# pointer, mask and shift, and the placement itself. So what the two binaries differ by is the
+# pipeline and nothing else, which is what the control has to be: the caller's loop of single calls
+# carries a call boundary the rehash does not have.
+#
+# Taken against 1c8636e (5.0.1). If it stops applying, the loop has changed and the numbers it
+# produced are dated; re-derive it rather than force it.
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -2449,28 +2449,13 @@
+         // The index is counted in value_idx_type and never in the container's size, for the reason
+         // spelled out in replace(): max_size() is exactly what value_idx_type can hold, so a
+         // container of precisely that many has a size that is not representable in it.
+-        constexpr auto ahead = pipeline_depth;
+         auto* const groups = m_buckets.data();
+         auto const mask = m_group_mask;
+         auto const shifts = m_shifts;
+-        auto ring = std::array<std::uint64_t, ahead>{};
+         auto it = m_values.begin();
+-        auto const end = m_values.end();
+-        auto const fetch = [&](std::size_t i) -> void {
+-            auto const mh = mixed_hash(get_key(*it));
+-            ++it;
+-            ring[i] = mh;
+-            prefetch_block(groups, static_cast<std::size_t>(mh >> shifts));
+-        };
+-        for (auto i = std::size_t{}; i < ahead && it != end; ++i) {
+-            fetch(i);
+-        }
+         auto const n = m_values.size();
+-        for (auto value_idx = std::size_t{}; value_idx < n; ++value_idx) {
+-            auto const mh = ring[value_idx % ahead];
+-            if (it != end) {
+-                fetch(value_idx % ahead);
+-            }
++        for (auto value_idx = std::size_t{}; value_idx < n; ++value_idx, ++it) {
++            auto const mh = mixed_hash(get_key(*it));
+             // we know for certain that key has not yet been inserted, so no need to check it.
+             auto const word = fingerprint_word(mh);
+             auto const counter = word & 7U;

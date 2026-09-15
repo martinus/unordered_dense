@@ -547,6 +547,47 @@ octave where this map swings 1.07-1.28x. At 3251 entries and load 0.79 it costs 
 map's 3.78. The eleven points where it does come out ahead are all above 440000 entries, where every
 map is waiting on memory and the probe hardly matters.
 
+## What the rehash pipeline is worth, against table size
+
+`scripts/ab/rehash_size.sh` puts `fill_buckets_from_values` against the same loop with its ring and
+prefetch removed (`scripts/ab/rehash_plain.patch`), one variant per binary, alternated round by
+round. It was written to answer whether the pipeline is a loss at the small sizes it had never been
+measured at; the answer and the tables are in `notes/index-design.md`, "The rehash pipeline below
+200000 entries".
+
+```sh
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/rehash_size.sh -r 49 -k u64   # the loop alone
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/rehash_size.sh -r 25 -k str -m build
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/rehash_size.sh -c g++ -r 49 -k u64 22627
+```
+
+Two modes, and they do not agree, which is the point of having both. `-m rehash` times `rehash(0)`
+on a map that is already at the bucket count `rehash(0)` asks for, so the header skips the
+allocation and runs `clear_buckets()` plus the loop: that isolates the loop and reads a 4.4% loss
+for an integer key at 122 KB of index. `-m build` builds from empty, which is where the loop runs
+for a caller, and there the same cell is 0.974 under gcc and 1.023 under clang. Quote which one a
+number is. Both print `plain/pipelined`, so above 1 the pipeline is winning, and both print the
+spread of each cell's rounds beside it -- a cell whose spread is the size of the difference has not
+measured the difference.
+
+**Each mode gets its own binary, and that is load-bearing for the numbers rather than for tidiness.**
+With both timed functions in one translation unit the second one changed the first: the pipelined
+side of `-m rehash` read 1.45 ns per element before `measure_build` was added to the file and 1.62
+after, with the plain side unmoved, which turned a 4% dip into 13%. The binaries are deterministic,
+so that was the inliner. `-DREHASH_MODE_BUILD` splits them, and `-DREHASH_REPS=N` -- which the perf
+recipe below uses -- is an `#if` and not a runtime switch so that the default translation unit stays
+byte-identical to the one the tables were taken with.
+
+A whole sweep is 12 seconds, so rounds are cheap here: the same 49-round sweep run twice agrees on
+every cell to 1.5%, which is what said the dip in the middle of the integer column is a shape rather
+than a noisy cell.
+
+```sh
+# instructions and cycles per element, equal work on both sides
+clang++ -O3 -DNDEBUG -std=c++17 -DREHASH_REPS=110 -Iinclude -Itest scripts/ab/rehash_size.cpp -o pf
+taskset -c 2 perf stat -e cycles,instructions ./pf u64 rehash 22627   # "elements N" on stderr
+```
+
 ## Lookup cost against table size
 
 `scripts/ab/sweep.cpp` walks the size axis instead of the workload axis: it grows
