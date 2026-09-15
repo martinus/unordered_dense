@@ -205,6 +205,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way
 - lookups are behind main
 - `ie64` ties boost while executing 58% more instructions, and the counts say why
+- The rehash pipeline below 200000 entries, where it had never been measured: it costs a gcc integer build up to 3.6% in a band, and it stays
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5097,6 +5098,128 @@ What this says and does not say: one machine, one compiler, one key distribution
 200 byte keys would move every row, since the share that is hashing goes up and the share that is
 `free` goes down. It says nothing about `map`, only about `set`. `std::sort` is in the tables for
 reference and not as a rival -- it also sorts the result.
+
+**The rehash pipeline below 200000 entries, where it had never been measured: it costs a gcc
+integer build up to 4.2% in a band, and it stays** (2026-09-15, no issue, asked for directly after
+5.0.1; Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/rehash_size.sh` with
+`scripts/ab/rehash_plain.patch`). The entry above measured the pipelined loop from 200000 entries
+upwards. Below that it had no measurement at all, and `fill_buckets_from_values` has no gate where
+`replace()` has one at 256 KB of index -- so the question was whether the rehash is the shape
+`replace()` turned out to be, a pipeline shipped above its crossover and never looked at below it.
+
+The control is the same loop with the ring and the prefetch removed and everything else left alone:
+the iterator walk, the hoisted group pointer, mask and shift, and the placement itself. One variant
+per binary, because a ring changes the function's size and two headers in one translation unit share
+an inlining budget. The subject is `rehash(0)` on a map already at the bucket count `rehash(0)` asks
+for, where the header skips the allocation and runs `clear_buckets()` plus the loop; the memset is in
+both variants and dilutes the ratio rather than steering it. Nineteen sizes, four per octave, because
+a rehash places every element and its cost per element follows the load factor, which sweeps half to
+maximum between doublings. Rounds alternate the two binaries; each cell is the median of 49 rounds
+for the loop and 25 for the build. Every ratio is plain/pipelined, so above 1 the pipeline is
+winning.
+
+### `rehash(0)`, the loop on its own
+
+| entries | index | u64 clang | u64 gcc | str clang | str gcc |
+|---|---|---|---|---|---|
+| 1000 | 5 KB | 1.087 | 1.064 | 1.037 | 0.946 |
+| 1414 | 8 KB | 1.098 | 1.020 | 1.040 | 0.945 |
+| 2000 | 11 KB | 1.027 | 1.052 | 1.071 | 0.982 |
+| 2828 | 15 KB | 1.073 | 1.037 | 1.081 | 0.990 |
+| 4000 | 21 KB | 1.036 | 1.041 | 1.105 | 1.011 |
+| 5657 | 30 KB | 1.016 | 1.006 | 1.118 | 1.019 |
+| 8000 | 43 KB | 1.007 | 0.975 | 1.137 | 1.031 |
+| 11314 | 61 KB | 1.000 | 0.995 | 1.131 | 1.030 |
+| 16000 | 86 KB | 0.966 | 0.966 | 1.148 | 1.044 |
+| 22627 | 122 KB | **0.956** | **0.961** | 1.154 | 1.052 |
+| 32000 | 172 KB | **0.953** | **0.956** | 1.279 | 1.181 |
+| 45255 | 243 KB | 0.953 | 0.971 | 1.285 | 1.186 |
+| 64000 | 344 KB | 1.079 | 1.082 | 1.439 | 1.334 |
+| 90510 | 486 KB | 1.072 | 1.073 | 1.432 | 1.331 |
+| 128000 | 688 KB | 1.207 | 1.222 | 1.534 | 1.414 |
+| 181019 | 972 KB | 1.197 | 1.206 | 1.518 | 1.394 |
+| 256000 | 1.3 MB | 1.271 | 1.273 | 1.527 | 1.413 |
+| 362039 | 1.9 MB | 1.253 | 1.264 | 1.463 | 1.362 |
+| 512000 | 2.7 MB | 1.274 | 1.284 | 1.497 | 1.414 |
+
+A string key wants the pipeline at nearly every size, up to 1.53x, and the two gcc cells at 1000 and
+1414 that read 0.945 are the only ones below 0.98. An integer key wants it up to 61 KB of index and
+from 344 KB on, and **does not want it between**, where it costs 3 to 4.7% on both compilers. Two
+runs of the same sweep agreed on every cell of that dip to within 1.5%.
+
+### Build from empty, which is where the loop actually runs
+
+| entries | index | u64 clang | u64 gcc | str clang | str gcc |
+|---|---|---|---|---|---|
+| 1000 | 5 KB | 1.063 | 1.048 | 0.999 | 0.998 |
+| 1414 | 8 KB | 1.055 | 1.028 | 0.985 | 0.985 |
+| 2000 | 11 KB | 1.049 | 1.031 | 1.003 | 0.996 |
+| 2828 | 15 KB | 1.056 | 1.015 | 1.002 | 0.996 |
+| 4000 | 21 KB | 1.043 | 0.992 | 1.014 | 1.002 |
+| 5657 | 30 KB | 1.087 | 0.994 | 1.012 | 1.003 |
+| 8000 | 43 KB | 1.025 | 0.979 | 1.024 | 1.009 |
+| 11314 | 61 KB | 1.023 | 0.983 | 1.016 | 1.008 |
+| 16000 | 86 KB | 1.023 | **0.965** | 1.027 | 1.006 |
+| 22627 | 122 KB | 1.023 | 0.974 | 1.016 | 1.006 |
+| 32000 | 172 KB | 0.979 | **0.958** | 1.032 | 1.017 |
+| 45255 | 243 KB | 1.004 | 0.963 | 1.021 | 1.013 |
+| 64000 | 344 KB | 1.013 | 0.977 | 1.054 | 1.044 |
+| 90510 | 486 KB | 1.019 | 0.980 | 1.037 | 1.030 |
+| 128000 | 688 KB | 1.030 | 1.004 | 1.070 | 1.061 |
+| 181019 | 972 KB | 1.035 | 1.002 | 1.050 | 1.044 |
+| 256000 | 1.3 MB | 1.056 | 1.024 | 1.083 | 1.075 |
+| 362039 | 1.9 MB | 1.051 | 1.018 | 1.077 | 1.072 |
+| 512000 | 2.7 MB | 1.070 | 1.038 | 1.144 | 1.133 |
+
+Under clang the pipeline costs a build nothing anywhere: the worst cell of the two key types is
+0.979, and the best is 1.144. Under gcc it costs an integer build 1.7 to 4.2% from 43 KB to 486 KB of
+index, which is the same band the loop loses in, and pays it back from 688 KB on. A string build is
+a wash under both compilers below 344 KB and a win above.
+
+### Eleven instructions per element, and where they buy nothing
+
+`perf stat` with the repetition count fixed at compile time so both variants do the same work, u64
+keys, clang, the build phase included in both and identical in both:
+
+| entries | index | pipelined instr/el | plain instr/el | pipelined cycles/el | plain cycles/el |
+|---|---|---|---|---|---|
+| 4000 | 21 KB | 35.9 | 24.8 | 9.87 | 10.75 |
+| 22627 | 122 KB | 37.7 | 26.4 | 10.73 | 9.91 |
+| 512000 | 2.7 MB | 81.0 | 61.8 | 36.64 | 39.10 |
+
+The ring costs 11 instructions per element and that does not move with the table -- the same order as
+the 13 it costs everywhere else in this header. What moves is what they buy. At 21 KB they take 8% of
+the cycles out, at 122 KB they add 8%, and at 2.7 MB they take out 6%. So the loop is not paying for
+its bookkeeping in exactly one place: a cheap hash over an index too big for L1 and too small to
+miss.
+
+**Kept, no gate.** A gate here would have to be on index bytes, the way `replace()`'s is, and the
+band that loses is bounded on both sides -- one threshold cannot say it. Fitting the obvious one,
+"no pipeline below 688 KB of index", hands a gcc integer build back its 2 to 4.2% and takes 4.3 to
+8.7% off a clang integer build below 30 KB, 1 to 3% off a clang string build in the middle, and every
+string cell above 43 KB on both compilers. The loss is one compiler, one key type and one band; the
+win is the other compiler at the same sizes, both compilers above the band, and strings nearly
+everywhere. Separating them needs to know whether the key's hash is expensive, which is a fact about
+the caller's data and not about the table, and this map does not gate on those (the range insert's
+`distance()` sizing, declined for the same reason).
+
+**The harness had to be pinned before any of this was worth reading.** The first version put both
+timed functions in one translation unit, and the second one changed the first: adding `measure_build`
+and a nanobench include moved the pipelined side of the `rehash` mode from 1.45 to 1.62 ns per
+element at 22627 entries while the plain side did not move at all, turning a 4% dip into 13%. The
+build is deterministic -- the same source and flags give a byte-identical binary, checked with
+`md5sum` -- so that was the inliner and not code layout, and it is the "inlining artifact" rule met
+from a new direction: not a count that moved, but a *time* that moved, in a file where nothing the
+clock covers had changed. `REHASH_MODE_BUILD` now gives each mode its own translation unit, the
+`perf` build takes its repetition count from an `#if` so that the default translation unit stays
+byte-identical to the one the tables came from, and the same sweep run twice agrees to 1.5%.
+
+What this says and does not say: one machine, two compilers, one value type (`std::uint64_t`), and an
+integer key through the workloads' bijection. The build column is a build and nothing else -- it does
+not say what a table that churns pays, where the rehash runs over values that are already resident.
+The `rehash(0)` column includes `clear_buckets()`'s memset in both variants, which makes the loop's
+own ratio slightly better than the column shows, not worse. Nothing here was measured above 512000
+entries; the entry above covers 2M and 4M and says the pipeline wins there by more.
 
 ## The robin hood index this replaced, and its dead ends
 
