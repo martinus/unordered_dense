@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Usage](usage.md) · [Design](design.md) · [Benchmarks](benchmarks.md) · **Real world usage**
 
-Open source projects that use `ankerl::unordered_dense`, grouped by what they do. The list was first put together on 2023-09-10 and last refreshed on 2026-08-06; every entry was confirmed by finding the include or the namespace in the project's own source on its default branch. Some authors have written in, the rest come from searching GitHub. Please send me a note if you want to be on that list!
+Open source projects that use `ankerl::unordered_dense`, grouped by what they do. The list was first put together on 2023-09-10 and last refreshed on 2026-09-16; every entry was confirmed by finding the include or the namespace in the project's own source on its default branch. Some authors have written in, the rest come from searching GitHub. Please send me a note if you want to be on that list!
 
 ## Databases and data engines
 
@@ -90,6 +90,7 @@ Open source projects that use `ankerl::unordered_dense`, grouped by what they do
 * [ArkScript](https://github.com/ArkScript-lang/Ark) - A small, fast, functional and scripting language for C++ projects.
 * [File Commander](https://github.com/VioletGiraffe/file-commander) - A cross-platform Total Commander-like orthodox file manager for Windows, Mac and Linux.
 * [FlashTokenizer](https://github.com/NLPOptimize/flash-tokenizer) - An efficient and optimized BERT tokenizer engine for LLM inference serving.
+* [GDB](https://sourceware.org/gdb/) - The GNU debugger. `gdbsupport/unordered_dense/` carries a copy, wrapped as `gdb::unordered_map` and `gdb::unordered_set`, and it ships in the vendor debuggers built on gdb as well, including AMD's ROCgdb and NVIDIA's cuda-gdb.
 * [Ichor](https://github.com/volt-software/Ichor) - A C++20 microservice bootstrapping framework focused on thread safety and dependency injection.
 * [minigpt4.cpp](https://github.com/Maknee/minigpt4.cpp) - Port of MiniGPT4 in C++ (4bit, 5bit, 6bit, 8bit, 16bit CPU inference with GGML).
 * [Nimble Commander](https://github.com/mikekazakov/nimble-commander) - A dual-pane file manager for macOS.
