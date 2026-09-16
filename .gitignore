@@ -47,3 +47,6 @@ core.*
 # --surface doc` regenerates it; the --surface flag is what makes it readable on GitHub's dark
 # theme, and is off for the copies that go on the blog.
 !/doc/group-block.svg
+
+# scripts/release_assets.sh writes here
+release-assets/
