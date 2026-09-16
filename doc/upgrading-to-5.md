@@ -2,9 +2,9 @@
 
 ## Most projects do nothing
 
-If you use `map` or `set` with the default template arguments, and you do not store hash values or
-iteration order anywhere outside the process, then 5.0 is a recompile. Everything in the container
-API is unchanged: `try_emplace`, `insert_or_assign`, `erase`, `extract`, `replace`, `values`,
+If you use `map` or `set` with the default template arguments, and you do not store hash values
+anywhere outside the process, then 5.0 is a recompile. Everything in the container API is
+unchanged: `try_emplace`, `insert_or_assign`, `erase`, `extract`, `replace`, `values`,
 `hash_for`, `replace_key`, the `hash<T>` specialization protocol, `is_avalanching`,
 `max_load_factor`, the allocator and container template arguments, and the `pmr` aliases all mean
 what they meant in 4.11.0.
@@ -86,7 +86,7 @@ ankerl::unordered_dense::detail::hash_int(x);
 **Do not sed this one.** Both 4.x spellings are the same token, and which replacement is right
 depends on the argument. Compile, and fix what the compiler points at.
 
-## 5. You store hash values or iteration order outside the process
+## 5. You store hash values outside the process
 
 This is the only break that is not a compile error, and it is the one to take seriously.
 
@@ -94,12 +94,8 @@ This is the only break that is not a compile error, and it is the one to take se
 a cache key or shard index has to be recomputed. A file written by 4.x and read by 5.0 will not
 report an error, it will simply not find things.
 
-**Iteration order changed**, which is true of any rehash but worth saying out loud for a major
-version. If a test asserts on the order elements come out of a map, it will fail, and it was
-already relying on something the container never promised.
-
-Neither of these can be detected for you. If you are not sure whether your project does this, grep
-for anywhere a hash value leaves the process.
+This cannot be detected for you. If you are not sure whether your project does it, grep for
+anywhere a hash value leaves the process.
 
 ## Also worth knowing, though it is not an API change
 
