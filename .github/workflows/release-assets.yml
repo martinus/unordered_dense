@@ -1,0 +1,61 @@
+name: Release assets
+
+# Attaches the header bundle to a release.
+#
+# This runs on `release: published` and not on the tag push that release.yml watches, because the
+# notes here are written by hand: the tag goes up, release.yml verifies that the tag and the header
+# agree and that the commit is on main, and then the assets appear the moment the release itself
+# does. Doing it at tag push would mean either creating the release from a template or racing the
+# person writing it.
+#
+# workflow_dispatch is for backfilling a release that predates this file.
+#
+# Why assets at all: GitHub does not count downloads of the auto-generated source tarballs, so
+# without an uploaded file there is no way to tell whether a release was used. These are counted.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach assets to, e.g. v5.0.1'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Work out the tag
+        id: tag
+        run: |
+          tag="${{ inputs.tag || github.event.release.tag_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      # The script runs lint-version.py --expect itself, so a tag whose headers say something else
+      # fails here rather than shipping a mislabelled archive.
+      - name: Build the bundle
+        run: ./scripts/release_assets.sh "${{ steps.tag.outputs.version }}"
+
+      # --clobber so that re-running this on a release that already has assets replaces them
+      # instead of failing, which is what a backfill or a fixed script needs.
+      - name: Attach
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            release-assets/unordered_dense-${{ steps.tag.outputs.version }}-headers.tar.gz \
+            release-assets/unordered_dense-${{ steps.tag.outputs.version }}-headers.zip \
+            release-assets/SHA256SUMS \
+            --clobber
