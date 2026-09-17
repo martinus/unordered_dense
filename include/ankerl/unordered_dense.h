@@ -4141,6 +4141,28 @@ public:
         return max_size();
     }
 
+    // nonstandard API: what the index asked the allocator for, which no arithmetic on the two
+    // above can give.
+    //
+    // In 4.x the index was one bucket per slot, so `bucket_count() * sizeof(bucket_type)` was the
+    // index, exactly. Here a bucket is a group of sixteen slots, `bucket_type` is only the part of
+    // that group the probe compares -- sixteen fingerprints and eight counters, 24 bytes -- and the
+    // sixteen value indices sit in the same block without being part of the type. That product
+    // therefore reads 24 bytes per slot against the 5.5 `group` costs and the 9.5 of `group_big`,
+    // and reads the same for both although they differ by four bytes a slot. It still compiles,
+    // which is the reason this is here: a caller that spends the number rather than prints it, e.g.
+    // one deciding when a join spills to disk, otherwise has to copy `group_storage::block` into
+    // its own source to stay right.
+    //
+    // Read from the array rather than from m_shifts, so it cannot describe an array that is not
+    // there; allocate_buckets_from_shift() resizes a fresh container exactly once, so what the
+    // block vector holds is also what it asked for. Bytes asked for, not resident pages, and the
+    // index only: the values are `values().capacity() * sizeof(value_type)`, and they are the
+    // larger of the two for anything but a small value.
+    [[nodiscard]] auto index_bytes() const noexcept -> std::size_t {
+        return m_buckets.size() * sizeof(typename bucket_container_type::block);
+    }
+
     // hash policy ////////////////////////////////////////////////////////////
 
     [[nodiscard]] auto load_factor() const -> float {
