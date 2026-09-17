@@ -22,6 +22,7 @@ shapes `ankerl::unordered_dense::map` and `set` can be asked to take. The index 
   - [`auto extract() && -> value_container_type`](#auto-extract---value_container_type)
   - [`extract()` Single Elements](#extract-single-elements)
   - [`[[nodiscard]] auto values() const noexcept -> value_container_type const&`](#nodiscard-auto-values-const-noexcept---value_container_type-const)
+  - [`[[nodiscard]] auto index_bytes() const noexcept -> std::size_t`](#nodiscard-auto-index_bytes-const-noexcept---stdsize_t)
   - [`auto replace(value_container_type&& container)`](#auto-replacevalue_container_type-container)
   - [`auto hash_for(K const& key) const -> precomputed_hash`](#auto-hash_fork-const-key-const---precomputed_hash)
   - [`auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#auto-visitfwdit-first-fwdit-last-f-f---size_t)
@@ -284,6 +285,25 @@ Note that the `extract(key)` API returns an `std::optional<value_type>` that is 
 ### `[[nodiscard]] auto values() const noexcept -> value_container_type const&`
 
 Exposes the underlying values container.
+
+### `[[nodiscard]] auto index_bytes() const noexcept -> std::size_t`
+
+How many bytes the index asked the allocator for. Together with the values container, that is
+everything the map allocates:
+
+```cpp
+auto total = map.index_bytes() + map.values().capacity() * sizeof(decltype(map)::value_type);
+```
+
+The index is 5.5 bytes per slot with `bucket_type::group` and 9.5 with `bucket_type::group_big`, so
+a table at the maximum load factor of 0.8 spends about 6.9 bytes of index per element.
+
+Do not compute this as `bucket_count() * sizeof(bucket_type)`. That was the index in 4.x, where
+there was one bucket per slot, and it is not one here: a bucket is a group of sixteen slots,
+`bucket_type` is only the 24 bytes of a group that the probe compares, and the sixteen value indices
+sit in the same block without being part of the type. The product reads 24 bytes per slot for both
+bucket types, and it still compiles, so nothing tells you. See
+[upgrading from 4.x](upgrading-to-5.md).
 
 ### `auto replace(value_container_type&& container)`
 

@@ -95,7 +95,7 @@ target_link_libraries(your_project_name unordered_dense::unordered_dense)
 ## Documentation
 
 * [Usage](doc/usage.md) - the hash, the API a vector of values makes possible, and the shapes `map` and `set` can be asked to take.
-* [Upgrading from 4.x](doc/upgrading-to-5.md) - what 5.0 broke, the four renames that fix most of it, and the one break that is not a compile error.
+* [Upgrading from 4.x](doc/upgrading-to-5.md) - what 5.0 broke, the four renames that fix most of it, and the two breaks that are not compile errors.
 * [Design](doc/design.md) - how the index works: one 88 byte block per group of sixteen slots, the overflow counters that make tombstones unnecessary, and what an insert, a lookup and an erase do.
 * [Benchmarks](doc/benchmarks.md) - the long version of the two graphs above.
 * [Real world usage](doc/users.md) - the open source projects that use this map, from MySQL to PrusaSlicer.

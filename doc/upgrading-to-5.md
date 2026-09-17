@@ -9,7 +9,7 @@ unchanged: `try_emplace`, `insert_or_assign`, `erase`, `extract`, `replace`, `va
 `max_load_factor`, the allocator and container template arguments, and the `pmr` aliases all mean
 what they meant in 4.11.0.
 
-The rest of this page is for the projects that do one of five things.
+The rest of this page is for the projects that do one of six things.
 
 ## 1. You named a bucket type
 
@@ -88,7 +88,8 @@ depends on the argument. Compile, and fix what the compiler points at.
 
 ## 5. You store hash values outside the process
 
-This is the only break that is not a compile error, and it is the one to take seriously.
+This break and the next one are the two that are not compile errors. This is the one to take
+seriously.
 
 **The hash produces different values in 5.0.** Anything you persisted, sent over a wire, or used as
 a cache key or shard index has to be recomputed. A file written by 4.x and read by 5.0 will not
@@ -96,6 +97,46 @@ report an error, it will simply not find things.
 
 This cannot be detected for you. If you are not sure whether your project does it, grep for
 anywhere a hash value leaves the process.
+
+## 6. You sized the index with `bucket_count() * sizeof(bucket_type)`
+
+This one still compiles, still runs, and is off by up to 4.36x.
+
+In 4.x the index was one array with one bucket per slot, so that product was the index, exactly. In
+5.0 neither half means that any more. `bucket_count()` still counts slots, but slots come in groups
+of sixteen, and `bucket_type` is only the part of a group that gets compared: sixteen fingerprints
+and eight overflow counters, 24 bytes. The sixteen value indices sit in the same block and are not
+part of the type. The product is therefore 24 bytes per slot no matter what the index costs.
+
+Measured with a counting allocator, `map<uint64_t, uint64_t>` filled with a million entries, which
+is 2097152 slots:
+
+| version, bucket type | `sizeof(bucket_type)` | the product | the index's live bytes | overstated by |
+|---|---|---|---|---|
+| 4.4.0, `standard` | 8 | 8.00 B/slot | 8.00 B/slot | 1.00x |
+| 5.0.1, `group` | 24 | 24.00 B/slot | 5.50 B/slot | 4.36x |
+| 5.0.1, `group_big` | 24 | 24.00 B/slot | 9.50 B/slot | 2.53x |
+
+Notably, `sizeof(bucket_type)` is 24 for both bucket types in 5.0, so the product cannot tell them
+apart although they differ by 4 bytes per slot.
+
+Nothing reports this, which means that it matters most where the number is used rather than printed.
+E.g. MySQL's
+[hash join](https://github.com/mysql/mysql-server/blob/trunk/sql/iterators/hash_join_buffer.cc) adds
+this product to the size of its row buffer and spills the join to disk once the total goes over
+`join_buffer_size`. It is on 4.4.0, where the product is exact.
+
+Ask the map instead. `index_bytes()` is the number, for either bucket type:
+
+```cpp
+auto index = map.index_bytes();
+auto values = map.values().capacity() * sizeof(decltype(map)::value_type);
+```
+
+`values()` is unchanged from 4.x, so only the first line is new. Both numbers are bytes asked for,
+not resident pages, and they do not count what the allocator rounds up or what a growth keeps around
+while it copies. In 5.0.0 and 5.0.1, which do not have the accessor, `bucket_count() / 16 * 88` is
+the same number for `bucket_type::group` and `/ 16 * 152` for `group_big`.
 
 ## Also worth knowing, though it is not an API change
 
