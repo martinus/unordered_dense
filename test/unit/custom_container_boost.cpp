@@ -75,4 +75,48 @@ TEST_CASE_TEMPLATE(
     REQUIRE(map.size() == static_cast<size_t>(total));
 }
 
+// The const paths: `begin() const`, `end() const`, `cbegin()`, `cend()` and the conversion from a
+// mutable iterator to a const one. The allocator here hands out a fancy pointer, so the const
+// iterator of segmented_vector has to point into `pointer const*` for any of this to compile.
+TEST_CASE_TEMPLATE(
+    "boost_container_vector_const_paths",
+    map_t,
+    ankerl::unordered_dense::map<int, std::string, ankerl::unordered_dense::hash<int>, std::equal_to<int>, shmem_vector>,
+    ankerl::unordered_dense::
+        segmented_map<int, std::string, ankerl::unordered_dense::hash<int>, std::equal_to<int>, shmem_allocator>) {
+
+    auto remover = shm_remove();
+
+    auto segment = boost::interprocess::managed_shared_memory(boost::interprocess::create_only, "MySharedMemory", 1024 * 1024);
+    auto map = map_t{shmem_allocator{segment.get_segment_manager()}};
+
+    int total = 1000;
+    for (int i = 0; i < total; ++i) {
+        map.try_emplace(i, std::to_string(i));
+    }
+
+    typename map_t::const_iterator const from_mutable = map.find(77);
+    REQUIRE(from_mutable->first == 77);
+    REQUIRE(from_mutable->second == std::to_string(77));
+
+    auto const& cmap = map;
+    REQUIRE(from_mutable != cmap.cend());
+
+    auto num_range = 0;
+    for (auto const& kv : cmap) {
+        REQUIRE(kv.second == std::to_string(kv.first));
+        ++num_range;
+    }
+    REQUIRE(num_range == total);
+
+    auto num_iter = 0;
+    for (auto it = cmap.cbegin(); it != cmap.cend(); ++it) {
+        REQUIRE(it->second == std::to_string(it->first));
+        ++num_iter;
+    }
+    REQUIRE(num_iter == total);
+
+    REQUIRE(cmap.find(total + 123) == cmap.cend());
+}
+
 #endif // ANKERL_UNORDERED_DENSE_HAS_BOOST
