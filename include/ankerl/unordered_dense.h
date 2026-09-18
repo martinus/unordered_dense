@@ -950,7 +950,11 @@ private:
      */
     template <bool IsConst>
     class iter_t {
-        using ptr_t = std::conditional_t<IsConst, segmented_vector::const_pointer const*, segmented_vector::pointer*>;
+        // The block array is a vector of `pointer`, so a const iterator points into `pointer const*` and not
+        // into `const_pointer const*`. For a raw pointer a qualification conversion makes the two the same,
+        // but for a fancy pointer, e.g. boost::interprocess::offset_ptr, they are unrelated class types and
+        // every const path fails to compile. Constness of the element is carried by `reference` and `pointer`.
+        using ptr_t = std::conditional_t<IsConst, segmented_vector::pointer const*, segmented_vector::pointer*>;
         ptr_t m_data{};
         std::size_t m_idx{};
 
