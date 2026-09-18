@@ -73,6 +73,29 @@ TEST_CASE_TEMPLATE(
 
     map.emplace(std::pair<int, std::string>(9999999, "hello"));
     REQUIRE(map.size() == static_cast<size_t>(total));
+
+    // The const paths over a container whose allocator hands out a fancy pointer. The iterator of
+    // segmented_vector has to point into `pointer const*` for these to compile at all, see the
+    // comment on iter_t::ptr_t.
+    auto const& cmap = map;
+    auto sum_range = size_t{0};
+    for (auto const& kv : cmap) {
+        sum_range += kv.second.size();
+    }
+    auto sum_iter = size_t{0};
+    for (auto it = cmap.cbegin(); it != cmap.cend(); ++it) {
+        sum_iter += it->second.size();
+    }
+    REQUIRE(sum_range == sum_iter);
+
+    auto const cit = cmap.find(77);
+    REQUIRE(cit != cmap.cend());
+    REQUIRE(cit->first == 77);
+    REQUIRE(cit->second == std::to_string(77));
+
+    map.erase(cit);
+    REQUIRE(map.size() == static_cast<size_t>(total - 1));
+    REQUIRE(cmap.find(77) == cmap.cend());
 }
 
 #endif // ANKERL_UNORDERED_DENSE_HAS_BOOST
