@@ -950,7 +950,8 @@ private:
      */
     template <bool IsConst>
     class iter_t {
-        using ptr_t = std::conditional_t<IsConst, segmented_vector::const_pointer const*, segmented_vector::pointer*>;
+        // The block array holds `pointer`, so a const iterator points into `pointer const*`.
+        using ptr_t = std::conditional_t<IsConst, segmented_vector::pointer const*, segmented_vector::pointer*>;
         ptr_t m_data{};
         std::size_t m_idx{};
 
