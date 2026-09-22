@@ -206,6 +206,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - lookups are behind main
 - `ie64` ties boost while executing 58% more instructions, and the counts say why
 - The rehash pipeline below 200000 entries, where it had never been measured: it costs a gcc integer build up to 3.6% in a band, and it stays
+- `try_emplace` on a present key, attacked from the hit side: three source shapes and `flatten` on the caller, and clang's count does not come down
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5220,6 +5221,63 @@ not say what a table that churns pays, where the rehash runs over values that ar
 The `rehash(0)` column includes `clear_buckets()`'s memset in both variants, which makes the loop's
 own ratio slightly better than the column shows, not worse. Nothing here was measured above 512000
 entries; the entry above covers 2M and 4M and says the pipeline wins there by more.
+
+**`try_emplace` on a present key, attacked from the hit side: three source shapes and `flatten` on
+the caller, and clang's count does not come down** (2026-09-22, issue #305, Ryzen 9 7950X, clang 22
+and gcc 16, `scripts/ab/try_emplace_hit.{cpp,sh}`). #305 was filed on the 73.2 against 48.4
+instructions quoted in "The insert path is split in two by clang" and in `do_place_element`'s
+comment, as an untried lever. It was not untried: "And the one candidate the list suggested is dead
+too" above already moved the `always_inline` outward (variant D, identical to shipped) and put the
+placement out of line (variant C, 61% onto a gcc build), and "The one fact left standing" names the
+register allocator. The issue should have been checked against those two first. What is new here is
+a harness that counts in-process around the loop only, the shrink-wrapping question that neither
+entry asked, and `flatten`.
+
+The harness: one map and one mode per binary, `map<uint64_t, uint64_t>` and `map<std::string,
+uint64_t>` (8-40 bytes) at 50000 entries, `try_emplace` on a present key in random order (`hit`), and
+`try_emplace` of fresh keys into tables reserved for them (`miss`), 4M operations, instructions and
+cycles from `perf_event_open` around the loop, user space only. Main against itself reads identical
+instruction counts in every cell, so any difference is the header. Instructions per operation:
+
+| | clang hit u64 | clang hit str | clang miss u64 | clang miss str | gcc hit u64 | gcc hit str | gcc miss u64 | gcc miss str |
+|---|---|---|---|---|---|---|---|---|
+| main (`ad06cce`) | **72.04** | 147.11 | **95.97** | **312.89** | **45.12** | 109.10 | 77.90 | 291.67 |
+| 1: placement out of line, given only the hash | 74.04 | **140.14** | 108.03 | 334.91 | 50.15 | 113.16 | 119.91 | 327.32 |
+| 2: `always_inline` on `do_try_emplace` | 72.04 | 147.11 | 95.97 | 312.89 | 47.15 | **109.07** | **76.87** | **288.67** |
+| 3: only the hash held across the probe | 72.04 | 144.11 | 95.97 | 319.38 | 45.12 | 109.10 | 77.90 | 291.67 |
+| main, caller's loop `flatten` | 77.04 | 152.11 | | | 55.10 | 111.08 | | |
+
+**Why the prologue cannot be shrink-wrapped, from the disassembly of clang's out-of-line
+`do_try_emplace`.** A hit pays six pushes, a stack adjustment and a spill on entry and the same
+back on return, 16 of its 72 instructions. The obvious fix is to let clang's shrink-wrapping put
+those saves on the placement path only, which needs the hit path to touch no callee-saved register.
+It touches six: the hit path uses fifteen general purpose registers, all nine that x86-64 lets a
+function use without saving and six more, for the key, the hash, the home group, the group, delta,
+the mask, the group and value base pointers, the block, the lanes, the lane, the counter, `this` and
+the argument pointer. Candidate 1 takes the placement's state out of the hit path entirely and the prologue stays,
+because the probe alone is over nine. Candidate 3 hands the placement the hash instead of its three
+pieces and clang's integer counts do not move by one instruction: it had already folded the two
+shapes into one. Getting the probe under nine means reloading the mask, the bases or `this` on
+every step of every lookup, including `find`, which shares the loop.
+
+**`flatten` says the prologue is not even the cost.** With the whole chain inlined into the caller's
+loop, which is gcc's shape and the one PGO produced in the entry above, clang reads 77.04: five
+*more* than with the boundary. The pressure that the out-of-line function pays as a prologue it pays
+inside the loop once inlined. gcc inlines `try_emplace` into the loop on its own and reads 45.12 on
+identical source, and forcing it with `flatten` makes gcc worse too (55.10), because `flatten` also
+inlines the vector's growth path. So of the 27 instructions between the compilers on a hit, the call
+boundary is at most the 16 of the prologue, and what is left is the allocation of the same inlined
+body.
+
+Candidate 3's string cells are the only non-null difference and they cancel: a string hit 3.0
+instructions fewer (2.0%), a string insert 6.5 more (2.1%), gcc unmoved. Nothing kept; no header
+change.
+
+What this says and does not say: one machine, one value type, 50000 entries, all in cache, so the
+counts are the decisive number and the cycles (one run, not tabled) moved with them. It does not
+cover `operator[]` separately; it is the same `do_try_emplace`. It says nothing about MSVC. The
+standing sentence in `CLAUDE.md` is unchanged: nothing in the source has been found to steer
+clang's allocation here, and now four more shapes have been tried.
 
 ## The robin hood index this replaced, and its dead ends
 
