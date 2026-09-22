@@ -547,6 +547,20 @@ octave where this map swings 1.07-1.28x. At 3251 entries and load 0.79 it costs 
 map's 3.78. The eleven points where it does come out ahead are all above 440000 entries, where every
 map is waiting on memory and the probe hardly matters.
 
+## Instructions per `try_emplace` hit and insert, counted around the loop
+
+`scripts/ab/try_emplace_hit.sh` builds `scripts/ab/try_emplace_hit.cpp` against main's header and
+the working tree's, both compilers, one map and one mode per binary (`HIT`: `try_emplace` on a
+present key; `MISS`: fresh keys into reserved tables; integer or string key), and prints
+instructions and cycles per operation read with `perf_event_open` around the timed loop only. Main
+against itself reads identical instruction counts, so the counts need no rounds; the cycles do.
+Written for #305; the results are in `notes/index-design.md`, "`try_emplace` on a present key".
+
+```sh
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/try_emplace_hit.sh 3            # working tree against origin/main
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/try_emplace_hit.sh -r HEAD~1 1
+```
+
 ## What the rehash pipeline is worth, against table size
 
 `scripts/ab/rehash_size.sh` puts `fill_buckets_from_values` against the same loop with its ring and
