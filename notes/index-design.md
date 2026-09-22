@@ -207,6 +207,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `ie64` ties boost while executing 58% more instructions, and the counts say why
 - The rehash pipeline below 200000 entries, where it had never been measured: it costs a gcc integer build up to 3.6% in a band, and it stays
 - `try_emplace` on a present key, attacked from the hit side: three source shapes and `flatten` on the caller, and clang's count does not come down
+- The default maximum load factor swept from 0.75 to 0.9: every step above 0.8 costs both compilers the same, and the one step below buys 0.8% for 6.7% more index
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5278,6 +5279,75 @@ counts are the decisive number and the cycles (one run, not tabled) moved with t
 cover `operator[]` separately; it is the same `do_try_emplace`. It says nothing about MSVC. The
 standing sentence in `CLAUDE.md` is unchanged: nothing in the source has been found to steer
 clang's allocation here, and now four more shapes have been tried.
+
+**The default maximum load factor swept from 0.75 to 0.9: every step above 0.8 costs both compilers
+the same, and the one step below buys 0.8% for 6.7% more index** (2026-09-22, issue #306, Ryzen 9
+7950X, clang 22 and gcc 16, THP `madvise`, `scripts/ab/load_factor.sh`). `default_max_load_factor`
+had been 0.8 since the group index landed and nothing in this file measured another value; boost
+ships 0.875. Each value became the candidate header's default and ran against main's 0.8 with
+`run.sh -p 50 all 12`, pinned to one core. Fifty points, not five, because every maximum doubles the
+table at a different size (0.875 grows at 1793, 3585, ... where 0.8 grows at 1639, 3277, ...), so
+the two sawtooths are out of phase: "Fifty points draw the load-factor sawtooth". The first column
+of each compiler is main against itself. baseline/candidate, above 1 means the candidate is faster:
+
+| workload | clang 0.8 | clang 0.75 | clang 0.85 | clang 0.875 | clang 0.9 | gcc 0.8 | gcc 0.75 | gcc 0.85 | gcc 0.875 | gcc 0.9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `it64` | 0.997 | 0.998 | 0.998 | 0.998 | 0.998 | 1.001 | 1.001 | 1.000 | 0.999 | 0.999 |
+| `ie64` | 0.993 | 1.012 | 0.968 | 0.945 | 0.922 | 1.000 | 1.023 | 0.977 | 0.948 | 0.922 |
+| `build64` | 0.999 | 1.012 | 0.968 | 0.937 | 0.904 | 1.001 | 1.030 | 0.944 | 0.907 | 0.859 |
+| `churn64` | 1.001 | 1.016 | 0.979 | 0.952 | 0.924 | 1.001 | 1.018 | 0.972 | 0.956 | 0.927 |
+| `find64` | 1.003 | 1.012 | 0.989 | 0.978 | 0.964 | 1.000 | 1.008 | 0.986 | 0.971 | 0.960 |
+| `itstr` | 1.000 | 1.000 | 1.000 | 1.000 | 0.999 | 1.001 | 1.001 | 0.999 | 0.999 | 0.999 |
+| `iestr` | 1.014 | 1.016 | 0.996 | 0.984 | 0.975 | 1.002 | 1.012 | 0.988 | 0.977 | 0.962 |
+| `buildstr` | 1.014 | 1.006 | 0.987 | 0.982 | 0.968 | 1.013 | 1.013 | 0.998 | 0.987 | 0.978 |
+| `churnstr` | 1.008 | 1.009 | 0.993 | 0.982 | 0.971 | 1.000 | 1.008 | 0.985 | 0.975 | 0.962 |
+| `findstr` | 1.000 | 1.002 | 0.999 | 0.994 | 0.988 | 0.999 | 1.001 | 0.998 | 0.992 | 0.987 |
+| `itbig` | 1.000 | 0.999 | 1.000 | 0.999 | 1.000 | 0.999 | 0.999 | 1.000 | 1.000 | 0.999 |
+| `iebig` | 0.994 | 1.012 | 0.971 | 0.948 | 0.925 | 1.000 | 1.019 | 0.976 | 0.952 | 0.930 |
+| `buildbig` | 0.999 | 0.998 | 0.996 | 0.989 | 0.981 | 1.000 | 0.991 | 0.996 | 1.002 | 0.998 |
+| `churnbig` | 0.997 | 1.013 | 0.973 | 0.954 | 0.930 | 1.002 | 1.005 | 0.986 | 0.975 | 0.959 |
+| `findbig` | 1.002 | 1.006 | 0.987 | 0.979 | 0.965 | 1.003 | 1.009 | 0.983 | 0.973 | 0.962 |
+| `rhit64` | 1.002 | 1.002 | 0.998 | 1.005 | 1.000 | 1.034 | 1.030 | 1.034 | 1.025 | 1.011 |
+| `rmiss64` | 0.953 | 1.019 | 0.928 | 0.908 | 0.867 | 1.004 | 1.024 | 0.970 | 0.942 | 0.929 |
+| `rhitstr` | 1.011 | 1.004 | 1.001 | 0.998 | 0.998 | 1.000 | 1.007 | 1.005 | 1.002 | 0.996 |
+| `rmissstr` | 1.010 | 1.006 | 0.989 | 0.980 | 0.973 | 1.000 | 1.006 | 0.988 | 0.978 | 0.967 |
+| `hashstr` | 0.918 | 0.924 | 1.022 | 1.020 | 1.030 | 1.001 | 1.000 | 1.000 | 1.004 | 1.001 |
+| geomean, 19 without `hashstr` | **0.9998** | **1.0074** | **0.9850** | **0.9740** | **0.9599** | **1.0031** | **1.0108** | **0.9886** | **0.9765** | **0.9628** |
+| geomean over the control | 1.0000 | 1.0076 | 0.9852 | 0.9742 | 0.9601 | 1.0000 | 1.0077 | 0.9855 | 0.9735 | 0.9598 |
+
+**Monotone, and the two compilers agree to 0.1% at every value**: over the control, 0.85 reads
+0.985 under both, 0.875 reads 0.974 and 0.974, 0.9 reads 0.960 and 0.960. About 1.3% of the geomean
+per 0.025 of maximum load, all of it on the workloads that place or miss: `build64`, `ie*`, `churn*`
+and `rmiss64` lose 5-14% at 0.9, the 50% `find*` 1-4%, all-hit `rhit*` and iteration nothing. That
+is the superlinear miss cost the fifty-point entry found at the top of each cycle, now paid over a
+longer stretch of it.
+
+**What the index saves, computed rather than measured, because it is arithmetic**: the table grows
+when `size() > floor(16 * groups * max_load_factor)` and the index is 88 bytes a group, so its bytes
+per entry over an octave follow from the maximum alone. Geometric mean over 2000 sizes across the
+octave from 2^20:
+
+| maximum load | 0.75 | 0.8 | 0.85 | 0.875 | 0.9 |
+|---|---|---|---|---|---|
+| index bytes per entry, mean | 10.37 | 9.72 | 9.15 | 8.89 | 8.64 |
+| range across the octave | 7.34-14.67 | 6.88-13.75 | 6.47-12.94 | 6.29-12.57 | 6.11-12.22 |
+| against 0.8 | 1.067 | 1 | 0.941 | 0.914 | 0.889 |
+
+For `map<uint64_t, uint64_t>` the values are 16 bytes an entry before the vector's own slack, so
+0.875's 8.6% of the index is under 3% of the map; for a 64 byte value it is under 1.5%. boost's
+0.875 would cost this map 2.6% of the score to save that.
+
+**Kept at 0.8.** 0.75 is the only value ahead, by 0.76% under clang and 0.77% under gcc, and pays
+6.7% more index for it, which is the trade #306 said not to take. Nothing changes in the header; the
+knob is `max_load_factor(float)` for a caller who weighs the two differently.
+
+What this says and does not say: the paired harness at fifty points per octave, sizes 50000 to
+200000, all in cache. Past the cache a smaller index misses less, which would move the answer
+towards a higher maximum; that is the size axis and it was not swept. The control's `rmiss64` reads
+0.953 under clang, the harness's per-build band on the miss workloads ("The paired harness has a
+systematic bias on `rmissstr`"), so a single miss cell is good to about 5%; the geomeans, and the
+agreement between compilers, are what to quote. `hashstr` is the hash alone and is left out of the
+geomean.
 
 ## The robin hood index this replaced, and its dead ends
 
