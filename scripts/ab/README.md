@@ -547,6 +547,19 @@ octave where this map swings 1.07-1.28x. At 3251 entries and load 0.79 it costs 
 map's 3.78. The eleven points where it does come out ahead are all above 440000 entries, where every
 map is waiting on memory and the probe hardly matters.
 
+## The default maximum load factor, swept
+
+`scripts/ab/load_factor.sh` makes each value the working tree header's `default_max_load_factor` in
+turn and runs `run.sh -r REV -p 50 all 12` against it, pinned to `AB_CORE`; the first value is the
+same-header control. It edits the header between runs and restores it on exit, and refuses to start
+on a header with local changes. Written for #306; the results are in `notes/index-design.md`, "The
+default maximum load factor swept".
+
+```sh
+AB_BUILD=/home/martinus/gra/x scripts/ab/load_factor.sh clang++ | tee clang.txt   # 0.8 0.75 0.85 0.875 0.9, 28 minutes
+AB_BUILD=/home/martinus/gra/x scripts/ab/load_factor.sh g++ 0.8 0.875
+```
+
 ## Instructions per `try_emplace` hit and insert, counted around the loop
 
 `scripts/ab/try_emplace_hit.sh` builds `scripts/ab/try_emplace_hit.cpp` against main's header and
