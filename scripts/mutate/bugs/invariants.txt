@@ -557,28 +557,47 @@
 # Only visible with a value type whose destructor does something -- so a suite that tests with
 # integers cannot see it at all, and one with a sanitizer only sees the leak.
 <<<
-    void resize_shrink(std::size_t new_size) {
+    void destroy_tail(std::size_t new_size) {
         if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (std::size_t ix = new_size; ix < m_size; ++ix) {
-                operator[](ix).~T();
+            for (auto i = m_size; i != new_size; --i) {
+                operator[](i - 1).~T();
             }
         }
         m_size = new_size;
 ===
-    void resize_shrink(std::size_t new_size) {
+    void destroy_tail(std::size_t new_size) {
         m_size = new_size;
+>>>
+
+# a segmented_vector destroys its elements first to last again
+# Nothing leaks and nothing reads freed memory, so only a test of the order sees it; what it costs is
+# the allocator's, a build after a teardown that faults its heap back in (the teardown-order tests).
+<<<
+            for (auto i = m_size; i != new_size; --i) {
+                operator[](i - 1).~T();
+            }
+===
+            for (auto i = new_size; i != m_size; ++i) {
+                operator[](i).~T();
+            }
+>>>
+
+# a segmented_vector frees its first block first again
+<<<
+        for (auto it = m_blocks.rbegin(); it != m_blocks.rend(); ++it) {
+            std::allocator_traits<Allocator>::deallocate(ba, *it, num_elements_in_block);
+        }
+===
+        for (auto ptr : m_blocks) {
+            std::allocator_traits<Allocator>::deallocate(ba, ptr, num_elements_in_block);
+        }
 >>>
 
 # clear() does not run the destructors of what it drops
 # Same shape, on the path every table takes when it is emptied rather than resized.
 <<<
     void clear() {
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (std::size_t i = 0, s = size(); i < s; ++i) {
-                operator[](i).~T();
-            }
-        }
-        m_size = 0;
+        destroy_tail(0);
 ===
     void clear() {
         m_size = 0;

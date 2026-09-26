@@ -1117,7 +1117,7 @@ private:
         }
     }
 
-    // Last block first, for the reason clear() gives.
+    // Last block first, like destroy_tail() below.
     void dealloc() {
         auto ba = Allocator(m_blocks.get_allocator());
         for (auto it = m_blocks.rbegin(); it != m_blocks.rend(); ++it) {
@@ -1129,10 +1129,18 @@ private:
         return (capacity + num_elements_in_block - 1U) / num_elements_in_block;
     }
 
-    void resize_shrink(std::size_t new_size) {
+    // Destroys the elements from new_size on, last first, and dealloc() frees the last block first:
+    // everything goes in the reverse of the order it was made, as a built-in array does. The order is
+    // the allocator's to benefit from. With glibc, a map whose values own heap memory and is freed
+    // front first hands that memory back to the kernel as it goes, and the next build in the same
+    // process faults all of it in again; freed last first, it stays in malloc's free lists for that
+    // build to reuse. The price is that a destroyed container's memory stays resident until it is
+    // reused or malloc_trim() is called, which std::unordered_map shares. notes/index-design.md,
+    // "Tearing a segmented_map down in reverse".
+    void destroy_tail(std::size_t new_size) {
         if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (std::size_t ix = new_size; ix < m_size; ++ix) {
-                operator[](ix).~T();
+            for (auto i = m_size; i != new_size; --i) {
+                operator[](i - 1).~T();
             }
         }
         m_size = new_size;
@@ -1286,7 +1294,7 @@ public:
 
     void resize(std::size_t const count) {
         if (count < m_size) {
-            resize_shrink(count);
+            destroy_tail(count);
         } else if (count > m_size) {
             std::size_t const new_elems = count - m_size;
             reserve(count);
@@ -1298,7 +1306,7 @@ public:
 
     void resize(std::size_t const count, value_type const& value) {
         if (count < m_size) {
-            resize_shrink(count);
+            destroy_tail(count);
         } else if (count > m_size) {
             std::size_t const new_elems = count - m_size;
             reserve(count);
@@ -1339,23 +1347,8 @@ public:
         return ref;
     }
 
-    // Last element first, and dealloc() frees the last block first: the reverse of construction,
-    // which is what a built-in array does. It matters when the values own heap memory. Freed front
-    // first, a string map of a million entries handed glibc's heap back to the kernel as it went
-    // (106 MB), and the next build faulted every page of it in again; freed last first, the memory
-    // stays in malloc's free lists and the next build reuses it. Measured one binary per header,
-    // build-destroy-build in one process (scripts/ab/teardown_order.sh): the warm build 1.7x faster
-    // for std::string keys and 2.6-2.9x for values that own an allocation, the teardown itself
-    // 1.4-1.8x, integers level, the first build unchanged. The price is that a destroyed map's memory
-    // stays resident until it is reused or malloc_trim() is called, which is what std::unordered_map
-    // does as well. notes/index-design.md, "Tearing a segmented_map down in reverse".
     void clear() {
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (auto i = size(); i != 0; --i) {
-                operator[](i - 1).~T();
-            }
-        }
-        m_size = 0;
+        destroy_tail(0);
     }
 
     void shrink_to_fit() {
