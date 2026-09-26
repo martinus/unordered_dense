@@ -1910,8 +1910,8 @@ private:
     }
 
     // What happens once the home group has been looked at and did not hold the key: whether it is
-    // worth walking on at all, and the walk. Shared by probe() and by the bulk visit, so that the
-    // probe's termination invariant is written once -- it was copied into the second of those, and
+    // worth walking on at all, and the walk. Shared by probe(), try_emplace_far and the bulk visit, so
+    // that the probe's termination invariant is written once -- it was copied into the bulk visit, and
     // a copy of an invariant is silent when it drifts, because the result is a wrong answer and not
     // a crash.
     //
@@ -1936,12 +1936,6 @@ private:
             // one.
             return probe_from(key, word, counter, next, delta);
         }
-    }
-
-    template <typename K>
-    ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
-        auto const word = fingerprint_word(mh);
-        return probe(key, word, word & 7U, group_idx_from_hash(mh));
     }
 
     // The probe for a caller that is holding the home group already -- a pipelined insert formed it
@@ -1970,12 +1964,11 @@ private:
         return probe_after_home(key, word, counter, home, home_idx);
     }
 
-    // The same probe for a caller that has already taken the hash apart. A pipelined insert has all
-    // three in hand -- it derived the group to prefetch it -- and re-deriving them per element is a
-    // table load, an and and a shift on the hot path of a loop that is doing nothing else.
     template <typename K>
-    ANKERL_UNORDERED_DENSE_FORCEINLINE auto
-    probe(K const& key, std::uint32_t word, unsigned counter, value_idx_type home_idx) const -> probe_result {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto probe(K const& key, std::uint64_t mh) const -> probe_result {
+        auto const word = fingerprint_word(mh);
+        auto const counter = word & 7U;
+        auto const home_idx = group_idx_from_hash(mh);
         if constexpr (!detail::key_compare_is_call_v<Key>) {
             return probe_from(key, word, counter, home_idx, 0);
         } else {
@@ -2401,9 +2394,9 @@ private:
     // constructed table does not allocate. Every path that probes the buckets either returns early
     // while the table is empty (do_find and do_find_hashed's callers, do_erase_key), or needs an
     // iterator into m_values and so
-    // cannot be reached in this state (erase, extract, replace_key), or calls this first -- which
-    // is the four insert entry points, the only ones that reach the buckets without a prior
-    // emptiness check.
+    // cannot be reached in this state (erase, extract, replace_key), or calls this before it
+    // reaches them -- which is the insert entry points; do_try_emplace looks at the home group
+    // first, behind its own emptiness check.
     void allocate_buckets_if_none() {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(m_buckets.empty()))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
@@ -2605,7 +2598,7 @@ private:
     }
 
     // Appends the value and points a slot at it. What it needs to know is where the key belongs;
-    // place_element below takes that from the probe that just missed, rather than deriving it
+    // place_element_at below takes that from the probe that just missed, rather than deriving it
     // again.
     //
     // Forced inline, and the reason is a trade worth knowing. clang prices this function at 480
@@ -3038,6 +3031,8 @@ private:
         auto const word = fingerprint_word(mh);
         auto const home_idx = group_idx_from_hash(mh);
         if (ANKERL_UNORDERED_DENSE_LIKELY(!empty())) {
+            // probe()'s home group, without the probe_result: returning one cost gcc a quarter of an
+            // integer hit (see probe_from).
             auto const* groups = m_buckets.data();
             prefetch_index(groups, home_idx);
             auto const& home = groups[home_idx];
@@ -3055,12 +3050,7 @@ private:
         allocate_buckets_if_none();
         auto const counter = word & 7U;
         if (ANKERL_UNORDERED_DENSE_LIKELY(m_buckets.data()[home_idx].m_overflows[counter] == 0)) {
-            return place_element_at(word,
-                                    counter,
-                                    home_idx,
-                                    std::piecewise_construct,
-                                    std::forward_as_tuple(std::forward<K>(key)),
-                                    std::forward_as_tuple(std::forward<Args>(args)...));
+            return place_new_key(word, counter, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
         }
         return try_emplace_far(mh, word, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
     }
@@ -3076,6 +3066,13 @@ private:
             move_home(r.group_idx, r.lane, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
         }
+        return place_new_key(word, counter, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
+    }
+
+    template <typename K, typename... Args>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+    place_new_key(std::uint32_t word, unsigned counter, value_idx_type home_idx, K&& key, Args&&... args)
+        -> std::pair<iterator, bool> {
         return place_element_at(word,
                                 counter,
                                 home_idx,
