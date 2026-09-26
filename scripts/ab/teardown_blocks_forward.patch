@@ -1,0 +1,13 @@
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -1120,8 +1120,8 @@
+     // Last block first, for the reason clear() gives.
+     void dealloc() {
+         auto ba = Allocator(m_blocks.get_allocator());
+-        for (auto it = m_blocks.rbegin(); it != m_blocks.rend(); ++it) {
+-            std::allocator_traits<Allocator>::deallocate(ba, *it, num_elements_in_block);
++        for (auto ptr : m_blocks) {
++            std::allocator_traits<Allocator>::deallocate(ba, ptr, num_elements_in_block);
+         }
+     }
+ 

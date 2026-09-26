@@ -1117,10 +1117,11 @@ private:
         }
     }
 
+    // Last block first, for the reason clear() gives.
     void dealloc() {
         auto ba = Allocator(m_blocks.get_allocator());
-        for (auto ptr : m_blocks) {
-            std::allocator_traits<Allocator>::deallocate(ba, ptr, num_elements_in_block);
+        for (auto it = m_blocks.rbegin(); it != m_blocks.rend(); ++it) {
+            std::allocator_traits<Allocator>::deallocate(ba, *it, num_elements_in_block);
         }
     }
 
@@ -1338,10 +1339,20 @@ public:
         return ref;
     }
 
+    // Last element first, and dealloc() frees the last block first: the reverse of construction,
+    // which is what a built-in array does. It matters when the values own heap memory. Freed front
+    // first, a string map of a million entries handed glibc's heap back to the kernel as it went
+    // (106 MB), and the next build faulted every page of it in again; freed last first, the memory
+    // stays in malloc's free lists and the next build reuses it. Measured one binary per header,
+    // build-destroy-build in one process (scripts/ab/teardown_order.sh): the warm build 1.7x faster
+    // for std::string keys and 2.6-2.9x for values that own an allocation, the teardown itself
+    // 1.4-1.8x, integers level, the first build unchanged. The price is that a destroyed map's memory
+    // stays resident until it is reused or malloc_trim() is called, which is what std::unordered_map
+    // does as well. notes/index-design.md, "Tearing a segmented_map down in reverse".
     void clear() {
         if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (std::size_t i = 0, s = size(); i < s; ++i) {
-                operator[](i).~T();
+            for (auto i = size(); i != 0; --i) {
+                operator[](i - 1).~T();
             }
         }
         m_size = 0;
