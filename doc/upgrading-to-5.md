@@ -154,7 +154,7 @@ that 4.x did not have. `reserve()` up front removes it.
 #endif
 ```
 
-The inline namespace follows the version, so `ankerl::unordered_dense::v5_0_1` is also the exact
+The inline namespace follows the version, so `ankerl::unordered_dense::v5_1_0` is also the exact
 version, and linking two translation units built against different versions is a link error rather
 than a silent mismatch.
 
