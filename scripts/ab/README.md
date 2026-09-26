@@ -549,15 +549,14 @@ map is waiting on memory and the probe hardly matters.
 
 ## The order a segmented_map tears itself down in
 
-`scripts/ab/teardown_order.sh` builds `scripts/ab/teardown_order.cpp` three times per key kind
-(`u64`, `str`, and `owned`, a value that owns a 96 byte allocation): against REV's header, the
-working tree's, and the working tree's with `scripts/ab/teardown_blocks_forward.patch` applied. Each
-binary builds a `segmented_map` from empty, destroys it and builds it again, and prints the first
-build, the median warm build, the median teardown and what glibc handed back to the kernel at each
-teardown. The results are in `notes/index-design.md`, "Tearing a segmented_map down in reverse".
+`scripts/ab/teardown_order.sh` builds a `segmented_map` from empty, destroys it and builds it again,
+for main's header, the working tree's, and the working tree's with
+`scripts/ab/teardown_blocks_forward.patch`; what it prints is described at the top of
+`scripts/ab/teardown_order.cpp`. The results are in `notes/index-design.md`, "Tearing a segmented_map
+down in reverse".
 
 ```sh
-AB_BUILD=/home/martinus/gra/x scripts/ab/teardown_order.sh -c clang++ 3 7            # 50000 200000 1000000, about three minutes
+AB_BUILD=/home/martinus/gra/x scripts/ab/teardown_order.sh -c clang++           # 3 passes, 7 rounds, 50000 200000 1000000
 AB_BUILD=/home/martinus/gra/x scripts/ab/teardown_order.sh -c g++ -r HEAD~1 1 3 50000
 ```
 
