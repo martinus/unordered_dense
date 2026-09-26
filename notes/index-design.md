@@ -5487,6 +5487,14 @@ V1-V9 fix the clang hit and pay for it in gcc's miss (V1 and V4: +40% cycles) or
 Every variant up to V12 left clang's miss above main. V14 is the first that is under main in seven of
 the eight cells on instructions, because the placement no longer sits behind a call either; the
 eighth, gcc's string hit, is +1.9% on instructions and -5.5% on cycles.
+V18a, from `/simplify`: the hit branch already relies on a table with values having buckets, so
+the miss's `allocate_buckets_if_none()` moves into the `else` and a miss tests emptiness once. One
+map: gcc miss 73.96 -> 68.96 / 293.8 -> 287.3, clang miss 84.2 -> 81.2 / 303.7 -> 294.0, clang u64
+hit 49.5 -> 51.3; score against V16 inside the band on time and 0.984-1.003 on instructions per
+workload (builds -1.2 to -1.6% on both compilers). Kept. V18b, the same review's other find --
+clang's out-of-line walk calling `probe_from` directly instead of `probe_after_home`, which re-tests
+the counter its caller just tested and, for a string key, makes a second call -- saved at most one
+instruction a hit and would copy the walk's termination test under a compiler `#if`; dropped.
 V13 tried to stop `flatten` pulling the vector's growth path into every insert site by testing
 `size() != capacity()` first: the extra compare costs gcc 19% cycles on the u64 miss and the code
 was no smaller, so dropped.
@@ -5505,6 +5513,7 @@ was no smaller, so dropped.
 | V16 | = V14 | 1.0767 (per-workload counts identical to V12) |
 | V17a: V16, `increase_size` inlinable | not run (one-map counts identical to V16) | 1.0726 |
 | V17b: V16, `fill_buckets_from_values` inlinable | not run (one-map counts identical to V16) | 1.0728 |
+| V18a: V16, `allocate_buckets_if_none()` only on the empty branch, against V16 | 0.9967 | 1.0004 |
 
 V14's per-workload instruction ratios under clang are all at or under 1.000: `random insert erase`
 0.873 / 0.942 / 0.880 (u64 / string / big value), `build` 0.928 / 0.974 / 0.921, `churn` 0.979 /

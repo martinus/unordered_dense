@@ -3044,10 +3044,12 @@ private:
                 }
                 lanes &= lanes - 1;
             }
+        } else {
+            // A table with values has buckets; one without may not (never grown) or may (cleared). The
+            // home group of an empty table holds nothing, and m_shifts does not change when the first
+            // bucket array is allocated, so home_idx stays right across this.
+            allocate_buckets_if_none();
         }
-        // The home group of an empty table holds nothing, and m_shifts does not change when the
-        // first bucket array is allocated, so home_idx stays right across this.
-        allocate_buckets_if_none();
         auto const counter = word & 7U;
         if (ANKERL_UNORDERED_DENSE_LIKELY(m_buckets.data()[home_idx].m_overflows[counter] == 0)) {
             return place_new_key(word, counter, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
