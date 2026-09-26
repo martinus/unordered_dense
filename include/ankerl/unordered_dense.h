@@ -67,9 +67,21 @@
 #ifdef _MSC_VER
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __declspec(noinline)
 #    define ANKERL_UNORDERED_DENSE_FORCEINLINE __forceinline
+#    define ANKERL_UNORDERED_DENSE_FLATTEN
 #else
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
 #    define ANKERL_UNORDERED_DENSE_FORCEINLINE inline __attribute__((always_inline))
+#    define ANKERL_UNORDERED_DENSE_FLATTEN __attribute__((flatten))
+#endif
+
+// try_emplace's walk past the home group (#321), which only a key whose fingerprint class has
+// overflowed home takes. Each compiler gets the shape the other one loses with: inlined, clang
+// retires 8% more instructions building a map of large values; called, gcc takes 11% more cycles
+// per insert of a fresh key, whether or not the insert walks.
+#if defined(__clang__)
+#    define ANKERL_UNORDERED_DENSE_TRY_EMPLACE_FAR ANKERL_UNORDERED_DENSE_NOINLINE
+#else
+#    define ANKERL_UNORDERED_DENSE_TRY_EMPLACE_FAR ANKERL_UNORDERED_DENSE_FORCEINLINE
 #endif
 
 // Data prefetch hint, a no-op where there is nothing to spell it with. MSVC has no
@@ -2413,7 +2425,7 @@ private:
     }
 
     // Into an index just allocated, so already empty.
-    void fill_buckets_from_values() {
+    ANKERL_UNORDERED_DENSE_NOINLINE void fill_buckets_from_values() {
         // Walked with an iterator rather than indexed with m_values[i], which is not a style
         // choice: placing an entry stores a fingerprint, a std::uint8_t store may alias any object
         // at all, and the container's own data pointer is such an object -- so after every
@@ -2498,7 +2510,7 @@ private:
         }
     }
 
-    void increase_size() {
+    ANKERL_UNORDERED_DENSE_NOINLINE void increase_size() {
         if (m_max_bucket_capacity == max_bucket_count()) {
             // remove the value again, we can't add it!
             m_values.pop_back();
@@ -2619,13 +2631,22 @@ private:
     // So the rule this leaves is narrower than "one header per binary": the *size* of the
     // translation unit decides what an always_inline is worth, a benchmark binary is the largest
     // unit anyone compiles this into, and an instruction count is the only number in the argument
-    // that none of that moves. What the attribute costs is real and stays true -- operator[] on a
-    // key already present pays for the placement code's register pressure on a path that never
-    // places (clang 73.2 instructions against 48.4) -- it is simply smaller than 17% of a build.
+    // that none of that moves. What the attribute cost was real -- operator[] on a key already
+    // present paid for the placement code's register pressure on a path that never places (clang
+    // 73.2 instructions against 48.4) -- and was smaller than 17% of a build. do_try_emplace now
+    // returns a hit in the home group before any of it (#321).
     template <typename... Args>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_place_element(std::uint64_t mh, Args&&... args) -> std::pair<iterator, bool> {
         auto const word = fingerprint_word(mh);
         return place_element_at(word, word & 7U, group_idx_from_hash(mh), std::forward<Args>(args)...);
+    }
+
+    // The value container's emplace_back, inlined whatever the caller's inlining budget: gcc runs
+    // out of it in a large insert loop and calls emplace_back out of line, and a map that is a local
+    // of the caller is then written to the stack and read back around every call (#321).
+    template <typename... Args>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE ANKERL_UNORDERED_DENSE_FLATTEN void append_value(Args&&... args) {
+        m_values.emplace_back(std::forward<Args>(args)...);
     }
 
     // As above for a caller holding the hash in pieces. The home group is only used on the branch
@@ -2636,7 +2657,7 @@ private:
     place_element_at(std::uint32_t word, unsigned counter, value_idx_type home_idx, Args&&... args)
         -> std::pair<iterator, bool> {
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
-        m_values.emplace_back(std::forward<Args>(args)...);
+        append_value(std::forward<Args>(args)...);
 
         auto value_idx = static_cast<value_idx_type>(m_values.size() - 1);
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(is_full()))
@@ -3005,16 +3026,52 @@ private:
         source.drop_tail_and_reindex(static_cast<std::size_t>(write - first));
     }
 
+    // Forced inline into the caller with its common cases: a hit in the home group, and a miss whose
+    // fingerprint class never overflowed home, placed there. Everything else is try_emplace_far's.
+    // Without the attribute clang called the whole of it, and a hit paid the placement's six
+    // register prologue (#305, #321).
     template <typename K, typename... Args>
-    auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
-        allocate_buckets_if_none();
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         auto const mh = mixed_hash(key);
         // Taken apart once for both halves: a probe that misses is followed by a placement starting
         // from the same group with the same fingerprint.
         auto const word = fingerprint_word(mh);
-        auto const counter = word & 7U;
         auto const home_idx = group_idx_from_hash(mh);
-        auto r = probe(key, word, counter, home_idx);
+        if (ANKERL_UNORDERED_DENSE_LIKELY(!empty())) {
+            auto const* groups = m_buckets.data();
+            prefetch_index(groups, home_idx);
+            auto const& home = groups[home_idx];
+            auto lanes = match_fingerprint(home, word);
+            while (lanes != 0) {
+                auto const value_idx = home.m_index[first_lane(lanes)];
+                if (m_equal(key, get_key(m_values[value_idx]))) {
+                    return {begin() + static_cast<difference_type>(value_idx), false};
+                }
+                lanes &= lanes - 1;
+            }
+        }
+        // The home group of an empty table holds nothing, and m_shifts does not change when the
+        // first bucket array is allocated, so home_idx stays right across this.
+        allocate_buckets_if_none();
+        auto const counter = word & 7U;
+        if (ANKERL_UNORDERED_DENSE_LIKELY(m_buckets.data()[home_idx].m_overflows[counter] == 0)) {
+            return place_element_at(word,
+                                    counter,
+                                    home_idx,
+                                    std::piecewise_construct,
+                                    std::forward_as_tuple(std::forward<K>(key)),
+                                    std::forward_as_tuple(std::forward<Args>(args)...));
+        }
+        return try_emplace_far(mh, word, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
+    }
+
+    // The key may have been placed past its home group: walk on, and place it if it is not there.
+    template <typename K, typename... Args>
+    ANKERL_UNORDERED_DENSE_TRY_EMPLACE_FAR auto
+    try_emplace_far(std::uint64_t mh, std::uint32_t word, value_idx_type home_idx, K&& key, Args&&... args)
+        -> std::pair<iterator, bool> {
+        auto const counter = word & 7U;
+        auto r = probe_after_home(key, word, counter, m_buckets.data()[home_idx], home_idx);
         if (r.found) {
             move_home(r.group_idx, r.lane, mh);
             return {begin() + static_cast<difference_type>(r.value_idx), false};
@@ -3640,22 +3697,22 @@ public:
     }
 
     template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(key, std::forward<Args>(args)...);
     }
 
     template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...);
     }
 
     template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
         return do_try_emplace(key, std::forward<Args>(args)...).first;
     }
 
     template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...).first;
     }
 
@@ -3667,7 +3724,7 @@ public:
         typename KE = KeyEqual,
         std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
                          bool> = true>
-    auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...);
     }
 
@@ -3679,7 +3736,7 @@ public:
         typename KE = KeyEqual,
         std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
                          bool> = true>
-    auto try_emplace(const_iterator /*hint*/, K&& key, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(const_iterator /*hint*/, K&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...).first;
     }
 
@@ -3885,12 +3942,12 @@ public:
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto operator[](Key const& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator[](Key const& key) -> Q& {
         return try_emplace(key).first->second;
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto operator[](Key&& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator[](Key&& key) -> Q& {
         return try_emplace(std::move(key)).first->second;
     }
 
@@ -3899,7 +3956,7 @@ public:
               typename H = Hash,
               typename KE = KeyEqual,
               std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
-    auto operator[](K&& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator[](K&& key) -> Q& {
         return try_emplace(std::forward<K>(key)).first->second;
     }
 
