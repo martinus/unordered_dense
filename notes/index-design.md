@@ -208,6 +208,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The rehash pipeline below 200000 entries, where it had never been measured: it costs a gcc integer build up to 3.6% in a band, and it stays
 - `try_emplace` on a present key, attacked from the hit side: three source shapes and `flatten` on the caller, and clang's count does not come down
 - The default maximum load factor swept from 0.75 to 0.9: every step above 0.8 costs both compilers the same, and the one step below buys 0.8% for 6.7% more index
+- Tearing a segmented_map down in reverse: glibc keeps the memory for the next build instead of handing it to the kernel, warm builds 1.7-2.9x when values own heap memory
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5348,6 +5349,73 @@ towards a higher maximum; that is the size axis and it was not swept. The contro
 systematic bias on `rmissstr`"), so a single miss cell is good to about 5%; the geomeans, and the
 agreement between compilers, are what to quote. `hashstr` is the hash alone and is left out of the
 geomean.
+
+**Tearing a segmented_map down in reverse: glibc keeps the memory for the next build instead of
+handing it to the kernel, warm builds 1.7-2.9x when values own heap memory** (2026-09-26, no issue,
+found through [facontidavide/Bonxai#69](https://github.com/facontidavide/Bonxai/pull/69); Ryzen 9 7950X, clang 22 and gcc 16, glibc 2.43, THP `madvise`,
+`scripts/ab/teardown_order.sh`, `scripts/ab/teardown_blocks_forward.patch`). `segmented_vector`
+destroyed its elements first to last and freed its blocks first to last. It now does both last to
+first, the order a built-in array uses. `map` and `set` keep `std::vector`, which libstdc++ and MSVC
+destroy front to back, and are untouched.
+
+**How it was found.** Bonxai's root map (`facontidavide/Bonxai`, `doc/root_map_benchmark.md`)
+measured `segmented_map` 1.8x slower than `std::unordered_map` to build a 46k-root voxel grid. The
+reconstruction (1M random voxels, best of 5, `std::unordered_map` swapped for the map through a
+`RootMap` alias) reproduced 1.48x, and it was entirely in the rounds after the first: in a fresh
+process `segmented_map` built in 854 ms against 884, the same 62k instructions and 10.2 page faults
+per root. In the warm rounds it took 1.8 page faults and 8800 instructions per root more. With
+`glibc.malloc.trim_threshold` and `glibc.malloc.mmap_threshold` pinned the two warm builds read 203
+and 207 ms, so it was the allocator. A `free` wrapper that logged every drop of the program break
+found one trim per teardown, set off by the free of a 104 byte Bonxai `LeafGrid`, handing back 400 MB
+under `segmented_map` and 138 MB under `std::unordered_map`, whose teardown runs in bucket order.
+Emptying the map from the back before destroying it cut the trim to 90 MB and the warm build to 229
+ms, ahead of `std::unordered_map`'s 250. Separately, Bonxai's own `std::hash<CoordT>` (OpenVDB's
+three-product XOR) gives 29226 distinct values for 46656 root keys and puts every key in one bucket
+by the top bits, which costs both maps 0.5 extra key compares a hit; that is Bonxai's to fix, and a
+murmur3-finalised pack of the three coordinates has no collisions on any lattice tried.
+
+**The measurement in this repository**: one binary per header and key kind, `segmented_map` built
+from empty, destroyed and built again in one process, seven rounds, the median of three passes,
+alternated with main's header. `owned` is a `uint64_t` key whose value owns a 96 byte allocation,
+Bonxai's shape reduced to the map. Times in ms; "released" is what the main arena shrank by at
+teardown (`mallinfo2().arena`). C is the change (elements and blocks last first), B has only the
+elements reversed:
+
+| compiler | kind | n | warm build main / C / B | teardown main / C / B | released MB main / C |
+|---|---|---|---|---|---|
+| clang | u64 | 50000 | 0.81 / **0.68** / 0.81 | 0.05 / 0.03 / 0.05 | 1.0 / 0.6 |
+| clang | u64 | 1000000 | 24.91 / 24.13 / 24.61 | 1.44 / 1.36 / 1.45 | 23.2 / 21.9 |
+| clang | str | 50000 | 3.13 / **1.64** / 1.65 | 0.76 / 0.55 / 0.54 | 4.6 / 0.0 |
+| clang | str | 200000 | 14.07 / **7.17** / 7.17 | 3.39 / 2.27 / 2.31 | 19.9 / 0.0 |
+| clang | str | 1000000 | 88.41 / **51.78** / 51.76 | 21.67 / **14.90** / 14.64 | 106.1 / 0.0 |
+| clang | owned | 50000 | 2.28 / **0.89** / 0.89 | 0.74 / 0.51 / 0.51 | 4.4 / 0.0 |
+| clang | owned | 1000000 | 73.97 / **28.93** / 29.24 | 21.48 / **12.30** / 12.37 | 131.2 / 0.0 |
+| gcc | u64 | 50000 | 0.68 / **0.54** / 0.68 | 0.05 / 0.03 / 0.05 | 1.0 / 0.6 |
+| gcc | str | 1000000 | 87.62 / **51.20** / 51.03 | 21.92 / **14.83** / 14.81 | 106.1 / 0.0 |
+| gcc | owned | 200000 | 11.61 / **3.62** / 3.58 | 3.64 / 2.12 / 2.10 | 23.7 / 0.0 |
+| gcc | owned | 1000000 | 71.26 / **24.74** / 24.63 | 21.63 / **12.14** / 12.23 | 131.2 / 0.0 |
+
+The first build of each size is unchanged or better (owned at 1M 76.9 to 70.2 under clang, the only
+cell that moved by more than 2%). The teardown is faster too, because main's included the kernel
+taking back 106-131 MB per round. Reversing the elements is nearly all of it; reversing the blocks
+as well is what moves a small integer map (0.81 to 0.68 at 50000) and costs nothing anywhere, so C
+ships. Bonxai's harness with the change: 46k roots 342 to 230 ms against `std::unordered_map`'s 248,
+787k roots 297 to 246 against 452, reads unchanged.
+
+**The price, measured**: resident memory after destroying a million-entry `segmented_map<std::string,
+uint64_t>`, above the keys it was built from: main 114 MB built, 0 after the teardown; C 114 built,
+**114 after the teardown**, 0 after `malloc_trim(0)`. The memory is in malloc's free lists and the
+next allocation of the process reuses it, which is the whole speedup, but a caller watching RSS after
+a teardown sees it stay. `std::unordered_map` does the same (137 MB built, 137 after, 0 after
+`malloc_trim(0)`); `map` returns it all, since its values are one `std::vector` block.
+
+What this says and does not say: glibc 2.43 only; jemalloc, tcmalloc and mimalloc were not run, and
+their trim policies differ. The mechanism is the order of frees against glibc's heap trim, which
+fires on a free whose coalesced chunk reaches 64 KB and returns whatever lies above the last live
+chunk: freed last first, small chunks near the top of the heap go to tcache and the fastbins first
+and are not coalesced into the top, so the later large frees find no top to trim. That explanation is
+read from the counters and the trim log, not from glibc's source. Nothing here touches the score,
+which has no segmented workload.
 
 ## The robin hood index this replaced, and its dead ends
 

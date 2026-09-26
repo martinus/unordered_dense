@@ -11,6 +11,8 @@
 #include <deque>
 #include <iterator>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 TEST_CASE("segmented_vector") {
     counter counts;
@@ -618,4 +620,145 @@ TEST_CASE("segmented_map_segment_size_reaches_the_container_and_defaults_unchang
     }
     REQUIRE(map.size() == 10000);
     REQUIRE(map.find(9999)->second == 9999);
+}
+
+namespace {
+
+// Writes its id into a log when it is destroyed. Moved-from objects write nothing, so only the
+// destruction of a live element is recorded.
+struct logs_destruction {
+    std::vector<int>* log;
+    int id;
+
+    logs_destruction(std::vector<int>* l, int i)
+        : log(l)
+        , id(i) {}
+    logs_destruction(logs_destruction&& other) noexcept
+        : log(std::exchange(other.log, nullptr))
+        , id(other.id) {}
+    logs_destruction(logs_destruction const&) = delete;
+    auto operator=(logs_destruction&& other) noexcept -> logs_destruction& {
+        log = std::exchange(other.log, nullptr);
+        id = other.id;
+        return *this;
+    }
+    auto operator=(logs_destruction const&) -> logs_destruction& = delete;
+    ~logs_destruction() {
+        if (log != nullptr) {
+            log->push_back(id);
+        }
+    }
+};
+
+// Records the address of every block of T it hands back, in order. The block index (a vector of
+// pointers) goes through a rebound copy and is not recorded.
+template <typename T>
+struct logs_deallocation {
+    using value_type = T;
+    std::vector<void const*>* allocated;
+    std::vector<void const*>* freed;
+
+    logs_deallocation(std::vector<void const*>* a, std::vector<void const*>* f)
+        : allocated(a)
+        , freed(f) {}
+    template <typename U>
+    logs_deallocation(logs_deallocation<U> const& other) // NOLINT(google-explicit-constructor,hicpp-explicit-conversions)
+        : allocated(other.allocated)
+        , freed(other.freed) {}
+
+    auto allocate(std::size_t n) -> T* {
+        auto* p = std::allocator<T>{}.allocate(n);
+        if constexpr (std::is_same_v<T, logs_destruction>) {
+            allocated->push_back(p);
+        }
+        return p;
+    }
+    void deallocate(T* p, std::size_t n) {
+        if constexpr (std::is_same_v<T, logs_destruction>) {
+            freed->push_back(p);
+        }
+        std::allocator<T>{}.deallocate(p, n);
+    }
+    template <typename U>
+    auto operator==(logs_deallocation<U> const& other) const -> bool {
+        return freed == other.freed;
+    }
+    template <typename U>
+    auto operator!=(logs_deallocation<U> const& other) const -> bool {
+        return !(*this == other);
+    }
+};
+
+auto descending(int n) -> std::vector<int> {
+    auto v = std::vector<int>();
+    for (int i = n - 1; i >= 0; --i) {
+        v.push_back(i);
+    }
+    return v;
+}
+
+} // namespace
+
+// Teardown runs last element first and frees the last block first, the reverse of construction.
+// Measured on a build-destroy-build cycle: glibc's heap trim hands back less of what the next build
+// asks for again (notes/index-design.md, "Tearing a segmented_map down in reverse").
+TEST_CASE("segmented_vector_destroys_last_element_first") {
+    auto log = std::vector<int>();
+    constexpr int n = 50; // four elements a block below, so this crosses a dozen blocks
+    {
+        auto vec = ankerl::unordered_dense::
+            segmented_vector<logs_destruction, std::allocator<logs_destruction>, sizeof(logs_destruction) * 4>();
+        for (int i = 0; i < n; ++i) {
+            vec.emplace_back(&log, i);
+        }
+    }
+    REQUIRE(log == descending(n));
+
+    log.clear();
+    auto vec = ankerl::unordered_dense::
+        segmented_vector<logs_destruction, std::allocator<logs_destruction>, sizeof(logs_destruction) * 4>();
+    for (int i = 0; i < n; ++i) {
+        vec.emplace_back(&log, i);
+    }
+    vec.clear();
+    REQUIRE(log == descending(n));
+    REQUIRE(vec.empty());
+}
+
+TEST_CASE("segmented_vector_frees_last_block_first") {
+    auto allocated = std::vector<void const*>();
+    auto freed = std::vector<void const*>();
+    auto log = std::vector<int>();
+    {
+        using alloc = logs_deallocation<logs_destruction>;
+        auto vec = ankerl::unordered_dense::segmented_vector<logs_destruction, alloc, sizeof(logs_destruction) * 4>(
+            alloc(&allocated, &freed));
+        for (int i = 0; i < 50; ++i) {
+            vec.emplace_back(&log, i);
+        }
+        REQUIRE(allocated.size() == 13);
+        REQUIRE(freed.empty());
+    }
+    REQUIRE(freed.size() == allocated.size());
+    REQUIRE(std::equal(freed.begin(), freed.end(), allocated.rbegin()));
+}
+
+TEST_CASE("segmented_map_destroys_the_last_inserted_value_first") {
+    auto log = std::vector<int>();
+    constexpr int n = 1000;
+    {
+        auto map = ankerl::unordered_dense::segmented_map<int, logs_destruction>();
+        for (int i = 0; i < n; ++i) {
+            map.try_emplace(i, &log, i);
+        }
+    }
+    REQUIRE(log == descending(n));
+
+    log.clear();
+    auto map = ankerl::unordered_dense::segmented_map<int, logs_destruction>();
+    for (int i = 0; i < n; ++i) {
+        map.try_emplace(i, &log, i);
+    }
+    map.clear();
+    REQUIRE(log == descending(n));
 }
