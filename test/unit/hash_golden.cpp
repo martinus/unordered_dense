@@ -2,6 +2,7 @@
 
 #include <app/doctest.h>
 
+#include <array>   // for array
 #include <cstddef> // for size_t
 #include <cstdint> // for uint64_t, uint8_t
 #include <cstring> // for memcpy
@@ -159,4 +160,39 @@ TEST_CASE("public_hashers_golden_values") {
 
     REQUIRE(ankerl::unordered_dense::hash<std::uint64_t>{}(42) == UINT64_C(0xf519f86ee2385b6b));
     REQUIRE(ankerl::unordered_dense::hash<int>{}(42) == UINT64_C(0xf519f86ee2385b6b));
+}
+
+namespace {
+
+template <std::size_t N>
+struct fixed_key {
+    std::array<std::uint32_t, N / 4> words{};
+};
+
+// hash_bytes over a key of compile-time size N, with the key written field by field just before,
+// against the same bytes with a length the compiler cannot see.
+template <std::size_t N>
+void check_compile_time_length_hashes_like_run_time_length() {
+    volatile std::size_t const run_time_len = N;
+    for (std::uint32_t seed = 1; seed < 2000; ++seed) {
+        auto key = fixed_key<N>{};
+        for (std::size_t i = 0; i < key.words.size(); ++i) {
+            key.words[i] = seed * 0x9E3779B9U + static_cast<std::uint32_t>(i) * 0x85EBCA6BU;
+        }
+        auto const at_compile_time = ankerl::unordered_dense::detail::hash_bytes(&key, sizeof(key));
+        auto const at_run_time = ankerl::unordered_dense::detail::hash_bytes(&key, run_time_len);
+        REQUIRE(at_compile_time == at_run_time);
+    }
+}
+
+} // namespace
+
+// A struct key whose size the compiler knows is read as 4 byte words, so that a key just written
+// field by field can be forwarded from the stores that wrote it (#311); a string's length is only
+// known at run time and keeps the 8 byte reads. Which of the two runs depends on inlining, so both
+// must give the same hash, or an insert and a lookup of one key could disagree.
+TEST_CASE("wyhash_compile_time_length_hashes_like_run_time_length") {
+    check_compile_time_length_hashes_like_run_time_length<8>();
+    check_compile_time_length_hashes_like_run_time_length<12>();
+    check_compile_time_length_hashes_like_run_time_length<16>();
 }

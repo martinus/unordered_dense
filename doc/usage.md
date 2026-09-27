@@ -211,6 +211,23 @@ struct custom_hash_unique_object_representation {
 };
 ```
 
+If the key is computed field by field right before the lookup, which is common for coordinates, how the bytes are read matters more than the hash itself. A read that spans two of the stores that just wrote the key has to wait until both are written to the cache, and that holds up the lookup's cache misses. Since #311, `hash_bytes` reads a key whose size is a compile-time multiple of 4 between 8 and 16 bytes as 4-byte words under gcc and clang, which avoids that; the value is the same as before. Measured with a 12-byte key of three `int32_t`, written field by field and then looked up, cycles per lookup on a Ryzen 9 7950X:
+
+| | clang 22 | gcc 16 |
+|---|---|---|
+| before, two 8-byte reads | 146 | 146 |
+| since #311 | 39 | 40 |
+| hashing the fields as values instead | 36 | 36 |
+
+The word reads cost about 1.4 cycles more per hash for a key that was already in memory. Other compilers, other sizes, and keys with fields narrower than 4 bytes still take the 8-byte reads. For those, hashing the fields as values avoids the problem entirely, e.g.:
+
+```cpp
+[[nodiscard]] auto operator()(coord const& c) const noexcept -> uint64_t {
+    auto const xy = (static_cast<uint64_t>(static_cast<uint32_t>(c.x)) << 32U) | static_cast<uint32_t>(c.y);
+    return ankerl::unordered_dense::detail::hash_int(xy ^ (static_cast<uint32_t>(c.z) * UINT64_C(0x9E3779B97F4A7C15)));
+}
+```
+
 ### Marking a Hash Avalanching From Outside
 
 `using is_avalanching = void;` is a member of the hash, which is no help when the hash comes from a library you cannot edit. `hash_is_avalanching` is what the map and set actually ask, and it can be answered from outside:

@@ -301,6 +301,21 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
     return v;
 }
 
+// A 4 byte read the compiler may not fuse with its neighbour into one 8 byte read: the empty asm
+// makes the value opaque, and clang otherwise turns `r4(p) | r4(p + 4) << 32` back into r8(p).
+// For a key the caller has just written field by field (#311): a load that spans two of the
+// caller's stores cannot be forwarded from them and waits until both are written to the cache,
+// and since stores are written in order, that serializes the lookups' cache misses. A 4 byte read
+// falls inside one store whether the caller's compiler wrote the fields as 4 + 4 + 4 (gcc) or as
+// 8 + 4 (clang), and is forwarded either way.
+[[nodiscard]] inline auto r4_unfused(const std::uint8_t* p) -> std::uint64_t {
+    auto v = r4(p);
+#    if defined(__GNUC__) || defined(__clang__)
+    __asm__("" : "+r"(v));
+#    endif
+    return v;
+}
+
 // reads 1, 2, or 3 bytes
 [[nodiscard]] inline auto r3(const std::uint8_t* p, std::size_t k) -> std::uint64_t {
     return (static_cast<std::uint64_t>(p[0]) << 16U) | (static_cast<std::uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
@@ -347,9 +362,24 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
         ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
             if (ANKERL_UNORDERED_DENSE_LIKELY(len >= 8))
                 ANKERL_UNORDERED_DENSE_LIKELY_ATTR {
-                    // two (potentially overlapping) 8 byte reads cover the whole input
-                    a = r8(p);
-                    b = r8(p + len - 8);
+#    if (defined(__GNUC__) || defined(__clang__)) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+                    // A length known at compile time is a struct's, which may have just been written
+                    // field by field; read it as 4 byte words and put together the same two words
+                    // (#311). A lookup right after writing a 12 byte key: 146 -> 40 cycles under clang
+                    // and gcc. A key already in memory pays 1.4 cycles for the extra reads. A length
+                    // only known at run time is a string's and keeps the two 8 byte reads. Both paths
+                    // give the same value -- which one runs depends on inlining, so they must -- and on
+                    // little-endian only is `r4 | r4 << 32` the same as r8.
+                    if (__builtin_constant_p(len) && len % 4 == 0) {
+                        a = r4_unfused(p) | (r4_unfused(p + 4) << 32U);
+                        b = r4_unfused(p + len - 8) | (r4_unfused(p + len - 4) << 32U);
+                    } else
+#    endif
+                    {
+                        // two (potentially overlapping) 8 byte reads cover the whole input
+                        a = r8(p);
+                        b = r8(p + len - 8);
+                    }
                 }
             else if (len >= 4) {
                 a = r4(p);
