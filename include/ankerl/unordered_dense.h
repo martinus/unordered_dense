@@ -311,7 +311,7 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
 [[nodiscard]] inline auto r4_unfused(const std::uint8_t* p) -> std::uint64_t {
     auto v = r4(p);
 #    if defined(__GNUC__) || defined(__clang__)
-    __asm__("" : "+r"(v));
+    __asm__("" : "+r"(v)); // NOLINT(hicpp-no-assembler): emits nothing; it only hides v from the load combiner
 #    endif
     return v;
 }
@@ -370,7 +370,7 @@ inline void mum(std::uint64_t* a, std::uint64_t* b) {
                     // only known at run time is a string's and keeps the two 8 byte reads. Both paths
                     // give the same value -- which one runs depends on inlining, so they must -- and on
                     // little-endian only is `r4 | r4 << 32` the same as r8.
-                    if (__builtin_constant_p(len) && len % 4 == 0) {
+                    if (__builtin_constant_p(len) != 0 && len % 4 == 0) {
                         a = r4_unfused(p) | (r4_unfused(p + 4) << 32U);
                         b = r4_unfused(p + len - 8) | (r4_unfused(p + len - 4) << 32U);
                     } else
