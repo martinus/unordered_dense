@@ -1447,8 +1447,25 @@ public:
     // How many arrays this allocates, for a test that counts what an empty table costs.
     static constexpr std::size_t array_count = 1;
 
+    // An empty table's index (#329): as many groups as the smallest array has, every slot empty and
+    // every counter zero, shared by every table without an array of its own and never written. With
+    // it, data() is never null, so a lookup in an empty table needs no test of its own: it finds
+    // nothing in the sentinel, and the insert that follows allocates before it writes anything.
+    static constexpr std::size_t sentinel_groups = 4;
+
 private:
     std::vector<block, allocator_type> m_blocks{};
+    // m_blocks.data(), or the sentinel while m_blocks is empty; what data() returns, without a test.
+    // sync() after anything that can change m_blocks.
+    block* m_data = sentinel();
+
+    [[nodiscard]] static auto sentinel() -> block* {
+        static std::array<block, sentinel_groups> s_sentinel{};
+        return s_sentinel.data();
+    }
+    void sync() noexcept {
+        m_data = m_blocks.empty() ? sentinel() : m_blocks.data();
+    }
 
 public:
     group_storage() = default;
@@ -1456,11 +1473,31 @@ public:
         : m_blocks(alloc) {}
     // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved) -- moved from member by member
     group_storage(group_storage&& other, allocator_type const& alloc)
-        : m_blocks(std::move(other.m_blocks), alloc) {}
-    group_storage(group_storage const&) = default;
-    group_storage(group_storage&&) noexcept = default;
-    auto operator=(group_storage const&) -> group_storage& = default;
-    auto operator=(group_storage&&) -> group_storage& = default;
+        : m_blocks(std::move(other.m_blocks), alloc) {
+        sync();
+        other.sync();
+    }
+    group_storage(group_storage const& other)
+        : m_blocks(other.m_blocks) {
+        sync();
+    }
+    group_storage(group_storage&& other) noexcept
+        : m_blocks(std::move(other.m_blocks)) {
+        sync();
+        other.sync();
+    }
+    auto operator=(group_storage const& other) -> group_storage& {
+        m_blocks = other.m_blocks;
+        sync();
+        return *this;
+    }
+    auto operator=(group_storage&& other) noexcept(std::is_nothrow_move_assignable_v<std::vector<block, allocator_type>>)
+        -> group_storage& {
+        m_blocks = std::move(other.m_blocks);
+        sync();
+        other.sync();
+        return *this;
+    }
     ~group_storage() = default;
 
     [[nodiscard]] auto get_allocator() const -> allocator_type {
@@ -1474,24 +1511,30 @@ public:
     }
     void clear() {
         m_blocks.clear();
+        sync();
     }
     void shrink_to_fit() {
         m_blocks.shrink_to_fit();
+        sync();
     }
     void swap(group_storage& other) noexcept {
         m_blocks.swap(other.m_blocks);
+        sync();
+        other.sync();
     }
     void resize(std::size_t num_groups) {
         m_blocks.resize(num_groups);
+        sync();
     }
     void assign(group_storage const& other) {
         m_blocks.assign(other.m_blocks.begin(), other.m_blocks.end());
+        sync();
     }
     [[nodiscard]] auto data() -> block* {
-        return m_blocks.data();
+        return m_data;
     }
     [[nodiscard]] auto data() const -> block const* {
-        return m_blocks.data();
+        return m_data;
     }
     // Zeroes the metadata of every block and leaves the indices alone, which is what the split
     // version's single memset did: an empty slot's index is never read.
@@ -1591,6 +1634,11 @@ private:
     static constexpr std::size_t merge_min_index_bytes = std::size_t{1} << 20U;
 
     static constexpr std::uint8_t initial_shifts = 64 - 2; // 2^(64-m_shifts) groups
+    // A table without an array of its own reads the sentinel with hash >> m_shifts, and every path
+    // that leaves a table without one sets m_shifts back to initial_shifts; so the sentinel has to
+    // hold that many groups (#329).
+    static_assert((std::size_t{1} << (64U - initial_shifts)) <= bucket_container_type::sentinel_groups,
+                  "the sentinel index must cover the smallest array");
     static constexpr float default_max_load_factor = 0.8F;
 
     // Named, and covering both containers, so that the promise and the recovery that exists for
@@ -3068,9 +3116,10 @@ private:
         // from the same group with the same fingerprint.
         auto const word = fingerprint_word(mh);
         auto const home_idx = group_idx_from_hash(mh);
-        if (ANKERL_UNORDERED_DENSE_LIKELY(!empty())) {
+        {
             // probe()'s home group, without the probe_result: returning one cost gcc a quarter of an
-            // integer hit (see probe_from).
+            // integer hit (see probe_from). No test for an empty table: without an array of its own
+            // it reads the shared sentinel, which holds nothing (#329).
             auto const* groups = m_buckets.data();
             prefetch_index(groups, home_idx);
             auto const& home = groups[home_idx];
@@ -3106,8 +3155,12 @@ private:
     ANKERL_UNORDERED_DENSE_NOINLINE auto
     find_or_place_miss(std::uint64_t mh, std::uint32_t word, value_idx_type home_idx, K&& key, Args&&... args)
         -> std::pair<iterator, bool> {
-        // The home group of an empty table holds nothing, and m_shifts does not change when the first
-        // bucket array is allocated, so home_idx stays right across this.
+        // A table without an array of its own reads the sentinel (#329); it allocates here, before
+        // anything is written, and places its first element directly instead of growing into it
+        // (which would hash the element a second time). Growing would also allocate first: such a
+        // table has a capacity of zero. Either keeps the sentinel unwritten; test/unit/sentinel.cpp.
+        // The home group of an empty table holds nothing, and m_shifts does not change when the
+        // first bucket array is allocated, so home_idx stays right across this.
         allocate_buckets_if_none();
         auto const counter = word & 7U;
         if (ANKERL_UNORDERED_DENSE_LIKELY(m_buckets.data()[home_idx].m_overflows[counter] == 0)) {
@@ -3214,19 +3267,15 @@ private:
         return found;
     }
 
+    // No test for an empty table: without an array of its own the table reads the shared sentinel
+    // index, which holds nothing (#329). An empty table therefore hashes the key it finds nothing
+    // for, and every other lookup saves the test.
     template <typename K>
     auto do_find(K const& key) -> iterator {
-        if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty()))
-            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
-                return end();
-            }
-
         return do_find_hashed(key, mixed_hash(key));
     }
 
-    // Same lookup with the hashing already done. Requires the bucket array to be allocated, which
-    // !empty() implies; the callers test empty() rather than this function so that a lookup in an
-    // empty table returns without hashing anything.
+    // Same lookup with the hashing already done.
     template <typename K>
     auto do_find_hashed(K const& key, std::uint64_t mh) -> iterator {
         auto r = probe(key, mh);
