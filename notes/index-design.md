@@ -5558,8 +5558,35 @@ site. In the score binary, which holds more insert sites than any caller will, g
 `.text` is 5531 -> 7244 / 10946 -> 11618 / 14597 -> 15480 bytes under clang (u64 hit, u64 miss,
 string miss) and 7731 -> 7573 / 9411 -> 8789 / 13953 -> 14465 under gcc.
 
-What this says and does not say: one machine, in cache (50000 entries one-map, the score's sizes);
-the counts are the decisive numbers. MSVC takes the gcc branch of the macro and gets no `flatten`,
+**Past the cache, the README's own harness** (2026-09-27, clang, `bench_readme.cpp` one map per
+binary, a million entries = the geomean of five sizes over the octave, `udm` built once from main
+and once from this branch, five rounds alternating the order, pinned to one core; median ns per
+operation, range over the rounds):
+
+| panel | key | 5.1.0 | this | speedup |
+|---|---|---|---|---|
+| build | u64 | 25.99 [25.88-26.27] | 25.08 [24.95-25.35] | 1.036 |
+| buildfree | u64 | 27.82 [27.63-28.20] | 26.96 [26.69-27.11] | 1.032 |
+| churn | u64 | 97.10 [96.63-98.57] | 97.95 [96.14-98.94] | 0.991 |
+| find | u64 | 32.14 [31.91-32.25] | 31.88 [31.78-31.95] | 1.008 |
+| build | str | 90.58 [89.90-90.84] | 90.14 [89.32-90.36] | 1.005 |
+| buildfree | str | 107.59 [106.90-108.31] | 106.65 [106.41-107.13] | 1.009 |
+| churn | str | 447.32 [447.21-447.87] | 446.46 [445.27-447.95] | 1.002 |
+| find | str | 132.97 [132.72-133.31] | 132.75 [132.57-133.21] | 1.002 |
+
+At a million entries the insert waits on memory, and what this saves is instructions: only the
+integer build moves, 3-4%, the rest is inside 1%. The README's graphs were not redrawn for it. The
+same comparison in `maps.sh -r main` (both headers in one binary) read the integer `find` at 0.81
+at all five sizes, which is that harness's inlining band and not the change: one map per binary,
+`count()` at a million entries retires 50.24 instructions under clang and 49.22 under gcc with
+either header, cycles within 1%. What is real is smaller and belongs to the caller: with the fill
+loop in the same function as the lookup loop, clang's lookup went 51.74 -> 54.74 instructions,
+because the inlined insert changes the register allocation of the function around it; with the
+fill moved into its own function the difference is zero. A first run of the alternating comparison
+shared its core with a stray process and read every cell twice as slow; the table is the re-run.
+
+What this says and does not say: one machine, in cache (50000 entries one-map, the score's sizes)
+except the table just above; the counts are the decisive numbers. MSVC takes the gcc branch of the macro and gets no `flatten`,
 and has not been measured. The compiler split is a measured choice per compiler, not a principle:
 a third compiler, or a future clang or gcc, may want the other shape, and the one-map harness and
 `solo.sh` are what would tell.
