@@ -215,6 +215,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - MySQL's `EXCEPT` read 7-11% slower on 5.2.0 than on 4.4.0, and it is where the linker put the map's code: an inactive block added next to the call took it to +1% and removing it brought the +7-11% back, with `do_find` and `hash_bytes` byte-identical in both binaries
 - udb3's `++h[key]` ran 70% slower under clang on 5.2.0 than on 5.1.0, and it was a loop variable stored and reloaded across a store with a late address: on Zen 4 that, with a division on the way to the next key, stops the loop overlapping its misses, 5x in a loop with no map at all; the part of the insert after a miss is called again under clang
 - The caller corpus: nine loops the way programs write them, one binary each, both compilers, in cache and past it, judged by each header's worst loop and not by a geomean; 5.2.0's worst was 3.3x under clang and 3.6x under gcc, the clang miss call of #310 brings clang's to 1.10, and under gcc nothing that removes the cliff is worth its price
+- The shape search: sixteen combinations of what the insert inlines, each judged by its worst ratio to the best combination anywhere measured, with the rule fixed before the results; it picks one shape for every compiler -- the home-group lookup inlined, the miss path and the walk past home called -- worst 1.11 under clang and 1.58 under gcc, where 5.2.0's everything-inlined reads 3.32 and 3.54
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5820,6 +5821,9 @@ above, set off by the harness's own `r() % n`. And one cold branch decides it: t
 this change left `allocate_buckets_if_none()` in the inlined part, in an `else` that only an empty
 table takes, and the hit read 145 cycles at 1M; moved into the called part, 56.
 
+(2026-09-27, later: superseded by "shape search" below -- the call is now the shape for every
+compiler, gcc included, picked by a fixed rule over sixteen shapes. The clang numbers here stand.)
+
 **What shipped: the part after a home-group miss (`find_or_place_miss`, the placement and the walk)
 is `noinline` under clang, as in #321's V12, and inlined under gcc, byte-identical to 5.2.0**
 (checked on five binaries). Under clang, against 5.2.0:
@@ -5909,12 +5913,54 @@ against 5.1.0 where 5.2.0 read -3.9%, UserID +0.3% where 5.2.0 read -2.8%, and u
 insert+delete 83.9 against 59.9 ns. The likely mechanism is #321's V10 one: a call that receives
 the map's `this` keeps a map declared in the caller in memory instead of in registers, and every
 insert of a new key pays for it. So gcc keeps 5.2.0's shape and its cliff, and `doc/benchmarks.md`
-says what a caller can do about it.
+says what a caller can do about it. (2026-09-27, later: reversed by "shape search"
+below. This paragraph weighed ClickHouse and udb3 above the corpus loop by judgment; a rule fixed
+before the results, the smallest worst ratio over all of them, picks the call for gcc too.)
 
 What this says and does not say: nine loops are a sample, chosen from slowdowns that happened, and
 a tenth may disagree; one CPU. The corpus is the check for any change to what an insert inlines
 (`CLAUDE.md`, the measurement table): its worst-ratio line, not the score, is what such a change
 has to hold.
+
+**The shape search: sixteen combinations of what the insert inlines, each judged by its worst ratio
+to the best combination anywhere measured, with the rule fixed before the results; it picks one
+shape for every compiler -- the home-group lookup inlined, the miss path and the walk past home
+called -- worst 1.11 under clang and 1.58 under gcc, where 5.2.0's everything-inlined reads 3.32
+and 3.54** (2026-09-27, #310, Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/shape_search/`). This
+replaced a week of one-variant-at-a-time argument, in which the gcc choice flipped twice. The four
+switches: `do_find_or_place` (the home-group lookup) inlined or called, `find_or_place_miss`
+inlined or called, `find_or_place_far` inlined or called, `flatten` on `append_value` or not;
+`gen.py` writes all sixteen from the tree's header. Every shape is measured on the caller corpus
+(18 cells, cycles), udb3 (2 modes, ns), ClickHouse (WatchID and CounterID, cycles), and the score
+(15 workloads, instructions, reported beside the grade since instructions are not time). The grade
+is the worst ratio over the timed metrics, each against the best shape on that metric.
+
+| | clang worst | where | clang score instr | gcc worst | where | gcc score instr |
+|---|---|---|---|---|---|---|
+| hit inlined, miss and walk called, flatten (**shipped**) | 1.11 | corpus build | 1.050 | 1.58 | corpus churn 4M | 1.105 |
+| hit inlined, miss called, walk inlined, flatten | 1.13 | corpus build | 1.047 | 1.57 | corpus churn 4M | 1.107 |
+| hit called, miss called | 1.17-1.18 | udb3_del, mysql 4M | 1.06 | 1.59-1.60 | corpus churn 4M | 1.14-1.16 |
+| hit called, miss inlined | 1.27-1.28 | bump_mask 4M | 1.04 | 1.61-1.67 | bump_mask / bump_mod 4M | 1.12-1.15 |
+| everything inlined (5.2.0) | 3.32-3.36 | bump_mod 64k | 1.004-1.011 | 3.54-3.58 | bump_mod 64k | 1.000-1.070 |
+
+What the shipped shape gives up against the best shape on each metric, gcc: the corpus churn at 4M
+1.58, udb3 insert+delete 1.39 (83.7 against 59.9 ns), ClickHouse WatchID 1.24 (373.6 against 301.6
+cycles per row), CounterID 1.07; clang: ClickHouse WatchID 1.10 (352.3 against 321.3), the corpus
+build 1.11. What it removes: the 3.3-3.6x cliff in `bump_mod` on both compilers, udb3's 1.9x under
+clang. The `flatten` and walk switches move nothing by more than 0.02 in the grade under either
+compiler; they are kept as they were measured best, flatten on and the walk called.
+
+Per metric, where the switches go (cycles or ns, best to worst group): udb3 under clang wants the
+miss called (41.8 against 60-81 inlined); udb3 under gcc wants everything inlined, walk included
+(59.9; with only the walk called 82.7); ClickHouse WatchID wants the miss inlined on both compilers
+(clang 321 against 352, gcc 302-327 against 350-390); calling the hit loses on every ClickHouse
+cell. No shape wins all of them, which is why the rule and not a judgment has to pick.
+
+What this says and does not say: the grade weights a synthetic corpus loop the same as a real
+program's benchmark, on purpose -- the rule is the smallest worst case, which is what "not
+brittle" means -- and a different rule (e.g. weighting real programs) would pick 5.2.0's shape for
+gcc again. One CPU. The search is the tool for the next such question: `run.sh gen`, the stages,
+`run.sh rank`, about three hours unattended.
 
 ## The robin hood index this replaced, and its dead ends
 

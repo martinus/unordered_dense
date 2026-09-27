@@ -74,35 +74,6 @@
 #    define ANKERL_UNORDERED_DENSE_FLATTEN __attribute__((flatten))
 #endif
 
-// What an insert does after a miss in the home group: the placement, and the walk past home.
-// Under clang it is called, so that all an insert inlines into the caller's loop is the lookup in
-// the home group (#310). Inlined, its registers pushed the caller's loop variables onto the stack,
-// and on Zen 4 a variable stored and reloaded every iteration, with a store of the found value in
-// between, waits for that store's address, which waits for the lookup's cache misses: udb3's
-// `++h[key]` ran at 80 ns per input against 42 called, the same cache misses no longer overlapping.
-// Under gcc it stays inlined: called, gcc's udb3 insert+delete went from 60 back to 84 ns, the score
-// read 0.940 and ClickHouse's WatchID (100M mostly new keys) 26% slower, which outweighs the one
-// caller-corpus loop the call rescues under gcc. Neither shape can guarantee a caller's loop does
-// not spill; notes/index-design.md, "stored and reloaded" and "caller corpus".
-#if defined(__clang__)
-#    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS ANKERL_UNORDERED_DENSE_NOINLINE
-#    define ANKERL_UNORDERED_DENSE_MISS_IS_CALLED 1 // NOLINT(cppcoreguidelines-macro-usage)
-#else
-#    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS ANKERL_UNORDERED_DENSE_FORCEINLINE
-#    define ANKERL_UNORDERED_DENSE_MISS_IS_CALLED 0 // NOLINT(cppcoreguidelines-macro-usage)
-#endif
-
-// The insert's walk past the home group (#321), which only a key whose fingerprint class has
-// overflowed home takes. Each compiler gets the shape the other one loses with: inlined, clang
-// retires 8% more instructions building a map of large values; called, gcc takes 11% more cycles
-// per insert of a fresh key, whether or not the insert walks. Under clang it is called from inside
-// the already out-of-line miss path.
-#if defined(__clang__)
-#    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_FAR ANKERL_UNORDERED_DENSE_NOINLINE
-#else
-#    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_FAR ANKERL_UNORDERED_DENSE_FORCEINLINE
-#endif
-
 // Data prefetch hint, a no-op where there is nothing to spell it with. MSVC has no
 // __builtin_prefetch and used to get the no-op, which quietly cost it the one the probe issues for
 // a group's value indices -- measured at 3 cycles off every hit, so a whole compiler was paying for
@@ -3081,25 +3052,33 @@ private:
                 }
                 lanes &= lanes - 1;
             }
-        } else if constexpr (!ANKERL_UNORDERED_DENSE_MISS_IS_CALLED) {
-            // A table with values has buckets; one without may not (never grown) or may (cleared). The
-            // home group of an empty table holds nothing, and m_shifts does not change when the first
-            // bucket array is allocated, so home_idx stays right across this.
-            allocate_buckets_if_none();
         }
         return find_or_place_miss<Piecewise>(mh, word, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
     }
 
-    // After a miss in the home group. Where this is called, it also allocates the buckets of an
-    // empty table: left in the caller as a cold branch, that branch alone was enough to push the
-    // caller's loop variables to the stack again (#310, the sweep's hit at 145 cycles against 56).
+    // Everything an insert does after a miss in the home group -- the empty table's allocation, the
+    // placement and the walk past home -- behind a call, for every compiler, so that all an insert
+    // inlines into the caller's loop is the lookup in the home group (#310). Inlined, the placement's
+    // registers pushed a caller's loop variables onto the stack, and on Zen 4 a variable stored and
+    // reloaded every iteration, with a store of the found element in between and a division on the
+    // way to the next key, stops the loop overlapping its misses: 3.3x (clang) and 3.5x (gcc) in one
+    // loop of the caller corpus for 5.2.0, which inlined all of it.
+    //
+    // The shape was picked by scripts/ab/shape_search: sixteen combinations of what is inlined, each
+    // judged by its worst ratio to the best combination over the caller corpus, udb3 and ClickHouse,
+    // with the rule fixed before the results. This one is worst at 1.11 under clang and 1.58 under
+    // gcc; everything inlined is 3.3 and 3.5. What gcc gives up for it is real: its udb3
+    // insert+delete 1.39x, ClickHouse's WatchID 1.18x, the score 0.940. The empty table's allocation
+    // is in here and not in the caller: left there as a cold branch, it alone was enough to push the
+    // caller's variables to the stack again. notes/index-design.md, "stored and reloaded", "caller
+    // corpus" and "shape search".
     template <bool Piecewise, typename K, typename... Args>
-    ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS auto
+    ANKERL_UNORDERED_DENSE_NOINLINE auto
     find_or_place_miss(std::uint64_t mh, std::uint32_t word, value_idx_type home_idx, K&& key, Args&&... args)
         -> std::pair<iterator, bool> {
-        if constexpr (ANKERL_UNORDERED_DENSE_MISS_IS_CALLED) {
-            allocate_buckets_if_none();
-        }
+        // The home group of an empty table holds nothing, and m_shifts does not change when the first
+        // bucket array is allocated, so home_idx stays right across this.
+        allocate_buckets_if_none();
         auto const counter = word & 7U;
         if (ANKERL_UNORDERED_DENSE_LIKELY(m_buckets.data()[home_idx].m_overflows[counter] == 0)) {
             return place_new<Piecewise>(word, counter, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
@@ -3108,8 +3087,11 @@ private:
     }
 
     // The key may have been placed past its home group: walk on, and place it if it is not there.
+    // The walk past home, which only a key whose fingerprint class overflowed its home group takes.
+    // Its own call inside the miss path: inlined there it made no measurable difference under either
+    // compiler (shape search), and called it keeps the miss path's common case small.
     template <bool Piecewise, typename K, typename... Args>
-    ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_FAR auto
+    ANKERL_UNORDERED_DENSE_NOINLINE auto
     find_or_place_far(std::uint64_t mh, std::uint32_t word, value_idx_type home_idx, K&& key, Args&&... args)
         -> std::pair<iterator, bool> {
         auto const counter = word & 7U;
