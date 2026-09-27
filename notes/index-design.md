@@ -220,7 +220,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - ClickHouse's aggregation benchmark on real Yandex.Metrica columns, where 4.1.2 was published behind absl on every large column: main is within 1-5% of absl on the large columns except WatchID under clang (1.16), uses less memory than absl on two of the three, and is 12-13% behind 4.1.2 under clang on the columns with few distinct keys
 - #326's op-cache footprint was taken away by #328: MySQL's `EXCEPT` went from 26-45x 4.4.0's op-cache misses on 5.2.0 to 1.9x and 1.1x in two layouts of main, and the query is level with 4.4.0 or faster in both
 - #331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes the rest
-- An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level
+- An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level; the index became a pointer and a count, so the map is 64 bytes, 8 fewer than 5.2.0
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6128,7 +6128,8 @@ can be had.
 
 **An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined
 lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's
-small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level**
+small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level; the
+index became a pointer and a count, so the map is 64 bytes, 8 fewer than 5.2.0**
 (2026-09-27, issue #329, Ryzen 9 7950X, clang 22 and gcc 16; the caller corpus, `solo.sh` +
 `perwl.sh`, #331's counting loop). The sentinel lives in `group_storage`, which the library owns:
 a static array of as many groups as the smallest table has (4), all slots empty and all counters
@@ -6182,7 +6183,14 @@ copy, move and swap follows `std::vector`'s rules, because the table's assignmen
 a raw pointer to a static, stored in a map that lives in shared memory, means nothing to the next
 process. The first version of this entry stored a raw `m_data` for every allocator and had exactly
 that flaw, which no test covers. MSVC's debug build allocates a proxy per `std::vector`, so the index
-no longer adds one to an empty table's allocation count there (`vector_count`, 1 -> 0). The
+no longer adds one to an empty table's allocation count there (`vector_count`, 1 -> 0). The storage
+offers only what the table does with it: it is neither copied nor moved as a whole, `take()` moves an
+array between two equal allocators (the table checks, or built the source itself), and
+`set_allocator()` is copy assignment's pocca. A mutation run over the first version, 90 mutants,
+found the general copy and move assignment branches unreachable, and found that no test would notice
+a destructor that leaks or a swap that forgets the allocator;
+`the_index_frees_through_the_allocator_that_allocated_it` now kills both. Score, one header per
+binary, against the sentinel with the vector: 1.0033 clang, 1.0066 gcc, three rounds each. The
 equivalent survivor in the mutation run over the diff: the `static_assert`'s comparison, since both
 sizes are 4.
 
