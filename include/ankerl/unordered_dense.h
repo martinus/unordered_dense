@@ -74,10 +74,27 @@
 #    define ANKERL_UNORDERED_DENSE_FLATTEN __attribute__((flatten))
 #endif
 
+// What an insert does after a miss in the home group: the placement, and the walk past home.
+// Under clang it is called, so that all an insert inlines into the caller's loop is the lookup in
+// the home group (#310). Inlined, its registers pushed the caller's loop variables onto the stack,
+// and on Zen 4 a variable stored and reloaded every iteration, with a store of the found value in
+// between, waits for that store's address, which waits for the lookup's cache misses: udb3's
+// `++h[key]` ran at 80 ns per input against 42 called, the same cache misses no longer overlapping.
+// Under gcc it stays inlined: called, gcc's udb3 insert+delete went from 60 back to 84 ns. Neither
+// shape can guarantee a caller's loop does not spill; notes/index-design.md, "stored and reloaded".
+#if defined(__clang__)
+#    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS ANKERL_UNORDERED_DENSE_NOINLINE
+#    define ANKERL_UNORDERED_DENSE_MISS_IS_CALLED 1 // NOLINT(cppcoreguidelines-macro-usage)
+#else
+#    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS ANKERL_UNORDERED_DENSE_FORCEINLINE
+#    define ANKERL_UNORDERED_DENSE_MISS_IS_CALLED 0 // NOLINT(cppcoreguidelines-macro-usage)
+#endif
+
 // The insert's walk past the home group (#321), which only a key whose fingerprint class has
 // overflowed home takes. Each compiler gets the shape the other one loses with: inlined, clang
 // retires 8% more instructions building a map of large values; called, gcc takes 11% more cycles
-// per insert of a fresh key, whether or not the insert walks.
+// per insert of a fresh key, whether or not the insert walks. Under clang it is called from inside
+// the already out-of-line miss path.
 #if defined(__clang__)
 #    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_FAR ANKERL_UNORDERED_DENSE_NOINLINE
 #else
@@ -3062,10 +3079,23 @@ private:
                 }
                 lanes &= lanes - 1;
             }
-        } else {
+        } else if constexpr (!ANKERL_UNORDERED_DENSE_MISS_IS_CALLED) {
             // A table with values has buckets; one without may not (never grown) or may (cleared). The
             // home group of an empty table holds nothing, and m_shifts does not change when the first
             // bucket array is allocated, so home_idx stays right across this.
+            allocate_buckets_if_none();
+        }
+        return find_or_place_miss<Piecewise>(mh, word, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
+    }
+
+    // After a miss in the home group. Where this is called, it also allocates the buckets of an
+    // empty table: left in the caller as a cold branch, that branch alone was enough to push the
+    // caller's loop variables to the stack again (#310, the sweep's hit at 145 cycles against 56).
+    template <bool Piecewise, typename K, typename... Args>
+    ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS auto
+    find_or_place_miss(std::uint64_t mh, std::uint32_t word, value_idx_type home_idx, K&& key, Args&&... args)
+        -> std::pair<iterator, bool> {
+        if constexpr (ANKERL_UNORDERED_DENSE_MISS_IS_CALLED) {
             allocate_buckets_if_none();
         }
         auto const counter = word & 7U;

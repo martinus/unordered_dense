@@ -50,6 +50,29 @@ The same run and the same reference, for the shapes this one map can be asked to
 
 [Huge pages](usage.md#huge-pages) take a `uint64_t` build and destroy to 0.60 and a churn to 0.79, for a one word change of the type. That 1.66x is larger than the biggest single-panel gain any other library here offers, which is boost's 1.64x on integer churn. [`segmented_map`](usage.md#segmented_map-and-segmented_set) builds at 0.64 because it never reallocates and moves the values, and it holds the lowest peak memory of any map in this run, 28.4 bytes per entry against 48.7 -- it is the map that leaves nothing superseded behind at all. It pays 1.54 on iteration for the extra indirection, and 3.48 with string keys. Both are opt-in, neither is the default.
 
+## A loop that divides and stores can run 5x slower, whatever map is in it
+
+This one cost me a day, so here it is for anyone benchmarking a hash map. On a Ryzen 9 7950X (Zen 4, the only CPU I measured it on), three things together make a lookup loop stop overlapping its cache misses, and it has nothing to do with the map:
+
+- a loop variable that the compiler keeps on the stack, stored and reloaded every iteration (e.g. the state of the random generator that picks the next key),
+- a 64 bit division on the way from that variable to the next key (`r() % n`),
+- a store into the element that was just found, whose address therefore depends on a cache miss (`++m[key]`).
+
+A loop over two plain arrays of 16M entries, no map anywhere, cycles per iteration, [scripts/ab/spill_trap.cpp](../scripts/ab/spill_trap.cpp):
+
+| | clang 22 | gcc 16 |
+|---|---|---|
+| none of the three | 48 | 52 |
+| any one or two of them | 57 to 76 | 54 to 76 |
+| all three | **381** | **380** |
+| all three, but the store goes to a fixed address | 65 | 68 |
+
+The reload of the spilled variable waits until the store's address is known, which is as long as the cache miss behind it, and the division puts that wait on the way to the next iteration's misses. Remove any one of the three and it is gone.
+
+A map only decides how many registers its inlined insert takes from the caller, and so whether the caller's variables end up on the stack. That is how [udb3](https://github.com/attractivechaos/udb3), which picks its keys with `y % (n >> 2)` and does `++h[key]`, read `ankerl::unordered_dense` 5.2.0 at 80 ns per insert under clang against 48 for 5.1.0, with the same cache misses: 5.2.0 inlined more of the insert, and the loop's variables spilled. Since #310 the part after a miss is called again under clang, which reads 42. But no shape of the map can promise that a caller's loop does not spill: under gcc, udb3's insert loop reads about 80 ns with every version and every shape I tried.
+
+So if a lookup loop is much slower than its cache misses explain, look at the loop before the map: a key computed without a division (a power of two mask, or keys taken from an array) or a loop body small enough to keep its variables in registers makes it go away. And a benchmark that picks its keys with `%` measures this as much as the map.
+
 ## How the numbers were taken, and what they do not say
 
 The charts cover 1 million to 2 million entries. That spans the last level cache rather than sitting past it: this machine has 64 MB of L3 as two 32 MB slices and the measured process is pinned to one core, so a million entries of `map<uint64_t, size_t>` is 26 MB of group index and values and still mostly L3-resident, while two million is 53 MB and is not. Smaller tables sort the maps differently again. Also `iterate` counts a full pass over every element, which plenty of programs never do. Treat anything under roughly 5% as a tie.
