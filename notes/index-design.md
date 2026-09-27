@@ -6137,7 +6137,11 @@ operation that can change the vector, so `data()` returns it without a test. A t
 would have put the check back on every lookup's address, which is why the pointer is stored. A
 `static_assert` in the table ties the sentinel's size to `initial_shifts`; every path that leaves a
 table without an array sets `m_shifts` back to it (the moves, `copy_buckets` for an empty source,
-`reset_to_empty`), so `hash >> m_shifts` stays inside the sentinel.
+`reset_to_empty`), so `hash >> m_shifts` stays inside the sentinel. After the review the sentinel
+moved out of `group_storage` to one per group type (`detail::sentinel_blocks<Group>()`, 352 bytes of
+BSS), rather than one per group type and allocator, and the `empty()` tests left in the
+precomputed-hash `find` and in `erase(key)` went too; `visit` keeps its test, which saves hashing a
+whole range.
 
 What keeps it unwritten: the miss path allocates before it places. An attempt to rely on the other
 guard alone -- a table without an array has a capacity of zero, so a placement grows first -- was
@@ -6145,9 +6149,12 @@ measured and taken back: the first insert then grows into the array and rehashes
 caught twice, as the first array coming out 8 groups instead of 4 (`bucket_count() == 64`) and as
 the first key hashed twice (`transparent.cpp`'s hash counts). With the allocation back, the
 mutation "deallocate_buckets keeps the capacity" is equivalent and was not added to the bug files;
-`test/unit/sentinel.cpp` checks every way to arrive at a table without an array (default, moved
-from, assigned from an empty table), lookups and erases in it, and that a fresh table afterwards
-still finds nothing.
+`the_sentinel_index_is_never_written` in `test/unit/lazy_bucket_allocation.cpp` checks every way to
+arrive at a table without an array (default, moved from, move assigned from, copy assigned from an
+empty table), lookups, erases and a first insert in it, and that a fresh table afterwards still
+finds nothing. It kills the mutation that drops both guards (no allocation in the miss path, no
+growth for the first element): the first insert writes the sentinel and the test crashes. Dropping
+either guard alone survives it, because the other one still allocates first.
 
 Score, one header per binary, against main: 1.0032 under clang and under gcc (inside the band);
 instructions per workload, clang: `find` 0.964 / 0.970 / 1.009 (u64 / string / big value), churn
@@ -6161,7 +6168,9 @@ counting loop, cycles per row, main -> this (4.1.2): clang AdvEngineID 10.08 -> 
 CounterID 10.88 -> 10.55 (9.35); gcc 9.52 -> 9.05 (10.57), 9.73 -> 9.27 (9.28).
 
 What this says and does not say: an empty table now hashes the key of a lookup that finds nothing,
-where it returned before hashing; the insert path and every other lookup save the test. The
+where it returned before hashing; the insert path and every other lookup save the test. The stored
+pointer costs every table 8 bytes: `sizeof(map<uint64_t, uint64_t>)` 72 -> 80, for both bucket
+types. The
 equivalent survivor in the mutation run over the diff: the `static_assert`'s comparison, since both
 sizes are 4.
 
