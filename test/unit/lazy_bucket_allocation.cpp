@@ -466,3 +466,40 @@ TEST_CASE_MAP("copying_an_emptied_table_starts_from_the_smallest_array", uint64_
     target[7] = 7;
     REQUIRE(target.bucket_count() == 64); // the smallest array, not the source's or the target's old one
 }
+
+// A table without a bucket array reads a shared sentinel index (#329), so that a lookup needs no test
+// for the empty table. Every empty table of the same group type in the process reads it, so nothing
+// may ever write it: after every route into the empty state has had lookups, erases and a first
+// insert, a fresh table must still find nothing, for any key.
+TEST_CASE_MAP("the_sentinel_index_is_never_written", int, int) {
+    static constexpr int grown = 64;
+    for (int round = 0; round < 20; ++round) {
+        auto moved_from = test::filled<map_t>(grown);
+        auto const sink = std::move(moved_from);
+
+        auto move_assigned_from = test::filled<map_t>(grown);
+        auto assign_sink = map_t();
+        assign_sink = std::move(move_assigned_from);
+
+        auto copy_assigned = test::filled<map_t>(grown);
+        auto const empty = map_t();
+        copy_assigned = empty;
+
+        auto default_constructed = map_t();
+
+        // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+        for (auto* m : {&moved_from, &move_assigned_from, &copy_assigned, &default_constructed}) {
+            for (int k = 0; k < 200; ++k) {
+                REQUIRE(m->find(k * 7919 + round) == m->end());
+                REQUIRE(m->erase(k * 7919 + round) == 0);
+            }
+            test::require_empty_table_answers(*m);
+        }
+        test::require_holds(sink, grown);
+        test::require_holds(assign_sink, grown);
+    }
+    auto const fresh = map_t();
+    for (int k = 0; k < 20000; ++k) {
+        REQUIRE(fresh.find(k) == fresh.end());
+    }
+}
