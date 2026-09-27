@@ -213,6 +213,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `insert()` and `emplace()` look the key up first when the arguments already are the value: a set's string hit 2.2x, a map's `insert({k, v})` hit 4.5x under clang, and `emplace(k, new int)` must still build its value
 - MySQL's int join never reaches the map, which makes it the control for how much relinking mysqld moves a query: 2.4%, the size of every MySQL difference measured for #321 and #323
 - MySQL's `EXCEPT` read 7-11% slower on 5.2.0 than on 4.4.0, and it is where the linker put the map's code: an inactive block added next to the call took it to +1% and removing it brought the +7-11% back, with `do_find` and `hash_bytes` byte-identical in both binaries
+- udb3's `++h[key]` ran 70% slower under clang on 5.2.0 than on 5.1.0, and it was a loop variable stored and reloaded across a store with a late address: on Zen 4 that, with a division on the way to the next key, stops the loop overlapping its misses, 5x in a loop with no map at all; the part of the insert after a miss is called again under clang
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5767,6 +5768,93 @@ a layout effect of this size is specific to the binary, and another build of the
 land either way. It does not say which functions collide. For MySQL, 5.2.0 with `index_bytes()` is
 level with or ahead of 4.4.0 on every query here but `EXCEPT`, which reads between +1% and +11%
 depending on the link, and whose map operations are 1.2-2x faster alone.
+
+**udb3's `++h[key]` ran 70% slower under clang on 5.2.0 than on 5.1.0, and it was a loop variable
+stored and reloaded across a store with a late address: on Zen 4 that, with a division on the way to
+the next key, stops the loop overlapping its misses, 5x in a loop with no map at all; the part of
+the insert after a miss is called again under clang** (2026-09-27, issue #310, Ryzen 9 7950X, clang
+22 and gcc 16; udb3 with its own `test.cpp` and flags, `scripts/ab/insert_sweep.cpp`,
+`scripts/ab/spill_trap.cpp`, `scripts/ab/try_emplace_hit.cpp`, `solo.sh`, `perwl.sh`).
+
+**udb3** (80M `uint32_t` inputs, 16.6M distinct keys, its `Hash32`), ns per input, median of three,
+pinned:
+
+| | 4.4.0 | 5.1.0 | 5.2.0 | 5.2.0, insert behind a `noinline` call | this |
+|---|---|---|---|---|---|
+| insert-only (`++h[key]`), gcc | 88.4 | 80.7 | 80.1 | 81.9 | = 5.2.0 |
+| insert-only, clang | 89.4 | 47.8 | **81.2** | 47.9 | **41.9** |
+| insert+delete (`try_emplace`, `erase`), gcc | 59.9 | **83.5** | **60.3** | 84.5 | = 5.2.0 |
+| insert+delete, clang | 79.7 | 47.2 | **60.6** | 45.9 | **41.6** |
+
+#310's own complaint, gcc's insert+delete at 83.5 against 4.4.0's 59.4, was already fixed by 5.2.0
+(#321, #323). The clang rows are what 5.2.0 did: clang, 5.1.0 against 5.2.0 on insert-only, the
+same L1D misses (0.369 G, 0.371 G), the same dTLB misses (0.152 G), the same branch misses, 16%
+fewer instructions and 72% more cycles. The same misses stopped overlapping.
+
+**Not the map, found in a loop without one** (`spill_trap.cpp`: two arrays of 16M entries, a key, a
+load of `idx[key]`, a load of `val[idx[key]]`), cycles per iteration:
+
+| | clang | gcc |
+|---|---|---|
+| none of: generator state through memory, a 64 bit `%`, `++` on the found element | 48.1 | 52.2 |
+| any one or two of them | 56.8-75.6 | 54.1-75.9 |
+| all three | **380.7** | **380.4** |
+| all three, the store to a fixed address instead | 64.6 | 68.1 |
+| all three, only the divisor reloaded (never stored) | 80.6 | 80.6 |
+
+What it needs is a variable stored to and reloaded from the stack every iteration, a store in
+between whose address comes from a cache miss, and the division between the reload and the next
+iteration's misses. The reload waits for that store's address. udb3 has all three: `y % (n >> 2)`,
+the splitmix state behind `&x`, and `++h[key]`. The map's part is register pressure: 5.2.0 inlines
+the whole insert, and the caller's loop variables no longer fit.
+
+**The sweep, and how chaotic it is** (`insert_sweep.cpp`, `map<uint64_t, uint64_t>`, cycles per
+operation). Build from empty is 4-12% faster on 5.2.0 than 5.1.0 at every size from 50k to 16M on
+both compilers; churn under clang 744 -> 505 at 16M, under gcc unchanged. The hit (`++m[k]`, key
+`r() % n`) is two speeds 2.2x apart at every size, 31.8 against 82.5 at 50k, 222 against 490 at
+16M, and which binary is fast follows no shape: clang 5.1.0 fast, clang 5.2.0 slow inlined and slow
+called, gcc slow in every version. Without the store (`m[k]`) or without the division (a mask) the
+gap goes, and 5.2.0 is ahead: 58.9 against 68.0, 59.3 against 67.5 cycles at 1M. It is the trap
+above, set off by the harness's own `r() % n`. And one cold branch decides it: the first version of
+this change left `allocate_buckets_if_none()` in the inlined part, in an `else` that only an empty
+table takes, and the hit read 145 cycles at 1M; moved into the called part, 56.
+
+**What shipped: the part after a home-group miss (`find_or_place_miss`, the placement and the walk)
+is `noinline` under clang, as in #321's V12, and inlined under gcc, byte-identical to 5.2.0**
+(checked on five binaries). Under clang, against 5.2.0:
+
+| | 5.2.0 | this |
+|---|---|---|
+| udb3 insert-only / insert+delete, ns | 81.2 / 60.6 | 41.9 / 41.6 |
+| sweep hit at 1M / 16M, cycles | 143 / 492 | 56 / 181 |
+| sweep build at 1M / 16M | 62 / 191 | 68 / 211 |
+| sweep churn at 1M / 16M | 157 / 505 | 159 / 509 |
+| one map, instructions (cycles): hit u64 | 51.3 (25.4) | 45.8 (24.2) |
+| hit string | 109.6 (87.1) | 105.2 (86.6) |
+| miss u64 | 81.2 (33.8) | 101.1 (39.3) |
+| miss string | 294.0 (123.8) | 319.9 (129.3) |
+| score, `solo.sh` against 5.2.0 | | 0.9698 |
+
+The score's per-workload instructions under clang, against 5.2.0: build 1.149 / 1.045 / 1.129
+(u64 / string / big value), churn 1.075 / 1.031 / 1.079, insert-erase 1.057 / 1.033 / 1.053, find
+and iterate within 2%. ClickHouse's aggregation benchmark, cycles per row against 5.1.0 (the same
+baseline as in "split at the home group"): CounterID -16.7%, AdvEngineID -21.9%, RegionID -15.2%,
+TraficSourceID -20.8%, UserID -8.2%, WatchID -2.9%, where 5.2.0 read -15.6, -19.4, -13.5, -18.4,
+-9.0 and -11.1%.
+
+This is #321's V14-against-V12 trade taken the other way, now that one side of it has a measured
+cliff. The price under clang: the score 3%, ClickHouse's WatchID (100M rows, almost all distinct)
+8 points of the 11 that 5.2.0 had won, an insert of a fresh key 16% more cycles in cache (4% for a
+string key). What it buys: 1.9x in udb3 and 2.6x in the sweep's hit, in the loops that spill. A
+cliff that depends on the caller's code was taken as the worse failure; the numbers to reverse
+that are here. Under gcc no
+shape avoided it in udb3's insert loop (about 80 ns in every version and shape), and gcc keeps
+5.2.0's shape because called it lost udb3's insert+delete (60.3 -> 84.5).
+
+What this says and does not say: one CPU; the trap needs the three ingredients and I measured it on
+Zen 4 only. No shape of the map can promise that a caller's loop does not spill, which is why
+`doc/benchmarks.md` now says what the ingredients are. A benchmark that picks keys with `%` and
+stores into what it found measures this, and mine did.
 
 ## The robin hood index this replaced, and its dead ends
 
