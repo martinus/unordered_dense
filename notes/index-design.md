@@ -220,6 +220,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - ClickHouse's aggregation benchmark on real Yandex.Metrica columns, where 4.1.2 was published behind absl on every large column: main is within 1-5% of absl on the large columns except WatchID under clang (1.16), uses less memory than absl on two of the three, and is 12-13% behind 4.1.2 under clang on the columns with few distinct keys
 - #326's op-cache footprint was taken away by #328: MySQL's `EXCEPT` went from 26-45x 4.4.0's op-cache misses on 5.2.0 to 1.9x and 1.1x in two layouts of main, and the query is level with 4.4.0 or faster in both
 - #331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes the rest
+- An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6124,6 +6125,45 @@ and ends with more instructions.
 What this says and does not say: two columns of one benchmark, in cache; the gap is clang's and
 under gcc main is level or ahead once #329 lands. No change of its own; #329 carries the part that
 can be had.
+
+**An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined
+lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's
+small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level**
+(2026-09-27, issue #329, Ryzen 9 7950X, clang 22 and gcc 16; the caller corpus, `solo.sh` +
+`perwl.sh`, #331's counting loop). The sentinel lives in `group_storage`, which the library owns:
+a static array of as many groups as the smallest table has (4), all slots empty and all counters
+zero, and a pointer `m_data` that is `m_blocks.data()` or the sentinel, set by `sync()` after every
+operation that can change the vector, so `data()` returns it without a test. A test inside `data()`
+would have put the check back on every lookup's address, which is why the pointer is stored. A
+`static_assert` in the table ties the sentinel's size to `initial_shifts`; every path that leaves a
+table without an array sets `m_shifts` back to it (the moves, `copy_buckets` for an empty source,
+`reset_to_empty`), so `hash >> m_shifts` stays inside the sentinel.
+
+What keeps it unwritten: the miss path allocates before it places. An attempt to rely on the other
+guard alone -- a table without an array has a capacity of zero, so a placement grows first -- was
+measured and taken back: the first insert then grows into the array and rehashes, which the suite
+caught twice, as the first array coming out 8 groups instead of 4 (`bucket_count() == 64`) and as
+the first key hashed twice (`transparent.cpp`'s hash counts). With the allocation back, the
+mutation "deallocate_buckets keeps the capacity" is equivalent and was not added to the bug files;
+`test/unit/sentinel.cpp` checks every way to arrive at a table without an array (default, moved
+from, assigned from an empty table), lookups and erases in it, and that a fresh table afterwards
+still finds nothing.
+
+Score, one header per binary, against main: 1.0032 under clang and under gcc (inside the band);
+instructions per workload, clang: `find` 0.964 / 0.970 / 1.009 (u64 / string / big value), churn
+0.975 / 0.988 / 0.953, build 0.987 / 0.997 / 0.989; gcc: `find` 0.952 / 0.981 / 0.952, insert-erase
+0.997 / 1.003 / 0.962, build 1.006 / 0.998 / 1.000. The caller corpus: worst ratio 1.09 under
+clang on both headers, 1.09 -> 1.03 under gcc; nearly every cell 1-3 instructions fewer. One cell
+went the other way: clang's `struct_key` at 64k, 88.2 -> 94.2 instructions, 46.1 -> 50.1 cycles
+(2% at 4M), with the `empty()` test gone from its loop and clang now reloading a variable from the
+stack inside it -- a register allocation of this one loop, not a property of the change. #331's
+counting loop, cycles per row, main -> this (4.1.2): clang AdvEngineID 10.08 -> 10.00 (9.02),
+CounterID 10.88 -> 10.55 (9.35); gcc 9.52 -> 9.05 (10.57), 9.73 -> 9.27 (9.28).
+
+What this says and does not say: an empty table now hashes the key of a lookup that finds nothing,
+where it returned before hashing; the insert path and every other lookup save the test. The
+equivalent survivor in the mutation run over the diff: the `static_assert`'s comparison, since both
+sizes are 4.
 
 ## The robin hood index this replaced, and its dead ends
 
