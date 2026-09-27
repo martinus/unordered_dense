@@ -214,6 +214,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - MySQL's int join never reaches the map, which makes it the control for how much relinking mysqld moves a query: 2.4%, the size of every MySQL difference measured for #321 and #323
 - MySQL's `EXCEPT` read 7-11% slower on 5.2.0 than on 4.4.0, and it is where the linker put the map's code: an inactive block added next to the call took it to +1% and removing it brought the +7-11% back, with `do_find` and `hash_bytes` byte-identical in both binaries
 - udb3's `++h[key]` ran 70% slower under clang on 5.2.0 than on 5.1.0, and it was a loop variable stored and reloaded across a store with a late address: on Zen 4 that, with a division on the way to the next key, stops the loop overlapping its misses, 5x in a loop with no map at all; the part of the insert after a miss is called again under clang
+- The caller corpus: nine loops the way programs write them, one binary each, both compilers, in cache and past it, judged by each header's worst loop and not by a geomean; 5.2.0's worst was 3.3x under clang and 3.6x under gcc, the clang miss call of #310 brings clang's to 1.10, and under gcc nothing that removes the cliff is worth its price
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5849,12 +5850,71 @@ string key). What it buys: 1.9x in udb3 and 2.6x in the sweep's hit, in the loop
 cliff that depends on the caller's code was taken as the worse failure; the numbers to reverse
 that are here. Under gcc no
 shape avoided it in udb3's insert loop (about 80 ns in every version and shape), and gcc keeps
-5.2.0's shape because called it lost udb3's insert+delete (60.3 -> 84.5).
+5.2.0's shape because called it lost udb3's insert+delete (60.3 -> 84.5). (2026-09-27, later: the same
+shape for gcc was measured once more against the caller corpus, entry below, and rejected again:
+the score 0.940, ClickHouse's WatchID +22.0% against 5.1.0 where 5.2.0 read -3.9%.)
 
 What this says and does not say: one CPU; the trap needs the three ingredients and I measured it on
 Zen 4 only. No shape of the map can promise that a caller's loop does not spill, which is why
 `doc/benchmarks.md` now says what the ingredients are. A benchmark that picks keys with `%` and
 stores into what it found measures this, and mine did.
+
+**The caller corpus: nine loops the way programs write them, one binary each, both compilers, in
+cache and past it, judged by each header's worst loop and not by a geomean; 5.2.0's worst was 3.3x
+under clang and 3.6x under gcc, the clang miss call of #310 brings clang's to 1.10, and under gcc
+nothing that removes the cliff is worth its price** (2026-09-27, #310, Ryzen 9 7950X, clang 22 and
+gcc 16, `scripts/ab/caller_corpus.{cpp,sh}`). The loops, each for a slowdown that happened: udb3's
+insert and insert+delete (#310), `++m[f(r() % n)]` and churn with keys from a modulo (the spill
+trap in its plainest form), `++m[k]` with a mask (#321's counting loop), a build from empty, a
+`std::string` hit, `segmented_map` with a 12 byte key built field by field and hashed through
+memory (#311, #312), and MySQL's `EXCEPT` call pattern. Each at 65536 and 4194304 entries, three
+rounds, every header once per cell and round, median; instruction counts deterministic.
+
+Worst ratio of a header's cycles to the fastest header in the same cell, over all 18 cells:
+
+| | 5.1.0 | 5.2.0 | #310 (clang: miss called) | V24 (miss called, both compilers) | V28 (the whole insert behind two calls) |
+|---|---|---|---|---|---|
+| clang | 1.29 | 3.33 | **1.10** | = #310 | 1.21 |
+| gcc | 1.58 | 2.76 / 3.59 | = 5.2.0 | 1.57 | 1.59 |
+
+(Two runs for gcc, the second with 5.2.0, V24 and V28 only; 5.2.0's worst read 2.76 and 3.59, the
+same loop, `bump_mod`.) The cells behind them, cycles per operation, 65536 / 4194304 entries:
+
+| | clang 5.2.0 | clang #310 | gcc 5.2.0 | gcc V24 | gcc V28 |
+|---|---|---|---|---|---|
+| `bump_mod` | 90.2 / 365.3 | 27.1 / 156.9 | 91.4 / 370.4 | 25.5 / 140.3 | 33.3 / 192.2 |
+| `churn_mod` | 134.8 / 568.4 | 80.7 / 271.3 | 108.5 / 359.9 | 134.3 / 566.0 | 140.1 / 573.7 |
+| `udb3_del` | 102.7 / 222.4 | 75.6 / 161.2 | 112.3 / 313.7 | 129.1 / 329.3 | 121.8 / 321.0 |
+| `build` | 48.1 / 118.1 | 52.2 / 129.4 | 44.9 / 108.7 | 51.9 / 133.1 | 53.1 / 145.2 |
+| `mysql_except` | 70.8 / 245.0 | 74.4 / 262.7 | 74.7 / 217.7 | 85.2 / 261.6 | 88.3 / 290.7 |
+| `bump_mask` | 25.0 / 156.5 | 24.7 / 154.9 | 25.4 / 141.0 | 23.4 / 137.9 | 30.7 / 186.8 |
+
+Three things it shows. The inlined shapes are fastest wherever the caller does not spill and fall
+off a 2.3-3.6x cliff where it does, and which loop that is changes with the compiler and with
+unrelated lines (a `reserve(1)` in the sweep harness moved 5.2.0's hit from 143 to 62 cycles). A
+call boundary bounds it, because the caller's loop variables then live in callee-saved registers
+whatever the map does; with only the home-group hit inlined, the lean hit path has not tripped it
+in any loop of this corpus under clang -- but it did in one loop of the earlier five-loop version,
+where the map was passed by reference (`++m[f(r() % n)]` at 1M: 141 against 5.1.0's 72 cycles), so
+it lowers the odds and does not remove them. V28, the whole insert behind a call with the hit in a function of
+its own and the rest tail-called, loses to that in nearly every cell and costs in cache (one map,
+hit u64 27.4 against 25.1 cycles under clang, a miss up to 45% under gcc), so it was dropped. The
+earlier five-loop corpus had recommended V28; the nine-loop one with two sizes overturned it.
+
+Under gcc the call that fixes clang costs more than it saves. V24 takes gcc's worst from 3.59 to
+1.57, and the one loop it rescues is `bump_mod`; against that, gcc's score reads 0.9404 (build
+1.338 / 1.095 / 1.294 instructions, u64 / string / big value; churn 1.186 / 1.088 / 1.180;
+insert-erase 1.177 / 1.077 / 1.212), ClickHouse's WatchID (100M rows, almost all new keys) +22.0%
+against 5.1.0 where 5.2.0 read -3.9%, UserID +0.3% where 5.2.0 read -2.8%, and udb3's
+insert+delete 83.9 against 59.9 ns. The likely mechanism is #321's V10 one: a call that receives
+the map's `this` keeps a map declared in the caller in memory instead of in registers, and every
+insert of a new key pays for it. So gcc keeps 5.2.0's shape and its cliff, and `doc/benchmarks.md`
+says what a caller can do about it.
+
+What this says and does not say: nine loops are a sample, chosen from slowdowns that happened, and
+a tenth may disagree; one CPU. The corpus is the check for any change to what an insert inlines
+(`CLAUDE.md`, the measurement table): its worst-ratio line, not the score, is what such a change
+has to hold.
 
 ## The robin hood index this replaced, and its dead ends
 

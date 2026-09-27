@@ -80,8 +80,10 @@
 // and on Zen 4 a variable stored and reloaded every iteration, with a store of the found value in
 // between, waits for that store's address, which waits for the lookup's cache misses: udb3's
 // `++h[key]` ran at 80 ns per input against 42 called, the same cache misses no longer overlapping.
-// Under gcc it stays inlined: called, gcc's udb3 insert+delete went from 60 back to 84 ns. Neither
-// shape can guarantee a caller's loop does not spill; notes/index-design.md, "stored and reloaded".
+// Under gcc it stays inlined: called, gcc's udb3 insert+delete went from 60 back to 84 ns, the score
+// read 0.940 and ClickHouse's WatchID (100M mostly new keys) 26% slower, which outweighs the one
+// caller-corpus loop the call rescues under gcc. Neither shape can guarantee a caller's loop does
+// not spill; notes/index-design.md, "stored and reloaded" and "caller corpus".
 #if defined(__clang__)
 #    define ANKERL_UNORDERED_DENSE_FIND_OR_PLACE_MISS ANKERL_UNORDERED_DENSE_NOINLINE
 #    define ANKERL_UNORDERED_DENSE_MISS_IS_CALLED 1 // NOLINT(cppcoreguidelines-macro-usage)
