@@ -216,6 +216,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - udb3's `++h[key]` ran 70% slower under clang on 5.2.0 than on 5.1.0, and it was a loop variable stored and reloaded across a store with a late address: on Zen 4 that, with a division on the way to the next key, stops the loop overlapping its misses, 5x in a loop with no map at all; the part of the insert after a miss is called again under clang
 - The caller corpus: nine loops the way programs write them, one binary each, both compilers, in cache and past it, judged by each header's worst loop and not by a geomean; 5.2.0's worst was 3.3x under clang and 3.6x under gcc, the clang miss call of #310 brings clang's to 1.10, and under gcc nothing that removes the cliff is worth its price
 - The shape search: sixteen combinations of what the insert inlines, each judged by its worst ratio to the best combination anywhere measured, with the rule fixed before the results; it picks one shape for every compiler -- the home-group lookup inlined, the miss path and the walk past home called -- worst 1.11 under clang and 1.58 under gcc, where 5.2.0's everything-inlined reads 3.32 and 3.54
+- `hash_bytes` reads a key of compile-time length 8, 12 or 16 as 4 byte words under gcc and clang: a lookup right after writing a 12 byte key field by field goes 146 -> 40 cycles on both compilers, the hash value unchanged, strings untouched, a key already in memory 1.4 cycles more
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5961,6 +5962,48 @@ program's benchmark, on purpose -- the rule is the smallest worst case, which is
 brittle" means -- and a different rule (e.g. weighting real programs) would pick 5.2.0's shape for
 gcc again. One CPU. The search is the tool for the next such question: `run.sh gen`, the stages,
 `run.sh rank`, about three hours unattended.
+
+**`hash_bytes` reads a key of compile-time length 8, 12 or 16 as 4 byte words under gcc and clang:
+a lookup right after writing a 12 byte key field by field goes 146 -> 40 cycles on both compilers,
+the hash value unchanged, strings untouched, a key already in memory 1.4 cycles more** (2026-09-27,
+issue #311, Ryzen 9 7950X, clang 22 and gcc 16, one variant per binary; the caller corpus). The 8-16
+byte path read `r8(p)` and `r8(p + len - 8)`. For a key the caller has just written, a load that
+spans two of the caller's stores cannot be forwarded from them and waits until both are written to
+the cache, and stores are written in order, so it holds up the lookups' misses. gcc writes three
+`int32_t` fields as three 4 byte stores, which the first read already spans; clang writes 8 + 4,
+which the second read spans. A 4 byte read lies inside one store in both cases. clang fuses
+`r4(p) | r4(p + 4) << 32` back into one 8 byte read (that is why the issue's "four 4 byte loads"
+row helped gcc only), so each word goes through an empty asm that makes its value opaque. The new
+path is taken only when `__builtin_constant_p(len) && len % 4 == 0`, only under gcc and clang, and
+only on little-endian: whether it runs depends on inlining, so both paths must give the same value,
+and `r4 | r4 << 32 == r8` holds on little-endian only. A unit test compares the two paths for 8, 12
+and 16 bytes; swapping the two words of `a` fails it.
+
+A `segmented_map<coord, uint64_t>` of three `int32_t`, the key written field by field and looked
+up at once, cycles per lookup:
+
+| | clang 64k | clang 1M | gcc 64k | gcc 1M |
+|---|---|---|---|---|
+| two 8 byte reads (before) | 144.1 | 368.7 | 146.2 | 380.0 |
+| 4 byte words (this) | 39.4 | 117.5 | 40.1 | 118.5 |
+| the fields hashed as values (`hash_int`) | 35.5 | 104.4 | 35.6 | 107.7 |
+
+Hashing 12 byte keys already in memory, cycles per hash: clang 4.60 -> 6.01, gcc 4.09 -> 5.53 (3
+loads, 2 shifts and 2 ors against 2 loads). Strings of 8-16 bytes of run-time length: identical
+instructions (clang 25.00, gcc 22.00), identical cycles. Reading each word once instead of the
+middle word twice changed nothing: the asm is not volatile, so the compiler merges the two reads
+already. The caller corpus, main against this: `struct_key` (#311's loop) 150.3 -> 46.5 and 840.7
+-> 242.6 under clang, 150.3 -> 41.6 and 836.3 -> 242.6 under gcc; every other cell within 1.02
+(clang) and 1.06 (gcc, the build at 4M, identical instructions). gcc's string loops lost
+instructions (`string_hit` 119.5 -> 110.5, the MySQL pattern 136.8 -> 131.8) although strings never
+take the new path: gcc's inliner decides differently about the larger `hash_bytes`, which is a
+gain here and not a property of the change.
+
+What this says and does not say: keys of other sizes, keys with fields narrower than 4 bytes (a
+2 byte field stored on its own is still spanned) and MSVC keep the 8 byte reads; for those the
+usage note in `doc/usage.md` recommends hashing the fields as values. One CPU: store forwarding
+rules differ between microarchitectures, and that a 4 byte load inside an 8 byte store is
+forwarded was measured on Zen 4 only.
 
 ## The robin hood index this replaced, and its dead ends
 
