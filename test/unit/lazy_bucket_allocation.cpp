@@ -47,17 +47,16 @@ auto tracked(test::alloc_counts& counts) -> Container {
     return Container(0, typename Container::allocator_type(0, &counts));
 }
 
-// What a table costs before it has allocated anything of its own. Not zero everywhere: a table is
-// the values plus the arrays of the index -- the groups, and the value index beside them -- and
-// MSVC's debug iterator support allocates a _Container_proxy through the allocator for each one as
-// it is constructed. So the floor is measured rather than assumed: that many empty vectors' worth,
-// whatever that is here. It was one fewer while the index was a single array of buckets, which is
-// the kind of thing only a Windows leg notices.
+// What a table costs before it has allocated anything of its own. Not zero everywhere: MSVC's debug
+// iterator support allocates a _Container_proxy through the allocator for every std::vector as it is
+// constructed, and a table holds the values' vector plus however many the index does. So the floor
+// is measured rather than assumed: that many empty vectors' worth, whatever that is here. The index
+// has held two, one and now no vectors, which is the kind of thing only a Windows leg notices.
 auto empty_table_cost() -> int {
     using index_t =
         ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group, std::allocator<pair_t>>;
     auto counts = test::alloc_counts{};
-    for (size_t i = 0; i < 1 + index_t::array_count; ++i) {
+    for (size_t i = 0; i < 1 + index_t::vector_count; ++i) {
         auto v = std::vector<pair_t, test::id_allocator<pair_t>>(test::id_allocator<pair_t>(0, &counts));
         static_cast<void>(v);
     }
@@ -502,4 +501,40 @@ TEST_CASE_MAP("the_sentinel_index_is_never_written", int, int) {
     for (int k = 0; k < 20000; ++k) {
         REQUIRE(fresh.find(k) == fresh.end());
     }
+}
+
+// The index is a pointer and a count (#329): the sentinel made a std::vector's own data pointer a
+// second copy, and its capacity was never read. With an empty allocator it takes two words, so
+// that a map is its values' vector plus 40 bytes on a 64 bit target, 8 fewer than 5.2.0's 48.
+TEST_CASE("the_index_is_two_words") {
+    using index_t =
+        ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group, std::allocator<pair_t>>;
+    using index_big_t = ankerl::unordered_dense::detail::group_storage<ankerl::unordered_dense::bucket_type::group_big,
+                                                                       std::allocator<pair_t>>;
+    REQUIRE(sizeof(index_t) == 2 * sizeof(void*));
+    REQUIRE(sizeof(index_big_t) == 2 * sizeof(void*));
+}
+
+// The index frees what it allocated, through the allocator that allocated it: after a swap under
+// propagate_on_container_swap, the index has to go back to the allocator it came from, which is the
+// other table's now. One table has no index, so a swap that forgot the allocator frees the one index
+// through the wrong counter; each counter has to balance at the end.
+TEST_CASE("the_index_frees_through_the_allocator_that_allocated_it") {
+    using alloc_t = test::id_allocator<pair_t, std::false_type, std::true_type, std::false_type, std::true_type>;
+    using swap_map = map_of<alloc_t>;
+    auto counts_a = test::alloc_counts{};
+    auto counts_b = test::alloc_counts{};
+    {
+        auto a = swap_map(0, alloc_t(1, &counts_a));
+        auto b = swap_map(0, alloc_t(2, &counts_b));
+        for (int i = 0; i < 100; ++i) {
+            a[i] = i;
+        }
+        a.swap(b);
+        REQUIRE(a.empty());
+        REQUIRE(b.contains(0));
+    }
+    REQUIRE(counts_a.allocations == counts_a.deallocations);
+    REQUIRE(counts_b.allocations == counts_b.deallocations);
+    REQUIRE(counts_a.allocations > 0);
 }
