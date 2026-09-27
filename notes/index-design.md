@@ -217,6 +217,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The caller corpus: nine loops the way programs write them, one binary each, both compilers, in cache and past it, judged by each header's worst loop and not by a geomean; 5.2.0's worst was 3.3x under clang and 3.6x under gcc, the clang miss call of #310 brings clang's to 1.10, and under gcc nothing that removes the cliff is worth its price
 - The shape search: sixteen combinations of what the insert inlines, each judged by its worst ratio to the best combination anywhere measured, with the rule fixed before the results; it picks one shape for every compiler -- the home-group lookup inlined, the miss path and the walk past home called -- worst 1.11 under clang and 1.58 under gcc, where 5.2.0's everything-inlined reads 3.32 and 3.54
 - `hash_bytes` reads a key of compile-time length 8, 12 or 16 as 4 byte words under gcc and clang: a lookup right after writing a 12 byte key field by field goes 146 -> 40 cycles on both compilers, the hash value unchanged, strings untouched, a key already in memory 1.4 cycles more
+- ClickHouse's aggregation benchmark on real Yandex.Metrica columns, where 4.1.2 was published behind absl on every large column: main is within 1-5% of absl on the large columns except WatchID under clang (1.16), uses less memory than absl on two of the three, and is 12-13% behind 4.1.2 under clang on the columns with few distinct keys
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6004,6 +6005,64 @@ What this says and does not say: keys of other sizes, keys with fields narrower 
 usage note in `doc/usage.md` recommends hashing the fields as values. One CPU: store forwarding
 rules differ between microarchitectures, and that a 4 byte load inside an 8 byte store is
 forwarded was measured on Zen 4 only.
+
+**ClickHouse's aggregation benchmark on real Yandex.Metrica columns, where 4.1.2 was published
+behind absl on every large column: main is within 1-5% of absl on the large columns except WatchID
+under clang (1.16), uses less memory than absl on two of the three, and is 12-13% behind 4.1.2 under
+clang on the columns with few distinct keys** (2026-09-27, issue #315, Ryzen 9 7950X, clang 22 and
+gcc 16, `kitaisreal/hash-table-aggregation-benchmark` with its own `CMakeLists.txt`, 4.1.2 from its
+`contrib`, 5.1.0 and main (5.2.0 + #323 + #328 + #330) beside it, `absl::Hash` for every map as in
+the published results; `perf stat` cycles per row, median of three rounds with the maps interleaved,
+pinned to core 2). Published on AWS c6a.4xlarge, time, 4.1.2 / absl: WatchID 12.93 / 10.01 s = 1.29,
+UserID 3.17 / 2.65 s = 1.20. Here, 4.1.2 / absl in cycles: 1.52 and 1.14 under clang, 1.24 and 1.13
+under gcc; the machine and compilers differ, so compare ratios, not seconds.
+
+Cycles per row (ratio to absl), clang:
+
+| column | ClickHouse HashMap | absl::flat_hash_map | google::dense_hash_map | 4.1.2 | 5.1.0 | main |
+|---|---|---|---|---|---|---|
+| WatchID | 311.6 (1.00) | 313.1 (1.00) | 427.9 (1.37) | 476.9 (1.52) | 373.9 (1.19) | 362.3 (1.16) |
+| URLHash | 123.9 (1.01) | 122.7 (1.00) | 155.3 (1.27) | 158.3 (1.29) | 143.1 (1.17) | 129.3 (1.05) |
+| UserID | 110.2 (0.93) | 118.0 (1.00) | 139.0 (1.18) | 135.0 (1.14) | 130.7 (1.11) | 120.1 (1.02) |
+| RegionID | 14.8 (0.75) | 19.6 (1.00) | 19.3 (0.98) | 23.4 (1.19) | 24.8 (1.26) | 21.0 (1.07) |
+| CounterID | 14.3 (0.75) | 19.1 (1.00) | 19.4 (1.02) | 18.2 (0.96) | 24.7 (1.29) | 20.6 (1.08) |
+| TraficSourceID | 12.7 (0.89) | 14.3 (1.00) | 15.0 (1.05) | 15.8 (1.10) | 19.6 (1.37) | 15.5 (1.08) |
+| AdvEngineID | 8.0 (0.59) | 13.7 (1.00) | 15.0 (1.09) | 13.4 (0.98) | 19.1 (1.40) | 15.0 (1.09) |
+
+gcc:
+
+| column | ClickHouse HashMap | absl::flat_hash_map | google::dense_hash_map | 4.1.2 | 5.1.0 | main |
+|---|---|---|---|---|---|---|
+| WatchID | 300.1 (0.82) | 366.8 (1.00) | 399.5 (1.09) | 454.0 (1.24) | 323.6 (0.88) | 383.0 (1.04) |
+| URLHash | 125.1 (0.97) | 129.0 (1.00) | 143.5 (1.11) | 157.0 (1.22) | 129.2 (1.00) | 129.2 (1.00) |
+| UserID | 112.4 (0.95) | 118.6 (1.00) | 129.6 (1.09) | 133.5 (1.13) | 120.4 (1.02) | 119.7 (1.01) |
+| RegionID | 16.2 (0.88) | 18.3 (1.00) | 15.8 (0.86) | 25.5 (1.39) | 26.0 (1.42) | 20.1 (1.10) |
+| CounterID | 16.3 (0.87) | 18.7 (1.00) | 15.4 (0.82) | 21.9 (1.17) | 21.6 (1.15) | 21.1 (1.13) |
+| TraficSourceID | 16.1 (1.25) | 12.9 (1.00) | 10.9 (0.85) | 25.8 (2.01) | 16.2 (1.26) | 14.8 (1.15) |
+| AdvEngineID | 10.1 (0.81) | 12.5 (1.00) | 10.2 (0.82) | 16.2 (1.30) | 15.7 (1.26) | 14.2 (1.14) |
+
+Memory as reported by the benchmark, MiB (the same under both compilers):
+
+| column | ClickHouse HashMap | absl | google dense | 4.1.2 | 5.1.0 | main |
+|---|---|---|---|---|---|---|
+| WatchID | 4096 | 2176 | 4096 | 2550 | 2230 | 2230 |
+| URLHash | 1024 | 544 | 1024 | 572 | 492 | 492 |
+| UserID | 1024 | 544 | 1024 | 525 | 445 | 445 |
+
+What moved: 5.x's index (5.5 bytes per slot against 4.x's 8) is what takes main below absl's memory
+on URLHash and UserID. The large columns went 1.52 / 1.29 / 1.14 (4.1.2) to 1.16 / 1.05 / 1.02
+(main) under clang, and 1.24 / 1.22 / 1.13 to 1.04 / 1.00 / 1.01 under gcc. Under gcc, WatchID
+(almost all new keys) is 18% slower on main than on 5.1.0, 383.0 against 323.6: that is #328's
+call after a home-group miss, which the shape search had put at 1.24x the best shape on this very
+column ("shape search"). ClickHouse's own map is the fastest on the small columns under both
+compilers (0.59-0.93 of absl) at 1.9x absl's memory on the large ones.
+
+Unexpected, and filed on its own (#331): under clang the columns with few distinct keys (CounterID,
+AdvEngineID: counting into a table that stays in cache) are 12-13% slower on main than on 4.1.2,
+20.6 against 18.2 and 15.0 against 13.4 cycles per row; under gcc 4.1.2 is the slower one there.
+
+What this says and does not say: one machine, 100M rows per column, in the benchmark's own
+harness; the published numbers are one run on AWS and are quoted as ratios only.
 
 ## The robin hood index this replaced, and its dead ends
 
