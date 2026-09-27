@@ -210,6 +210,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The default maximum load factor swept from 0.75 to 0.9: every step above 0.8 costs both compilers the same, and the one step below buys 0.8% for 6.7% more index
 - Tearing a segmented_map down in reverse: glibc keeps the memory for the next build instead of handing it to the kernel, warm builds 1.8-3.2x when values own heap memory
 - `try_emplace` split at the home group: the hit and the common placement inlined into the caller, the walk past home behind a call for clang only, and every scored workload at or under main's instruction count on both compilers
+- `insert()` and `emplace()` look the key up first when the arguments already are the value: a set's string hit 2.2x, a map's `insert({k, v})` hit 4.5x under clang, and `emplace(k, new int)` must still build its value
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5590,6 +5591,67 @@ except the table just above; the counts are the decisive numbers. MSVC takes the
 and has not been measured. The compiler split is a measured choice per compiler, not a principle:
 a third compiler, or a future clang or gcc, may want the other shape, and the one-map harness and
 `solo.sh` are what would tell.
+
+**`insert()` and `emplace()` look the key up first when the arguments already are the value: a set's
+string hit 2.2x, a map's `insert({k, v})` hit 4.5x under clang, and `emplace(k, new int)` must still
+build its value** (2026-09-27, follow-up to #321, Ryzen 9 7950X, clang 22 and gcc 16, one map per
+binary: `scripts/ab/try_emplace_hit.cpp` with the operation swapped for `insert`, `solo.sh`,
+`perwl.sh`). #321 put `try_emplace`'s hit and common placement in front of any call; every other
+single-element insert still built the value first (`emplace_back`), probed, and popped it on a hit,
+and a set has no `try_emplace` at all. The comment on `do_insert_hashed` had named this as "left for
+its own change".
+
+The shape: `do_try_emplace`'s body is `do_find_or_place<Piecewise>(key, args...)`, and `emplace()`
+routes to it when its arguments are one `value_type`, or for a map a `Key` and a `mapped_type` (each
+by value or reference); the set's transparent `emplace(K&&)` routes to it too. Every `insert()`
+overload goes through `emplace()`, and all six are now `always_inline`. What is built is built from
+the same arguments as before; only a present key skips it.
+
+**Instructions and cycles per operation, #321's merged header against this, 50000 entries** (map =
+`map.insert({k, v})`, set = `set.insert(k)` with `k` a non-const lvalue for a miss and a const one
+for a hit, so both `insert` overloads are covered):
+
+| | clang instr | clang cycles | gcc instr | gcc cycles |
+|---|---|---|---|---|
+| map hit u64 | 88.0 -> 50.3 | 121.4 -> 26.8 | 58.2 -> 43.2 | 27.3 -> 23.6 |
+| map hit string | 300.6 -> 227.2 | 191.1 -> 175.9 | 282.2 -> 227.9 | 192.9 -> 177.2 |
+| map miss u64 | 98.0 -> 81.2 | 99.7 -> 40.9 | 76.0 -> 67.9 | 31.5 -> 29.1 |
+| map miss string | 331.6 -> 311.9 | 160.0 -> 148.6 | 310.9 -> 305.1 | 153.4 -> 150.6 |
+| set hit u64 | 80.0 -> 49.3 | 33.0 -> 21.1 | 55.1 -> 42.2 | 22.4 -> 20.3 |
+| set hit string | 270.0 -> 104.6 | 185.1 -> 83.4 | 251.7 -> 107.0 | 181.1 -> 82.2 |
+| set miss u64 | 92.0 -> 76.2 | 40.3 -> 33.1 | 65.0 -> 63.9 | 25.3 -> 25.3 |
+| set miss string | 304.8 -> 279.8 | 147.8 -> 120.3 | 277.7 -> 278.8 | 148.4 -> 110.4 |
+
+The string hits are the copy of the key that is no longer made. clang's integer map hit took 121
+cycles for 88 instructions in the old shape; why was not looked into, since the shape is gone.
+`try_emplace`'s own counts are identical to the merged header's in all eight cells of its harness.
+The score (`solo.sh` against the merged header): clang 0.9962, gcc 0.9979, inside the band; every
+workload's instructions identical except clang's `find` at 1.017 (u64) and 1.026 (big value), whose
+code this does not touch -- the inliner, the same caller-side effect as the entry above.
+
+**Three shapes lost on the way.** Routing only `insert(value_type const&/&&)` (V19) missed the
+common case: `set.insert(k)` with a non-const `k` binds to the template `insert(P&&)`, which went to
+`emplace()`, so the set miss did not move at all. Putting the dispatch in `emplace()` with the
+`insert()` overloads left un-annotated (V20) put gcc's integer map miss at 94.9 instructions against
+76.0 and the set miss at 89.9 against 65.0: `insert` stayed a call and the caller's map was spilled
+around it, #321's mechanism again; `always_inline` on the six overloads (V21) took it back. Building
+`try_emplace`'s `piecewise_construct` tuples in `do_try_emplace` and handing them down (V19-V21)
+cost clang 6 instructions on an integer `try_emplace` miss, because they were held across the
+lookup; the `Piecewise` flag forms them at the placement (V22).
+
+**The rule has to stop at conversions**, which ASan found: `unique_ptr_fill` calls
+`emplace(k, new int(i))` twice per key and its comment says the element "is still constructed, so
+there's no memory leak here". Looked up first, the second call built nothing and the pointer leaked,
+1000 per map type. So a key-first `emplace()` takes only arguments that already are what they would
+become, where skipping construction skips a copy and nothing else; `emplace(k, 20)` into a map whose
+mapped type is built from an `int` still builds and destroys it, and a test counts that. MySQL's
+hash join (`emplace(key, LinkedImmutableString{nullptr})`) passes a `mapped_type` and takes the new
+path.
+
+What this says and does not say: in cache only, one machine; MySQL, ClickHouse and the million-entry
+harness were not re-run. `emplace(Args...)` with anything else, the hinted `emplace_hint`, and
+`insert_or_assign` keep their shapes. A present key now leaves an rvalue `insert` argument unmoved,
+where before it was moved from into an element that was then popped.
 
 ## The robin hood index this replaced, and its dead ends
 
