@@ -1,0 +1,21 @@
+Writes every key MySQL 9.7.2's set operations hash, and whether it is inserted or looked up, to the
+file named by UDM_DUMP; scripts/ab/mysql_except_replay.cpp -DDUMP reads it. Measurement only. The
+block is inactive without the variable and still moves the code around it: with it, EXCEPT read
++1% against 4.4.0, without it +7-11% (notes, "instruction cache").
+
+--- a/sql/iterators/composite_iterators.cc
++++ b/sql/iterators/composite_iterators.cc
+@@ -2181,6 +2181,15 @@
+     t->hash_field->store(static_cast<longlong>(primary_hash), true);
+   }
++  // UDM_DUMP: log every key and whether it is inserted or looked up (measurement only).
++  {
++    static FILE *udm_dump = getenv("UDM_DUMP") ? fopen(getenv("UDM_DUMP"), "wb") : nullptr;
++    if (udm_dump != nullptr) {
++      unsigned char w = write ? 1 : 0;
++      fwrite(&w, 1, 1, udm_dump);
++      fwrite(&primary_hash, sizeof(primary_hash), 1, udm_dump);
++    }
++  }
+   // A secondary hash based on primary hash.
+   ImmutableStringWithLength secondary_hash_key;

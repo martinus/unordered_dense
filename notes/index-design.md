@@ -212,6 +212,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `try_emplace` split at the home group: the hit and the common placement inlined into the caller, the walk past home behind a call for clang only, and every scored workload at or under main's instruction count on both compilers
 - `insert()` and `emplace()` look the key up first when the arguments already are the value: a set's string hit 2.2x, a map's `insert({k, v})` hit 4.5x under clang, and `emplace(k, new int)` must still build its value
 - MySQL's int join never reaches the map, which makes it the control for how much relinking mysqld moves a query: 2.4%, the size of every MySQL difference measured for #321 and #323
+- MySQL's `EXCEPT` read 7-11% slower on 5.2.0 than on 4.4.0, and it is where the linker put the map's code: an inactive block added next to the call took it to +1% and removing it brought the +7-11% back, with `do_find` and `hash_bytes` byte-identical in both binaries
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5680,7 +5681,92 @@ are new, from empty, gcc `-O2`), is 123.6 -> 99.6 cycles (gcc) and 121.5 -> 100.
 
 So the MySQL rounds in "split at the home group" and its 0.260 for `EXCEPT` are inside this band as
 well, and the int join there was never a measurement of the map. A MySQL number needs the
-instruction count beside it, and a query that does not run the map as its control.
+instruction count beside it, and a query that does not run the map as its control. (2026-09-27, later: `EXCEPT`'s
+part was split after all, and it was not the map's work; see the entry below, "instruction cache".)
+
+**MySQL's `EXCEPT` read 7-11% slower on 5.2.0 than on 4.4.0, and it is where the linker put the
+map's code: an inactive block added next to the call took it to +1% and removing it brought the
++7-11% back, with `do_find` and `hash_bytes` byte-identical in both binaries** (2026-09-27, MySQL
+9.7.2 built with gcc 16 `-O2`, no LTO, Ryzen 9 7950X; `perf stat`, `perf record -c 200003` over ten
+queries on the pinned mysqld; `scripts/ab/mysql_except_replay.cpp`, `scripts/ab/mysql_except_dump.patch`,
+`/home/martinus/gra/mysqlbench/bench2.py`). With 2 GB buffers, ten `EXCEPT`s per server, two
+alternating rounds, 5.2.0 as a drop-in read 1.1887 / 1.1882 G cycles a query against 4.4.0's 1.1085
+/ 1.1105, on 1.3% fewer instructions, while the int join (which never calls the map, entry below)
+went 1.5% the other way. The profile put it in the map: `do_find` 1693 -> 3190 samples, the hash
+1120 -> 1347, `memcmp` 3832 -> 4952.
+
+**Three explanations that the replay rules out.** The replay runs MySQL's call pattern on the map
+alone: `segmented_map<ImmutableStringWithLength, LinkedImmutableString>` with MySQL's hasher, keys as
+pointers to a one-byte length and eight bytes in an arena, the first table `emplace`d and the second
+`find`-ed. Per operation, 4.4.0 -> 5.2.0:
+
+| keys | `emplace` cycles | `find` cycles | compares per `find` |
+|---|---|---|---|
+| `splitmix` of sysbench's `k`, 632k distinct | 147.2 -> 71.9 | 80.3 -> 64.8 | 0.6337 -> 0.6583 |
+| MySQL's own, dumped from the query, 174k distinct | 54.2 -> 27.2 | 27.5 -> 23.1 | 0.8892 -> 0.9122 |
+| MySQL's own, 16 random lines of 64 MB read per operation | 638.0 -> 588.8 | 600.1 -> 575.8 | same |
+
+- False fingerprint matches: 5.x has 16x more of them, and they are 0.023-0.025 compares per lookup.
+  A one-byte fingerprint over sixteen slots gives that rate with any hash.
+- The hash on MySQL's keys: those are the output of MySQL's own row hash, and structured -- about
+  24 of 64 bits vary, the low byte is always zero, and a million rows of 632k distinct `k` give only
+  174k distinct keys, so MySQL's hash already collides. `hash_bytes` spreads them as well as random
+  keys: the compare count moves by the same 0.023.
+- The group's second cache line and the fingerprint table, evicted between lookups by the scan:
+  with 16 random cache misses of other work per operation, 5.2.0 stays ahead.
+
+**The A/B/A.** The dump patch (a `getenv` test, never true in a timed run) went into
+`composite_iterators.cc`; with it, `EXCEPT` read 1.1019 / 1.1263 G cycles against 4.4.0's 1.1048 /
+1.1004, on 19 M more instructions for the test. Taken out again and rebuilt, it read 1.2054 / 1.2394
+against 1.1223 / 1.1155. `do_find` sits 384 bytes further on in the one binary, 64-byte aligned in
+both, and its instructions are identical except the RIP offset of the fingerprint table, which
+resolves to the same address. Its samples: 3479 in the slow binary, 1961 in the fast one; the hash
+1523 against 581. Counted per query:
+
+| binary | cycles | L1 icache misses | op cache misses | branch misses |
+|---|---|---|---|---|
+| 5.2.0, slow layout | 1209.6 M | 4.54 M | 59.0 M | 0.55 M |
+| 5.2.0, fast layout | 1126.5 M | 0.56 M | 34.1 M | 0.72 M |
+| 4.4.0 | 1119.2 M | 0.44 M | 1.3 M | 1.13 M |
+
+So the slow layout pays ten times the instruction cache misses of the fast one, and it is the
+front end, not the branch predictor, which does better on 5.2.0 in both. Which lines collide is not
+known: counting the sampled hot lines per L1i set does not separate the two binaries (the fast one
+has more sets over eight ways), because samples show where time went and not every line fetched.
+
+**What is 5.2.0's in every layout: 26-45x the op cache misses of 4.4.0.** #321 and #323 inline the
+whole insert into the caller, `flatten` pulls the vector's growth path in with it, and MySQL's
+`check_unique_fields_hash` is such a caller. In the fast layout it costs 0.7% of the cycles; it is
+also more hot code for an unlucky placement to collide with. Filed as its own issue.
+
+**Spilling at MySQL's defaults**, the other half of recommending 5.2.0 to MySQL: its hash join and
+set operations add `bucket_count() * sizeof(bucket_type)` to their memory and spill to disk past
+`join_buffer_size` / `set_operations_buffer_size`, which reads 24 bytes per slot on 5.x against 5.5
+real ("You sized the index" in `doc/upgrading-to-5.md`). Median of three, two alternating rounds,
+seconds:
+
+| query | buffer | 4.4.0 | 5.2.0 drop-in | 5.2.0 with `index_bytes()` |
+|---|---|---|---|---|
+| hash join, string key | 256 KB (default) | 1.812 | 1.962 (+8.3%) | 1.833 (+1.1%) |
+| hash join, string key | 16 MB | 1.140 | 1.137 | 1.128 |
+| hash join, string key | 64 MB | 1.111 | 1.094 | 1.075 |
+| `INTERSECT` | 256 KB | 5.853 | 5.875 | 5.852 |
+| `INTERSECT` | 16 MB | 3.079 | 2.999 | 3.045 |
+| `INTERSECT` | 64 MB | 3.082 | 3.103 | 3.077 |
+| `EXCEPT` | 256 KB | 0.490 | 0.433 | 0.486 |
+| `EXCEPT` | 16 MB | 0.255 | 0.274 | 0.262 |
+| `EXCEPT` | 64 MB | 0.253 | 0.273 | 0.261 |
+
+The drop-in pays for the over-counted index where it spills, 8.3% on the string join at the default,
+and `index_bytes()` takes that back. The drop-in's `EXCEPT` at 256 KB reading 12% faster is not
+explained. The `EXCEPT` rows at 16 and 64 MB are the layout above (the `index_bytes()` build is a
+third link of mysqld).
+
+What this says and does not say: one machine, one compiler, no LTO, which is not how MySQL ships;
+a layout effect of this size is specific to the binary, and another build of the same source may
+land either way. It does not say which functions collide. For MySQL, 5.2.0 with `index_bytes()` is
+level with or ahead of 4.4.0 on every query here but `EXCEPT`, which reads between +1% and +11%
+depending on the link, and whose map operations are 1.2-2x faster alone.
 
 ## The robin hood index this replaced, and its dead ends
 
