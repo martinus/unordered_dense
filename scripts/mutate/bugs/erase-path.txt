@@ -16,19 +16,21 @@
 # been rewritten and these questions want re-deriving rather than repairing.
 
 # the slot is freed but the counters are left where they were
+# (The four blocks below whose code moved were re-derived against uncount(), erase_group_slot()
+# and repoint_value() on 2026-09-27, #314; the invariants are unchanged.)
 # Nothing is wrong with an answer the map gives afterwards - a counter that is too
 # high only sends a probe one group further - so this is the shape of bug the suite
 # is least able to see, and the reason to ask about it by name. The walk is kept and
 # only the decrement is taken away, because deleting the walk leaves mh unused and
 # the compiler would answer instead of the tests.
 <<<
-                if (groups[group_idx].m_overflows[counter] != 255) {
-                    --groups[group_idx].m_overflows[counter];
-                }
+            if (groups[group_idx].m_overflows[counter] != 255) {
+                --groups[group_idx].m_overflows[counter];
+            }
 ===
-                if (groups[group_idx].m_overflows[counter] == 255) {
-                    --groups[group_idx].m_overflows[counter];
-                }
+            if (groups[group_idx].m_overflows[counter] == 255) {
+                --groups[group_idx].m_overflows[counter];
+            }
 >>>
 
 # the counters come down along the wrong probe sequence
@@ -36,11 +38,11 @@
 # this key's own hash. Retracing anything else decrements counters that belong to
 # other keys, and those keys stop being findable once their counter reaches zero.
 <<<
-            value_idx_type delta = 0;
-            do {
+        value_idx_type delta = 0;
+        while (group_idx != found_in) {
 ===
-            value_idx_type delta = 1;
-            do {
+        value_idx_type delta = 1;
+        while (group_idx != found_in) {
 >>>
 
 # the erased entry's fingerprint is left in place
@@ -48,18 +50,18 @@
 # names whatever the dense move put at that position: a lookup for the erased key
 # can come back with somebody else's value.
 <<<
-        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
+        groups[found_in].m_fingerprints[lane] = 0;
 ===
-        groups[found_in].m_fingerprints[slot % slots_per_group] = groups[found_in].m_fingerprints[slot % slots_per_group];
+        groups[found_in].m_fingerprints[lane] = groups[found_in].m_fingerprints[lane];
 >>>
 
 # the moved element's slot is left pointing at the position it came from
 # m_values closed its hole, but one slot still names the index the erased value used
 # to live at, which now holds a different element entirely.
 <<<
-            m_buckets.index()[slot_of_value(mh, values_idx_back)] = value_idx_to_remove;
+            repoint_value(mh, values_idx_back, value_idx_to_remove);
 ===
-            m_buckets.index()[slot_of_value(mh, values_idx_back)] = values_idx_back;
+            repoint_value(mh, values_idx_back, values_idx_back);
 >>>
 
 # the search for the moved element's slot looks for an index one past the end
