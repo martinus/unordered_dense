@@ -211,6 +211,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Tearing a segmented_map down in reverse: glibc keeps the memory for the next build instead of handing it to the kernel, warm builds 1.8-3.2x when values own heap memory
 - `try_emplace` split at the home group: the hit and the common placement inlined into the caller, the walk past home behind a call for clang only, and every scored workload at or under main's instruction count on both compilers
 - `insert()` and `emplace()` look the key up first when the arguments already are the value: a set's string hit 2.2x, a map's `insert({k, v})` hit 4.5x under clang, and `emplace(k, new int)` must still build its value
+- MySQL's int join never reaches the map, which makes it the control for how much relinking mysqld moves a query: 2.4%, the size of every MySQL difference measured for #321 and #323
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5652,6 +5653,34 @@ What this says and does not say: in cache only, one machine; MySQL, ClickHouse a
 harness were not re-run. `emplace(Args...)` with anything else, the hinted `emplace_hint`, and
 `insert_or_assign` keep their shapes. A present key now leaves an rvalue `insert` argument unmoved,
 where before it was moved from into an element that was then popped.
+
+**MySQL's int join never reaches the map, which makes it the control for how much relinking mysqld
+moves a query: 2.4%, the size of every MySQL difference measured for #321 and #323** (2026-09-27,
+MySQL 9.7.2 built with gcc 16 `-O2`, no LTO, Ryzen 9 7950X, `perf stat` and `perf record -c 1000003`
+on the pinned mysqld during the query; `mysqlish.cpp` beside it, one map per binary). The
+`bench.py` rounds for 5.1.0 against main after #323 read the int join 7.828 -> 8.016 s and `EXCEPT`
+0.270 -> 0.276 s, both with non-overlapping ranges, where #321's run had `EXCEPT` at 0.260. Counted:
+
+| query | instructions 5.1.0 -> main | cycles |
+|---|---|---|
+| hash join, int key, duplicates | 429,278,525,275 -> 429,278,668,041 | +2.4% |
+| `EXCEPT`, int | 13.616 G -> 13.413 G (-1.5%) | +2.9% |
+
+The int join's profile holds no `unordered_dense`, no hash join iterator and no `StoreRow`: the only
+hash in it is InnoDB's adaptive hash index, and the time is `row_search_mvcc` and the record
+compares. Its instructions agree to seven digits because none of the changed code runs; its 2.4%
+is where the linker put InnoDB. `EXCEPT` does use the map -- `MaterializeIterator` calls
+`segmented_map::emplace(key, LinkedImmutableString{nullptr})`, which #323 routes key-first -- and
+retires fewer instructions, and its cycles move by the control's amount. Its profile is ~1170
+samples a build and the symbols move with inlining (5.1.0's out-of-line `emplace` holds 37 samples,
+main's `MaterializeIterator` gains 58), so it cannot split the two. That call alone, replayed in one
+map per binary (`segmented_map<std::string_view, pointer>`, 8-byte keys, 1M `emplace`s of which 49%
+are new, from empty, gcc `-O2`), is 123.6 -> 99.6 cycles (gcc) and 121.5 -> 100.1 (clang) against
+5.1.0, and #321 alone does not move it (123.5, 121.7).
+
+So the MySQL rounds in "split at the home group" and its 0.260 for `EXCEPT` are inside this band as
+well, and the int join there was never a measurement of the map. A MySQL number needs the
+instruction count beside it, and a query that does not run the map as its control.
 
 ## The robin hood index this replaced, and its dead ends
 
