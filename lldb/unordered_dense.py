@@ -456,10 +456,10 @@ class SegmentedVectorProvider(object):
 
 def _bucket_count(valobj, size):
     """bucket_count() in slots: 0 with no groups allocated, else
-    (m_group_mask + 1) * 16. The index is a detail::group_storage, which
-    holds its groups in m_blocks -- a std::vector -- while a segmented
-    values container has an m_size beside its own m_blocks, which is how the
-    two are told apart. An unparseable index is answered from the mask
+    (m_group_mask + 1) * 16. The index is a detail::group_storage: since
+    #329 a pointer m_ptr and a group count m_size, before that a std::vector
+    m_blocks, and a segmented values container has an m_size beside its own
+    m_blocks, which is how those two are told apart. An unparseable index is answered from the mask
     instead of assumed empty, so None means even the mask is unreadable.
     With the member itself unreadable and no values, 0 -- the
     never-reserve()d default."""
@@ -467,7 +467,10 @@ def _bucket_count(valobj, size):
     allocated = None
     if _valid(buckets):
         blocks = _member(buckets, "m_blocks")
-        if _valid(blocks):
+        groups = _uint(_member(buckets, "m_size")) if _valid(_member(buckets, "m_ptr")) else None
+        if groups is not None:
+            allocated = groups > 0
+        elif _valid(blocks):
             seg_size = _uint(_member(buckets, "m_size"))
             if seg_size is not None:
                 allocated = seg_size > 0

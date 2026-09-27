@@ -1556,6 +1556,7 @@ public:
     group_storage(group_storage const& other) = delete;
     group_storage(group_storage&& other) = delete;
     auto operator=(group_storage const& other) -> group_storage& = delete;
+    auto operator=(group_storage&& other) -> group_storage& = delete;
     // What std::vector's move assignment promises, which the table's own noexcept repeats.
     static constexpr bool nothrow_move_assignable =
         traits::propagate_on_container_move_assignment::value || traits::is_always_equal::value;
