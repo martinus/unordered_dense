@@ -6168,9 +6168,21 @@ counting loop, cycles per row, main -> this (4.1.2): clang AdvEngineID 10.08 -> 
 CounterID 10.88 -> 10.55 (9.35); gcc 9.52 -> 9.05 (10.57), 9.73 -> 9.27 (9.28).
 
 What this says and does not say: an empty table now hashes the key of a lookup that finds nothing,
-where it returned before hashing; the insert path and every other lookup save the test. The stored
-pointer costs every table 8 bytes: `sizeof(map<uint64_t, uint64_t>)` 72 -> 80, for both bucket
-types. The
+where it returned before hashing; the insert path and every other lookup save the test.
+
+The size of the map: the stored pointer first cost every table 8 bytes, `sizeof(map<uint64_t,
+uint64_t>)` 72 -> 80. `group_storage` then became a pointer and a group count instead of a
+`std::vector` plus that pointer: the table never grows the array in place, so the vector's capacity
+was a word nobody read, and its data pointer was a second copy of `m_data`. The map is now 64 bytes
+on a 64 bit target, 8 fewer than 5.2.0, for both bucket types and every key type; `pmr::map` 88 ->
+80, `segmented_map` 80 -> 72. The allocator sits in an empty base when it is empty. Propagation on
+copy, move and swap follows `std::vector`'s rules, because the table's assignments rely on them, and
+`clear()` now frees the array, which is what every caller did next anyway. A fancy pointer
+(`boost::interprocess`'s `offset_ptr`) stores null rather than the sentinel and `data()` tests for it:
+a raw pointer to a static, stored in a map that lives in shared memory, means nothing to the next
+process. The first version of this entry stored a raw `m_data` for every allocator and had exactly
+that flaw, which no test covers. MSVC's debug build allocates a proxy per `std::vector`, so the index
+no longer adds one to an empty table's allocation count there (`vector_count`, 1 -> 0). The
 equivalent survivor in the mutation run over the diff: the `static_assert`'s comparison, since both
 sizes are 4.
 
