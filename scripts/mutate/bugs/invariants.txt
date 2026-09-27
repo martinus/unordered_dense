@@ -86,21 +86,24 @@
 <<<
         auto const home_idx = group_idx_from_hash(mh);
         auto const counter = fingerprint_word(mh) & 7U;
-        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
+        groups[found_in].m_fingerprints[lane] = 0;
 ===
-        auto const found_in = static_cast<value_idx_type>(slot / slots_per_group);
         auto const home_idx = found_in;
         auto const counter = fingerprint_word(mh) & 7U;
+        groups[found_in].m_fingerprints[lane] = 0;
 >>>
 
-# the erase clears the fingerprint of the wrong slot in the group
-# slot is a slot index over the whole array; the lane inside its group is slot % 16 and the group
-# is slot / 16. Swapping them clears some other slot's fingerprint, which loses that key and leaves
-# the erased one findable.
+# the erase clears the fingerprint in the entry's home group instead of the group it is in
+# Re-derived 2026-09-27 (#314): the slot used to arrive as one index over the whole array, and the
+# mistake was taking group and lane out of it the wrong way round. It arrives as the group it is in
+# and the lane now, next to the home group the counters need, and those two group indices are the
+# ones to confuse. For an entry at home they are the same group, so this is wrong only for an entry
+# that was placed past home: its own fingerprint stays, and the lane in home -- somebody else's, or
+# empty -- is cleared.
 <<<
-        groups[found_in].m_fingerprints[slot % slots_per_group] = 0;
+        groups[found_in].m_fingerprints[lane] = 0;
 ===
-        groups[found_in].m_fingerprints[slot / 16] = 0;
+        groups[home_idx].m_fingerprints[lane] = 0;
 >>>
 
 # a probe trusts the fingerprint and never compares the key
@@ -109,14 +112,26 @@
 <<<
                 auto const value_idx = group.m_index[lane];
                 if (m_equal(key, get_key(m_values[value_idx]))) {
-                    return {slot, value_idx, true};
+                    return {group_idx, value_idx, static_cast<std::uint8_t>(lane), true};
                 }
 ===
                 auto const value_idx = group.m_index[lane];
                 static_cast<void>(key);
                 if (true) {
-                    return {slot, value_idx, true};
+                    return {group_idx, value_idx, static_cast<std::uint8_t>(lane), true};
                 }
+>>>
+
+# an insert trusts the fingerprint in the home group and never compares the key
+# The same mistake in the other copy of the home group's loop, the one #321 inlined into every
+# insert: a new key whose fingerprint matches one already at home is reported as present, and is
+# never inserted.
+<<<
+                auto const value_idx = home.m_index[first_lane(lanes)];
+                if (m_equal(key, get_key(m_values[value_idx]))) {
+===
+                auto const value_idx = home.m_index[first_lane(lanes)];
+                if (true) {
 >>>
 
 # the candidate loop drops the lowest bit by shifting instead of clearing it
@@ -138,11 +153,11 @@
 # first key sharing a fingerprint is repointed instead, which corrupts two entries at once.
 <<<
                 if (group.m_index[lane] == value_idx) {
-                    return slot;
+                    return {group_idx, static_cast<std::uint8_t>(lane)};
                 }
 ===
                 static_cast<void>(value_idx);
-                return slot;
+                return {group_idx, static_cast<std::uint8_t>(lane)};
 >>>
 
 # the backfill's search for the slot accepts any fingerprint match
@@ -333,9 +348,9 @@
 # iteration yields it, and find() cannot see it.
 <<<
             m_values.pop_back(); // value was already there, so get rid of it
-            move_home(r.slot, mh);
+            move_home(r.group_idx, r.lane, mh);
 ===
-            move_home(r.slot, mh);
+            move_home(r.group_idx, r.lane, mh);
 >>>
 
 # ---------------------------------------------------------------- copying, moving, assignment
@@ -369,14 +384,12 @@
             // first insert allocate. Copying an empty table therefore allocates nothing either.
 >>>
 
-# a moved-from table keeps the mask of an index it no longer owns
-# The arrays go to the target and the source is left describing them: a probe on the moved-from
-# table masks with a nonzero mask and reads through a data pointer that is now null.
-<<<
-            m_group_mask = std::exchange(other.m_group_mask, 0);
-===
-            m_group_mask = other.m_group_mask;
->>>
+# (Removed 2026-09-27, #314: "a moved-from table keeps the mask of an index it no longer owns",
+# which kept `m_group_mask` in the source of a move assignment. It survived, and nothing can catch
+# it any more: nothing reads the mask of a table without a bucket array -- bucket_count() returns 0
+# before it looks, every probe needs the array, and the first insert allocates one, which sets the
+# mask anew. A stale mask became unobservable when bucket_count() learned to ask m_buckets first.
+# Put a block back here if the mask is ever read on a path that can run without the array.)
 
 # ---------------------------------------------------------------- the API's own promises
 
@@ -491,9 +504,10 @@
 # for the old key stays behind with a fingerprint no key will match and a counter trail nothing
 # will ever undo.
 <<<
-        erase_group_slot(slot_of_value(old_key_hash, value_idx), old_key_hash);
+        erase_group_slot(at.group_idx, at.lane, old_key_hash);
         place_group(new_key_hash, value_idx);
 ===
+        static_cast<void>(at);
         place_group(new_key_hash, value_idx);
 >>>
 
