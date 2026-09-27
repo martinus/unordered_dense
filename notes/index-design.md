@@ -219,6 +219,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `hash_bytes` reads a key of compile-time length 8, 12 or 16 as 4 byte words under gcc and clang: a lookup right after writing a 12 byte key field by field goes 146 -> 40 cycles on both compilers, the hash value unchanged, strings untouched, a key already in memory 1.4 cycles more
 - ClickHouse's aggregation benchmark on real Yandex.Metrica columns, where 4.1.2 was published behind absl on every large column: main is within 1-5% of absl on the large columns except WatchID under clang (1.16), uses less memory than absl on two of the three, and is 12-13% behind 4.1.2 under clang on the columns with few distinct keys
 - #326's op-cache footprint was taken away by #328: MySQL's `EXCEPT` went from 26-45x 4.4.0's op-cache misses on 5.2.0 to 1.9x and 1.1x in two layouts of main, and the query is level with 4.4.0 or faster in both
+- #331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes the rest
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6086,6 +6087,43 @@ The issue's bar, within 2x of 4.4.0's op cache misses in every measured layout, 
 change of its own. What this says and does not say: two layouts of one build configuration; the
 experiment #326 proposed (keeping the growth path out of an inlined insert) was not run, since the
 insert is no longer inlined past the home group.
+
+**#331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of
+latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's
+sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes
+the rest** (2026-09-27, issue #331, Ryzen 9 7950X, clang 22 and gcc 16; ClickHouse's counting loop,
+`++map[*current]` over the real AdvEngineID and CounterID columns, 100M rows, `absl::Hash` linked
+from the benchmark's own abseil build, the loop alone timed, best of five, one variant per binary).
+The #315 numbers include the benchmark's file loading; timing the loop alone makes the gap larger
+in relative terms. A stand-in hash (a multiply fold, not marked avalanching) did not reproduce it
+-- main came out 1.46x ahead on AdvEngineID -- so the hash is part of the picture and `absl::Hash`
+had to be linked for real.
+
+Cycles (instructions) per row:
+
+| | 4.1.2 | main | main, no `empty()` test (#329) | main, fingerprint by arithmetic | main, pre-broadcast 16 byte table |
+|---|---|---|---|---|---|
+| clang AdvEngineID (19 keys) | **9.08** (36.1) | 10.08 (39.0) | 10.00 (38.0) | 10.94 (42.0) | 10.73 (40.0) |
+| clang CounterID (6506 keys) | **9.67** (43.4) | 10.88 (44.3) | 10.55 (42.2) | 11.99 (48.7) | 12.06 (48.5) |
+| gcc AdvEngineID | 10.57 (50.9) | 9.52 (40.0) | **8.95** (36.0) | | |
+| gcc CounterID | 9.27 (47.6) | 9.72 (41.7) | **9.20** (37.8) | | |
+
+The profile of the loop under clang puts main's cycles on the key compare's branch after the group
+compare, the vector broadcast (`pshufd`) and the index load; main executes 1-3 more instructions
+per row than 4.1.2 and takes about 1 cycle more, so it is latency and not work. 4.x compared one
+8 byte bucket (fingerprint and distance, with the value index beside it) and went to the key; 5.x
+broadcasts the fingerprint, compares sixteen lanes, extracts a mask, finds its first bit and loads
+the index, which is the group design's price on a table that fits in L1 and hits its first slot.
+That is an inference from these numbers, not a measured latency chain. The two ways around the
+broadcast both lost: computing the fingerprint instead of the table lookup (the table was measured
+right in the first place, "The gcc string-lookup gap, explained and mostly closed": integer misses
+1.05-1.06x), and a 4 KB table of fingerprints already broadcast
+to 16 bytes, which keeps the scalar table load for the counter and the stored fingerprint as well
+and ends with more instructions.
+
+What this says and does not say: two columns of one benchmark, in cache; the gap is clang's and
+under gcc main is level or ahead once #329 lands. No change of its own; #329 carries the part that
+can be had.
 
 ## The robin hood index this replaced, and its dead ends
 
