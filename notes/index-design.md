@@ -218,6 +218,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The shape search: sixteen combinations of what the insert inlines, each judged by its worst ratio to the best combination anywhere measured, with the rule fixed before the results; it picks one shape for every compiler -- the home-group lookup inlined, the miss path and the walk past home called -- worst 1.11 under clang and 1.58 under gcc, where 5.2.0's everything-inlined reads 3.32 and 3.54
 - `hash_bytes` reads a key of compile-time length 8, 12 or 16 as 4 byte words under gcc and clang: a lookup right after writing a 12 byte key field by field goes 146 -> 40 cycles on both compilers, the hash value unchanged, strings untouched, a key already in memory 1.4 cycles more
 - ClickHouse's aggregation benchmark on real Yandex.Metrica columns, where 4.1.2 was published behind absl on every large column: main is within 1-5% of absl on the large columns except WatchID under clang (1.16), uses less memory than absl on two of the three, and is 12-13% behind 4.1.2 under clang on the columns with few distinct keys
+- #326's op-cache footprint was taken away by #328: MySQL's `EXCEPT` went from 26-45x 4.4.0's op-cache misses on 5.2.0 to 1.9x and 1.1x in two layouts of main, and the query is level with 4.4.0 or faster in both
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6063,6 +6064,28 @@ AdvEngineID: counting into a table that stays in cache) are 12-13% slower on mai
 
 What this says and does not say: one machine, 100M rows per column, in the benchmark's own
 harness; the published numbers are one run on AWS and are quoted as ratios only.
+
+**#326's op-cache footprint was taken away by #328: MySQL's `EXCEPT` went from 26-45x 4.4.0's
+op-cache misses on 5.2.0 to 1.9x and 1.1x in two layouts of main, and the query is level with
+4.4.0 or faster in both** (2026-09-27, issue #326, MySQL 9.7.2, gcc 16 `-O2`, Ryzen 9 7950X,
+`perf stat` over five queries on the pinned mysqld, two rounds). 5.2.0 inlined the whole insert,
+growth path included (`flatten`), into `MaterializeIterator::check_unique_fields_hash`; main
+inlines only the home-group lookup and calls the rest (#328), which is the change #326 asked for
+from another direction. The second layout is the same source with the inactive
+`scripts/ab/mysql_except_dump.patch` applied, which moved 5.2.0's `EXCEPT` by 7-11% before.
+Per query:
+
+| | op cache misses | L1 icache misses | cycles | instructions |
+|---|---|---|---|---|
+| 4.4.0 | 1.56 M | 0.45-0.46 M | 1137.7-1149.5 M | 4528.8 M |
+| 5.2.0 (the issue) | 34.1-59.0 M | 0.56-4.54 M | 1126.5-1209.6 M | 4469.7 M |
+| main, layout 1 | 2.97-3.03 M | 0.84-0.86 M | 1098.7-1115.1 M | 4481.1 M |
+| main, layout 2 | 1.74-1.75 M | 0.54-0.55 M | 1096.3-1125.7 M | 4497.0 M |
+
+The issue's bar, within 2x of 4.4.0's op cache misses in every measured layout, is met without a
+change of its own. What this says and does not say: two layouts of one build configuration; the
+experiment #326 proposed (keeping the growth path out of an inlined insert) was not run, since the
+insert is no longer inlined past the home group.
 
 ## The robin hood index this replaced, and its dead ends
 
