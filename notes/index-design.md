@@ -234,6 +234,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Why boost's `unordered_flat_map` finds faster (#341): it needs no value index, so the first thing a lookup touches is 1 byte of metadata per slot against this map's 5.5, which leaves L2 at a far smaller table; from 46080 entries to 460800 this map takes 1.7-2.1x boost's L3 fills per find and 14-35% more cycles under clang (0.93-1.04 under gcc), while in L2 it is compiler codegen alone (this map's cycles 0.83-0.88 of boost's under gcc, 1.22-1.25 under clang)
 - Valhalla's CostMatrix (valhalla#4552) re-run with the map Valhalla ships (4.5.0), main and absl: all three within 1.1% on every row, as the original found ("all in all it hardly matters"), because the map is a few percent of a matrix request (`ReachedMap::add` 3.6%, out-of-line map code 0.36%)
 - OSRM's e2e benchmarks (osrm-backend#6922) re-run on a quiet, pinned core with the 4.4.0 #6922 tried and with main: both take map matching to 1.21-1.27x the requests per second of `std::unordered_map`, CH table to 1.10x and CH trip to 1.05x, and main is not ahead of 4.4.0 -- equal on most rows, behind on CH match (1.255 against 1.274) and MLD table (0.986 against 1.009)
+- Hits in cache-resident tables (1000 to 16000 entries), 4.5.0 against main (#346): main takes 0.41-0.61 of 4.5.0's time on scrambled integer keys and 0.71-0.79 on strings, from a quiet loop and a busy one, and 1.02-1.43x of it on dense ids 0..n-1, which a multiplicative hash places without collisions -- 4.5.0's best case, and the keys Redpanda's and OSRM's callers have
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6539,6 +6540,11 @@ cycles per operation; a copy that skips the loop separates the two phases):
 - 92160 keys: construction +51 (clang) / +72 (gcc) instructions and +10 / +24 cycles per fresh insert, growth included; the loop +27 / +20 instructions and +16 / +14 cycles per call. Branch misses equal.
 - The loop's hit, read in clang's disassembly: the group probe (fingerprint-word table load, broadcast, 16-byte compare, movemask, tzcnt, index load, key compare, lane loop) against 4.x's scalar compare on its first bucket, and around it the #310 spill pattern: the `end()` comparison and six of the loop's values reloaded from the stack every call, and `mt19937_64`'s tempering constants moved between registers and rematerialized. The hash is not it: the 80 keys spread 9-11 per group.
 
+[2026-09-28, #346: the keys here are dense ids. With keys 0..n-1 a multiplicative hash leaves
+4.x's robin hood probe collision-free, so it never walks and never mispredicts; with scrambled
+integer keys 4.5.0 mispredicts 0.6-1.1 branches per lookup and main is 2.2x faster at the same
+sizes. See "Hits in cache-resident tables".]
+
 What this says and does not say:
 - 4.5.0's `map` beats every container here, and the ranking Redpanda measured holds for 4.5.0 (`map` ahead of absl's two, `segmented_map` level with them). main's `map` falls to level with `absl::flat_hash_map` (ahead under gcc at 92160, behind under clang).
 - It is instructions, not memory: at 92160 entries the whole working set is about 7 MB (4.4 of it the replica vector), inside the L3, and the extra cycles are fewer than the extra instructions.
@@ -6580,6 +6586,11 @@ The candidates:
 - P (no index prefetch): clang -2.5 instructions, cycles level; gcc -6 and -2.8 cycles. It is #250/#252's measured win on larger tables, so it is a diagnostic here, not a proposal.
 - S (each key prefers the lane its fingerprint's low four bits name, placed there when that lane is free; `probe()` reads that lane's value index and prefetches the value before the match): engaged -- 89% of hits in their preferred lane at 80 entries, 67% at 92160, 64% at 200000 -- and +8 instructions and +1.7-2.2 cycles in the bare loop, +2 (clang) and +4 (gcc) cycles in Redpanda's. The dependent load it was meant to hide is not what these loops wait on: consecutive lookups are independent, and the core already overlaps them.
 
+[2026-09-28, #346: the keys here are dense ids. With keys 0..n-1 a multiplicative hash leaves
+4.x's robin hood probe collision-free, so it never walks and never mispredicts; with scrambled
+integer keys 4.5.0 mispredicts 0.6-1.1 branches per lookup and main is 2.2x faster at the same
+sizes. See "Hits in cache-resident tables".]
+
 What this says and does not say: main's hit is more instructions than 4.5.0's, and boost's is as
 many, so the instruction count is not what separates main from boost; boost's fewer cycles at the
 same count (9-11% clang, 15-16% gcc in Redpanda's loop; 25% and 3% in the bare one) are not
@@ -6617,6 +6628,10 @@ times smaller, and the value access comes on top of it. Where the index goes doe
 beside the fingerprints (today) bloats the first access; in its own array (until 2026-09-06, "merged
 block") adds a third access; narrower (16-bit indices 0.986) and tiny pointers (#229, ~9% memory, no
 speed) were measured before. It is the cost of dense values: the price of fast iteration.
+
+[2026-09-28, #346: the keys here are dense ids (0..n-1, looked up at random). How boost compares on
+scrambled integer keys was not measured; 4.x, the other map these entries weigh main against, loses
+2.2x to main on scrambled keys of the same sizes. See "Hits in cache-resident tables".]
 
 What this says and does not say:
 - In L2 (10000 and 23040 entries) neither map takes L3 fills, and the difference is code generation: this map's cycles are 0.83-0.88 of boost's under gcc (10.8 against 13.0, 12.1 against 13.7) and 1.22-1.25 under clang (12.0 against 9.8, 12.8 against 10.2), at about the same instruction counts. Not investigated further.
@@ -6692,12 +6707,53 @@ server-side time is summed per method from `osrm-routed`'s log as well.
 | MLD table | 193.8 | 1.009 (1.006-1.011) | 0.986 (0.978-0.988) | 1.012 (1.012-1.017) | 0.978 (0.976-0.982) | 0.991 / 1.016 |
 | MLD match | 108.5 | 1.248 (1.031-1.254) | 1.263 (1.255-1.268) | 1.233 (1.230-1.242) | 1.225 (1.217-1.229) | 0.769 / 0.756 |
 
+[2026-09-28, #346: the keys here are dense ids. With keys 0..n-1 a multiplicative hash leaves
+4.x's robin hood probe collision-free, so it never walks and never mispredicts; with scrambled
+integer keys 4.5.0 mispredicts 0.6-1.1 branches per lookup and main is 2.2x faster at the same
+sizes. See "Hits in cache-resident tables".]
+
 What this says and does not say:
 - Against `std::unordered_map` both versions win where the query heap's node index is busy: matching gains a fifth to a quarter of its server time on both algorithms, CH table a tenth, CH trip 6%. #6922's CI read +16% (CH) and +10% (MLD) matching on a runner its authors called jumpy; on a pinned core it is larger.
 - main against 4.4.0 is level or behind: CH match 1.255 against 1.274 (`map`) and 1.209 against 1.253 (`segmented_map`), MLD table 0.986 against 1.009 and 0.978 against 1.012, MLD trip slightly behind; main ahead only on MLD match with `map` (1.263 against 1.248). This is #341's case: a per-query table that is small, stays in cache and is mostly hit, where 4.x's robin hood hit is cheaper than the group probe, and the group index's gains (misses, tables past the cache) do not come into play.
 - `route` and `nearest` are level for every build; the client's overhead dominates them, and the server times agree.
 - A first run the same day with std, main `segmented_map` and main `map` only read the same main `map` ratios within 0.01 on every row except CH table and trip (1.071 / 1.029 then, 1.096 / 1.049 here); std's own rate differed between the two sessions (CH table 414.6 and 319.2 requests/s), which is why only ratios within one session are quoted.
 - One compiler (gcc 13), Berlin only (#6922's CI also had a larger Poland run), one machine. MLD's table was not profiled.
+
+**Hits in cache-resident tables (1000 to 16000 entries), 4.5.0 against main (#346): main takes 0.41-0.61 of 4.5.0's time on scrambled integer keys and 0.71-0.79 on strings, from a quiet loop and a busy one, and 1.02-1.43x of it on dense ids 0..n-1, which a multiplicative hash places without collisions -- 4.5.0's best case, and the keys Redpanda's and OSRM's callers have** (2026-09-28, issue #346, Ryzen 9 7950X, clang 22 and gcc 16;
+`scripts/ab/small_hits.sh 5 v4.5.0 origin/main` over `scripts/ab/small_hits.cpp`, one header per binary,
+five rounds with the binaries rotated, medians; each size is five tables across its octave, geomean).
+
+The loops are in `test/bench/workloads.h`, where `bench_small_hits_udm` (in `quick_overall_map.cpp`,
+not in the score) runs them for the current header: `find_all<true>` (quiet), `find_hits_busy` (a
+loop shaped like #317's caller: a 64-bit division picks the key, the found value goes into a random
+slot of a 4 MB array), and the same two over `dense_id_table`, whose keys are 0..n-1 unscrambled.
+
+| main / 4.5.0, ns per hit (5.x ns / 4.5.0 ns) | clang quiet | clang busy | gcc quiet | gcc busy |
+|---|---|---|---|---|
+| `uint64_t`, scrambled, 1000 | 0.442 (3.65 / 8.28) | 0.522 (5.21 / 9.97) | 0.444 (3.64 / 8.19) | 0.413 (4.90 / 11.88) |
+| `uint64_t`, scrambled, 4000 | 0.469 (4.35 / 9.27) | 0.518 (5.80 / 11.20) | 0.473 (4.31 / 9.12) | 0.418 (5.47 / 13.08) |
+| `uint64_t`, scrambled, 16000 | 0.513 (5.23 / 10.20) | 0.606 (7.63 / 12.59) | 0.516 (5.18 / 10.04) | 0.487 (7.14 / 14.66) |
+| `uint64_t`, dense ids 0..n-1, 1000 | 1.431 (2.48 / 1.73) | 1.347 (3.49 / 2.59) | 1.151 (2.16 / 1.88) | 1.289 (3.40 / 2.63) |
+| `uint64_t`, dense ids 0..n-1, 4000 | 1.347 (2.71 / 2.02) | 1.299 (3.60 / 2.77) | 1.116 (2.37 / 2.13) | 1.226 (3.52 / 2.87) |
+| `uint64_t`, dense ids 0..n-1, 16000 | 1.231 (3.16 / 2.57) | 1.207 (4.56 / 3.78) | 1.018 (2.78 / 2.73) | 1.138 (4.39 / 3.86) |
+| `std::string`, 1000 | 0.713 (18.40 / 25.79) | 0.750 (21.34 / 28.45) | 0.721 (17.80 / 24.68) | 0.761 (22.95 / 30.14) |
+| `std::string`, 4000 | 0.729 (19.90 / 27.30) | 0.759 (23.30 / 30.69) | 0.740 (19.32 / 26.10) | 0.762 (24.77 / 32.49) |
+| `std::string`, 16000 | 0.763 (25.14 / 32.93) | 0.781 (28.60 / 36.64) | 0.789 (24.85 / 31.50) | 0.782 (29.82 / 38.14) |
+
+Why, from `perf stat` on the quiet integer loop at 1000 entries: 4.5.0 executes fewer instructions
+(45.1 against 56.3 per lookup) and mispredicts 0.44 branches per lookup against main's 0.01, which is
+the whole of 28.6 against 16.2 cycles. A robin hood probe walks until the distance says stop, and
+with random keys where it stops is not predictable; the group probe answers with one SIMD compare.
+With keys 0..n-1 (same loop, 1000 / 16000 / 92160 entries), 4.5.0 mispredicts 0.00-0.04 and takes
+7.5 / 12.2 / 23.2 cycles against main's 12.0 / 15.7 / 27.8; with scrambled keys it mispredicts
+0.61 / 0.56 / 1.08 and takes 28.5 / 31.8 / 63.7 against 12.3 / 17.6 / 29.6. main is within 0.3-2
+cycles of itself on either kind of key.
+
+What this says and does not say:
+- The earlier finding that main's hit costs more than 4.x's in real callers (#317, #319, #341) holds for dense integer ids and not in general. Redpanda's raft group ids are 0..n-1 in its benchmark, #341's bare loop used 0..92159, and OSRM's node ids are dense indices (inferred from OSRM's data model, not checked in its code). For any other integer keys, and for strings, main's hit is 1.3-2.4x faster than 4.5.0's in tables of this size.
+- Dense ids are what #347 has to win back; `bench_small_hits_udm`'s dense-id rows are its benchmark.
+- Decision on the score: these loops stay out of it. The score scrambles integer keys on purpose (`key_source`), and a score that included dense ids would reward a probe tuned to one key pattern; the scrambled hit loops would add a case main already wins by 2x. Any change for #347 reports `bench_small_hits_udm` beside the score instead.
+- In cache only (up to 16000 entries); #341's size sweep covers larger tables on dense ids.
 
 ## The robin hood index this replaced, and its dead ends
 
