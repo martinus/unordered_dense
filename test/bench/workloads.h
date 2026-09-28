@@ -332,6 +332,92 @@ auto find_all(lookup_table<Map>* t) -> size_t {
     return checksum;
 }
 
+// The same all-hit lookups inside a loop shaped like the callers that use a map this way (#346):
+// the key is picked with a 64-bit division, as std::uniform_int_distribution does, and what was found
+// is added into a random slot of a 4 MB array, as Redpanda's leader balancer swaps into its replica
+// vector (#317). Such a loop keeps more of its own state live across the lookup than find_all does,
+// and a lookup that needs more registers pushes it to the stack; that is where main measured behind
+// 4.x in #317, #319 and #341, and find_all, which holds almost nothing, cannot see it.
+struct busy_sink {
+    std::vector<uint64_t> slots = std::vector<uint64_t>(size_t{1} << 19U);
+};
+
+template <typename Map>
+auto find_hits_busy(lookup_table<Map>* t, busy_sink* sink) -> size_t {
+    constexpr size_t lookups = 1000000;
+    auto rng = t->rng.copy();
+    auto const* keys = t->keys.data();
+    auto const num_keys = static_cast<uint64_t>(t->keys.size());
+    auto* out = sink->slots.data();
+    auto const out_mask = static_cast<uint64_t>(sink->slots.size() - 1);
+    auto const& map = t->map;
+    size_t checksum = 0;
+    for (size_t i = 0; i < lookups; ++i) {
+        auto const r = rng();
+        auto const it = map.find(key_for<Map>(keys[r % num_keys]));
+        auto const v = static_cast<uint64_t>(it->second);
+        out[(r >> 23U) & out_mask] += v;
+        checksum += v;
+    }
+    t->rng = std::move(rng);
+    return checksum;
+}
+
+// Ids that are dense indices -- 0..n-1 as they are, not through key_source's bijection -- looked up
+// at random, from the quiet loop and the busy one (#346). A multiplicative hash spreads such keys on a
+// lattice without collisions, which is a robin hood index's best case: 4.5.0's probe never walks and
+// never mispredicts, and it beats this map by up to 43% here, where it loses 2x on scrambled keys.
+// Redpanda's raft group ids and OSRM's node ids are keys like these (#317, #319). The score keeps
+// them out on purpose (see key_source); this is the one place they are measured, by name.
+template <typename Map>
+struct dense_id_table {
+    Map map{};
+    size_t n;
+    ankerl::nanobench::Rng rng{999};
+    explicit dense_id_table(size_t num)
+        : n(num) {
+        tame_allocator();
+        for (size_t i = 0; i < n; ++i) {
+            map.emplace(i, i);
+        }
+    }
+};
+
+template <typename Map>
+auto find_dense_ids(dense_id_table<Map>* t) -> size_t {
+    auto rng = t->rng.copy();
+    auto const& map = t->map;
+    auto const end = map.end();
+    auto const n = static_cast<uint64_t>(t->n);
+    size_t checksum = 0;
+    for (size_t i = 0; i < 1000000; ++i) {
+        auto it = map.find(((rng() >> 32U) * n) >> 32U);
+        if (it != end) {
+            checksum += it->second;
+        }
+    }
+    t->rng = std::move(rng);
+    return checksum;
+}
+
+template <typename Map>
+auto find_dense_ids_busy(dense_id_table<Map>* t, busy_sink* sink) -> size_t {
+    auto rng = t->rng.copy();
+    auto const& map = t->map;
+    auto const n = static_cast<uint64_t>(t->n);
+    auto* out = sink->slots.data();
+    auto const out_mask = static_cast<uint64_t>(sink->slots.size() - 1);
+    size_t checksum = 0;
+    for (size_t i = 0; i < 1000000; ++i) {
+        auto const r = rng();
+        auto const v = static_cast<uint64_t>(map.find(r % n)->second);
+        out[(r >> 23U) & out_mask] += v;
+        checksum += v;
+    }
+    t->rng = std::move(rng);
+    return checksum;
+}
+
 // The keys the hash-only workload runs over, built once and shared by every caller.
 //
 // One set, not one per instantiation: the A/B harness runs two hashes interleaved, and giving each

@@ -164,6 +164,39 @@ TEST_CASE("bench_find_all_hits_or_misses_udm" * doctest::test_suite("bench") * d
 
 // The string hash on its own; not part of the score. A lookup is ~224 instructions and only ~60
 // of them are the hash, so a change to the hash is easier to resolve here than in the score.
+// Hits in tables that fit in the caches, 1000 to 16000 entries, from a quiet loop and from a busy one
+// (#346): the case main measured behind 4.x in real callers (#317, #319, #341). Not in the score.
+TEST_CASE("bench_small_hits_udm" * doctest::test_suite("bench") * doctest::skip()) {
+    using map_t = ankerl::unordered_dense::map<uint64_t, size_t>;
+    using map_str_t = ankerl::unordered_dense::map<std::string, size_t>;
+    ankerl::nanobench::Bench bench;
+    bench.title("small hits").minEpochTime(100ms);
+    auto sink = workloads::busy_sink();
+    for (size_t n : {size_t{1000}, size_t{4000}, size_t{16000}}) {
+        auto ints = workloads::lookup_table<map_t>(n);
+        auto strings = workloads::lookup_table<map_str_t>(n);
+        bench.run(fmt::format("map<uint64_t, size_t> {} quiet", n), [&] {
+            ankerl::nanobench::doNotOptimizeAway(workloads::find_all<true>(&ints));
+        });
+        bench.run(fmt::format("map<uint64_t, size_t> {} busy", n), [&] {
+            ankerl::nanobench::doNotOptimizeAway(workloads::find_hits_busy(&ints, &sink));
+        });
+        auto dense = workloads::dense_id_table<map_t>(n);
+        bench.run(fmt::format("map<uint64_t, size_t> {} dense ids quiet", n), [&] {
+            ankerl::nanobench::doNotOptimizeAway(workloads::find_dense_ids(&dense));
+        });
+        bench.run(fmt::format("map<uint64_t, size_t> {} dense ids busy", n), [&] {
+            ankerl::nanobench::doNotOptimizeAway(workloads::find_dense_ids_busy(&dense, &sink));
+        });
+        bench.run(fmt::format("map<std::string, size_t> {} quiet", n), [&] {
+            ankerl::nanobench::doNotOptimizeAway(workloads::find_all<true>(&strings));
+        });
+        bench.run(fmt::format("map<std::string, size_t> {} busy", n), [&] {
+            ankerl::nanobench::doNotOptimizeAway(workloads::find_hits_busy(&strings, &sink));
+        });
+    }
+}
+
 TEST_CASE("bench_hash_string_udm" * doctest::test_suite("bench") * doctest::skip()) {
     ankerl::nanobench::Bench bench;
     bench.title("hash").minEpochTime(100ms).unit("hash").batch(workloads::hash_keys().size());
