@@ -221,6 +221,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - #326's op-cache footprint was taken away by #328: MySQL's `EXCEPT` went from 26-45x 4.4.0's op-cache misses on 5.2.0 to 1.9x and 1.1x in two layouts of main, and the query is level with 4.4.0 or faster in both
 - #331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes the rest
 - An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level; the index became a pointer and a count, so the map is 64 bytes, 8 fewer than 5.2.0
+- `segmented_map` lookups against `map`, one cell per binary: a hit costs 7-15 instructions more and a miss 0.4-2.4, and of that only about 5 instructions of clang's `find` hit are avoidable -- clang splits the value index a second time for `it->second`, where gcc reuses the probe's split -- so nothing was changed
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6193,6 +6194,47 @@ a destructor that leaks or a swap that forgets the allocator;
 binary, against the sentinel with the vector: 1.0033 clang, 1.0066 gcc, three rounds each. The
 equivalent survivor in the mutation run over the diff: the `static_assert`'s comparison, since both
 sizes are 4.
+
+**`segmented_map` lookups against `map`, one cell per binary: a hit costs 7-15 instructions more and a miss 0.4-2.4, and of that only about 5 instructions of clang's `find` hit are avoidable -- clang splits the value index a second time for `it->second`, where gcc reuses the probe's split -- so nothing was changed** (2026-09-28, issue #312, Ryzen 9 7950X, clang 22 and gcc 16;
+`scripts/ab/find_segmented.sh`, which builds `scripts/ab/find_segmented.cpp` once per map,
+operation, mode, key type and size and counts user-space instructions and cycles around the loop
+with `perf_event_open`, 2^23 lookups in random order, `find` followed by `it->second` or
+`contains`).
+
+Instructions per lookup, `segmented_map` minus `map` (the absolute counts are in the table after):
+
+| | clang `find` | clang `contains` | gcc `find` | gcc `contains` |
+|---|---|---|---|---|
+| hit, `uint64_t` | +11.1 | +2.1 | +7.1 | +9.1 |
+| hit, `std::string` | +9.2 | +2.2 | +15.1 | +5.1 |
+| miss, either key | +1.2 | +1.2 | +1.3 | +0.4 to +2.4 |
+
+| 50000 entries, instr/op | `map` | `segmented_map` |
+|---|---|---|
+| clang `find` hit u64 / string | 43.84 / 127.85 | 54.93 / 137.05 |
+| clang `contains` hit u64 / string | 44.87 / 127.85 | 46.96 / 130.05 |
+| gcc `find` hit u64 / string | 38.92 / 103.80 | 45.97 / 118.87 |
+| gcc `contains` hit u64 / string | 37.92 / 103.80 | 46.97 / 108.94 |
+
+The counts at 1M entries differ from these by at most 3.8 instructions and the gaps by at most 2.0.
+Cycles follow the instructions in cache (clang `find` hit u64 27.9 against 31.1). At 1M,
+`segmented_map` over `map` in cycles reads 0.95 (clang `contains` string hit) to 1.25 (gcc
+`contains` u64 hit), one run each, so read no ranking from the 1M cycles.
+
+Where clang's 11 go, read from the disassembly of the `uint64_t` `find` hit (53 instructions
+against 42 per hit):
+- about 4 in the key comparison: the probe reaches the stored key through the block pointer (shift, load, mask, scale) where `map` scales once. This is what segmenting is.
+- about 5 in `it->second`: the iterator is a block-array pointer and an index, so dereferencing it splits the index again. The probe did the same split two instructions earlier, and clang does not reuse it. gcc does: its found path loads the value from the address it compared the key at.
+- about 3 in register pressure: a spilled pointer reloaded every iteration and two extra moves.
+- not the `end()` comparison, which is one `cmp` in both, and not the element multiply, a shift for the 16 byte pair.
+
+What this says and does not say: the avoidable part is clang only, `find` hits only, about 5
+instructions of 55 on an in-cache integer table, and nothing for `contains`, misses or gcc. Removing
+it needs the iterator to carry the element pointer: 16 -> 24 bytes, a block-boundary test in `++`,
+and `it + n` or `end()` must never read a block that is not allocated -- a change to what every
+iteration over a `segmented_map` runs, for a gain one compiler's `find` hit sees. Declined on that
+trade without building it; the harness is there if the Bonxai read or another caller makes the
+clang hit matter. The Bonxai read was not re-run, since nothing changed.
 
 ## The robin hood index this replaced, and its dead ends
 
