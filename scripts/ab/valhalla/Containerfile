@@ -1,0 +1,2 @@
+FROM localhost/valbuild:latest
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libabsl-dev ccache >/dev/null && rm -rf /var/lib/apt/lists/*

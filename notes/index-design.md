@@ -230,6 +230,7 @@ place rather than being deleted, because the retraction is usually the more usef
 ||||||| parent of bd0aaaa (notes: #341, main's find hit in Redpanda's loop is half probe and half caller; three candidates lost, nothing changed)
 - #341, main's `find` hit against 4.5.0's in Redpanda's loop: half of the +20-27 instructions per call is the group probe itself (+11-14 in a bare loop) and half the caller around it; boost's `unordered_flat_map` runs as many instructions and 9-16% fewer cycles in that loop, and three candidates -- the walk past home out of line, no index prefetch, a speculative value prefetch from a preferred lane -- each cost cycles or did not move them, so nothing changed
 - Why boost's `unordered_flat_map` finds faster (#341): it needs no value index, so the first thing a lookup touches is 1 byte of metadata per slot against this map's 5.5, which leaves L2 at a far smaller table; from 46080 entries to 460800 this map takes 1.7-2.1x boost's L3 fills per find and 14-35% more cycles under clang (0.93-1.04 under gcc), while in L2 it is compiler codegen alone (this map's cycles 0.83-0.88 of boost's under gcc, 1.22-1.25 under clang)
+- Valhalla's CostMatrix (valhalla#4552) re-run with the map Valhalla ships (4.5.0), main and absl: all three within 1.1% on every row, as the original found ("all in all it hardly matters"), because the map is a few percent of a matrix request (`ReachedMap::add` 3.6%, out-of-line map code 0.36%)
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6539,6 +6540,45 @@ What this says and does not say:
 - From 46080 to 460800 entries this map takes 1.7-2.1x boost's L3 fills; in cycles it is 1.14-1.35 of boost's under clang and 0.93-1.04 under gcc, where gcc's codegen advantage offsets it. Redpanda's loop (#317) sits at 92160.
 - Past the L3 (2000000), the fills even out and both pay DRAM; this map is 1.26 (clang) and 1.22 (gcc) of boost's cycles there, not examined.
 - The scored benchmark's tables are up to 200000 entries with 50% misses; a miss reads only the metadata, which is why the group layout wins there. This is the all-hits case, one fill source per run and one run per cell.
+
+**Valhalla's CostMatrix (valhalla#4552) re-run with the map Valhalla ships (4.5.0), main and absl: all three within 1.1% on every row, as the original found ("all in all it hardly matters"), because the map is a few percent of a matrix request (`ReachedMap::add` 3.6%, out-of-line map code 0.36%)** (2026-09-28, issue #318, Ryzen 9 7950X; Valhalla master 76cd51059 built with gcc
+13.3 in an Ubuntu 24.04 container, rootless podman; `scripts/ab/valhalla/`, which has the steps).
+
+Setup as in the original comment: request files of 20 random `sources_to_targets` requests each,
+auto costing, inside Berlin's bounding box or the Mannheim-Usedom box the comment links; a
+long-running `valhalla_service` with one worker, pinned to two cores, a warm-up request, each file
+timed as a whole; four rounds with the variant order rotated, medians. Tiles for all of Germany
+(Geofabrik, built in 517 s). The `absl` variant replaces both of CostMatrix's containers
+(`ReachedMap`'s `pmr::map<uint64_t, pmr vector>`, keeping its pmr allocator, and the
+`unfound_connections` set) with `absl::flat_hash_map`/`flat_hash_set` (Ubuntu's abseil 20220623);
+the rest of Valhalla keeps 4.5.0 in that build. Each binary was checked for its container's symbols.
+
+The Mannheim-Usedom box reaches into Poland and Czechia, and with random points 14 of 20 requests
+failed with error 170 ("Locations are in unconnected regions"): one bad point of 40 fails the whole
+request. Its file is built from points that route to Kassel instead (800 of 837 drawn), and all 60
+requests then succeed. The matrix distance cap is raised to 2000 km; the default 400 km is shorter
+than the box.
+
+| seconds per file of 20 requests | 4.5.0 (as shipped) | main | absl |
+|---|---|---|---|
+| Berlin, 20 sources/targets | 13.04 (13.02-13.10) | 13.00 (12.97-13.04), 0.997 | 13.03 (13.01-13.06), 0.999 |
+| Berlin, 50 sources/targets | 46.74 (46.35-46.98) | 47.23 (46.79-47.97), 1.011 | 46.25 (45.80-46.43), 0.990 |
+| Mannheim-Usedom, 20 sources/targets | 30.54 (30.49-30.62) | 30.40 (30.26-30.50), 0.995 | 30.43 (29.91-30.81), 0.996 |
+
+(min-max over the four rounds; ratios to 4.5.0.) The original, 2024, on robin-hood-hashing as
+master: 36 / 118 / 210 for master, 39 / 124 / 215 for `map`, 38 / 126 / 220 for `segmented_map`, 36 /
+119 / 215 for absl, on other hardware, other data and other requests, so only the ranking compares.
+
+Where the time is, `perf record` of main's service on the Berlin 50 file: `SourceToTarget` 7.5%,
+`CheckConnections` 13.4%, `Expand`/`ExpandInner` 17.9%, `GetAstarHeuristic` 7.9%, the tile reads and
+edge costs most of the rest; `ReachedMap::add` (a find, an emplace on a miss and a `push_back`, the map
+inlined) 3.6%; everything out of line in `ankerl::` 0.36%. The map's inlined finds inside
+`CheckConnections` are not separable in this profile.
+
+What this says and does not say: the rows are level within their own spread (main's Berlin 50
+reads 1.011 with a range of 46.79-47.97 against 46.35-46.98), so neither main nor absl moves
+CostMatrix, and a faster map could move it by at most a few percent. One compiler (gcc 13 in the
+container), one machine, one data snapshot. `segmented_map` was not re-run: Valhalla uses `map`.
 
 ## The robin hood index this replaced, and its dead ends
 
