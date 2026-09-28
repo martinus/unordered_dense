@@ -226,6 +226,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The teardown harness ran its sides in a fixed order, and the side that runs first in a pass reads 2-4% slower on the string first build; the 5-18% first-build gap at 50000 that #309 could not explain does not reproduce with the same two headers (0.4-3.0%), so the harness now rotates its sides
 - STP's parser with 4.5.0 against 5.1.0 and main, the two instances from stp#560: 5.1.0 parses 4-5% faster on both instances under both compilers, with the same instructions within 1.3%, and 8% less peak memory on the larger instance; main reads within 3.1 points of 5.1.0
 - stp#567's constant bit propagator tables re-checked on STP master: against the same four tables as std::unordered_*, 4.5.0 takes propagation to 0.912 and this repository's main to 0.859, nearly all of it on one instance (testcase15 0.74 and 0.69), and total solve time is level within 1% where #567 read -22% propagation and -4.9% total
+- Redpanda's leader balancer benchmark (redpanda#17182) re-run standalone against main: main's `map` is 3-10% slower than 4.5.0 on the benchmark as written, whose map holds 80 keys, and 15-20% slower with one entry per raft group as in a real cluster, where it executes 20-27 more instructions per lookup; the `segmented_map` Redpanda ships is level (clang 0.917, gcc 1.042)
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6414,6 +6415,49 @@ set is not #567's (fourteen `vlsat3` against six families), so this does not con
 numbers on its own files at its own commit; it says the effect has not survived into master on the
 files this screen found. main is 0.941 of 4.5.0's propagation over the fifteen, consistent with the
 parser's 4-5% on #316. Not measured: gcc, and #567's own commit.
+
+**Redpanda's leader balancer benchmark (redpanda#17182) re-run standalone against main: main's `map` is 3-10% slower than 4.5.0 on the benchmark as written, whose map holds 80 keys, and 15-20% slower with one entry per raft group as in a real cluster, where it executes 20-27 more instructions per lookup; the `segmented_map` Redpanda ships is level (clang 0.917, gcc 1.042)** (2026-09-28, issue #317, Ryzen 9 7950X, clang 22 and gcc 16, abseil master;
+`scripts/ab/redpanda_lb.sh 4 30` over `redpanda_lb.cpp`, v4.5.0 against main (272e1f1), one binary per header and compiler, the
+six containers as template parameters in each, 30 rounds with the order rotated, 4 alternations of
+the binaries, medians of the alternations' medians, pinned to one core).
+
+`redpanda_lb.cpp` is `lb.random_generator` from Redpanda's `leader_balancer_bench.cc` without
+Seastar: constructing `random_reassignments` (as of redpanda#17182) from a cluster index of 72 nodes x
+16 shards x 80 groups x 3 replicas, then 184320 `generate_reassignment()` calls, each a random index
+(`uniform_int_distribution`, a 64-bit division), a swap in a 4.4 MB replica vector, and one lookup
+that hits. What differs from Redpanda's: a flat index instead of `node_hash_map<shard,
+btree_map<group, replicas>>`, `std::vector` instead of `fragmented_vector`, `std::mt19937_64`, and
+`segmented_map` on its own `segmented_vector` rather than Redpanda's `chunked_vector`. Redpanda
+pinned a fork labelled 4.4.0 that differs from v4.5.0 in 23 lines; v4.5.0 stands for it here.
+
+Redpanda's test helper numbers the groups 0..79 on every shard, so the benchmark's `_current_leaders`
+holds **80 keys** after 92160 assignments. A real cluster gives every raft group its own id, which
+`-DUNIQUE_GROUPS` does: 92160 entries.
+
+| ms, v4.5.0 / main | 80 keys, clang | 80 keys, gcc | 92160 keys, clang | 92160 keys, gcc |
+|---|---|---|---|---|
+| `std::map` | 8.861 / 8.863 | 10.256 / 10.256 | 35.25 / 35.49 | 45.72 / 46.03 |
+| `absl::flat_hash_map` | 5.828 / 5.835 | 6.712 / 6.723 | 6.562 / 6.447 | 7.494 / 7.343 |
+| `absl::node_hash_map` | 5.948 / 5.953 | 6.779 / 6.768 | 10.67 / 10.64 | 11.66 / 11.59 |
+| `absl::btree_map` | 9.950 / 9.938 | 10.120 / 10.113 | 24.20 / 24.16 | 23.39 / 23.34 |
+| `map` | **5.484** / 6.053 | **6.514** / 6.736 | **5.728** / 6.604 | **5.938** / 7.093 |
+| `segmented_map` | 6.007 / 6.283 | 6.656 / 6.760 | 7.604 / 6.973 | 7.107 / 7.408 |
+
+The four other containers are the control: they are the same code in every binary and read within
+0.2% (80 keys) and 2.0% (92160 keys) between the two.
+
+Where `map`'s time goes, `main` against 4.5.0 (`perf stat`, one container per run, instructions and
+cycles per operation; a copy that skips the loop separates the two phases):
+- 80 keys: +8 instructions per `operator[]` in construction, +19 per `generate_reassignment()`; +25% cycles and 2.3x branch misses overall.
+- 92160 keys: construction +51 (clang) / +72 (gcc) instructions and +10 / +24 cycles per fresh insert, growth included; the loop +27 / +20 instructions and +16 / +14 cycles per call. Branch misses equal.
+- The loop's hit, read in clang's disassembly: the group probe (fingerprint-word table load, broadcast, 16-byte compare, movemask, tzcnt, index load, key compare, lane loop) against 4.x's scalar compare on its first bucket, and around it the #310 spill pattern: the `end()` comparison and six of the loop's values reloaded from the stack every call, and `mt19937_64`'s tempering constants moved between registers and rematerialized. The hash is not it: the 80 keys spread 9-11 per group.
+
+What this says and does not say:
+- 4.5.0's `map` beats every container here, and the ranking Redpanda measured holds for 4.5.0 (`map` ahead of absl's two, `segmented_map` level with them). main's `map` falls to level with `absl::flat_hash_map` (ahead under gcc at 92160, behind under clang).
+- It is instructions, not memory: at 92160 entries the whole working set is about 7 MB (4.4 of it the replica vector), inside the L3, and the extra cycles are fewer than the extra instructions.
+- The caller is the one #310's corpus was built to catch -- a loop holding an RNG's state with a division and a store to a random address on the way to the next key -- and the shape search's fix (the placement out of line) does not reach a lookup: `find` has no placement, and its whole hit path is inline.
+- For Redpanda, which ships `segmented_map`, main is level at the size a cluster has (0.917 clang, 1.042 gcc).
+- Not established: which part of the +20-27 instructions is the group probe itself and which the spills. The scored benchmark, where main's hits are 1.33x faster than 4.11.0's, runs its lookups in a loop that holds little else, so the caller's shape is the likely difference, not a measured one. Not run: Redpanda's own build, and the `_frag` variants on `fragmented_vector`.
 
 ## The robin hood index this replaced, and its dead ends
 
