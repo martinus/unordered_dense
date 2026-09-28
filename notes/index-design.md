@@ -227,6 +227,8 @@ place rather than being deleted, because the retraction is usually the more usef
 - STP's parser with 4.5.0 against 5.1.0 and main, the two instances from stp#560: 5.1.0 parses 4-5% faster on both instances under both compilers, with the same instructions within 1.3%, and 8% less peak memory on the larger instance; main reads within 3.1 points of 5.1.0
 - stp#567's constant bit propagator tables re-checked on STP master: against the same four tables as std::unordered_*, 4.5.0 takes propagation to 0.912 and this repository's main to 0.859, nearly all of it on one instance (testcase15 0.74 and 0.69), and total solve time is level within 1% where #567 read -22% propagation and -4.9% total
 - Redpanda's leader balancer benchmark (redpanda#17182) re-run standalone against main: main's `map` is 3-10% slower than 4.5.0 on the benchmark as written, whose map holds 80 keys, and 15-20% slower with one entry per raft group as in a real cluster, where it executes 20-27 more instructions per lookup; the `segmented_map` Redpanda ships is level (clang 0.917, gcc 1.042)
+||||||| parent of bd0aaaa (notes: #341, main's find hit in Redpanda's loop is half probe and half caller; three candidates lost, nothing changed)
+- #341, main's `find` hit against 4.5.0's in Redpanda's loop: half of the +20-27 instructions per call is the group probe itself (+11-14 in a bare loop) and half the caller around it; boost's `unordered_flat_map` runs as many instructions and 9-16% fewer cycles in that loop, and three candidates -- the walk past home out of line, no index prefetch, a speculative value prefetch from a preferred lane -- each cost cycles or did not move them, so nothing changed
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6458,6 +6460,47 @@ What this says and does not say:
 - The caller is the one #310's corpus was built to catch -- a loop holding an RNG's state with a division and a store to a random address on the way to the next key -- and the shape search's fix (the placement out of line) does not reach a lookup: `find` has no placement, and its whole hit path is inline.
 - For Redpanda, which ships `segmented_map`, main is level at the size a cluster has (0.917 clang, 1.042 gcc).
 - Not established: which part of the +20-27 instructions is the group probe itself and which the spills. The scored benchmark, where main's hits are 1.33x faster than 4.11.0's, runs its lookups in a loop that holds little else, so the caller's shape is the likely difference, not a measured one. Not run: Redpanda's own build, and the `_frag` variants on `fragmented_vector`.
+||||||| parent of bd0aaaa (notes: #341, main's find hit in Redpanda's loop is half probe and half caller; three candidates lost, nothing changed)
+**#341, main's `find` hit against 4.5.0's in Redpanda's loop: half of the +20-27 instructions per call is the group probe itself (+11-14 in a bare loop) and half the caller around it; boost's `unordered_flat_map` runs as many instructions and 9-16% fewer cycles in that loop, and three candidates -- the walk past home out of line, no index prefetch, a speculative value prefetch from a preferred lane -- each cost cycles or did not move them, so nothing changed** (2026-09-28, issue #341, Ryzen 9 7950X, clang 22 and gcc 16, boost 1.90, abseil
+master; Redpanda's loop is `redpanda_lb.cpp` with `-DUNIQUE_GROUPS` from #317, the loop's share taken
+as a whole run minus a construction-only run, `perf stat`, 20 rounds; the bare loop is the same
+92160-entry `map<int64_t, 8 byte value>` looked up with keys drawn beforehand, 2^23 finds counted
+in-process).
+
+Per `generate_reassignment()` call (one `find` that hits, plus Redpanda's RNG and swap), and per
+bare `find`:
+
+| | Redpanda loop, clang instr / cycles | gcc | bare loop, clang | gcc |
+|---|---|---|---|---|
+| 4.5.0 | 146.3 / 108-110 | 152.3 / 121-122 | 23.3 / 12.3 | 25.3 / 13.6-13.7 |
+| main | 173.6 / 125-128 | 172.5 / 136-137 | 37.0 / 15.6-15.8 | 36.0 / 14.8-14.9 |
+| `boost::unordered_flat_map` | 178.9 / 114.4 | 159.5 / 115.3 | 36.0 / 11.7 | 39.0 / 14.3 |
+| `absl::flat_hash_map` | 177.5 / 105.7 | 192.8 / 125.1 | | |
+| A: walk past home out of line for every key | 163.6 / 128.4 | 169.0 / 134.8 | | |
+| P: no `prefetch_index` (diagnostic) | 171.1 / 126.3 | 166.5 / 133.0 | | |
+| S: speculative value prefetch | 185.6 / 126.9 | 183.0 / 139.7 | 45.0 / 17.4 | 43.0 / 17.1 |
+
+(Ranges are the same binary measured in two sessions.)
+
+The split: the bare loop puts main's own hit at +13.7 (clang) / +10.7 (gcc) instructions over 4.5.0,
+so the rest of the +27 / +20 in Redpanda's loop is the caller: the `end()` comparison and six of the
+loop's values reloaded from the stack every call, and the RNG's constants moved and rematerialized.
+main's hit is 36 instructions: the hash, the fingerprint word's table load, broadcast, `imul` by the
+88 byte block, two prefetches, the 16 byte compare, movemask, tzcnt, the index load and the key
+compare, with the counter and the walk's delta computed before the hit test although only a miss
+uses them. 4.5.0's is one scalar compare of the bucket's distance-and-fingerprint, then the key.
+
+The candidates:
+- A (`probe_past_home` for every key, not only one whose compare is a call): 10 fewer instructions under clang and 2.5 more cycles; gcc -3.5 instructions, -1 cycle.
+- P (no index prefetch): clang -2.5 instructions, cycles level; gcc -6 and -2.8 cycles. It is #250/#252's measured win on larger tables, so it is a diagnostic here, not a proposal.
+- S (each key prefers the lane its fingerprint's low four bits name, placed there when that lane is free; `probe()` reads that lane's value index and prefetches the value before the match): engaged -- 89% of hits in their preferred lane at 80 entries, 67% at 92160, 64% at 200000 -- and +8 instructions and +1.7-2.2 cycles in the bare loop, +2 (clang) and +4 (gcc) cycles in Redpanda's. The dependent load it was meant to hide is not what these loops wait on: consecutive lookups are independent, and the core already overlaps them.
+
+What this says and does not say: main's hit is more instructions than 4.5.0's, and boost's is as
+many, so the instruction count is not what separates main from boost; boost's fewer cycles at the
+same count (9-11% clang, 15-16% gcc in Redpanda's loop; 25% and 3% in the bare one) are not
+explained here. The two loops are throughput loops (their lookups do not
+depend on each other), so a latency argument does not apply to them, which is what S showed.
+Nothing in the header changed. #341 stays open for whatever explains the cycles.
 
 ## The robin hood index this replaced, and its dead ends
 
