@@ -1,0 +1,29 @@
+--- a/include/util/query_heap.hpp
++++ b/include/util/query_heap.hpp
+@@ -8,6 +8,8 @@
+ #include <cstddef>
+ #include <limits>
+ #include <unordered_map>
++
++#include "ankerl/unordered_dense.h"
+ #include <vector>
+ 
+ namespace osrm::util
+@@ -31,7 +33,7 @@
+ template <typename NodeID, typename Key> class UnorderedMapStorage
+ {
+   public:
+-    explicit UnorderedMapStorage(std::size_t) { nodes.rehash(1000); }
++    explicit UnorderedMapStorage(std::size_t) {}
+ 
+     Key &operator[](const NodeID node) { return nodes[node]; }
+ 
+@@ -54,7 +56,7 @@
+     void Clear() { nodes.clear(); }
+ 
+   private:
+-    std::unordered_map<NodeID, Key> nodes;
++    ankerl::unordered_dense::segmented_map<NodeID, Key> nodes;
+ };
+ 
+ template <typename NodeID,

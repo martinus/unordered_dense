@@ -1,0 +1,2 @@
+FROM localhost/valbuild-absl:latest
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl zip unzip tar pkg-config ninja-build autoconf autoconf-archive automake libtool bison flex python3-requests python3-numpy linux-libc-dev >/dev/null && rm -rf /var/lib/apt/lists/*

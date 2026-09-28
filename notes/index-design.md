@@ -231,6 +231,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - #341, main's `find` hit against 4.5.0's in Redpanda's loop: half of the +20-27 instructions per call is the group probe itself (+11-14 in a bare loop) and half the caller around it; boost's `unordered_flat_map` runs as many instructions and 9-16% fewer cycles in that loop, and three candidates -- the walk past home out of line, no index prefetch, a speculative value prefetch from a preferred lane -- each cost cycles or did not move them, so nothing changed
 - Why boost's `unordered_flat_map` finds faster (#341): it needs no value index, so the first thing a lookup touches is 1 byte of metadata per slot against this map's 5.5, which leaves L2 at a far smaller table; from 46080 entries to 460800 this map takes 1.7-2.1x boost's L3 fills per find and 14-35% more cycles under clang (0.93-1.04 under gcc), while in L2 it is compiler codegen alone (this map's cycles 0.83-0.88 of boost's under gcc, 1.22-1.25 under clang)
 - Valhalla's CostMatrix (valhalla#4552) re-run with the map Valhalla ships (4.5.0), main and absl: all three within 1.1% on every row, as the original found ("all in all it hardly matters"), because the map is a few percent of a matrix request (`ReachedMap::add` 3.6%, out-of-line map code 0.36%)
+- OSRM's e2e benchmarks (osrm-backend#6922) re-run on a quiet, pinned core with the 4.4.0 #6922 tried and with main: both take map matching to 1.21-1.27x the requests per second of `std::unordered_map`, CH table to 1.10x and CH trip to 1.05x, and main is not ahead of 4.4.0 -- equal on most rows, behind on CH match (1.255 against 1.274) and MLD table (0.986 against 1.009)
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6579,6 +6580,42 @@ What this says and does not say: the rows are level within their own spread (mai
 reads 1.011 with a range of 46.79-47.97 against 46.35-46.98), so neither main nor absl moves
 CostMatrix, and a faster map could move it by at most a few percent. One compiler (gcc 13 in the
 container), one machine, one data snapshot. `segmented_map` was not re-run: Valhalla uses `map`.
+
+**OSRM's e2e benchmarks (osrm-backend#6922) re-run on a quiet, pinned core with the 4.4.0 #6922 tried and with main: both take map matching to 1.21-1.27x the requests per second of `std::unordered_map`, CH table to 1.10x and CH trip to 1.05x, and main is not ahead of 4.4.0 -- equal on most rows, behind on CH match (1.255 against 1.274) and MLD table (0.986 against 1.009)** (2026-09-28, issue #319, Ryzen 9 7950X; OSRM master 214ba8f9f, Release with LTO,
+gcc 13.3 in an Ubuntu 24.04 container, dependencies from vcpkg; `scripts/ab/osrm/`, which has the
+steps).
+
+#6922 changed one line: `UnorderedMapStorage` in `include/util/query_heap.hpp`, the node index of
+the query heaps the search engine keeps per thread, from `std::unordered_map` (with `rehash(1000)`
+in its constructor) to `segmented_map` (without it), and vendored this map's 4.4.0. OSRM declined
+it and still ships `std::unordered_map`. Five builds, all in one session: as shipped, and
+`segmented_map` and `map` each with 4.4.0 and with main. Each binary was checked for its version's
+symbols. Data as OSRM's CI had it: Berlin from Geofabrik, prepared for CH and MLD, and
+`test/data/berlin_gps_traces.csv.gz`. Load: OSRM's own `scripts/ci/e2e_benchmark.py`, seeded, 50
+warm-ups and 1000 requests per method, against a fresh `osrm-routed -t 1` on core 2 with the client on
+core 3; five rounds, build order rotated, medians, ratios to std with the rounds' min-max. The client's
+rate includes Python's own overhead (about 2 ms a request, most of `route` and `nearest`), so the
+server-side time is summed per method from `osrm-routed`'s log as well.
+
+| | std, requests/s | 4.4.0 `map` | main `map` | 4.4.0 `segmented_map` | main `segmented_map` | server time, 4.4.0 / main `map` |
+|---|---|---|---|---|---|---|
+| CH route | 544.4 | 1.017 (1.011-1.018) | 1.012 (1.005-1.015) | 1.015 (1.013-1.019) | 1.011 (1.011-1.014) | 0.969 / 0.972 |
+| CH nearest | 1920.0 | 1.000 (0.936-1.008) | 1.002 (0.998-1.011) | 0.995 (0.959-1.001) | 0.997 (0.987-1.005) | 0.997 / 0.994 |
+| CH trip | 123.5 | 1.052 (1.047-1.058) | 1.049 (1.044-1.056) | 1.052 (1.049-1.055) | 1.051 (1.048-1.053) | 0.934 / 0.937 |
+| CH table | 319.2 | 1.099 (1.097-1.104) | 1.096 (1.093-1.098) | 1.101 (1.097-1.102) | 1.095 (1.092-1.096) | 0.889 / 0.893 |
+| CH match | 55.1 | 1.274 (1.272-1.278) | 1.255 (1.248-1.262) | 1.253 (1.250-1.258) | 1.209 (1.199-1.211) | 0.767 / 0.781 |
+| MLD route | 570.8 | 1.001 (0.994-1.006) | 1.003 (1.000-1.008) | 1.003 (1.001-1.006) | 1.002 (0.997-1.005) | 0.990 / 0.988 |
+| MLD nearest | 1915.3 | 1.000 (0.985-1.006) | 1.003 (0.998-1.006) | 0.999 (0.996-1.001) | 1.002 (0.979-1.013) | 0.999 / 1.001 |
+| MLD trip | 108.9 | 1.003 (1.000-1.010) | 0.994 (0.984-1.000) | 1.013 (1.005-1.015) | 0.997 (0.989-0.999) | 0.995 / 1.006 |
+| MLD table | 193.8 | 1.009 (1.006-1.011) | 0.986 (0.978-0.988) | 1.012 (1.012-1.017) | 0.978 (0.976-0.982) | 0.991 / 1.016 |
+| MLD match | 108.5 | 1.248 (1.031-1.254) | 1.263 (1.255-1.268) | 1.233 (1.230-1.242) | 1.225 (1.217-1.229) | 0.769 / 0.756 |
+
+What this says and does not say:
+- Against `std::unordered_map` both versions win where the query heap's node index is busy: matching gains a fifth to a quarter of its server time on both algorithms, CH table a tenth, CH trip 6%. #6922's CI read +16% (CH) and +10% (MLD) matching on a runner its authors called jumpy; on a pinned core it is larger.
+- main against 4.4.0 is level or behind: CH match 1.255 against 1.274 (`map`) and 1.209 against 1.253 (`segmented_map`), MLD table 0.986 against 1.009 and 0.978 against 1.012, MLD trip slightly behind; main ahead only on MLD match with `map` (1.263 against 1.248). This is #341's case: a per-query table that is small, stays in cache and is mostly hit, where 4.x's robin hood hit is cheaper than the group probe, and the group index's gains (misses, tables past the cache) do not come into play.
+- `route` and `nearest` are level for every build; the client's overhead dominates them, and the server times agree.
+- A first run the same day with std, main `segmented_map` and main `map` only read the same main `map` ratios within 0.01 on every row except CH table and trip (1.071 / 1.029 then, 1.096 / 1.049 here); std's own rate differed between the two sessions (CH table 414.6 and 319.2 requests/s), which is why only ratios within one session are quoted.
+- One compiler (gcc 13), Berlin only (#6922's CI also had a larger Poland run), one machine. MLD's table was not profiled.
 
 ## The robin hood index this replaced, and its dead ends
 
