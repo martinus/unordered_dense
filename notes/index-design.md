@@ -229,6 +229,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Redpanda's leader balancer benchmark (redpanda#17182) re-run standalone against main: main's `map` is 3-10% slower than 4.5.0 on the benchmark as written, whose map holds 80 keys, and 15-20% slower with one entry per raft group as in a real cluster, where it executes 20-27 more instructions per lookup; the `segmented_map` Redpanda ships is level (clang 0.917, gcc 1.042)
 ||||||| parent of bd0aaaa (notes: #341, main's find hit in Redpanda's loop is half probe and half caller; three candidates lost, nothing changed)
 - #341, main's `find` hit against 4.5.0's in Redpanda's loop: half of the +20-27 instructions per call is the group probe itself (+11-14 in a bare loop) and half the caller around it; boost's `unordered_flat_map` runs as many instructions and 9-16% fewer cycles in that loop, and three candidates -- the walk past home out of line, no index prefetch, a speculative value prefetch from a preferred lane -- each cost cycles or did not move them, so nothing changed
+- Why boost's `unordered_flat_map` finds faster (#341): it needs no value index, so the first thing a lookup touches is 1 byte of metadata per slot against this map's 5.5, which leaves L2 at a far smaller table; from 46080 entries to 460800 this map takes 1.7-2.1x boost's L3 fills per find and 14-35% more cycles under clang (0.93-1.04 under gcc), while in L2 it is compiler codegen alone (this map's cycles 0.83-0.88 of boost's under gcc, 1.22-1.25 under clang)
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6501,6 +6502,43 @@ same count (9-11% clang, 15-16% gcc in Redpanda's loop; 25% and 3% in the bare o
 explained here. The two loops are throughput loops (their lookups do not
 depend on each other), so a latency argument does not apply to them, which is what S showed.
 Nothing in the header changed. #341 stays open for whatever explains the cycles.
+
+**Why boost's `unordered_flat_map` finds faster (#341): it needs no value index, so the first thing a lookup touches is 1 byte of metadata per slot against this map's 5.5, which leaves L2 at a far smaller table; from 46080 entries to 460800 this map takes 1.7-2.1x boost's L3 fills per find and 14-35% more cycles under clang (0.93-1.04 under gcc), while in L2 it is compiler codegen alone (this map's cycles 0.83-0.88 of boost's under gcc, 1.22-1.25 under clang)** (2026-09-28, issue #341, Ryzen 9 7950X, clang 22 and gcc 16, boost 1.90;
+`scripts/ab/lookup_fills.cpp`, `map<int64_t, 8 byte value>`, 2^23 finds of keys drawn beforehand,
+all hits, pinned to one core, `perf stat -e ls_dmnd_fills_from_sys.local_ccx,cycles:u` around the
+process, one run per cell).
+
+Top-down at 92160 entries (`perf stat -M PipelineL1,PipelineL2`, clang): this map 55.5% backend
+bound, 53.6% of it memory, against boost's 43.0% and 41.8%; bad speculation about 1% for both; L1
+misses per find 3.4 against 3.0, dTLB misses negligible for both. Demand fills per find from L2:
+1.05 against 1.13; from L3: **0.91 against 0.44**. Over the size axis:
+
+| entries | this map, clang: cycles, L3 fills | boost, clang | this map, gcc | boost, gcc |
+|---|---|---|---|---|
+| 10000 | 12.0, 0.00 | 9.8, 0.00 | 10.8, 0.00 | 13.0, 0.00 |
+| 23040 | 12.8, 0.02 | 10.2, 0.01 | 12.1, 0.02 | 13.7, 0.02 |
+| 46080 | 15.0, 0.28 | 11.7, 0.15 | 13.9, 0.32 | 14.5, 0.16 |
+| 92160 | 18.1, 0.91 | 13.4, 0.44 | 16.5, 0.90 | 16.0, 0.44 |
+| 200000 | 19.4, 1.39 | 16.1, 0.79 | 19.7, 1.39 | 19.0, 0.81 |
+| 460800 | 24.5, 1.81 | 21.5, 1.02 | 23.5, 1.81 | 25.3, 1.00 |
+| 1000000 | 50.3, 1.74 | 36.8, 1.34 | 50.0, 1.82 | 44.4, 1.30 |
+| 2000000 | 91.2, 1.38 | 72.3, 1.49 | 97.5, 1.40 | 79.8, 1.46 |
+
+Why: every lookup first reads its group's metadata. boost keeps its elements in its slot array and
+needs nothing but 16 bytes of metadata per 15 slots, so that array is about 1 byte per slot and stays
+in L2 (1 MB here) to far larger tables. This map keeps its values in one dense vector, so a group has
+to say where each of its entries lives: sixteen 4-byte indices beside the 24 bytes of fingerprints and
+counters, 88 bytes per 16 slots, 5.5 bytes per slot. The first access leaves L2 at a table about five
+times smaller, and the value access comes on top of it. Where the index goes does not remove it:
+beside the fingerprints (today) bloats the first access; in its own array (until 2026-09-06, "merged
+block") adds a third access; narrower (16-bit indices 0.986) and tiny pointers (#229, ~9% memory, no
+speed) were measured before. It is the cost of dense values: the price of fast iteration.
+
+What this says and does not say:
+- In L2 (10000 and 23040 entries) neither map takes L3 fills, and the difference is code generation: this map's cycles are 0.83-0.88 of boost's under gcc (10.8 against 13.0, 12.1 against 13.7) and 1.22-1.25 under clang (12.0 against 9.8, 12.8 against 10.2), at about the same instruction counts. Not investigated further.
+- From 46080 to 460800 entries this map takes 1.7-2.1x boost's L3 fills; in cycles it is 1.14-1.35 of boost's under clang and 0.93-1.04 under gcc, where gcc's codegen advantage offsets it. Redpanda's loop (#317) sits at 92160.
+- Past the L3 (2000000), the fills even out and both pay DRAM; this map is 1.26 (clang) and 1.22 (gcc) of boost's cycles there, not examined.
+- The scored benchmark's tables are up to 200000 entries with 50% misses; a miss reads only the metadata, which is why the group layout wins there. This is the all-hits case, one fill source per run and one run per cell.
 
 ## The robin hood index this replaced, and its dead ends
 
