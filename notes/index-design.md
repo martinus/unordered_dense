@@ -225,6 +225,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - Small maps, two variants from #304 prototyped and measured against `main` over 20000 maps of 1 to 32 entries: no index below eight entries makes a map of up to four entries 1.06-2.3x faster to build, 1.2-2.2x faster to destroy and its lookups 1.5-3.7x faster, but puts back the empty-table test #329 took out of every lookup; a two-group minimum index helps a one- or two-entry integer map 2-28% and builds 32 entries 1.17-1.61x slower; neither was kept
 - The teardown harness ran its sides in a fixed order, and the side that runs first in a pass reads 2-4% slower on the string first build; the 5-18% first-build gap at 50000 that #309 could not explain does not reproduce with the same two headers (0.4-3.0%), so the harness now rotates its sides
 - STP's parser with 4.5.0 against 5.1.0 and main, the two instances from stp#560: 5.1.0 parses 4-5% faster on both instances under both compilers, with the same instructions within 1.3%, and 8% less peak memory on the larger instance; main reads within 3.1 points of 5.1.0
+- stp#567's constant bit propagator tables re-checked on STP master: against the same four tables as std::unordered_*, 4.5.0 takes propagation to 0.912 and this repository's main to 0.859, nearly all of it on one instance (testcase15 0.74 and 0.69), and total solve time is level within 1% where #567 read -22% propagation and -4.9% total
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6375,6 +6376,44 @@ nothing about solving, only parsing (`--parse-only`, as stp#560 measured). main 
 within the rounds' spread except clang's laby (0.929 against 0.960). The larger instance's 8% less
 memory fits the index's 5.5 bytes per slot against 4.5.0's 8, which was not checked, and the
 smaller one's +3.6% was not examined.
+
+**stp#567's constant bit propagator tables re-checked on STP master: against the same four tables as std::unordered_*, 4.5.0 takes propagation to 0.912 and this repository's main to 0.859, nearly all of it on one instance (testcase15 0.74 and 0.69), and total solve time is level within 1% where #567 read -22% propagation and -4.9% total** (2026-09-28, asked alongside issue #316, Ryzen 9 7950X, clang 22; STP master
+51fdb95b, Release, `stp -s`, three rounds with the build order rotated per round, pinned to one
+core, medians; propagation time is the sum of the "After Constant Bit Propagation" phase times that
+`-s` prints).
+
+stp#567 (merged 2026-07-21 as 6b7390ff) moved the constant bit propagator's node-to-bits map, its
+worklist set and its dependents index from `std::unordered_*` to 4.5.0, reporting propagation 15.1 to
+11.8 s summed (-22%) and total solve time -4.9% on the fifteen most propagation-heavy QF_BV files of
+six families (not named individually). Master has since rewritten two of those files (#738's flat
+parent lists, #879's cost-ordered worklist), so the change no longer reverts; the `std` build here
+switches master's four tables (`NodeToFixedBitsMap`, `WorkList`'s set, `Dependencies`' index map and
+seen set) back to `std::unordered_map`/`set` with the same hashers and changes nothing else. The
+`main` build is master with this repository's header plus STP's `stp_insertion_may_rehash()`.
+
+Files: the fifteen that finish within 60 s with the most propagation time, screened with the 4.5.0
+build from `stp/testcase15`, the 66 `bmc-bv-svcomp14` files, `vlsat3`, `picorv32`, and 80 random files
+each of Sydr and catchconv (SMT-LIB 2025, Zenodo 16740866). Fourteen of the fifteen are `vlsat3`;
+the heavier `vlsat3` files do not finish in 60 s.
+
+| file | propagation ms, std / 4.5.0 / main | ratio to std | wall s, std / 4.5.0 / main |
+|---|---|---|---|
+| testcase15 | 1995 / 1471 / 1374 | 0.74 / 0.69 | 5.27 / 4.60 / 4.28 |
+| 14 vlsat3 files, each | | 0.99-1.08 / 0.94-1.02 | |
+| sum of all 15 | 5117 / 4667 / 4393 | 0.912 / 0.859 | 162.5 / 162.9 / 161.1 |
+
+Answers (sat/unsat) agree across all 135 runs. Reading master for the hazard #567 fixed -- an
+iterator or reference into the table held across an insert, which a dense map invalidates and
+`std::unordered_map` does not: `simplify_during_bb` holds `FixedBits*` since #567, the two loops over
+the whole map insert only into other maps, and every other access takes the pointer out of the
+iterator before anything inserts. Nothing found.
+
+What this says and does not say: on today's STP the tables #567 changed are a small part of solving
+on these files, and a dense map's gain there is one instance's propagation, not the solve. The file
+set is not #567's (fourteen `vlsat3` against six families), so this does not contradict #567's
+numbers on its own files at its own commit; it says the effect has not survived into master on the
+files this screen found. main is 0.941 of 4.5.0's propagation over the fifteen, consistent with the
+parser's 4-5% on #316. Not measured: gcc, and #567's own commit.
 
 ## The robin hood index this replaced, and its dead ends
 
