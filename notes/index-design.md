@@ -224,6 +224,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `segmented_map` lookups against `map`, one cell per binary: a hit costs 7-15 instructions more and a miss 0.4-2.4, and of that only about 5 instructions of clang's `find` hit are avoidable -- clang splits the value index a second time for `it->second`, where gcc reuses the probe's split -- so nothing was changed
 - Small maps, two variants from #304 prototyped and measured against `main` over 20000 maps of 1 to 32 entries: no index below eight entries makes a map of up to four entries 1.06-2.3x faster to build, 1.2-2.2x faster to destroy and its lookups 1.5-3.7x faster, but puts back the empty-table test #329 took out of every lookup; a two-group minimum index helps a one- or two-entry integer map 2-28% and builds 32 entries 1.17-1.61x slower; neither was kept
 - The teardown harness ran its sides in a fixed order, and the side that runs first in a pass reads 2-4% slower on the string first build; the 5-18% first-build gap at 50000 that #309 could not explain does not reproduce with the same two headers (0.4-3.0%), so the harness now rotates its sides
+- STP's parser with 4.5.0 against 5.1.0 and main, the two instances from stp#560: 5.1.0 parses 4-5% faster on both instances under both compilers, with the same instructions within 1.3%, and 8% less peak memory on the larger instance; main reads within 3.1 points of 5.1.0
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6331,6 +6332,49 @@ What this says and does not say: nothing in #309's conclusion rested on the firs
 warm-build and teardown columns are unaffected (they are 1.5-3.2x, far outside either effect). The
 first-position effect is 2-4% and shows only on the string first build here; other harnesses that
 run their variants in a fixed order within a pass may carry it too, which was not checked.
+
+**STP's parser with 4.5.0 against 5.1.0 and main, the two instances from stp#560: 5.1.0 parses 4-5% faster on both instances under both compilers, with the same instructions within 1.3%, and 8% less peak memory on the larger instance; main reads within 3.1 points of 5.1.0** (2026-09-28, issue #316, Ryzen 9 7950X, clang 22 and gcc 16; STP master 51fdb95b,
+Release, `stp --parse-only`, seven rounds with the variant order rotated per round, pinned to one
+core, `perf stat -e instructions:u,cycles:u`, medians; ranges are min-max of the seven).
+
+STP pins 4.5.0 by SHA-256 and patches it at configure time (`cmake/PrepareUnorderedDense.cmake`: a
+non-allocating same-allocator `swap`, and `stp_insertion_may_rehash()`). The 5.1.0 and main builds
+replace that generated header after configuring with the version's own header plus the same
+`stp_insertion_may_rehash()` (`bucket_count() == 0 || size() >= m_max_bucket_capacity`, the same
+growth rule in both); 5.x's own `swap` does not allocate, so the other patch has no counterpart. The
+instances come from the SMT-LIB 2025 release on Zenodo (record 16740866, `QF_BV.tar.zst`):
+`20230221-oisc-gurtner/AND-NESTED-32-32.smt2` (89 MB) and `asp/Labyrinth/laby_17_17_02.lp.smt2`
+(32 MB). stp#560's third number, ponylink's preprocessing, has no public instance and was not run.
+
+| | wall, s | ratio | instructions | ratio | cycles | ratio | peak RSS, MB |
+|---|---|---|---|---|---|---|---|
+| clang AND-NESTED, 4.5.0 | 3.86 (3.84-3.92) | 1 | 40.10 G | 1 | 16.82 G | 1 | 584 |
+| clang AND-NESTED, 5.1.0 | 3.70 (3.68-3.76) | 0.959 | 39.76 G | 0.991 | 16.14 G | 0.959 | 538 |
+| clang AND-NESTED, main | 3.75 (3.72-3.79) | 0.972 | 40.08 G | 0.999 | 16.36 G | 0.973 | 538 |
+| clang laby, 4.5.0 | 0.99 (0.98-0.99) | 1 | 8.64 G | 1 | 4.20 G | 1 | 336 |
+| clang laby, 5.1.0 | 0.95 (0.94-0.96) | 0.960 | 8.62 G | 0.997 | 4.03 G | 0.957 | 348 |
+| clang laby, main | 0.92 (0.92-0.95) | 0.929 | 8.71 G | 1.008 | 3.92 G | 0.933 | 348 |
+| gcc AND-NESTED, 4.5.0 | 3.57 (3.53-3.62) | 1 | 42.20 G | 1 | 15.52 G | 1 | 584 |
+| gcc AND-NESTED, 5.1.0 | 3.39 (3.38-3.44) | 0.950 | 42.26 G | 1.001 | 14.77 G | 0.952 | 538 |
+| gcc AND-NESTED, main | 3.42 (3.40-3.51) | 0.958 | 42.35 G | 1.003 | 14.87 G | 0.958 | 538 |
+| gcc laby, 4.5.0 | 0.97 (0.97-0.99) | 1 | 8.11 G | 1 | 4.15 G | 1 | 336 |
+| gcc laby, 5.1.0 | 0.93 (0.93-0.94) | 0.959 | 8.21 G | 1.013 | 3.96 G | 0.953 | 348 |
+| gcc laby, main | 0.94 (0.93-0.95) | 0.969 | 8.25 G | 1.017 | 3.98 G | 0.958 | 348 |
+
+Where the map is in a parse: `perf record` of the clang AND-NESTED run puts 5.5% of the self time in
+out-of-line `ankerl::` symbols with 4.5.0 and 2.9% with 5.1.0 (`std::_Hashtable` 3.8% in both;
+STP keeps some std tables). Map code inlined into STP's functions is not in those figures, so they
+are a lower bound on the map's share. The top of the profile is STP's own `isRealTerm()` and
+`GetChildren()`, 23%.
+
+What this says and does not say: in this program the gain from 5.x is cycles, not instructions --
+the same work with fewer stalls -- and it is 4-5% of a parse in which the map's visible share is a
+few percent, so most of what the map's code can give here, it gives. It does not separate the
+container from the hash-caching stp#560 did at the same time; both builds carry that. It says
+nothing about solving, only parsing (`--parse-only`, as stp#560 measured). main against 5.1.0 is
+within the rounds' spread except clang's laby (0.929 against 0.960). The larger instance's 8% less
+memory fits the index's 5.5 bytes per slot against 4.5.0's 8, which was not checked, and the
+smaller one's +3.6% was not examined.
 
 ## The robin hood index this replaced, and its dead ends
 
