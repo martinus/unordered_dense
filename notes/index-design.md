@@ -223,6 +223,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level; the index became a pointer and a count, so the map is 64 bytes, 8 fewer than 5.2.0
 - `segmented_map` lookups against `map`, one cell per binary: a hit costs 7-15 instructions more and a miss 0.4-2.4, and of that only about 5 instructions of clang's `find` hit are avoidable -- clang splits the value index a second time for `it->second`, where gcc reuses the probe's split -- so nothing was changed
 - Small maps, two variants from #304 prototyped and measured against `main` over 20000 maps of 1 to 32 entries: no index below eight entries makes a map of up to four entries 1.06-2.3x faster to build, 1.2-2.2x faster to destroy and its lookups 1.5-3.7x faster, but puts back the empty-table test #329 took out of every lookup; a two-group minimum index helps a one- or two-entry integer map 2-28% and builds 32 entries 1.17-1.61x slower; neither was kept
+- The teardown harness ran its sides in a fixed order, and the side that runs first in a pass reads 2-4% slower on the string first build; the 5-18% first-build gap at 50000 that #309 could not explain does not reproduce with the same two headers (0.4-3.0%), so the harness now rotates its sides
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -5423,7 +5424,11 @@ back 20-131 MB per round. Reversing the elements is nearly all of it; reversing 
 what moves a small integer map (0.81 to 0.67 at 50000 under clang, 0.67 to 0.53 under gcc) and costs
 nothing anywhere, so C ships. The first build runs before any teardown, so the order cannot touch it,
 and at 200000 and a million it agrees within 2%; at 50000, where it is a millisecond, C reads 5-18%
-faster in every cell under both compilers, which this measurement does not explain. `resize()` to a
+faster in every cell under both compilers, which this measurement does not explain. [2026-09-28,
+#313: it does not reproduce. The same two headers re-measured read 0.4-3.0% apart at 50000, inside
+the harness's own band, and main's side is the one that moved (clang u64 0.96, not 1.16). The first
+build column of the table above is not evidence either way; see "The teardown harness ran its
+sides in a fixed order".] `resize()` to a
 smaller size and `clear()` go through the same backward loop as the destructor. Bonxai's harness
 with the change: 46k roots 342 to 230 ms against `std::unordered_map`'s 248, 787k roots 297 to 246
 against 452, reads unchanged.
@@ -6300,6 +6305,32 @@ What this says and does not say:
 Declined for the default map on that trade: the large-map lookup keeps #329's gain. An opt-in small
 mode (a template option or its own alias) would not have the price, and is worth building only for a
 caller with many tiny maps and a measured need.
+
+**The teardown harness ran its sides in a fixed order, and the side that runs first in a pass reads 2-4% slower on the string first build; the 5-18% first-build gap at 50000 that #309 could not explain does not reproduce with the same two headers (0.4-3.0%), so the harness now rotates its sides** (2026-09-28, issue #313, Ryzen 9 7950X, clang 22 and gcc 16;
+`scripts/ab/teardown_order.sh ... 5 7 50000`, first builds, medians of five passes).
+
+| first build, ms | same header, fixed order: base / cand / blocksfwd | #309's pair, `7ac1e3a~1` / `7ac1e3a` | same header, rotated: base / cand / blocksfwd |
+|---|---|---|---|
+| clang u64 | 0.901 / 0.896 / 0.894 | 0.962 / 0.953 | 0.915 / 0.901 / 0.900 |
+| clang str | **3.174** / 3.117 / 3.066 | 3.138 / 3.062 | 3.074 / 3.067 / 3.076 |
+| clang owned | 3.023 / 3.008 / 3.013 | 3.043 / 3.032 | 3.010 / 3.015 / 3.006 |
+| gcc u64 | 0.866 / 0.855 / 0.857 | 0.831 / 0.817 | 0.867 / 0.855 / 0.851 |
+| gcc str | **3.170** / 3.068 / 3.060 | 3.117 / 3.027 | 3.070 / 3.074 / 3.067 |
+| gcc owned | 2.955 / 2.974 / 2.964 | 2.943 / 2.924 | 2.958 / 2.966 / 2.966 |
+
+With the same header on all three sides, the first side of every pass (`base`) read the string build
+2-4% slower under both compilers and took the outliers (3.388, 3.447). #309's two headers, measured
+the same way, read 0.4-3.0% apart, where #309 read 5-18%; and the side that moved is main's (clang
+u64 0.96 today against 1.16 then, owned 3.04 against 3.39), not #309's, which reads what it read.
+The machine state of that run is not recoverable, so what slowed main's side then is not known; a
+process left on the pinned core, which contaminated another run the same week, would do it. Rotating
+the side order per pass brings the three identical headers within 0.3% for strings and owned values
+and 1.9% for integers.
+
+What this says and does not say: nothing in #309's conclusion rested on the first build, and the
+warm-build and teardown columns are unaffected (they are 1.5-3.2x, far outside either effect). The
+first-position effect is 2-4% and shows only on the string first build here; other harnesses that
+run their variants in a fixed order within a pass may carry it too, which was not checked.
 
 ## The robin hood index this replaced, and its dead ends
 

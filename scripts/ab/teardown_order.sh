@@ -57,7 +57,10 @@ echo "# $cxx, baseline $rev, $passes passes x $rounds rounds, sizes ${sizes[*]}"
 for ((p = 0; p < passes; ++p)); do
     for kind in "${kinds[@]}"; do
         for n in "${sizes[@]}"; do
-            for side in "${sides[@]}"; do
+            # The side that runs first in a pass reads a few percent slower (#313: 2-4% on the
+            # string first build with the same header on all three sides), so the order rotates.
+            for ((s = 0; s < ${#sides[@]}; ++s)); do
+                side=${sides[$(((s + p) % ${#sides[@]}))]}
                 taskset -c "${AB_CORE:-2}" "$build/$cxx-$side-$kind" "$rounds" "$n" | sed "s/^/$side /"
             done
         done
