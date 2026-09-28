@@ -1,0 +1,52 @@
+--- a/src/thor/costmatrix.cc	2026-09-28 13:28:24.004251917 +0200
++++ b/src/thor/costmatrix.cc	2026-09-28 13:32:52.295763633 +0200
+@@ -7,6 +7,8 @@
+ #include "sif/hierarchylimits.h"
+ #include "sif/recost.h"
+ 
++#include <absl/container/flat_hash_map.h>
++#include <absl/container/flat_hash_set.h>
+ #include <ankerl/unordered_dense.h>
+ 
+ #include <algorithm>
+@@ -85,7 +87,7 @@
+ 
+ struct CostMatrix::LocationStatus {
+   int threshold;
+-  ankerl::unordered_dense::set<uint32_t> unfound_connections;
++  absl::flat_hash_set<uint32_t> unfound_connections;
+ 
+   LocationStatus(const int t) : threshold(t) {
+   }
+@@ -123,7 +125,12 @@
+ private:
+   std::pmr::unsynchronized_pool_resource pool_;
+   std::pmr::polymorphic_allocator<uint32_t> vec_alloc_;
+-  ankerl::unordered_dense::pmr::map<uint64_t, PmrVector> storage_;
++  absl::flat_hash_map<uint64_t,
++                      PmrVector,
++                      absl::Hash<uint64_t>,
++                      std::equal_to<uint64_t>,
++                      std::pmr::polymorphic_allocator<std::pair<const uint64_t, PmrVector>>>
++      storage_;
+ };
+ 
+ // Constructor with cost threshold.
+--- a/src/thor/CMakeLists.txt	2026-09-28 13:28:24.004094227 +0200
++++ b/src/thor/CMakeLists.txt	2026-09-28 13:35:42.543018587 +0200
+@@ -53,4 +53,5 @@
+     valhalla::meili
+     ${valhalla_protobuf_targets}
+     Boost::boost
++    absl::flat_hash_map
+     ${libprime_server_targets})
+--- a/CMakeLists.txt	2026-09-28 13:28:23.915613158 +0200
++++ b/CMakeLists.txt	2026-09-28 13:35:42.543218307 +0200
+@@ -141,6 +141,7 @@
+ set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
+ 
+ # Boost has no .pc file..
++find_package(absl REQUIRED)
+ find_package(Boost 1.71 REQUIRED)
+ add_definitions(-DBOOST_NO_CXX11_SCOPED_ENUMS)
+ add_definitions(-DBOOST_ALLOW_DEPRECATED_HEADERS)
