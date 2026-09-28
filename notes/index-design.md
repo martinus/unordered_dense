@@ -222,6 +222,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - #331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes the rest
 - An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` 3-5% fewer instructions on both compilers, gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level; the index became a pointer and a count, so the map is 64 bytes, 8 fewer than 5.2.0
 - `segmented_map` lookups against `map`, one cell per binary: a hit costs 7-15 instructions more and a miss 0.4-2.4, and of that only about 5 instructions of clang's `find` hit are avoidable -- clang splits the value index a second time for `it->second`, where gcc reuses the probe's split -- so nothing was changed
+- Small maps, two variants from #304 prototyped and measured against `main` over 20000 maps of 1 to 32 entries: no index below eight entries makes a map of up to four entries 1.06-2.3x faster to build, 1.2-2.2x faster to destroy and its lookups 1.5-3.7x faster, but puts back the empty-table test #329 took out of every lookup; a two-group minimum index helps a one- or two-entry integer map 2-28% and builds 32 entries 1.17-1.61x slower; neither was kept
 
 **The robin hood index this replaced, and its dead ends**
 
@@ -6235,6 +6236,70 @@ and `it + n` or `end()` must never read a block that is not allocated -- a chang
 iteration over a `segmented_map` runs, for a gain one compiler's `find` hit sees. Declined on that
 trade without building it; the harness is there if the Bonxai read or another caller makes the
 clang hit matter. The Bonxai read was not re-run, since nothing changed.
+
+**Small maps, two variants from #304 prototyped and measured against `main` over 20000 maps of 1 to 32 entries: no index below eight entries makes a map of up to four entries 1.06-2.3x faster to build, 1.2-2.2x faster to destroy and its lookups 1.5-3.7x faster, but puts back the empty-table test #329 took out of every lookup; a two-group minimum index helps a one- or two-entry integer map 2-28% and builds 32 entries 1.17-1.61x slower; neither was kept** (2026-09-28, issue #304, Ryzen 9 7950X, clang 22 and gcc 16; `scripts/ab/small_maps.cpp`,
+`small_maps.sh` and `small_maps_variants.py`, which writes the five headers compared; five rounds
+alternated between the variants, medians).
+
+The harness builds 20000 maps of one size, runs `count` on each map's own keys and as many it does
+not hold (50% hits, and it checks the hits), then destroys them, each phase timed and reported in ns
+per map, after an untimed pass over every size that faults the heap in. The variants:
+- `two`: the smallest index two groups (176 bytes) instead of four (352). One group needs `hash >> 64`, which is undefined, or a mask on every lookup.
+- `A8`, `A16`: no index for the first 8 or 16 values. An insert scans them with `KeyEqual` and appends; value N+1 allocates the index and places all of them. `find` tests for "no index" before hashing and scans.
+- `B8`: the same insert, and a `find` that hashes, probes the sentinel and scans only on a miss, so a hit in a large map pays nothing.
+
+They are prototypes of build, `count` and destroy only; the switch to an index hashes the inserted
+key twice, which is what the 12- to 32-entry cells of A and B pay for, and a real version would not.
+
+Ratios to `main`, build / lookup / destroy, below 1 is faster:
+
+| clang++, entries | `main` ns build / lookup / destroy | two groups | A8 | A16 | B8 |
+|---|---|---|---|---|---|
+| u64 1 | 27.5 / 9.2 / 23.1 | 0.88 / 0.79 / 0.93 | 0.44 / 0.67 / 0.48 | 0.43 / 0.55 / 0.47 | 0.45 / 0.70 / 0.48 |
+| u64 2 | 45.2 / 11.9 / 22.4 | 0.91 / 0.76 / 0.96 | 0.62 / 0.61 / 0.50 | 0.59 / 0.55 / 0.50 | 0.62 / 1.01 / 0.50 |
+| u64 4 | 70.1 / 23.7 / 22.0 | 0.96 / 0.93 / 0.97 | 0.70 / 0.68 / 0.50 | 0.69 / 0.65 / 0.50 | 0.73 / 1.14 / 0.50 |
+| u64 8 | 108.9 / 42.6 / 23.0 | 0.98 / 0.92 / 0.93 | 0.78 / 1.35 / 0.49 | 0.77 / 1.31 / 0.48 | 0.82 / 1.48 / 0.49 |
+| u64 12 | 158.1 / 56.3 / 37.4 | 1.02 / 0.96 / 1.02 | 1.99 / 1.22 / 1.87 | 0.86 / 1.94 / 0.63 | 2.00 / 1.04 / 1.75 |
+| u64 16 | 211.5 / 59.4 / 36.4 | 1.05 / 1.06 / 0.96 | 1.73 / 1.16 / 1.68 | 0.93 / 3.09 / 0.62 | 1.74 / 1.09 / 1.66 |
+| u64 32 | 404.5 / 125.5 / 59.6 | 1.61 / 1.03 / 1.19 | 1.39 / 1.16 / 1.39 | 1.52 / 1.16 / 1.53 | 1.40 / 1.09 / 1.43 |
+| string 1 | 99.8 / 60.7 / 34.5 | 0.96 / 0.90 / 0.97 | 0.79 / 0.44 / 0.64 | 0.76 / 0.43 / 0.63 | 0.79 / 0.97 / 0.64 |
+| string 2 | 226.2 / 168.1 / 43.1 | 0.96 / 0.98 / 1.02 | 0.86 / 0.29 / 0.73 | 0.84 / 0.28 / 0.74 | 0.86 / 1.00 / 0.74 |
+| string 4 | 288.3 / 224.8 / 82.5 | 1.03 / 1.00 / 1.02 | 0.92 / 0.62 / 0.84 | 0.92 / 0.61 / 0.84 | 0.92 / 1.18 / 0.85 |
+| string 8 | 535.0 / 326.0 / 143.7 | 0.99 / 0.97 / 1.00 | 0.93 / 0.82 / 0.90 | 0.93 / 0.81 / 0.90 | 0.93 / 1.48 / 0.93 |
+| string 12 | 841.8 / 399.8 / 214.5 | 0.97 / 0.97 / 1.00 | 1.27 / 1.04 / 1.14 | 0.98 / 1.11 / 0.92 | 1.29 / 1.05 / 1.14 |
+| string 16 | 1017.8 / 515.2 / 259.9 | 1.00 / 0.96 / 1.01 | 1.23 / 0.98 / 1.09 | 1.03 / 1.25 / 0.94 | 1.23 / 1.12 / 1.12 |
+| string 32 | 1811.4 / 660.0 / 590.7 | 1.18 / 1.11 / 1.24 | 1.12 / 1.03 / 0.88 | 1.23 / 1.04 / 1.10 | 1.13 / 1.08 / 0.91 |
+
+| g++, entries | `main` ns build / lookup / destroy | two groups | A8 | A16 | B8 |
+|---|---|---|---|---|---|
+| u64 1 | 25.8 / 8.9 / 23.5 | 0.88 / 0.78 / 0.91 | 0.47 / 0.57 / 0.46 | 0.47 / 0.48 / 0.47 | 0.48 / 0.75 / 0.46 |
+| u64 2 | 43.9 / 12.7 / 22.4 | 0.91 / 0.72 / 0.98 | 0.65 / 0.45 / 0.48 | 0.64 / 0.43 / 0.50 | 0.66 / 1.05 / 0.48 |
+| u64 4 | 68.8 / 22.1 / 21.6 | 0.93 / 0.94 / 1.00 | 0.74 / 0.57 / 0.50 | 0.74 / 0.57 / 0.53 | 0.75 / 1.19 / 0.50 |
+| u64 8 | 108.8 / 40.0 / 23.0 | 0.97 / 0.93 / 0.93 | 0.81 / 1.00 / 0.49 | 0.81 / 0.93 / 0.50 | 0.82 / 1.60 / 0.47 |
+| u64 12 | 158.3 / 54.8 / 39.6 | 1.01 / 0.94 / 0.98 | 1.98 / 0.93 / 1.64 | 0.90 / 1.46 / 0.60 | 2.01 / 0.97 / 1.65 |
+| u64 16 | 210.5 / 55.0 / 36.4 | 1.05 / 1.06 / 0.98 | 1.74 / 0.99 / 1.64 | 0.97 / 2.81 / 0.63 | 1.76 / 1.04 / 1.74 |
+| u64 32 | 405.7 / 117.5 / 63.0 | 1.60 / 1.03 / 1.13 | 1.38 / 0.99 / 1.32 | 1.58 / 0.99 / 1.34 | 1.39 / 1.03 / 1.38 |
+| string 1 | 97.6 / 56.8 / 35.7 | 0.95 / 0.92 / 0.95 | 0.83 / 0.46 / 0.63 | 0.85 / 0.49 / 0.62 | 0.82 / 0.91 / 0.62 |
+| string 2 | 221.8 / 156.9 / 44.7 | 0.98 / 0.98 / 0.99 | 0.87 / 0.27 / 0.71 | 0.89 / 0.29 / 0.73 | 0.89 / 1.02 / 0.72 |
+| string 4 | 281.6 / 213.4 / 83.5 | 0.94 / 0.96 / 1.00 | 0.94 / 0.56 / 0.83 | 0.93 / 0.55 / 0.82 | 0.93 / 1.03 / 0.85 |
+| string 8 | 526.1 / 297.1 / 143.0 | 0.96 / 1.00 / 1.00 | 0.93 / 0.83 / 0.91 | 0.93 / 0.86 / 0.91 | 0.94 / 1.25 / 0.93 |
+| string 12 | 810.4 / 365.5 / 212.9 | 1.01 / 1.00 / 0.99 | 1.31 / 1.01 / 1.16 | 1.03 / 1.07 / 0.93 | 1.30 / 1.00 / 1.18 |
+| string 16 | 986.6 / 450.7 / 261.4 | 1.00 / 1.01 / 1.00 | 1.24 / 1.01 / 1.09 | 1.04 / 1.31 / 0.95 | 1.29 / 1.02 / 1.11 |
+| string 32 | 1789.2 / 593.2 / 581.3 | 1.17 / 1.11 / 1.26 | 1.12 / 1.02 / 0.91 | 1.22 / 1.01 / 1.11 | 1.12 / 1.02 / 0.92 |
+
+Index bytes per map: `main` 352 from the first entry; `two` 176 up to 25 entries, then 352; A8 0 up
+to 8 entries.
+
+What this says and does not say:
+- `two` is 2-28% faster for one or two integer entries (less to allocate and zero), within 8% of `main` from 4 to 16 entries, and 1.17 (string) to 1.61 (integer) times slower to build 32 entries: every size from 26 to 51 now grows once more. Not a win.
+- B is out: a small map hashes and then scans, so its lookups are slower than `main`'s from two entries on.
+- A is the one with a real gain: up to four entries, build 0.44-0.94, destroy 0.46-0.84, lookups 0.27-0.68 (a string key is never hashed). At eight integer entries its lookups are 1.35x under clang, because a miss scans all eight, so N would be about 4.
+- Its price is on every other map: `find` has to test for "no index" before it hashes, which is the test #329 removed, measured there at 3-5% of `find`'s instructions (0.964 / 0.970 clang, 0.952 / 0.981 gcc for u64 / string). That price was not re-measured on the prototype. The score, which has no small maps, can only show the cost.
+- A full version touches every path the issue lists (about fifteen), each needing tests across the transition both ways.
+
+Declined for the default map on that trade: the large-map lookup keeps #329's gain. An opt-in small
+mode (a template option or its own alias) would not have the price, and is worth building only for a
+caller with many tiny maps and a measured need.
 
 ## The robin hood index this replaced, and its dead ends
 
