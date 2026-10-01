@@ -72,7 +72,7 @@ jobs:
             cxx: clang++
             no_boost: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # the baseline is `git show REV:include/...`, so REV has to exist in this clone
           fetch-depth: 0
