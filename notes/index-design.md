@@ -37,6 +37,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - `max_rss::of` was charging every map 128 KB of its own, and the counter beside it could not see `aligned_alloc`
 - Peak memory across every harness is now the process's resident high-water mark, and one build of the map is enough to measure it
 - Every configuration of 5.2.0, twelve rows in the README run (#349): `pmr` is free, `group_big` costs 16-34% on integer keys below 2^32 elements, `segmented_map` builds 1.9x faster at 0.58x the peak memory and iterates strings 3.38x slower with its default 4 KB segment, and huge pages are the largest gain on every integer panel
+- 5.2.0 against 5.0.0 on the README workloads: level within 1.4% everywhere except the integer build, 3.6% faster; what 5.1 and 5.2 changed is invisible to this harness
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
@@ -706,6 +707,31 @@ What this says and does not say: one machine, one size octave from 1M, inside th
 It does not say how `group_big` behaves past 2^32 elements, the only place it is needed, or what a
 `pmr` resource other than `new_delete_resource` does (a monotonic resource would keep every
 superseded block).
+
+**5.2.0 against 5.0.0 on the README workloads: level within 1.4% everywhere except the integer build, 3.6% faster; what 5.1 and 5.2 changed is invisible to this harness** (2026-10-02, after #349, Ryzen 9 7950X, clang 22.1.8, `bench_readme.sh -u v5.2.0`
+with its renamed second header pointed at v5.0.0 instead of v4.11.0, a temporary copy, rows `udm`
+and that one only, 1M base octave, 3 rounds interleaved, `AB_CORE=2`, 04:18 to 04:29). Median ns
+per operation (bytes per entry for the last two), 5.2.0 / 5.0.0:
+
+| | `uint64_t` | ratio | `std::string` | ratio |
+|---|---|---|---|---|
+| build | 22.07 / 22.54 | 0.979 | 77.19 / 78.18 | 0.987 |
+| build + destroy | 23.26 / 24.13 | 0.964 | 92.06 / 92.90 | 0.991 |
+| find | 29.70 / 29.79 | 0.997 | 124.97 / 125.19 | 0.998 |
+| churn | 88.98 / 88.52 | 1.005 | 418.43 / 419.57 | 0.997 |
+| iterate | 0.192 / 0.193 | 0.996 | 0.656 / 0.665 | 0.986 |
+| peak rss | 48.55 / 48.59 | 0.999 | 122.73 / 122.85 | 0.999 |
+| bytes asked | 42.43 / 42.43 | 1.000 | 137.56 / 137.56 | 1.000 |
+
+The integer build + destroy is the only cell whose rounds do not overlap (5.2.0 22.92-23.44, 5.0.0
+24.08-24.13), and 3.6% is at the edge of the ±3% code layout band, so it is one layout sample and
+not yet a result. Everything else is inside run-to-run drift. That is what the header changes
+between the two tags predict (`git log v5.0.0..v5.2.0 -- include/`): #321 moved the home-group hit
+and placement of `try_emplace` in front of any call, which changes what an insert inlines into its
+*caller*, and a harness whose loop holds nothing live across the call cannot see that (the caller
+corpus, "stored and reloaded", is where it shows: 5.2.0 read 3.3x / 3.6x behind the best shape
+there, which #310 fixed after the release); the segmented teardown order is in 5.1.0 but these are
+plain `map` rows; and the memory layout did not change, to the byte.
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 **`probe_result`'s shape swept two ways, a third argued down from the return sequence, and the one that ships is the best of them** (2026-09-12,
