@@ -86,7 +86,8 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [Eleven slots and twenty-four slots, and why sixteen is where it stops](#eleven-slots-and-twenty-four-slots-and-why-sixteen-is-where-it-stops) · 2026-09-10 · rejected
   - [Tiny pointers, and the bound insertion order puts on the value index](#tiny-pointers-and-the-bound-insertion-order-puts-on-the-value-index) · 2026-09-10/11 · rejected
   - [The default maximum load factor swept from 0.75 to 0.9: every step above 0.8 costs both compilers the same, and the one step below buys 0.8% for 6.7% more index](#the-default-maximum-load-factor-swept-from-075-to-09-every-step-above-08-costs-both-compilers-the-same-and-the-one-step-below-buys-08-for-67-more-index) · 2026-09-22 · rejected
-  - [Double hashing with the step taken from the fingerprint, re-measured one header per binary after the churn harness was fixed: churned misses 1.07-1.18x faster, the score level, a fresh integer hit up to 5% slower under clang](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang) · 2026-10-02 · open
+  - [Double hashing with the step taken from the fingerprint, re-measured one header per binary after the churn harness was fixed: churned misses 1.07-1.18x faster, the score level, a fresh integer hit up to 5% slower under clang](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang) · 2026-10-02 · superseded
+  - [Seven probe sequences and five ways of computing their step against the triangular one: a key-dependent step shortens a churned miss, and every way of computing it costs the walk a third live value that no source shape hides](#seven-probe-sequences-and-five-ways-of-computing-their-step-against-the-triangular-one-a-key-dependent-step-shortens-a-churned-miss-and-every-way-of-computing-it-costs-the-walk-a-third-live-value-that-no-source-shape-hides) · 2026-10-02 · rejected
 - [Lookup: the probe, SIMD compare and prefetch](#lookup-the-probe-simd-compare-and-prefetch)
   - [A miss had no bound, and eight chosen keys made it loop forever](#a-miss-had-no-bound-and-eight-chosen-keys-made-it-loop-forever) · 2026-09-05 · kept
   - [gcc left `probe` out of line, and forcing it inline is the largest single gcc gain on the branch](#gcc-left-probe-out-of-line-and-forcing-it-inline-is-the-largest-single-gcc-gain-on-the-branch) · 2026-09-05 · kept
@@ -761,13 +762,13 @@ The sweep asks nanobench for a precision instead of naming a round count, which 
 
 This section covers the shape of the group index: slots per group, counter width and which counter a probe reads, the memory layout of fingerprints, counters and value indices, the probe sequence, the growth factor and the maximum load factor. The shipped design (16 slots, eight one-byte counters, one merged 88 byte block, triangular probing, growth 2, maximum load 0.8) is a measured local optimum on each axis. Most alternatives lose because they add work to every lookup, or because they save L1 fills that were never on the critical path.
 
-**Where it stands** (as of 2026-09-22)
+**Where it stands** (as of 2026-10-02)
 
 - Sixteen slots stays: eleven nets below 1.00, twenty-four reads 0.85 to 1.00 everywhere (it dilutes the eight counter classes), twelve 0.9888. [Eleven slots and twenty-four slots](#eleven-slots-and-twenty-four-slots-and-why-sixteen-is-where-it-stops)
 - Eight one-byte counters per group is the top of the counter axis: one counter 0.959, 16 nibbles 0.986, 32 two-bit 0.988. [The width of the overflow counter](#the-width-of-the-overflow-counter-all-four-divisions-of-a-groups-eight-counter-bytes-measured-against-the-designs-eight-one-byte-counters)
 - An exact in-home counter is worth 2-3% in cache only; ~80% of what the counter misses is siblings. [And the fifth point on that axis](#and-the-fifth-point-on-that-axis-an-exact-counter-worth-2-3). Per-step counter choice is a no-op or noise: [Which counter a probe consults at each step of its sequence](#which-counter-a-probe-consults-at-each-step-of-its-sequence)
 - The merged 88 byte block is kept (7% fewer lookup instructions, 28% fewer dTLB misses at 4M): [Two optimizations the charts point at](#two-optimizations-the-charts-point-at-one-measured-and-one-not-yet). Split arrays tie: [Fingerprints and counters in two arrays instead of ...](#fingerprints-and-counters-in-two-arrays-instead-of-one-24-byte-group). Line-aligned indices 0.993, second fingerprint 0.975, 16-bit indices 0.986: [Three layouts borrowed from other maps, all lost](#three-layouts-borrowed-from-other-maps-all-lost-line-aligned-value-indices-a-second-fingerprint-in-the-index-word-a-16-bit-index)
-- Double hashing: rejected on 2026-09-07 on a paired run (`rmiss64` 0.915), but re-measured one header per binary on 2026-10-02 the score is level, churned misses are 1.07-1.18x faster and a fresh clang integer hit 2-5% slower; open ([re-measured](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang)); a per-table seed is free on lookups, 3.5% of a build, macro material: [Three ideas the eighteen-map comparison suggested](#three-ideas-the-eighteen-map-comparison-suggested-all-measured-none-kept)
+- Triangular probing stays (#355): a step from the key takes 7-18% off a churned miss, all of it in the first step, and every way of computing it keeps a third value live across a walk whose start is on the integer hit path, +1.8-10% of the score's find instructions; peeling the home group off to avoid that loses 14-18% of a churned lookup under clang. [Seven probe sequences](#seven-probe-sequences-and-five-ways-of-computing-their-step-against-the-triangular-one-a-key-dependent-step-shortens-a-churned-miss-and-every-way-of-computing-it-costs-the-walk-a-third-live-value-that-no-source-shape-hides), following [the one-header re-measurement](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang); a per-table seed is free on lookups, 3.5% of a build, macro material: [Three ideas the eighteen-map comparison suggested](#three-ideas-the-eighteen-map-comparison-suggested-all-measured-none-kept)
 - The sliding window wins 1-5% of a hit, nothing on a miss against counters, loses 24% of churn at 1M and forecloses counters and merged block: [The sliding window, built and measured rather than simulated](#the-sliding-window-built-and-measured-rather-than-simulated), [A dense map on flat_wmap's structure, measured against the shipped one](#a-dense-map-on-flat_wmaps-structure-measured-against-the-shipped-one-and-the-comparison-is-not-what-it-looks-like)
 - A narrower value index or tiny pointers: at most ~9% of memory, no speed (#229), closed: [Tiny pointers, and the bound insertion order puts ...](#tiny-pointers-and-the-bound-insertion-order-puts-on-the-value-index). Not zeroing the index: 1.7% and UB, reverted: [Not zeroing the value index](#not-zeroing-the-value-index)
 - Growth below 2 for the value vector: a knob, not the default: [A growth factor below 2](#a-growth-factor-below-2-and-the-premise-that-suggested-it-was-wrong)
@@ -1144,7 +1145,7 @@ What this says and does not say: the paired harness at fifty points per octave, 
 
 ### Double hashing with the step taken from the fingerprint, re-measured one header per binary after the churn harness was fixed: churned misses 1.07-1.18x faster, the score level, a fresh integer hit up to 5% slower under clang
 
-*2026-10-02 · no issue · open · Ryzen 9 7950X, clang 22 and gcc 16, one header per binary, 3 rounds alternated (5 for the score), medians, `AB_CORE=2`; variant generated by a patcher outside the tree (step = 2 * fingerprint + 1, as folly's `probeDelta`; `delta` stays the step counter so every termination bound keeps its meaning)*
+*2026-10-02 · no issue · superseded · Ryzen 9 7950X, clang 22 and gcc 16, one header per binary, 3 rounds alternated (5 for the score), medians, `AB_CORE=2`; variant generated by a patcher outside the tree (step = 2 * fingerprint + 1, as folly's `probeDelta`; `delta` stays the step counter so every termination bound keeps its meaning)*
 
 Re-taken because the churned half of the 2026-09-07 rejection (see [Three ideas the eighteen-map comparison suggested](#three-ideas-the-eighteen-map-comparison-suggested-all-measured-none-kept)) came from `scripts/ab/probe_length.cpp` churning in sequential keys, which leaves almost no drift to save. The 2026-09-07 variant took its step from hash bits 8-15; this one takes it from the fingerprint, which every probe site already holds, so no signature changed. Ten sites walk the sequence (`probe_from`, `probe_after_home`, `place_group`, `uncount`, `erase_group_slot`, `move_home`, `slot_of_value`, `repoint_value`, `fill_buckets_from_values` and `next_group` itself). The unit suite passes except the one test that encodes "the next group" (`erase_uncounts.cpp`, `a_rehash_rebuilds_the_overflow_counters_as_they_were`, 19 compares against 27).
 
@@ -1175,6 +1176,84 @@ Re-taken because the churned half of the 2026-09-07 rejection (see [Three ideas 
 **What this says.** The 2026-09-07 numbers (`rmiss64` 0.915, `build64` 0.950 paired) do not reproduce one header per binary for this variant: the score is level, builds are level, fresh misses are level or better. What double hashing buys is real and is on a table churned at a fixed size: 7-18% off a miss, the same size as `move_home`'s gain, and the two stack (the one-writing-hit rows). What it costs is a fresh integer hit under clang, 2-5% (two more instructions on the critical path, the step), and nothing measurable elsewhere. The "nothing left to win" of 2026-09-07 was a statement about the sequential-key table.
 
 **What this does not say.** Two side effects were reasoned about and not measured: while a table has sixteen groups or fewer, every key of one counter class has the same step modulo the group count, so the smallest tables give a class one shared sequence; and the first step off home is no longer the adjacent block, which the hardware prefetcher served. ARM is unmeasured. The caller corpus and the shape search were not re-run, and a change to `next_group`'s inputs changes what the probe keeps live. It is a candidate for its own issue, not a change made here.
+
+**Later (2026-10-02):** #355 measured seven sequences and five ways of computing their step, and none is at or under the triangular sequence everywhere; see [Seven probe sequences](#seven-probe-sequences-and-five-ways-of-computing-their-step-against-the-triangular-one-a-key-dependent-step-shortens-a-churned-miss-and-every-way-of-computing-it-costs-the-walk-a-third-live-value-that-no-source-shape-hides). The "two more instructions on the critical path" above is four under clang in that loop: the step's register spills the caller's accumulator.
+
+### Seven probe sequences and five ways of computing their step against the triangular one: a key-dependent step shortens a churned miss, and every way of computing it costs the walk a third live value that no source shape hides
+
+*2026-10-02 · #355 · rejected · Ryzen 9 7950X, clang 22 and gcc 16, `AB_CORE=2`; `scripts/ab/probe_sequence.{py,sh}` (variants), `scripts/ab/probe_length.sh`, `scripts/ab/solo.sh -h` + `perwl.sh` (score, 5 rounds), `scripts/ab/prefetch_index.cpp` under `perf stat` (instructions per lookup)*
+
+#355 asked for a sequence that keeps [double hashing's churned-miss gain](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang) and loses nothing anywhere else. None does. `scripts/ab/probe_sequence.py` writes every variant as a patched copy of the header in which all ten walks go through one `advance()`; `--check` proves for every variant, every fingerprint and 4 to 65536 groups that the walk visits every group within its bound (a variant that visits some group twice gets the bound raised by as many steps; shortening that bound makes `--check` fail). The unit suite passes against every variant except, for the ones whose first step is not +1, the test that encodes "the next group" (`a_rehash_rebuilds_the_overflow_counters_as_they_were`).
+
+| variant | step `delta` (1, 2, ...) |
+|---|---|
+| `tri` | `delta` (shipped) |
+| `dh` | `2*fp + 1` (folly's `probeDelta`) |
+| `dh1`, `dh2` | `delta` for the first one or two steps, then `2*fp + 1` |
+| `dhhi`, `dh1hi` | `2*(fp >> 3) + 1`, which the counter class `fp & 7` does not use; and with home+1 first |
+| `dhcls` | `2*class + 1`: the class is in a register anyway |
+| `tric1` | `2*class + 1` for the first step, triangular after it |
+| `dhp`, `dhq` | `dh` with the step packed into `delta` (`steps << 9 \| step`, and `step << 32 \| steps`) |
+| `dhv`, `dhclsv`, `tric1v` | the step's input behind an empty `asm volatile`, so it cannot be hoisted (diagnostic) |
+| `<v>peel` | any of them with the home group peeled off `probe()`, `place_group`, `slot_of_value` and `repoint_value` |
+
+**Groups per lookup**, 4096 groups, 200 turnovers, no writing hits (churned miss / churned hit; fresh miss at 0.799):
+
+| | 0.76 churned miss | 0.76 churned hit | 0.799 churned miss | 0.799 churned hit | 0.799 fresh miss |
+|---|---|---|---|---|---|
+| `tri` | 1.265 | 1.136 | 1.432 | 1.204 | 1.086 |
+| `dh` | **1.174** | 1.113 | **1.268** | 1.162 | 1.054 |
+| `dhhi` | 1.172 | 1.115 | 1.279 | 1.165 | 1.054 |
+| `dhcls` | 1.205 | 1.118 | 1.337 | 1.167 | 1.067 |
+| `tric1` | 1.204 | 1.119 | 1.319 | 1.169 | 1.067 |
+| `dh1` | 1.236 | 1.130 | 1.363 | 1.189 | 1.075 |
+| `dh2` | 1.254 | 1.136 | 1.415 | 1.202 | 1.084 |
+
+The gain is in the first step. Keeping home+1 first (`dh1`) gives back two thirds of it and `dh2` nearly all: a full group's overflow all going to the one adjacent group is what lengthens the churned walk, not the steps after it. The decorrelated step (`dhhi`) is no better than `dh` at 4096 groups. Spreading the first step over eight neighbours by class (`dhcls`, `tric1`) gets two thirds of `dh`'s gain. On 4, 8 and 16 groups (2000 turnovers) the cells move in both directions by up to 0.1 group with a few hundred keys and no variant is consistently worse than `tri`; the class/step correlation the issue worried about does not show.
+
+**Instructions per lookup**, the score's `find_all` at 50000 entries, (20 calls minus 0 calls) / 20M, hit / miss:
+
+| | clang | gcc |
+|---|---|---|
+| `tri` | 54.0 / 42.8 | 51.0 / 39.8 |
+| `dh` | 57.9 / 43.3 | 53.0 / 42.5 |
+| `dhcls` | 55.9 / 42.5 | 54.9 / 43.6 |
+| `tric1` | 58.0 / 43.7 | 55.1 / 43.8 |
+| `dhp` | 58.9 / 44.4 | 55.2 / 42.8 |
+| `dhq` | 56.9 / 44.4 | 53.0 / 41.6 |
+| `dhv` | 58.0 / 48.5 | 53.0 / 42.6 |
+| `tripeel` | 55.9 / 40.6 | 51.1 / 37.8 |
+| `dhpeel` | 58.0 / 42.4 | 52.1 / 37.5 |
+
+Where `dh`'s four come from, `perf annotate` of clang's loop: the triangular walk needs the group and `delta`, and after the hash nothing else is live but the class and the broadcast fingerprint. A step from the key is a third value. For an integer key the home group is the walk's first iteration, so the step's computation is loop-invariant and is hoisted in front of the home group, and the register it holds pushes the caller's accumulator to the stack: `movzbl` + `lea` for the step, and a load and a store around every hit's `add`. Every way round it was tried and each fails on clang. `dhp`: scalar evolution sees that `delta & 511` never changes and splits the step back out into its own register. `dhq`: one instruction back, not four. `dhv`: the step is no longer hoisted, but the word it is made from now needs the register instead. `dhclsv`/`tric1v`: the barrier on the class stops the hoist, and the table's members are then reloaded every lookup. `dhcls`/`tric1`: `2*class+1` is hoisted into a register of its own even though the class is live. A per-lookup count in one caller's loop also moves with the inliner (`find_all` is inlined into `main` for `tri` and out of line for most variants), which is why the score decides.
+
+**The score**, `solo.sh -h`, baseline over candidate, and `perwl.sh` (candidate over baseline, ins/op), the cells that miss +1%:
+
+| | clang score | gcc score | clang ins/op | gcc ins/op |
+|---|---|---|---|---|
+| `dh` | 0.9969 | 0.9982 | integer/big find +3.6/+4.6%, insert-erase +3.3/+2.5%, churn +2.1/+3.5% | integer find +7.0% |
+| `dhcls` | 0.9986 | 0.9990 | find +1.8/+2.8%, insert-erase +2.7/+2.0%, churn +1.9/+2.8% | integer find +10.0%, insert-erase +2.7/+2.4%, churn +2.0/+2.1% |
+| `tric1` | 0.9944 | 0.9956 | find +3.7/+4.8%, insert-erase +5.5/+5.2%, churn +4.6/+3.6% | integer find +9.1%, insert-erase +3.8/+5.2%, churn +2.5/+3.3% |
+| `dhpeel` | 0.9969 | **1.0082** | find 1.000/0.999, insert-erase +2.4/+1.4%, churn +3.9/+5.9% | **none**: nothing above +0.1%, integer find -3.1% |
+| `tripeel` | 1.0020 | 1.0034 | none: nothing above +0.2%, integer churn -2.3% | none: nothing above +0.8%, -2 to -4% on the integer workloads |
+
+**Peeling loses time although it saves instructions.** `tripeel` changes nothing but the peel and does fewer instructions in the score on both compilers, and it is slower: tri over variant, `move_home.cpp` at 52363 entries churned 40 times and the fresh `find_all` at 50000, 5 rounds rotated, medians:
+
+| | clang `tripeel` | clang `dhpeel` | gcc `tripeel` | gcc `dhpeel` | gcc `dh` |
+|---|---|---|---|---|---|
+| churned miss | **0.851** | 0.946 | 0.996 | **1.180** | **1.173** |
+| churned hit | 0.857 | 0.872 | 0.976 | 1.020 | 1.024 |
+| churned miss, one writing hit | 0.825 | 0.886 | 0.998 | 1.135 | 1.132 |
+| churn round | 0.964 | 0.959 | 1.022 | 1.059 | 1.040 |
+| fresh `uint64_t` hit | 0.968 | 0.951 | 0.973 | 0.948 | 1.012 |
+| fresh `uint64_t` miss | 1.000 | 1.059 | 0.985 | 1.057 | 1.034 |
+| fresh string hit, builds | 0.987-1.004 | 1.001-1.004 | 1.003-1.021 | 1.002-1.015 | 1.000-1.021 |
+
+Under clang the peeled `probe()` makes a churned lookup 14-18% slower; under gcc it costs the fresh integer hit 3-5%. The home group inlined twice over (once peeled, once as the loop's first iteration in `probe_from`, which other callers still use) is more code in every caller, and the instruction count does not see what it does to the front end. Peeling is rejected with or without a new sequence.
+
+**What this says.** A key-dependent step takes 7-18% off a churned miss, and the first step is where all of it is. The price is one more value live across the walk, and the walk's preheader is on the hit path of every integer lookup. No source shape removes that: the compilers split, hoist or reload around every attempt, and the shape that does remove it (peeling) costs more in time than it saves. Plain `dh` is the best of them in time (gcc within the ±3% band or faster in every cell; clang 2-5% slower on a fresh integer hit), but it adds 3.6-7% instructions to the score's integer find, so #355's "instructions not above +1%" is not met by any variant on either compiler.
+
+**What would reopen it:** a sequence whose step needs no value that the triangular walk does not already hold (class-only steps were the attempt, and the compilers still give the step a register of its own), or a caller where a register is free, which is not something the header can know. ARM, the caller corpus and `fuzz_group_index` were not run, since no variant became a candidate.
 
 ## Lookup: the probe, SIMD compare and prefetch
 

@@ -46,8 +46,9 @@ auto measure(map_t const& m, std::vector<std::uint64_t> const& keys, std::size_t
 int main(int argc, char** argv) {
     auto const load = argc > 1 ? std::strtod(argv[1], nullptr) : 0.76;
     auto const turnovers = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 200;
-    // 4096 groups = 65536 slots; fill to the requested load
-    auto const slots = std::size_t{65536};
+    // 4096 groups = 65536 slots by default; fill to the requested load
+    auto const groups = argc > 4 ? std::strtoull(argv[4], nullptr, 10) : 4096;
+    auto const slots = static_cast<std::size_t>(groups) * 16U;
     auto const n = static_cast<std::size_t>(static_cast<double>(slots) * load);
 
     auto r = rng();

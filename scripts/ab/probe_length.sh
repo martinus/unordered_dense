@@ -2,11 +2,12 @@
 # Groups visited per lookup, fresh and after churn: the drift a table takes on because nothing moves
 # after it is placed, and what move_home() takes back.
 #
-#   scripts/ab/probe_length.sh [load] [turnovers] [writing hits per round]
+#   scripts/ab/probe_length.sh [load] [turnovers] [writing hits per round] [groups, default 4096]
 #
 # The counter cannot live in the header -- it would be in everybody's probe -- so this patches a
 # copy of it, exactly the way run.sh makes its baseline copy, and builds against that. Nothing in
-# the working tree is touched.
+# the working tree is touched. AB_HEADER=<path> instruments that header instead of the working tree's
+# (scripts/ab/probe_sequence.sh passes each probe sequence variant this way).
 #
 # `writing hits per round` is how many `operator[]` lookups on a present key each churn round does.
 # That is the path move_home() runs on, so 0 measures the drift and 1 or 4 measure what taking it
@@ -21,7 +22,7 @@ mkdir -p "$build"
 cxx=${CXX_PROBE:-clang++}
 
 # the probe, with a counter in it
-python3 - "$root/include/ankerl/unordered_dense.h" "$build/instrumented.h" <<'PY'
+python3 - "${AB_HEADER:-$root/include/ankerl/unordered_dense.h}" "$build/instrumented.h" <<'PY'
 import sys
 src, dst = sys.argv[1], sys.argv[2]
 s = open(src).read()
