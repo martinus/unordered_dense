@@ -82,12 +82,13 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 // Measured on map<uint64_t, uint64_t> from 1M to 64M entries (notes/index-design.md, "A map_view
 // over a mapped file"). Random hits on 2 MB pages are 1.03-1.13x as fast as on the file's pages from
 // 4M to 64M entries, the same as the owning map gains from huge_page::map; the 4 KB file mapping
-// runs at the owning map's speed there. At 1M the gap is 1.38x (clang) and 1.70x (gcc). With the
-// file in the page cache, the first 100000 lookups on a fresh `file` mapping (trust::unchecked)
-// take 2-17 ms, where reading the owning map takes 14 ms to 1 s. With the file not in the page cache
-// they take 17 ms at 1M and 8.6 s at 64M, where `file_populated` has done them in 9-312 ms and
-// `huge_copy` in 9-339 ms. So `file` is the default; `file_populated` is for a file that is likely not in the page cache;
-// `huge_copy` is for a process that does many lookups and does not share the file with others.
+// runs at the owning map's speed there. At 1M the gap is 1.4-2.1x, depending on how the file
+// entered the page cache. With the file in the page cache, the first 100000 lookups on a fresh
+// `file` mapping (trust::unchecked) take 2-17 ms, where reading the owning map takes 14 ms to 1 s.
+// With the file not in the page cache they take 17 ms at 1M and 8.6 s at 64M, where
+// `file_populated` has done them in 9-312 ms and `huge_copy` in 9-339 ms. So `file` is the default;
+// `file_populated` is for a file that is likely not in the page cache; `huge_copy` is for a process
+// that does many lookups and does not share the file with others.
 enum class mapping : std::uint8_t { file, file_populated, huge_copy };
 
 namespace detail {

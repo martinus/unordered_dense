@@ -652,7 +652,9 @@ The last argument, `ud::mapping`, says where the bytes live:
   nothing read until a lookup touches it, and every process that maps the file shares one copy in
   the page cache. The pages are the page cache's: 4 KB, unless the file is on hugetlbfs, where they
   are 2 MB with nothing more to ask for. `trust::checked` reads the whole index once, which pages
-  all of it in; the lazy start in the table below is `trust::unchecked`.
+  all of it in; the lazy start in the table below is `trust::unchecked`. Checked, the first 100000
+  lookups at 64M entries take 73 ms with the file cached (17 unchecked) and 684 ms with it evicted
+  (8601 unchecked: the check reads the index sequentially, which readahead serves in large reads).
 - `mapping::file_populated`: the same, with `MAP_POPULATE`, so the whole file is read before the
   constructor returns, sequentially.
 - `mapping::huge_copy`: the file read into private anonymous memory on 2 MB pages (`MAP_HUGETLB` if
@@ -677,7 +679,8 @@ huge pages, so it stands in for hugetlbfs, the same 2 MB pages):
 | `mapping::file_populated`, not in the page cache | 9 | 35 | 92 | 312 |
 | `mapping::huge_copy`, not in the page cache | 9 | 40 | 99 | 339 |
 
-So: 2 MB pages make lookups 1.03-1.13x faster from 4M entries up and 1.4-1.7x at 1M, and a 4 KB
+So: 2 MB pages make lookups 1.03-1.13x faster from 4M entries up and 1.4-2.1x at 1M (how much depends
+on how the file entered the page cache: a sequential read gives TLB-friendly large folios), and a 4 KB
 file mapping looks up as fast as the owning map on the default allocator from 4M up, and faster
 at 1M. Two processes on
 `mapping::file` each show the whole file in their RSS and half of it in their PSS, and the page

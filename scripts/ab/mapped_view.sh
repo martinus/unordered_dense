@@ -9,7 +9,7 @@
 set -euo pipefail
 export LC_ALL=C
 cxx=clang++ sizes=1000000,4000000,16000000,64000000 rounds=7 phases=warm,cold,shared
-modes=owning,owning_huge,view_file,view_populate,view_collapse,view_thp_copy,view_hugetlb
+modes=owning,owning_huge,view_file,view_populate,view_collapse,view_thp_copy,view_hugetlb,header_file,header_populated,header_huge,header_file_checked
 while getopts "c:n:r:p:m:" opt; do
     case $opt in
         c) cxx=$OPTARG ;;
