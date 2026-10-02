@@ -281,7 +281,7 @@ build against the vendored nanobench as they always did.
 ## Memory against time, the one chart the README embeds
 
 ```sh
-scripts/ab/alloc_timeline.sh          # measures, then draws doc/allocated_memory.png
+scripts/ab/alloc_timeline.sh -u v5.2.0 # measures, then draws doc/allocated_memory.png
 ```
 
 `memory.cpp` above answers "how much does this map hold", one number per size. This one answers

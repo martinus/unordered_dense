@@ -36,6 +36,7 @@ place rather than being deleted, because the retraction is usually the more usef
 - The lookup harnesses measure throughput, and a million entries is not past the cache here
 - `max_rss::of` was charging every map 128 KB of its own, and the counter beside it could not see `aligned_alloc`
 - Peak memory across every harness is now the process's resident high-water mark, and one build of the map is enough to measure it
+- Every configuration of 5.2.0, twelve rows in the README run (#349): `pmr` is free, `group_big` costs 16-34% on integer keys below 2^32 elements, `segmented_map` builds 1.9x faster at 0.58x the peak memory and iterates strings 3.38x slower with its default 4 KB segment, and huge pages are the largest gain on every integer panel
 
 **Dead ends of the group index (paired A/B, 2026-09-05)**
 
@@ -650,6 +651,61 @@ allocator will not reproduce it, which is why bytes-requested stays measured bes
 under `memory`. `alloc_timeline.cpp` still counts bytes, and should: its output is a timeline of
 individual allocations, which resident-set sampling cannot reproduce at that resolution.
 
+
+**Every configuration of 5.2.0, twelve rows in the README run (#349): `pmr` is free, `group_big` costs 16-34% on integer keys below 2^32 elements, `segmented_map` builds 1.9x faster at 0.58x the peak memory and iterates strings 3.38x slower with its default 4 KB segment, and huge pages are the largest gain on every integer panel** (2026-10-01/02, issue #349, Ryzen 9 7950X, clang 22.1.8,
+`scripts/ab/bench_readme.sh -u v5.2.0`, 25 maps x 2 key types, 1M base octave, 3 rounds, median,
+23:47 to 02:30, `AB_CORE=2`). `-u REV` is new for this: it builds every `unordered_dense` row from
+REV's three headers (checked byte-identical to the tag, and `-H` shows all three resolved from the
+copy) and writes the version to `doc/bench_readme.ref`, which `mapsplot.py` uses as the reference
+label. The twelve rows are values {`std::vector`, `segmented_map`} x index {`group`, `group_big`} x
+allocator {`std::allocator`, `pmr::` on the default resource, `huge_page_allocator`}; `pmr` and huge
+pages share the allocator slot. Huge page segmented rows use 16 MB segments, the others the 4096
+byte default. Ratio to 5.2.0's `map`, `uint64_t` / `std::string`:
+
+| configuration | build + destroy | find | churn | iterate | peak rss |
+|---|---|---|---|---|---|
+| `pmr` | 1.03 / 1.02 | 1.00 / 0.99 | 1.01 / 1.00 | 0.99 / 1.03 | 1.00 / 1.00 |
+| `group_big` | 1.34 / 1.04 | 1.18 / 1.03 | 1.16 / 1.05 | 1.01 / 1.03 | 1.21 / 1.07 |
+| `group_big`, `pmr` | 1.36 / 1.05 | 1.17 / 1.03 | 1.16 / 1.05 | 1.02 / 1.02 | 1.21 / 1.07 |
+| segmented | 0.54 / 0.66 | 1.04 / 1.00 | 1.11 / 1.03 | 1.51 / 3.38 | 0.58 / 0.90 |
+| segmented, `pmr` | 0.54 / 0.66 | 1.05 / 1.00 | 1.11 / 1.03 | 1.51 / 3.39 | 0.58 / 0.90 |
+| segmented, `group_big` | 0.74 / 0.70 | 1.20 / 1.04 | 1.46 / 1.08 | 1.59 / 3.40 | 0.78 / 0.97 |
+| segmented, `group_big`, `pmr` | 0.73 / 0.70 | 1.21 / 1.04 | 1.46 / 1.08 | 1.58 / 3.47 | 0.79 / 0.97 |
+| huge | 0.58 / 0.70 | 0.91 / 0.97 | 0.80 / 0.96 | 0.84 / 0.97 | 0.78 / 0.98 |
+| huge, `group_big` | 0.66 / 0.77 | 1.08 / 0.99 | 0.99 / 1.00 | 0.91 / 0.97 | 0.99 / 1.04 |
+| segmented 16 MB, huge | 0.50 / 0.50 | 0.95 / 0.97 | 0.88 / 0.96 | 1.35 / 1.00 | 0.66 / 0.91 |
+| segmented 16 MB, huge, `group_big` | 0.57 / 0.53 | 1.10 / 0.99 | 1.19 / 1.00 | 1.46 / 1.02 | 0.86 / 0.98 |
+
+5.2.0's `map` itself: `uint64_t` 23.24 ns build + destroy, 29.70 find, 88.33 churn, 0.20 iterate,
+48.6 B/entry peak; `std::string` 92.72, 126.00, 418.96, 0.67, 122.8. Every `pmr` row is within
+3.5% of its `std::allocator` twin. `group_big` against `group` is the 152 byte block against 88;
+with huge pages under both the integer find ratio stays (1.18 plain, 1.18 on huge pages), so it is
+not the TLB alone. The segmented string iteration (3.38) against 16 MB segments on huge pages
+(1.00) changes two things at once; #350 separates them.
+
+The same run with `main`'s headers (ee1adaf plus nothing in `include/`), earlier the same evening,
+19:58 to 22:41, is recorded and not compared, being a run from a different time: segmented
+`uint64_t` read find 1.15 and churn 1.00 against its own `map`, where 5.2.0's reads 1.04 and 1.11;
+`group_big` 1.15 / 1.13; huge 0.92 / 0.74. If the segmented swap between find and churn is real it
+is one of the nine header commits since v5.2.0, and only a paired run (`maps.sh -r`) can say.
+
+The libraries, in the same 5.2.0 run, replace the 2026-09 CSV wholesale, which was measured against
+an older header and so is not compared either: integer find and churn against boost 0.73 / 0.61
+then, 0.73 / 0.59 now; `std::unordered_map` iterate 110x then, 112x now. folly and emhash had to be
+re-cloned at the pinned commits (`~/gra/folly/hightent`, `~/gra/emhash/fastsong`) with a
+hand-written `folly-config.h`; without them `bench_readme.sh` drops their rows with only a
+`missing:` line on stderr. `spill_trap.cpp`, unchanged source, read 54 cycles for the no-trap loop
+against the 48 recorded, and `latency.cpp` 17.0 / 12.0 ns for `unordered_dense` and 22.4 / 7.4 for
+boost against 16.6 / 12.2 and 22.0 / 7.3.
+
+`doc/allocated_memory.png` was re-drawn from v5.2.0 the same night (`alloc_timeline.sh -u v5.2.0`,
+which got the same option): the byte counts are identical to the previous chart to 0.1 MB, the fill
+times are 0.38 s boost, 0.39 s `segmented_map`, 0.44 s abseil, 0.49 s `map`.
+
+What this says and does not say: one machine, one size octave from 1M, inside the cache boundary.
+It does not say how `group_big` behaves past 2^32 elements, the only place it is needed, or what a
+`pmr` resource other than `new_delete_resource` does (a monotonic resource would keep every
+superseded block).
 
 ## Dead ends of the group index (paired A/B, 2026-09-05)
 **`probe_result`'s shape swept two ways, a third argued down from the return sequence, and the one that ships is the best of them** (2026-09-12,

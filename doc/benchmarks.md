@@ -2,96 +2,103 @@
 
 [README](../README.md) · [Usage](usage.md) · [Design](design.md) · **Benchmarks** · [Real world usage](users.md)
 
-The long version of the two graphs in the [README](../README.md#benchmarks): what each panel
-measures, what the graphs say, what `ankerl::unordered_dense`'s two opt-in shapes do to the same
-numbers, and how it was all taken. Obviously I wrote both the map and the benchmark, so the bias is
-where you'd expect it. Everything is relative to `ankerl::unordered_dense::map`, so 1.00 is level
-with it and 2.00 is twice the cost. Raw numbers are in [bench_readme.csv](bench_readme.csv).
+The long version of the graphs in the [README](../README.md#benchmarks), plus every configuration `ankerl::unordered_dense` itself can be put in. Obviously I wrote both the map and the benchmark, so the bias is where you'd expect it. Every `unordered_dense` row is the latest release, 5.2.0, and everything is relative to its `ankerl::unordered_dense::map`: 1.00 is level with it, 2.00 is twice the cost. Raw numbers are in [bench_readme.csv](bench_readme.csv).
 
 ![benchmark results, uint64_t keys](bench-readme-u64.svg)
 
 ![benchmark results, std::string keys](bench-readme-str.svg)
 
-## What each panel measures
-
 | panel | one operation is | `map<uint64_t, size_t>` |
 |---|---|---|
-| build + destroy | one insert into a map that starts empty with nothing reserved, plus that entry's share of destroying the map afterwards | 23.80 ns |
-| find | one lookup, half of them hitting | 29.29 ns |
-| churn | one erase and one insert at a fixed table size, with a key the map does not currently hold | 84.63 ns |
-| iterate | one element visited by a full pass, summing the mapped value | 0.19 ns |
-| peak memory | one live entry's share of the highest resident set the process reaches while the map is built, its baseline subtracted | 48.7 bytes |
+| build + destroy | one insert into an empty map, nothing reserved, plus its share of destroying the map | 23.2 ns |
+| find | one lookup, half of them hitting | 29.7 ns |
+| churn | one erase plus one insert of a key not in the map, at a fixed size | 88.3 ns |
+| iterate | one element of a full pass, summing the mapped value | 0.20 ns |
+| peak memory | one entry's share of the highest resident set while building, baseline subtracted | 48.6 bytes |
 
-The `geomean` column is the sort key and nothing more. Every axis ends where its own bars do, except `iterate`, which stops at 10x: `std::unordered_map` needs 110x there, and an axis that fits that turns every other bar into a sliver. The bars that run past it are drawn torn off, with the real number next to them.
+The `geomean` column is only the sort key. `iterate` is capped at 10x, because `std::unordered_map` needs 112x there and would squash every other bar. Bars that run past the axis are drawn torn off, with the real number next to them.
 
-## Iteration is what the dense layout buys, integer find is what it costs
+## Iteration is what the dense layout buys, integer find and churn are what it costs
 
-**Iteration is what the dense layout buys.** One pass costs 0.19 ns per element with `uint64_t` keys. The elements sit in a `std::vector` and the pass never looks at the index at all. The flat maps need 5.5x to 13x of that because they walk metadata and skip empty slots, and `std::unordered_map` needs 110x because it chases a pointer per element. If you iterate often, no other panel here will matter as much.
+**Iteration:** 0.20 ns per element with `uint64_t` keys. The elements sit in a `std::vector`, and a pass never looks at the index. The flat maps need 5.4x to 13x of that because they walk their metadata and skip empty slots, and `std::unordered_map` needs 112x because it follows a pointer per element.
 
-**With string keys it builds and destroys 2.1x to 2.6x faster than any flat map.** 93 ns per entry, against 192 ns for `absl::flat_hash_map` and 237 ns for `emilib`. Part of that is the hash: with `uint64_t` keys, where the hash is nearly free, `absl::flat_hash_map` is at 0.81 and `emilib` at 0.90, so the index is not what makes the string case fast.
+**Building with string keys:** 2.1x to 2.6x faster than every flat map here, 93 ns per entry against 196 for `absl::flat_hash_map` and 241 for `emilib`. Most of that is the teardown: freeing a million `std::string` buffers costs `unordered_dense` 15 ns per entry and every flat map 64 to 71 ns. Same strings, different order. A dense map frees them in insertion order, the way the heap was filled, a flat map in hash order. With `uint64_t` keys there is nothing to free per element, and `absl::flat_hash_map` builds at 0.82. For the boost, absl and F14 node maps the teardown is 56% to 61% of the lifetime, so a panel without the destructor would show `absl node` at 1.59 instead of 3.79. Inserts alone are in the CSV under `build`.
 
-**The rest of it is the teardown, which is why that panel includes it.** Freeing a million `std::string` buffers costs this map 14 ns per entry and every flat map 64 to 68 ns. The strings are the same strings; what differs is the order they are released in. A dense map keeps its elements in insertion order, so the frees walk the heap the way it was filled, while a flat map holds them in hash order and frees them in a sequence unrelated to how they were allocated. For the node maps the teardown is not a detail at all: it is 58% to 62% of the whole lifetime with `uint64_t` keys, where for this map it is 6%. A panel that stopped at the last insert would report `absl node` at 1.46 rather than 3.64, and hide the difference entirely.
+**Integer find and churn:** against `boost::unordered_flat_map`, a `uint64_t` lookup is 0.73 and a churn pair 0.59. `indivi::flat_umap` churns at 0.65, `indivi::flat_wmap` finds at 0.71, `absl::flat_hash_map` reads 0.75 and 0.86. That is the design. A lookup pays one more dependent load than a flat map, and an erase has to find the element and then re-find the slot of the one that gets moved into its hole. With `std::string` keys the hash pays most of it back: 1.13 and 0.91 against boost.
 
-**Integer find and churn are where it loses.** Against `boost::unordered_flat_map` a `uint64_t` lookup is 0.73 and a churn pair is 0.61. `indivi::flat_umap` churns at 0.66, `indivi::flat_wmap` finds at 0.71, and `absl::flat_hash_map` is the mildest of them at 0.81 on both. That is the design and not a bug. An erase has to find the element and then re-find the slot of the element that gets swapped into the hole, and a lookup pays one indirection that a flat map does not have. With `std::string` keys the same two numbers against boost are 1.15 and 0.91, so the hash pays most of it back.
+**Peak memory:** resident pages, which is not the same as bytes requested. The flat maps hold 1.04x to 1.28x per `uint64_t` entry, the node maps 0.94x to 1.04x. Counted as bytes requested, `absl::flat_hash_map` is at 0.96 where resident pages put it at 1.11. The difference is what a doubling array leaves behind: the old block is freed but stays resident in glibc's arena, and the next one is twice as big, so it can't reuse it. That is glibc's policy and not a property of any map; bytes requested are in the CSV under `memory`.
 
-**Peak memory is measured as resident pages, and that is not the same as bytes asked for.** Every flat map here holds 1.04x to 1.28x per `uint64_t` entry, and the node maps 0.94x to 1.04x. The flat maps are not asking for more -- counted in bytes requested, `absl::flat_hash_map` is at 0.96 where resident pages put it at 1.11. The difference is what a doubling array leaves behind: each superseded block is freed but stays resident in glibc's arena, and the next one is twice its size, so it cannot be reused. A map that allocates a million uniform nodes leaves nothing behind, and its two numbers agree to 1%.
+**Against 4.11.0**, the robin hood index that 5.0.0 replaced: `uint64_t` build + destroy 1.65x faster, find 1.30x, churn 1.49x, and 1.15x the peak memory. With `std::string` keys it is only 1.28, 1.12 and 1.10.
 
-Which number you want depends on the allocator. The ~30% is glibc's retention policy rather than a property of the map, and another allocator will not reproduce it; the bytes-requested figure is in [bench_readme.csv](bench_readme.csv) under `memory` if that is the question you have.
+## Every configuration of `unordered_dense`, and which ones are worth it
 
-**5.0.0 builds and destroys `uint64_t` 1.6x faster than 4.11.0.** 4.11.0 is on the charts above, in the middle of the field rather than beside 5.0.0, which is the honest place for it. It is the robin hood index that 5.0.0 replaced: it builds and destroys at 1.59, finds at 1.29, churns at 1.49 and holds 1.14x the peak memory. Unfortunately the same comparison with `std::string` keys is only 1.26, 1.13 and 1.09, and part of even that is not the index at all: 5.0.0 also mixes the string hash in independent 16 byte blocks instead of chaining them, which took one hash of these keys from 2.52 ns to 2.00 ns under clang.
+The same run, for the options `unordered_dense` has ([#349](https://github.com/martinus/unordered_dense/issues/349)): values in a `std::vector` or [`segmented_map`](usage.md#segmented_map-and-segmented_set), the index as `bucket_type::group` or `group_big`, and the allocator as `std::allocator`, `pmr::` on the default resource, or [huge pages](usage.md#huge-pages). That is 12 combinations. `pmr` and huge pages both go in the allocator slot, so they don't combine. The huge page segmented rows use 16 MB segments as [usage.md recommends](usage.md#sizing-a-segment-for-a-huge-page), all other segmented rows the 4096 byte default.
 
-## Huge pages and segmented values move more than the choice of library
+![unordered_dense's own configurations, uint64_t keys](bench-readme-udm-u64.svg)
 
-The same run and the same reference, for the shapes this one map can be asked to take: segmented values, huge pages, or both.
+![unordered_dense's own configurations, std::string keys](bench-readme-udm-str.svg)
 
-![unordered_dense's own shapes, uint64_t keys](bench-readme-udm-u64.svg)
+Ratios to `map`, `uint64_t` / `std::string` keys:
 
-![unordered_dense's own shapes, std::string keys](bench-readme-udm-str.svg)
+| configuration | build + destroy | find | churn | iterate | peak memory |
+|---|---|---|---|---|---|
+| `pmr::map` | 1.03 / 1.02 | 1.00 / 0.99 | 1.01 / 1.00 | 0.99 / 1.03 | 1.00 / 1.00 |
+| `group_big` | 1.34 / 1.04 | 1.18 / 1.03 | 1.16 / 1.05 | 1.01 / 1.03 | 1.21 / 1.07 |
+| `segmented_map` | 0.54 / 0.66 | 1.04 / 1.00 | 1.11 / 1.03 | 1.51 / 3.38 | **0.58** / **0.90** |
+| `segmented_map`, `group_big` | 0.74 / 0.70 | 1.20 / 1.04 | 1.46 / 1.08 | 1.59 / 3.40 | 0.78 / 0.97 |
+| `huge_page::map` | 0.58 / 0.70 | **0.91** / 0.97 | **0.80** / 0.96 | **0.84** / 0.97 | 0.78 / 0.98 |
+| `huge_page::segmented_map`, 16 MB | **0.50** / **0.50** | 0.95 / 0.97 | 0.88 / 0.96 | 1.35 / 1.00 | 0.66 / 0.91 |
+| `huge_page::segmented_map`, 16 MB, `group_big` | 0.57 / 0.53 | 1.10 / 0.99 | 1.19 / 1.00 | 1.46 / 1.02 | 0.86 / 0.98 |
 
-[Huge pages](usage.md#huge-pages) take a `uint64_t` build and destroy to 0.60 and a churn to 0.79, for a one word change of the type. That 1.66x is larger than the biggest single-panel gain any other library here offers, which is boost's 1.64x on integer churn. [`segmented_map`](usage.md#segmented_map-and-segmented_set) builds at 0.64 because it never reallocates and moves the values, and it holds the lowest peak memory of any map in this run, 28.4 bytes per entry against 48.7 -- it is the map that leaves nothing superseded behind at all. It pays 1.54 on iteration for the extra indirection, and 3.48 with string keys. Both are opt-in, neither is the default.
+`pmr` on the default resource costs nothing measurable. Every cell is within 3.5% of `map`, and with `group_big` or `segmented_map` it is within 2.1% of the same configuration without `pmr`, so those rows are only in the charts. A dense map allocates a few large blocks, so a virtual call per allocation does not show up.
+
+`group_big` is for more than 2^32 elements, below that it is pure cost. Its group block is 152 bytes instead of 88, so the index is 1.7x the size and misses the cache more often. With string keys the hash dominates and the cost shrinks to 3% to 7%.
+
+`segmented_map` never reallocates: growing adds a segment instead of copying everything into a block twice the size, and no superseded block stays behind. With `uint64_t` keys that makes it build 1.9x faster, and 28.2 bytes per entry is the lowest peak memory of any map in this run. The extra indirection costs 4% on find, 11% on churn and 51% on iteration. Unfortunately iterating with `std::string` keys is 3.38x, and with 16 MB segments on huge pages it is 1.00. That changes both the segment size and the page, so it does not say which of the two it is; [#350](https://github.com/martinus/unordered_dense/issues/350) is about finding out. Combined with `group_big`, the combination the issue asked about, both costs add up for integer keys: 1.20 on find and 1.46 on churn.
+
+Huge pages are the largest gain on this page: 1.7x on the integer build and 1.25x on churn, for a one word change of the type. As far as I can say the lower peak memory comes from the allocator giving superseded blocks back to the kernel with `munmap`, where glibc keeps them resident. With 16 MB segments it builds fastest of everything here, 0.50 for both key types.
+
+So:
+
+- `map` if you don't know. Without huge pages, no configuration beats it on find, churn or iteration by more than 2%.
+- `huge_page::map` for tables of more than a few MB, if the allocator in the type is fine. It is at or below `map` on every panel here. At 50000 entries no block reaches 2 MB and it does nothing.
+- `segmented_map` if references must stay valid while inserting, or peak memory matters most, and iteration does not.
+- `group_big` only for more than 2^32 elements.
+- `pmr::` whenever you need it.
 
 ## A loop that divides and stores can run 5x slower, whatever map is in it
 
-This one cost me a day, so here it is for anyone benchmarking a hash map. On a Ryzen 9 7950X (Zen 4, the only CPU I measured it on), three things together make a lookup loop stop overlapping its cache misses, and it has nothing to do with the map:
+On a Ryzen 9 7950X (Zen 4, the only CPU I measured it on), three things together stop a lookup loop from overlapping its cache misses, and none of them is the map:
 
-- a loop variable that the compiler keeps on the stack, stored and reloaded every iteration (e.g. the state of the random generator that picks the next key),
+- a loop variable the compiler keeps on the stack, stored and reloaded every iteration (e.g. the state of the random generator that picks the next key),
 - a 64 bit division on the way from that variable to the next key (`r() % n`),
-- a store into the element that was just found, whose address therefore depends on a cache miss (`++m[key]`).
+- a store into the element just found, whose address depends on a cache miss (`++m[key]`).
 
-A loop over two plain arrays of 16M entries, no map anywhere, cycles per iteration, [scripts/ab/spill_trap.cpp](../scripts/ab/spill_trap.cpp):
+Two plain arrays of 16M entries, no map anywhere, cycles per iteration, [scripts/ab/spill_trap.cpp](../scripts/ab/spill_trap.cpp):
 
 | | clang 22 | gcc 16 |
 |---|---|---|
-| none of the three | 48 | 52 |
-| any one or two of them | 57 to 76 | 54 to 76 |
-| all three | **381** | **380** |
-| all three, but the store goes to a fixed address | 65 | 68 |
+| none of the three | 54 | 62 |
+| any one or two of them | 66 to 88 | 63 to 88 |
+| all three | **442** | **439** |
+| all three, but the store goes to a fixed address | 75 | 80 |
 
-The reload of the spilled variable waits until the store's address is known, which is as long as the cache miss behind it, and the division puts that wait on the way to the next iteration's misses. Remove any one of the three and it is gone.
+The reload waits for the store's address, which is as long as the cache miss behind it, and the division puts that wait on the way to the next iteration's misses. Remove any one of the three and it is gone. A map only decides how many registers its inlined insert takes from the caller, and so whether the caller's variables spill. Since [#310](https://github.com/martinus/unordered_dense/issues/310), on `main` and not in 5.2.0, everything an insert does after missing the home group is a call, to keep the caller's registers free. No map can promise that the caller's loop doesn't spill, though. If a lookup loop is much slower than its cache misses explain, look at the loop first: a key computed without a division, or a loop body small enough to keep its variables in registers, makes it go away.
 
-A map only decides how many registers its inlined insert takes from the caller, and so whether the caller's variables end up on the stack. That is how [udb3](https://github.com/attractivechaos/udb3), which picks its keys with `y % (n >> 2)` and does `++h[key]`, read `ankerl::unordered_dense` 5.2.0 at 80 ns per insert under clang against 48 for 5.1.0, with the same cache misses: 5.2.0 inlined more of the insert, and the loop's variables spilled. Since #310 everything an insert does after a miss is called again, under every compiler, and clang reads 42. That shape came out of a search over sixteen combinations of what an insert inlines, each judged by its worst ratio to the best combination over nine caller loops ([scripts/ab/caller_corpus.cpp](../scripts/ab/caller_corpus.cpp)), udb3 and ClickHouse: its slowest loop is 1.11x the best under clang and 1.58x under gcc, where 5.2.0's had one at 3.3x and 3.5x. It is not free under gcc (udb3's insert+delete 1.39x, ClickHouse's largest column 1.24x of the best shape), and no shape of the map can promise that a caller's loop does not spill.
+## How the numbers were taken, and what they don't say
 
-So if a lookup loop is much slower than its cache misses explain, look at the loop before the map: a key computed without a division (a power of two mask, or keys taken from an array) or a loop body small enough to keep its variables in registers makes it go away. And a benchmark that picks its keys with `%` measures this as much as the map.
+- One binary per map: a binary with a dozen maps has a code layout that moves more than the differences drawn here.
+- 5 table sizes spanning one doubling from 1 million entries, geometric mean. Load factor is a sawtooth between doublings, and two maps don't double at the same size, so a ratio at one size compares two random points of two cycles. For maps of different families I measured that at up to 26%.
+- 10 million operations per cell, each after one untimed warmup, 3 rounds over all maps, median.
+- `find` is **throughput, not latency**: each key comes from an rng, so several lookups are in flight. In a dependent chain at a million entries `unordered_dense` takes 17.0 ns against 12.0, and `boost::unordered_flat_map` 22.4 against 7.4 ([scripts/ab/latency.cpp](../scripts/ab/latency.cpp)). The ranking is different there.
+- 1 to 2 million entries spans the last level cache, it does not sit past it: 64 MB of L3 in two 32 MB slices, the process pinned to one core, and a million `map<uint64_t, size_t>` entries are 26 MB. Smaller tables sort the maps differently again.
+- Peak memory is `VmHWM`, reset through `/proc/self/clear_refs` before the fill, in a forked child per fill, with the resident set beforehand subtracted. Bytes requested come from a separate binary that interposes `malloc`, `calloc`, `realloc`, `free`, `aligned_alloc`, `posix_memalign`, `mmap` and `munmap`, because interposing `malloc` slows down node maps and not dense ones.
+- Every map uses its own default hash, because that's what you get when you type the name. The [design notes](../notes/index-design.md) give every map the same hash, to compare only the indexes.
+- `iterate` is a full pass over every element, which lots of programs never do. Treat anything under about 5% as a tie.
 
-## How the numbers were taken, and what they do not say
-
-The charts cover 1 million to 2 million entries. That spans the last level cache rather than sitting past it: this machine has 64 MB of L3 as two 32 MB slices and the measured process is pinned to one core, so a million entries of `map<uint64_t, size_t>` is 26 MB of group index and values and still mostly L3-resident, while two million is 53 MB and is not. Smaller tables sort the maps differently again. Also `iterate` counts a full pass over every element, which plenty of programs never do. Treat anything under roughly 5% as a tie.
-
-`find` measures **throughput, not latency**. Each lookup draws its key from an rng, so several are in flight at once, which is what a program that looks up in a loop gets. A dependent chain, where each key comes from the value the last lookup returned, is slower: at a million entries 16.6 ns against 12.2 for this map and 22.0 against 7.3 for `boost::unordered_flat_map`. The overlap is worth more to a flat map, which has one region and one dependent load, than to a dense one whose second load is already on the chain, so the ranking on the two is not the same. Ratios between maps on this page are all throughput and all measured the same way.
-
-The first panel times construction, the inserts and the destructor. The inserts on their own are in the CSV under `build`, and the difference between the two columns is what the teardown costs.
-
-One binary per map, because a binary with a dozen maps in it has a code layout that moves more than the differences being drawn. 5 table sizes spanning exactly one doubling, geometric mean over them: a load factor runs a sawtooth between doublings and two maps do not double at the same size, so a ratio at a single size compares two arbitrary points of two different cycles. For a pair from different families I measured that at up to 26%. 10 million operations per timed cell, and 3 rounds over the whole set of maps, median, each round preceded by an untimed warmup of that cell.
-
-Peak memory is the process's own high-water mark: `VmHWM` is reset through `/proc/self/clear_refs` before the fill and read after it, with the resident set beforehand subtracted so that the key pools and the binary are not charged. Each fill runs in a forked child, because glibc does not hand a grown arena back and a second fill in the same process would reuse resident pages and read far too low.
-
-The same run also counts bytes requested, by interposing `malloc`, `calloc`, `realloc`, `free`, `aligned_alloc`, `posix_memalign`, `mmap` and `munmap` and charging each block `malloc_usable_size` plus glibc's chunk header. All of them matter: a counter that watches only `operator new` reads a map that calls `malloc` directly at zero, and one that misses `aligned_alloc` reads a map that aligns its metadata array at a quarter of its real size. Those numbers are in the CSV under `memory`. The binary that counts is not the binary that times: interposing `malloc` costs a map that allocates per element a few percent and a dense map nothing, which is a bias that would land on one family only.
-
-The benchmarks behind the design notes ask a different question and hand every map the same hash, so that only the index differs. Here the hash is part of what a caller gets, so it stays in.
-
-Ryzen 9 7950X, Fedora 44, clang 22.1.8, `-O3`, transparent huge pages on `madvise`, the measured process pinned to one core. Boost 1.90, Abseil LTS 20250814, folly `65749da`, emhash and emilib `20a28e8`, indivi `27ff2ce`.
+Ryzen 9 7950X, Fedora 44, clang 22.1.8, `-O3`, transparent huge pages on `madvise`, measured process pinned to one core, run on 1st October 2026. Boost 1.90, Abseil LTS 20250814, folly `65749da`, emhash and emilib `20a28e8`, indivi `27ff2ce`.
 
 ```sh
-scripts/ab/bench_readme.sh            # 1h40m, writes doc/bench_readme.csv and the four SVGs
-scripts/ab/bench_readme.sh -w memory  # re-take a single panel
+AB_CORE=2 AB_BUILD=/some/dir scripts/ab/bench_readme.sh -u v5.2.0   # 2h45m, writes doc/bench_readme.csv and the four SVGs
+scripts/ab/bench_readme.sh -u v5.2.0 -w memory                      # re-take a single panel
 ```

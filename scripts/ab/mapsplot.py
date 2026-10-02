@@ -25,6 +25,7 @@ Stdlib only.
 """
 import csv
 import math
+import os
 import sys
 from collections import defaultdict
 
@@ -40,14 +41,21 @@ FAMILY = {
 OF = {
     "udm": "dense", "udm-4.11": "dense", "emhash8": "dense", "f14-vector": "dense", "ihtab": "dense",
     "udm-segmented": "dense", "udm-huge": "dense", "udm-seg-huge": "dense",
+    "udm-big": "dense", "udm-seg-big": "dense", "udm-huge-big": "dense", "udm-seg-huge-big": "dense",
+    "udm-pmr": "dense", "udm-seg-pmr": "dense", "udm-pmr-big": "dense", "udm-seg-pmr-big": "dense",
     "boost": "flat", "boost-own": "flat", "absl": "flat", "absl-own": "flat", "f14-value": "flat",
     "emilib": "flat", "indivi-u": "flat", "indivi-w": "flat", "verstable": "flat",
     "std": "node", "boost-node": "node", "absl-node": "node", "f14-node": "node",
 }
 PRETTY = {
     "udm": "unordered_dense 5.0", "udm-4.11": "unordered_dense 4.11", "boost": "boost flat",
-    "udm-segmented": "unordered_dense segmented",
-    "udm-huge": "unordered_dense, huge pages", "udm-seg-huge": "unordered_dense segmented + huge",
+    "udm-segmented": "segmented",
+    "udm-huge": "huge pages", "udm-seg-huge": "segmented 16 MB, huge pages",
+    "udm-big": "group_big", "udm-seg-big": "segmented, group_big",
+    "udm-huge-big": "group_big, huge pages",
+    "udm-seg-huge-big": "segmented 16 MB, group_big, huge pages",
+    "udm-pmr": "pmr", "udm-seg-pmr": "segmented, pmr",
+    "udm-pmr-big": "group_big, pmr", "udm-seg-pmr-big": "segmented, group_big, pmr",
     "boost-own": "boost flat, own hash", "absl": "absl flat", "absl-own": "absl flat, own hash",
     "f14-value": "F14Value", "f14-vector": "F14Vector", "f14-node": "F14Node",
     "emhash8": "emhash8", "emilib": "emilib", "indivi-u": "indivi flat_umap",
@@ -270,6 +278,11 @@ def panel_args(argv):
         else:
             rest.append(a)
     csvp, key, base, out = rest[0], rest[1], int(rest[2]), rest[3]
+    # The version the reference row was measured at, written beside the CSV by bench_readme.sh: the
+    # README draws a release, which is not necessarily the header in this tree.
+    ref = os.path.splitext(csvp)[0] + ".ref"
+    if os.path.exists(ref):
+        PRETTY[REF] = open(ref).read().strip()
     works = [w.split(":") for w in rest[4:]]
     only = set(flags["only"].split(",")) if "only" in flags else None
     drop = set(flags["drop"].split(",")) if "drop" in flags else set()
@@ -289,10 +302,10 @@ def panel_args(argv):
 def cmd_bars(argv):
     out, key, base, works, cols, vals, present, _ = panel_args(argv)
     order = sorted(present, key=lambda m: vals.get((m, works[0][0]), 9e9))
-    panels(out, f"relative to unordered_dense 5.0, {key} keys",
+    panels(out, f"relative to {PRETTY[REF]}, {key} keys",
            f"geometric mean over one octave from {base:,} entries; lower is faster",
            order, cols, vals,
-           "time relative to unordered_dense 5.0, so 1.00 is level with it")
+           f"time relative to {PRETTY[REF]}, so 1.00 is level with it")
 
 
 def cmd_readme(argv):
@@ -314,12 +327,12 @@ def cmd_readme(argv):
     order = sorted(present, key=overall)
     keyname = "uint64_t" if key == "u64" else "std::string"
     what = flags.get("title", "every map in its default configuration")
-    panels(out, f"relative to unordered_dense 5.0, {keyname} keys, {what}",
+    panels(out, f"relative to {PRETTY[REF]}, {keyname} keys, {what}",
            f"geometric mean over one octave from {base:,} entries; lower is better, and 1.00 is level "
-           f"with unordered_dense 5.0. Rows are sorted by the geomean of all five panels; a bar torn "
+           f"with {PRETTY[REF]}. Rows are sorted by the geomean of all five panels; a bar torn "
            f"off at the right ran past the axis.",
            order, cols, vals,
-           flags.get("unit", "relative to unordered_dense 5.0: time for the first four panels, "
+           flags.get("unit", f"relative to {PRETTY[REF]}: time for the first four panels, "
                                 "peak bytes per entry for the last"),
            surface=True, width=1030,
            # Four times the reference is where the choice between two maps is already made, for the
