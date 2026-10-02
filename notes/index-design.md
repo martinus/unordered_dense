@@ -146,6 +146,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [A bulk `visit()`, and the `prefetch(key)` API it replaced -- which was measured against the wrong baseline](#a-bulk-visit-and-the-prefetchkey-api-it-replaced----which-was-measured-against-the-wrong-baseline) · 2026-09-11 · kept
   - [`visit()` re-measured across the cache boundary: the cache-resident loss is a hit-rate effect](#visit-re-measured-across-the-cache-boundary-the-cache-resident-loss-is-a-hit-rate-effect) · 2026-09-13 · info
   - [`replace()` + `extract()` as the way to unique a vector, and the duplicate rate that turns it over](#replace--extract-as-the-way-to-unique-a-vector-and-the-duplicate-rate-that-turns-it-over) · 2026-09-13 · info
+  - [Loading a map from its values and its index: an owning load is 3-17x faster than building at 1M-64M entries and a view costs 0.85 ns per entry to check, but the slot check is most of an owning load, so the owning constructor takes `trust` too](#loading-a-map-from-its-values-and-its-index-an-owning-load-is-3-17x-faster-than-building-at-1m-64m-entries-and-a-view-costs-085-ns-per-entry-to-check-but-the-slot-check-is-most-of-an-owning-load-so-the-owning-constructor-takes-trust-too) · 2026-10-02 · kept
 - [The hash function](#the-hash-function)
   - [The string hash restructured: independent blocks from 17 to 144 bytes](#the-string-hash-restructured-independent-blocks-from-17-to-144-bytes) · 2026-09-06 · kept
   - [The last structural lever on the hash, taken and found to weigh nothing](#the-last-structural-lever-on-the-hash-taken-and-found-to-weigh-nothing) · 2026-09-07 · rejected
@@ -2947,7 +2948,7 @@ What this says and does not say:
 
 The bulk paths `replace()`, `merge()`, `insert(first, last)` and `visit()`, and the lookahead rings and cache gates inside them. A ring pays only once its index is out of cache, and where that happens depends on the rest of the loop and on the caller's duplicate rate, so each gate is fitted on its own loop and swept across sizes. Sizing a table from a range it has not seen is a guess about caller data and was declined even at 2x.
 
-**Where it stands** (as of 2026-09-13)
+**Where it stands** (as of 2026-10-02)
 
 - `replace()`'s ring is gated on `index_bytes > 256 KiB` (`pipeline_min_index_bytes`): geomean 0.9081 over 28 cells, worst cell 1.163. Its payoff depends on the duplicate rate (1.5x with none, 16% slower with a quarter, at 352 KiB). See [`replace()`'s gate was re-measured on a fixed harness and kept](#replaces-gate-was-re-measured-on-a-fixed-harness-and-kept-and-the-harness-is-the-finding).
 - `replace()`'s loops hold iterator cursors and ask `size()` rather than hold `last` (a fourth live value cost 3.5% cycles). See [`replace()`'s two loops walk with cursors too](#replaces-two-loops-walk-with-cursors-too-and-one-cursor-too-many-is-slower-than-none).
@@ -2955,6 +2956,7 @@ The bulk paths `replace()`, `merge()`, `insert(first, last)` and `visit()`, and 
 - Range insert sizing (#248) declined at 2x: every version is a heuristic about caller data. See [`insert(first, last)` sizing the table from the range](#insertfirst-last-sizing-the-table-from-the-range-built-measured-declined).
 - The range insert and bulk visit rings have no gate (#247). See [The other two pipelines do not want the cache gate](#the-other-two-pipelines-do-not-want-the-cache-gate-and-the-gates-own-footprint-model-was-wrong).
 - Chunk when an element has two dependent accesses, stream when it has one: `visit()` chunks, the rehash streams. See [Chunks or a sliding ring](#chunks-or-a-sliding-ring-the-rehash-and-the-bulk-visit-want-opposite-answers-and-the-reason-generalises).
+- Loading from values and index (#299): a checked owning load is 3.1-7.6x faster than building for integers and 3.9-17x for strings, 1M-64M; the slot check costs it 1.4-6.1x, so it takes `trust` like the view; a view's check is 0.85 ns per entry. See [Loading a map from its values and its index](#loading-a-map-from-its-values-and-its-index-an-owning-load-is-3-17x-faster-than-building-at-1m-64m-entries-and-a-view-costs-085-ns-per-entry-to-check-but-the-slot-check-is-most-of-an-owning-load-so-the-owning-constructor-takes-trust-too).
 - `visit(first, last, f)` replaced `prefetch(key)`, which was measured against the wrong baseline; batching keys is itself 1.5x. Below the cache `visit()` loses only when every key hits (0.89x at 1000 entries); with half misses it wins 1.15x to 1.24x at every size. See [A bulk `visit()`, and the `prefetch(key)` API it replaced](#a-bulk-visit-and-the-prefetchkey-api-it-replaced----which-was-measured-against-the-wrong-baseline) and [`visit()` re-measured across the cache boundary](#visit-re-measured-across-the-cache-boundary-the-cache-resident-loss-is-a-hit-rate-effect).
 - `replace()` + `extract()` dedups a `std::vector<std::string>` 10x to 27x faster than a boost set copied out; the lead erodes with duplicates. A forward compaction crosses over at 25-30% and is not applied. See [`replace()` + `extract()` as the way to unique a vector](#replace--extract-as-the-way-to-unique-a-vector-and-the-duplicate-rate-that-turns-it-over).
 
@@ -3313,6 +3315,35 @@ So a `segmented_vector::erase(first, last)` would today serve one unapplied patc
 Not applied. It regresses the 5-25% band, where a bulk load most likely is, and it changes `values()` afterwards from "partly reordered" to input order, which four tests in `test/unit/replace.cpp` and `fuzz_replace_map` pin. Worth revisiting for a caller whose input really is mostly duplicates.
 
 What this says and does not say: one machine, one compiler, one key distribution. A vector of 200 byte keys would move every row, since more of the time is hashing and less is `free`. It says nothing about `map`, only `set`. `std::sort` is in the tables for reference, not as a rival: it also sorts.
+
+### Loading a map from its values and its index: an owning load is 3-17x faster than building at 1M-64M entries and a view costs 0.85 ns per entry to check, but the slot check is most of an owning load, so the owning constructor takes `trust` too
+
+*2026-10-02 · #299 · kept · Ryzen 9 7950X, clang 22 and gcc 16, THP `madvise`, `AB_CORE=2`; `scripts/ab/index_load.sh` (one binary per mode, median of 7 rounds, the loaded map destroyed outside the clock, RSS of one load in a forked child before the timed rounds)*
+
+`index()`, `index_format_id`, the owning constructor, `map_view`/`set_view`, `view()`, the owning constructor from a view and `verify()` shipped in #299. The values and the index sit in 64-aligned memory before the clock starts, so no row measures the page cache or the page size (#301 owns that question). `map<uint64_t, uint64_t>` and `map<std::string, size_t>` (workload string keys), ns per entry:
+
+| | n | build (reserved) | owning, checked | owning, unchecked | check cost | view, checked | view, unchecked | `verify(full)` |
+|---|---|---|---|---|---|---|---|---|
+| clang u64 | 1M | 9.27 | 2.99 | 0.494 | 6.05x | 0.855 | 0 | 3.20 |
+| clang u64 | 4M | 32.8 | 6.36 | 6.85 | 0.93x | 0.849 | 0 | 12.7 |
+| clang u64 | 16M | 41.6 | 7.11 | 4.26 | 1.67x | 0.851 | 0 | 16.0 |
+| clang u64 | 64M | 45.4 | 7.08 | 4.14 | 1.71x | 0.851 | 0 | 17.5 |
+| gcc u64 | 1M | 8.06 | 1.91 | 0.449 | 4.25x | 0.872 | 0 | 3.17 |
+| gcc u64 | 4M | 33.0 | 5.31 | 6.79 | 0.78x | 0.871 | 0 | 11.7 |
+| gcc u64 | 16M | 41.4 | 5.89 | 4.26 | 1.38x | 0.871 | 0 | 15.0 |
+| gcc u64 | 64M | 44.0 | 5.80 | 4.11 | 1.41x | 0.870 | 0 | 16.8 |
+| clang str | 1M | 24.0 | 6.13 | 3.74 | 1.64x | 0.857 | 0 | 12.1 |
+| clang str | 4M | 95.6 | 6.62 | 5.32 | 1.24x | 0.849 | 0 | 34.0 |
+| gcc str | 1M | 23.0 | 5.29 | 3.76 | 1.41x | 0.881 | 0 | 11.3 |
+| gcc str | 4M | 97.4 | 5.65 | 5.33 | 1.06x | 0.871 | 0 | 31.4 |
+
+`verify(spot)` is 16 lookups, under 0.0001 ns per entry at every size. Peak RSS of one load, bytes per entry: building, owning checked and owning unchecked are within 0.5 of each other (27.5-27.8 for `uint64_t`, 110.9-111.4 for strings, the values included), and a view is 0: it holds two pointers and two sizes.
+
+**The issue's rule for the check fired.** It said that if the check fused into the copy cost more than 10% of the owning load at any size, the owning constructor gets a `trust` argument back. It costs 4.3-6.1x at 1M, where the copy alone runs in cache, and 1.38-1.71x at 16M-64M. The check reads every slot with a branch on a random fingerprint, and, for an owning table, sets a bit per value in a bitmap of n bits (below). Four rewrites of the loop, measured at 1M with clang on the owning load against 0.46-0.52 unchecked: the first version, a branch per slot, 2.34-2.81 across builds; branchless with a spare bit for empty slots 4.63; with a spare word per lane 4.19; branchy reading a copy of the block 3.11. Branchless pays for the view, whose check has no bitmap: 0.85 against 1.16. So the owning load keeps the branch and the view the branchless loop.
+
+**Why the owning check needs the bitmap, found by `fuzz_index_view`.** The first check was the one the issue specified: every full slot in range, as many full slots as values. Under `_GLIBCXX_ASSERTIONS` the fuzzer found bytes that pass it and still read out of bounds: two slots pointing at value n-1, one value pointed at by none. An erase moves value n-1 into the hole and repoints the one slot `repoint_value` finds, and the other slot is left pointing at n-1, one past the end after the pop. ASan did not see it: the read is inside the vector's capacity. Requiring every value to be pointed at exactly once makes every later operation keep it so, and costs the owning load one bit per value. A view never erases and does not need it.
+
+What this says and does not say: a load from memory, not from a file; the 4M `uint64_t` row reads the unchecked load slower than the checked one on both compilers (6.85 against 6.36, 6.79 against 5.31), which nothing in the code explains, and is most likely where the allocator puts a fresh 27 MB index next to a 512 KB bitmap or without one -- unexplained, and the other three sizes agree with each other. The 1M and 4M rows of the build are in cache and out of it; the loads are bandwidth: 7 ns per entry at 64M is 27.5 bytes of values and index per entry (the RSS column), plus the page faults of the fresh index.
 
 ## The hash function
 
