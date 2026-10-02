@@ -1,0 +1,63 @@
+# What mapped_view.h (#301) must get right, and the test in test/unit/mapped_view.cpp that notices.
+#
+#     scripts/mutate/mutate.py --file include/ankerl/mapped_view.h \
+#         --bugs scripts/mutate/bugs/mapped-view.txt --test-filter 'mapped_view*'
+
+# the layout check multiplies: a count whose byte count wraps to a small number gets through
+<<<
+            return offset <= size && count <= (size - offset) / element_size;
+===
+            return offset <= size && count * element_size <= size - offset;
+>>>
+
+# the layout check forgets the offset: an offset past the end wraps around
+<<<
+            return offset <= size && count <= (size - offset) / element_size;
+===
+            return count <= (size - offset) / element_size;
+>>>
+
+# only the values are checked against the file's end
+<<<
+        if (!fits(layout.values_offset, layout.num_values, sizeof(value_type)) ||
+            !fits(layout.index_offset, layout.num_blocks, sizeof(index_block))) {
+===
+        if (!fits(layout.values_offset, layout.num_values, sizeof(value_type))) {
+>>>
+
+# huge_copy maps memory and never reads the file into it
+<<<
+        try {
+            read_into(d.fd);
+===
+        try {
+>>>
+
+# the move leaves the source owning the mapping: two munmaps of one region
+<<<
+        : m_region(std::exchange(other.m_region, nullptr))
+===
+        : m_region(other.m_region)
+>>>
+
+# the view is built over the wrong array
+<<<
+        auto const* blocks = layout.num_blocks == 0 ? nullptr : file.data() + layout.index_offset;
+===
+        auto const* blocks = layout.num_blocks == 0 ? nullptr : file.data() + layout.values_offset;
+>>>
+
+# an empty file is mapped anyway (mmap of length 0 fails)
+<<<
+        if (m_size == 0) {
+            return;
+        }
+===
+>>>
+
+# the trust argument is dropped: every view is unchecked
+<<<
+        , m_view(make_view(m_file, layout, t, hash, equal)) {}
+===
+        , m_view(make_view(m_file, layout, t == trust::checked ? trust::unchecked : t, hash, equal)) {}
+>>>
