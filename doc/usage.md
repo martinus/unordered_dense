@@ -570,6 +570,20 @@ How much the remaining index spike matters depends on the size of your value. Th
 The size of a segment is a template parameter, and it defaults to 4096 bytes, which is small. A map
 that is going on huge pages wants it set: see [Sizing a segment for a huge page](#sizing-a-segment-for-a-huge-page).
 
+A map whose values own heap memory wants it set too. A `segmented_map<std::string, size_t>` with
+4096 byte segments iterates 3.3x slower than `map` at 4M entries, because its 2560 byte segments
+are allocated between the strings' own buffers and every one of them starts the walk cold; with
+256 KB segments it is 1.24x, with 16 MB 1.06x, and lookups, churn and memory do not change. For
+values without heap memory the segment size makes no difference to iteration. The default stays
+small because a non-empty segmented map holds at least one whole segment:
+
+```cpp
+// 256 KB segments for a map of strings
+using map_t = ankerl::unordered_dense::segmented_map<std::string, std::size_t, ankerl::unordered_dense::hash<std::string>,
+                                                     std::equal_to<std::string>, std::allocator<std::pair<std::string, std::size_t>>,
+                                                     ankerl::unordered_dense::bucket_type::group, 256 * 1024>;
+```
+
 ## Custom Bucket Types
 
 The index is groups of sixteen slots; the bucket type chooses how wide a value index is. The

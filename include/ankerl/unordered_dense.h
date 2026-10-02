@@ -936,7 +936,10 @@ struct require_avalanching : Hash {
 // exactly, and 32 of an 80 byte value rather than 51 -- 2560 bytes. `segmented_map` takes this as a
 // trailing parameter, which is worth setting when the rounding is what decides whether a segment
 // reaches an allocator's threshold: a "2 MB" segment is one whole huge page for a 16 byte pair and
-// 1.28 MB for a 40 byte one.
+// 1.28 MB for a 40 byte one -- and when the values own heap memory: small segments land between the
+// values' own allocations, and iterating a map of strings at 4M entries is 3.3x `map` with 4096
+// byte segments and 1.24x with 256 KB. Kept small because a non-empty map holds a whole segment
+// (#350; notes/index-design.md, "segment size").
 inline constexpr std::size_t default_segment_size_bytes = 4096;
 
 // Very much like std::deque, but faster for indexing (in most cases). As of now this doesn't implement the full std::vector

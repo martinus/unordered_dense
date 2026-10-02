@@ -1,0 +1,66 @@
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -986,9 +986,8 @@
+     }
+ 
+     using self_t = segmented_vector<T, Allocator, MaxSegmentSizeBytes>;
+-    static constexpr auto num_bits = num_bits_closest(MaxSegmentSizeBytes, sizeof(T));
+-    static constexpr auto num_elements_in_block = 1U << num_bits;
+-    static constexpr auto mask = num_elements_in_block - 1U;
++    // exact page: as many elements as fit, not a power of two; the segment is one aligned page
++    static constexpr std::size_t num_elements_in_block = MaxSegmentSizeBytes / sizeof(T);
+ 
+     /**
+      * Iterator class doubles as const_iterator and iterator
+@@ -1087,7 +1086,7 @@
+         }
+ 
+         constexpr auto operator*() const noexcept -> reference {
+-            return m_data[m_idx >> num_bits][m_idx & mask];
++            return m_data[m_idx / num_elements_in_block][m_idx % num_elements_in_block];
+         }
+ 
+         [[nodiscard]] constexpr auto operator[](difference_type diff) const noexcept -> reference {
+@@ -1095,7 +1094,7 @@
+         }
+ 
+         constexpr auto operator->() const noexcept -> pointer {
+-            return &m_data[m_idx >> num_bits][m_idx & mask];
++            return &m_data[m_idx / num_elements_in_block][m_idx % num_elements_in_block];
+         }
+ 
+         template <bool O>
+@@ -1142,7 +1141,8 @@
+         if (m_blocks.size() == m_blocks.capacity()) {
+             m_blocks.reserve((std::max)(std::size_t{1}, m_blocks.capacity() * 2));
+         }
+-        pointer block = std::allocator_traits<Allocator>::allocate(ba, num_elements_in_block);
++        (void)ba;
++        auto block = static_cast<pointer>(::operator new(MaxSegmentSizeBytes, std::align_val_t{MaxSegmentSizeBytes}));
+         m_blocks.push_back(block);
+     }
+ 
+@@ -1166,7 +1166,8 @@
+     void dealloc() {
+         auto ba = Allocator(m_blocks.get_allocator());
+         for (auto it = m_blocks.rbegin(); it != m_blocks.rend(); ++it) {
+-            std::allocator_traits<Allocator>::deallocate(ba, *it, num_elements_in_block);
++            (void)ba;
++            ::operator delete(*it, std::align_val_t{MaxSegmentSizeBytes});
+         }
+     }
+ 
+@@ -1287,11 +1288,11 @@
+ 
+     // Indexing is highly performance critical
+     [[nodiscard]] constexpr auto operator[](std::size_t i) const noexcept -> T const& {
+-        return m_blocks[i >> num_bits][i & mask];
++        return m_blocks[i / num_elements_in_block][i % num_elements_in_block];
+     }
+ 
+     [[nodiscard]] constexpr auto operator[](std::size_t i) noexcept -> T& {
+-        return m_blocks[i >> num_bits][i & mask];
++        return m_blocks[i / num_elements_in_block][i % num_elements_in_block];
+     }
+ 
+     [[nodiscard]] constexpr auto begin() -> iterator {

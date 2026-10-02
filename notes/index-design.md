@@ -162,6 +162,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [The score runs on 4 KB pages and pays 1.6 billion L1 dTLB misses for it](#the-score-runs-on-4-kb-pages-and-pays-16-billion-l1-dtlb-misses-for-it) · 2026-09-12 · info
   - [Tearing a segmented_map down in reverse: glibc keeps the memory for the next build instead of handing it to the kernel, warm builds 1.8-3.2x when values own heap memory](#tearing-a-segmented_map-down-in-reverse-glibc-keeps-the-memory-for-the-next-build-instead-of-handing-it-to-the-kernel-warm-builds-18-32x-when-values-own-heap-memory) · 2026-09-26 · kept
   - [`segmented_map` lookups against `map`, one cell per binary: a hit costs 2-15 instructions more and a miss 0.4-2.4, and of that only about 5 instructions of clang's `find` hit are avoidable -- clang splits the value index a second time for `it->second`, where gcc reuses the probe's split -- so nothing was changed](#segmented_map-lookups-against-map-one-cell-per-binary-a-hit-costs-2-15-instructions-more-and-a-miss-04-24-and-of-that-only-about-5-instructions-of-clangs-find-hit-are-avoidable----clang-splits-the-value-index-a-second-time-for-it-second-where-gcc-reuses-the-probes-split----so-nothing-was-changed) · 2026-09-28 · rejected
+  - [A `segmented_map`'s segment size, apart from the page: a map of strings iterates 3.3x slower than `map` with 4 KB segments and 1.24x with 256 KB because the segments sit between the strings' own buffers; for values without heap memory the size changes nothing, and exact-page segments lose everywhere](#a-segmented_maps-segment-size-apart-from-the-page-a-map-of-strings-iterates-33x-slower-than-map-with-4-kb-segments-and-124x-with-256-kb-because-the-segments-sit-between-the-strings-own-buffers-for-values-without-heap-memory-the-size-changes-nothing-and-exact-page-segments-lose-everywhere) · 2026-10-02 · kept
 - [Small tables](#small-tables)
   - [#331, counting into a small table under clang 11-12% behind 4.1.2: about one cycle per row of latency in the 16-slot group's compare, on a table whose first slot almost always hits; #329's sentinel takes 0.1-0.3 cycles of it under clang and all of it under gcc, and nothing tried closes the rest](#331-counting-into-a-small-table-under-clang-11-12-behind-412-about-one-cycle-per-row-of-latency-in-the-16-slot-groups-compare-on-a-table-whose-first-slot-almost-always-hits-329s-sentinel-takes-01-03-cycles-of-it-under-clang-and-all-of-it-under-gcc-and-nothing-tried-closes-the-rest) · 2026-09-27 · open
   - [Small maps, two variants from #304 prototyped and measured against `main` over 20000 maps of 1 to 32 entries: no index below eight entries makes a map of up to four entries 1.06-2.3x faster to build, 1.2-2.2x faster to destroy and its lookups 1.5-3.7x faster, but puts back the empty-table test #329 took out of every lookup; a two-group minimum index helps a one- or two-entry integer map 2-28% and builds 32 entries 1.17-1.61x slower; neither was kept](#small-maps-two-variants-from-304-prototyped-and-measured-against-main-over-20000-maps-of-1-to-32-entries-no-index-below-eight-entries-makes-a-map-of-up-to-four-entries-106-23x-faster-to-build-12-22x-faster-to-destroy-and-its-lookups-15-37x-faster-but-puts-back-the-empty-table-test-329-took-out-of-every-lookup-a-two-group-minimum-index-helps-a-one--or-two-entry-integer-map-2-28-and-builds-32-entries-117-161x-slower-neither-was-kept) · 2026-09-28 · rejected
@@ -3533,13 +3534,14 @@ What this says and does not say: keys of other sizes, keys with fields narrower 
 
 What the page size, the `segmented_map` container and the order of frees at teardown do to speed and memory. 2 MB pages are the largest measured lever left on the score (2.6-3.6%), but they belong to the allocator or the environment, not the map's code. Memory figures follow the same sawtooth as time, so quote them over an octave, never at one size.
 
-**Where it stands** (as of 2026-09-28)
+**Where it stands** (as of 2026-10-02)
 
 - `segmented_map` segments only the values since 5.0.0; the index still doubles beside itself (a 1.1 GB spike for 100M `uint64_t` pairs). Kept; `reserve()` removes the doubling. See [What `segmented_map` gives up in 5.0.0, found in review](#what-segmented_map-gives-up-in-500-found-in-review)
 - Memory per entry must be summarised over an octave: at 64 byte values `unordered_dense` and boost are a wash (118.3 against 118.5), at 8 bytes boost is ahead (32.6 against 29.2). See [Those memory figures are a point on the sawtooth](#those-memory-figures-are-a-point-on-the-sawtooth-and-the-octave-says-something-else).
 - The opt-in `huge_page_allocator` (#231) ships with a 2 MB threshold: integer builds 1.5-1.7x from 200000 entries (string builds 1.1-1.3x), churn 1.33x at 800000, nothing at 50000 except the string build. 16 MB segments on it are the fastest build measured for string keys and 64 byte values; for integers the vector on the allocator stays 6-11% ahead. `segmented_map` takes the segment size as a template parameter since #272. See [The opt-in huge page allocator](#the-opt-in-huge-page-allocator-measured-across-the-size-axis).
 - The score runs on 4 KB pages; the same binary on 2 MB pages scores 1.0256 (gcc) and 1.0364 (clang). Not the map's to set. See [The score runs on 4 KB pages and ...](#the-score-runs-on-4-kb-pages-and-pays-16-billion-l1-dtlb-misses-for-it).
 - `segmented_vector` destroys and frees last to first: warm builds 1.8-2.3x for strings, 2.6-3.2x for owning values, at the price of RSS staying until reuse or `malloc_trim(0)`. See [Tearing a segmented_map down in reverse](#tearing-a-segmented_map-down-in-reverse-glibc-keeps-the-memory-for-the-next-build-instead-of-handing-it-to-the-kernel-warm-builds-18-32x-when-values-own-heap-memory).
+- `default_segment_size_bytes` stays 4096. A map of strings iterates 3.3x slower than `map` with it and 1.24x with 256 KB segments (the 2560 byte segments sit between the strings' buffers); for other values the segment size changes nothing; exact-page segments lose everywhere. See [A `segmented_map`'s segment size, apart from the page](#a-segmented_maps-segment-size-apart-from-the-page-a-map-of-strings-iterates-33x-slower-than-map-with-4-kb-segments-and-124x-with-256-kb-because-the-segments-sit-between-the-strings-own-buffers-for-values-without-heap-memory-the-size-changes-nothing-and-exact-page-segments-lose-everywhere).
 - A `segmented_map` hit costs 2-15 instructions more than `map` (a `find` hit 7-15, a clang `contains` hit 2); only about 5 of clang's `find` hit are avoidable, and fixing them needs a 24-byte iterator. Declined. See [`segmented_map` lookups against `map`, one cell per binary](#segmented_map-lookups-against-map-one-cell-per-binary-a-hit-costs-2-15-instructions-more-and-a-miss-04-24-and-of-that-only-about-5-instructions-of-clangs-find-hit-are-avoidable----clang-splits-the-value-index-a-second-time-for-it-second-where-gcc-reuses-the-probes-split----so-nothing-was-changed).
 
 ### What `segmented_map` gives up in 5.0.0, found in review.
@@ -3803,6 +3805,44 @@ Where clang's 11 go, read from the disassembly of the `uint64_t` `find` hit (53 
 - Not the `end()` comparison, which is one `cmp` in both, and not the element multiply, a shift for the 16 byte pair.
 
 What this says and does not say: the avoidable part is clang only, `find` hits only, about 5 instructions of 55 on an in-cache integer table, and nothing for `contains`, misses or gcc. Removing it needs the iterator to carry the element pointer: 16 -> 24 bytes, a block-boundary test in `++`, and `it + n` or `end()` must never read a block that is not allocated. That changes what every iteration over a `segmented_map` runs, for a gain one compiler's `find` hit sees. Declined on that trade without building it. The harness is there if the Bonxai read (see [Tearing a segmented_map down in reverse](#tearing-a-segmented_map-down-in-reverse-glibc-keeps-the-memory-for-the-next-build-instead-of-handing-it-to-the-kernel-warm-builds-18-32x-when-values-own-heap-memory)) or another caller makes the clang hit matter. The Bonxai read was not re-run, since nothing changed.
+
+### A `segmented_map`'s segment size, apart from the page: a map of strings iterates 3.3x slower than `map` with 4 KB segments and 1.24x with 256 KB because the segments sit between the strings' own buffers; for values without heap memory the size changes nothing, and exact-page segments lose everywhere
+
+*2026-10-02 · #350 · kept · Ryzen 9 7950X, clang 22, THP `madvise`, `AB_CORE=2`; `scripts/ab/segment_size.sh` (one binary per variant, `bench_readme`'s workloads through `maps.h`, octave geomean at four bases, one round), `scripts/ab/segment_exact_page.patch`, `perf stat`*
+
+The #349 run read string iteration at 3.47x `map` for `segmented_map` with 4 KB segments and 1.03x for `huge_page::segmented_map` with 16 MB segments, which changes the segment size and the page at once. This separates them: power-of-two segments from 4 KB to 16 MB on `std::allocator` and on `huge_page_allocator`, and `exact4096`, one page-aligned 4096 byte allocation per segment holding `4096 / sizeof(T)` elements, indexed by a division. Elements of 16 (`uint64_t` pair), 40 (`std::string` pair) and 72 bytes (64 byte value). Ratios to `map` on the same allocator (`huge-*` rows: to `map` on `std::allocator`), lower is better.
+
+Iteration, by base size (octave geomean):
+
+| | str 50k | str 200k | str 1M | str 4M | u64 1M | u64 4M | 72 B 1M | 72 B 4M |
+|---|---|---|---|---|---|---|---|---|
+| `map`, ns/element | 0.286 | 0.330 | 0.807 | 0.776 | 0.277 | 0.380 | 1.49 | 1.47 |
+| 4 KB segments | 1.69 | 2.06 | 3.06 | 3.33 | 1.29 | 1.25 | 1.17 | 1.16 |
+| 16 KB | 1.50 | 1.66 | 2.40 | 2.80 | 1.30 | 1.24 | 1.13 | 1.13 |
+| 64 KB | 1.27 | 1.33 | 1.62 | 1.70 | 1.27 | 1.24 | 1.13 | 1.12 |
+| 256 KB | 1.15 | 1.11 | 1.22 | 1.24 | 1.31 | 1.20 | 1.12 | 1.12 |
+| 2 MB | 1.13 | 1.11 | 1.08 | 1.09 | 1.28 | 1.22 | 1.11 | 1.10 |
+| 16 MB | 1.12 | 1.06 | 1.06 | 1.06 | 1.32 | 1.25 | 1.10 | 1.11 |
+| exact page | 1.86 | 2.06 | 3.04 | 3.33 | 3.17 | 3.09 | 2.37 | 2.49 |
+| 4 KB on `huge_page_allocator` | 1.72 | 2.09 | 3.13 | 3.33 | 1.33 | 1.22 | 1.17 | 1.17 |
+| 16 MB on `huge_page_allocator` | 1.13 | 1.05 | 1.01 | 1.05 | 1.16 | 1.01 | 0.95 | 0.91 |
+
+**For strings it is the segment size and not the page**: 4 KB segments on the huge page allocator read the same as on `std::allocator`, and 16 MB segments on 4 KB pages read 1.06. **For values that own no heap memory the segment size changes nothing**: 1.20-1.32x for `uint64_t` and 1.10-1.17x for 64 byte values at every size from 4 KB to 16 MB. That remainder is the segmented iterator's own index arithmetic; only 2 MB pages under 2 MB+ segments take part of it back.
+
+The mechanism, `perf stat` over 3G element visits at 1M strings (the run includes the fills, so the differences are what counts): 4 KB segments cost 24.6G cycles more than `map`, +8 per element, with +1 instruction per element, +44M dTLB load misses (0.015 per element, at most ~1G cycles of it) and +0.27G L1 misses. 256 KB and 16 MB segments read the same as `map` on all of them. So it is neither instructions nor the TLB. What differs between the key types is the allocation pattern: a 40 byte pair rounds to 64 elements, 2560 bytes per segment, and each segment is a `malloc` between the strings' own buffers, so the walk restarts cold every 64 elements; a `uint64_t` map's 4096 byte segments are consecutive `malloc`s with nothing between them. This last step is an inference from the counters and the contrast, not measured directly (no prefetcher counter was read).
+
+Everything else, at 1M and 4M:
+
+| | build + destroy | find | churn | peak RSS |
+|---|---|---|---|---|
+| str, 4 KB / 256 KB / 16 MB | 0.58-0.67 / 0.51-0.57 / 0.51-0.57 | 0.99-1.01 for all | 1.01-1.03 for all | 0.90-0.94 for all |
+| u64, 4 KB / 256 KB / 16 MB | 0.57-0.83 / 0.56-0.83 / 0.63-0.86 | 1.03-1.07 for all | 0.94-1.04 for all | 0.58-0.71 / 0.60-0.71 / 0.75-0.78 |
+| 72 B, 4 KB / 256 KB / 16 MB | 0.61-0.66 / 0.51-0.60 / 0.50-0.55 | 1.02-1.07 for all | 0.97-1.04 for all | 0.53-0.72 / 0.53-0.71 / 0.58-0.74 |
+| exact page, str / u64 / 72 B | 0.63-0.69 / 0.68-1.10 / 0.98-1.04 | 1.01-1.19 | 0.97-1.05 | 0.90-0.94 / 0.90-1.09 / 1.00-1.34 |
+
+**Exact-page segments are the worst segmented variant, or tied with the worst, on every workload and every element size**, and the idea that motivated them, one segment per page, buys nothing measurable: string iteration reads the same as 4 KB power-of-two segments, `uint64_t` iteration 3.1x because the index is now a division, and the page-aligned allocations cost glibc up to a page of padding each (RSS 0.90-1.09 of `map` for `uint64_t`, against 0.58-0.71). At 50000 entries a `uint64_t` map's RSS rises from 0.64 of `map` with 4 KB segments to 0.83 with 2 MB and 16 MB: a non-empty map holds whole segments.
+
+What this says and does not say: one round per cell and one compiler; the drift between neighbouring segment sizes is 1-3%, smaller than every effect quoted. The string grid ran against the header before #299 and the other two after it; `segmented_vector` is the same in both and every ratio is within one grid. Decision (owner, 2026-10-02): `default_segment_size_bytes` stays 4096, because a larger default costs every small segmented map a whole segment (a 1-entry map holds 4 KB today), and `doc/usage.md` and the header comment tell a map of strings to pass 256 KB. Exact-page segments closed with these numbers.
 
 ## Small tables
 

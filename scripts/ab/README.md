@@ -1043,3 +1043,19 @@ Sweep both axes. The size axis and the duplicate rate disagree about which varia
 single cell is not an answer -- the numbers and what they decided are in `notes/index-design.md`
 under "the duplicate rate that turns it over". `scripts/ab/replace_forward.patch` is the dedup walk
 rewritten as a forward compaction, measured there and not applied.
+
+## A segmented_map's segment size, apart from the page it lands on (#350)
+
+    AB_CORE=2 AB_BUILD=/home/martinus/gra/x scripts/ab/segment_size.sh -k str [-c g++] [-b 50000,200000,1000000,4000000] [-v regex]
+    python3 scripts/ab/segment_size_table.py out.txt
+
+One binary per variant: the plain map, power-of-two segments from 4 KB to 16 MB on `std::allocator`
+and on `huge_page_allocator`, and `exact4096` -- `segment_exact_page.patch` applied to a copy of
+the header, `4096 / sizeof(T)` elements per segment, each one page-aligned page, indexed by a
+division. `-k` picks the element: `u64` (16 bytes), `str` (40), `big` (72). The workloads are
+`bench_readme.cpp`'s through `maps.h`: build and destroy inside the clock, find at half hits, churn,
+iterate, and peak RSS of a build in a forked child, each an octave geomean. The table script prints
+every variant as a ratio to the plain map. The full grid of one kind is 15 variants and ~50 minutes
+for strings; `-v` cuts it (13 variants of `u64`: ~35 minutes). Smoke with
+`-k u64 -b 1000 -o 10000 -v 'map|seg4096$'`. The numbers are in `notes/index-design.md`, "segment
+size".
