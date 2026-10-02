@@ -66,6 +66,7 @@ test_sources = [
     'unit/hash_golden.cpp',
     'unit/huge_page_allocator.cpp',
     'unit/include_only.cpp',
+    'unit/index_container.cpp',
     'unit/index_view.cpp',
     'unit/initializer_list.cpp',
     'unit/insert_or_assign.cpp',
