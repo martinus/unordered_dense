@@ -2,7 +2,10 @@
 # One header per binary: build the scored benchmark twice, from two revisions of the header, and
 # alternate whole runs.
 #
-#   scripts/ab/solo.sh [-r REV] [-c COMPILER] [-t TESTCASE] [rounds]
+#   scripts/ab/solo.sh [-r REV] [-c COMPILER] [-t TESTCASE] [-h HEADER] [rounds]
+#
+# -h takes the candidate header from a file instead of the working tree (probe_sequence.sh writes
+# each variant to one).
 #
 # The paired harness next door interleaves baseline and candidate epoch by epoch in one process,
 # which cancels drift and is the right tool for almost everything. It cannot measure a change that
@@ -18,12 +21,13 @@
 # 10% with instruction counts from maps_one.sh, which neither layout nor drift can move.
 set -euo pipefail
 export LC_ALL=C
-rev=HEAD cxx=clang++ tc=bench_quick_overall_udm
-while getopts "r:c:t:" opt; do
+rev=HEAD cxx=clang++ tc=bench_quick_overall_udm cand=
+while getopts "r:c:t:h:" opt; do
     case $opt in
         r) rev=$OPTARG ;;
         c) cxx=$OPTARG ;;
         t) tc=$OPTARG ;;
+        h) cand=$OPTARG ;;
         *) exit 1 ;;
     esac
 done
@@ -42,7 +46,7 @@ for side in base cand; do
         --exclude=./subprojects/packagecache -cf - . | tar -C "$src" -xf -; }
 done
 git -C "$root" show "$rev:include/ankerl/unordered_dense.h" > "$build/src_base/include/ankerl/unordered_dense.h"
-cp "$root/include/ankerl/unordered_dense.h" "$build/src_cand/include/ankerl/unordered_dense.h"
+cp "${cand:-$root/include/ankerl/unordered_dense.h}" "$build/src_cand/include/ankerl/unordered_dense.h"
 cmp -s "$build/src_base/include/ankerl/unordered_dense.h" "$build/src_cand/include/ankerl/unordered_dense.h" &&
     echo "  note: the headers are identical, so this measures code layout and nothing else"
 
@@ -56,7 +60,7 @@ done
 # bench_quick_overall_udm_bigbucket is the same fifteen workloads over `group_big`, which nothing
 # else in the tree measures end to end; it prints the same label as the default test case.
 score() { "$1" -ns -tc="$tc" 2>&1 | grep bench_quick_overall_map_udm | awk '{print $1}'; }
-echo "one header per binary, $cxx, $tc, candidate = working tree, baseline = $rev"
+echo "one header per binary, $cxx, $tc, candidate = ${cand:-working tree}, baseline = $rev"
 for r in $(seq 1 "$rounds"); do
     b=$(score "$build/udm-base"); c=$(score "$build/udm-cand")
     printf "  round %d   baseline %.6f   candidate %.6f   ratio %.4f\n" "$r" "$b" "$c" \

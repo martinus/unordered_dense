@@ -592,6 +592,24 @@ AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/prefetch_index.sh 5    # abou
 AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/place_inline.sh 5      # about ten minutes
 ```
 
+## Probe sequences other than the triangular one (#355)
+
+`scripts/ab/probe_sequence.py` writes a copy of the working tree's header that walks another
+probe sequence; every walk then goes through one `advance()`, and `--check` proves that each
+variant visits every group within its bound. `--list` names the variants, and the docstring says
+what each one asks. `scripts/ab/probe_sequence.sh` runs them: `probes` (groups per lookup through
+`probe_length.sh`, which takes `AB_HEADER` and a group count for this), `score` (`solo.sh -h`,
+which takes the candidate header from a file, then `perwl.sh`), and `time` (a churned table, fresh
+lookups and builds, one binary per variant, `AB_CXX` for one compiler, `AB_SMOKE=1` for the
+smallest size of each). The result is in `notes/index-design.md`, "Seven probe sequences".
+
+```sh
+scripts/ab/probe_sequence.py --check
+scripts/ab/probe_sequence.sh probes tri dh dhcls                                   # minutes
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/probe_sequence.sh score 5 dh    # ~20 min per variant
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 AB_CXX=g++ scripts/ab/probe_sequence.sh time 5 dh
+```
+
 ## Instructions per `try_emplace` hit and insert, counted around the loop
 
 `scripts/ab/try_emplace_hit.sh` builds `scripts/ab/try_emplace_hit.cpp` against main's header and
