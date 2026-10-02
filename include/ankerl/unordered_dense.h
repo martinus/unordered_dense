@@ -2010,12 +2010,12 @@ private:
     // rehash is about to write a group it has never read, so it wants that line too.
     //
     // Asking for `p` and `p + 87` instead -- the first line and the *last*, which is what this did
-    // until 2026-09-11 -- left out the middle, which holds all eight counters and half the
-    // fingerprints, the two things a probe reads first. Stepping by 64 was worth 3.3%, 12.28
-    // ns/block against 12.67, on a 176 MiB array walked at random with a sixteen-deep lookahead and
-    // a probe-shaped read (#250). The `off < 128` is the clamp, and it is the half of the rule this
-    // function was missing: without it a 152 byte block gets a third prefetch, which is the one
-    // #252 measured as a loss.
+    // until 2026-09-11 -- left out the middle, which for a block straddling three lines holds all
+    // eight counters and up to half the fingerprints, the two things a probe reads first. Stepping
+    // by 64 was worth 3.2%, 12.28 ns/block against 12.67, on a 176 MiB array walked at random with a
+    // sixteen-deep lookahead and a probe-shaped read (#250). The `off < 128` is the clamp, and it is
+    // the half of the rule this function was missing: without it a 152 byte block gets a third
+    // prefetch, which is the one #252 measured as a loss.
     template <typename Block>
     static void prefetch_block(Block const* block) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) -- byte arithmetic on the block
@@ -2299,7 +2299,7 @@ private:
     // group hands back is an address to load from -- `m_values[value_idx]`, a second miss behind the
     // first -- so the prefetch takes one level off a two-level chain. Here the index ends the chain:
     // it feeds a compare, and in the twin a store that ends the function, so what the prefetch can
-    // overlap is worth about what its two instructions cost. Dropping both takes 0.3-0.6% of the
+    // overlap is worth about what its two instructions cost. Dropping both takes 0.1-0.6% of the
     // instructions off every erase-heavy workload of the score under both compilers and nothing off
     // any other one; the time moves less than the noise floor, baseline/candidate 1.0039 under gcc
     // and 0.9991 under clang, one header per binary with scripts/ab/solo.sh. It ships on the
@@ -2606,7 +2606,7 @@ private:
         // in isolation (10.3 to 5.4 at 44 MB), but inside a build it is worth 0-7% of an integer
         // build above 32 MB and nothing below, because the rehash is a minority of a large build
         // and the scratch it needs is faulted in fresh every time at about a microsecond a page. Not
-        // kept; the measurement is in CLAUDE.md.
+        // kept; the measurement is in notes/index-design.md, "The rehash loop pipelined".
         //
         // The index is counted in value_idx_type and never in the container's size, for the reason
         // spelled out in replace(): max_size() is exactly what value_idx_type can hold, so a
@@ -2786,7 +2786,10 @@ private:
     // present paid for the placement code's register pressure on a path that never places (clang
     // 73.2 instructions against 48.4) -- and was smaller than 17% of a build. The insert now returns
     // a hit in the home group before any of it (#321). Until then this was said of do_place_element,
-    // a wrapper taking the whole hash, which the key-first insert left without a caller.
+    // a wrapper taking the whole hash, which the key-first insert left without a caller. Re-measured
+    // on this function on 2026-10-02 (scripts/ab/place_inline.sh, one map per translation unit): a
+    // clang integer build 1.19-1.22x faster with the attribute, a string build 1.02-1.04x, and gcc,
+    // which inlines it anyway, unchanged for integers.
     template <typename... Args>
     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
     place_element_at(std::uint32_t word, unsigned counter, value_idx_type home_idx, Args&&... args)
@@ -3211,7 +3214,7 @@ private:
     // judged by its worst ratio to the best combination over the caller corpus, udb3 and ClickHouse,
     // with the rule fixed before the results. This one is worst at 1.11 under clang and 1.58 under
     // gcc; everything inlined is 3.3 and 3.5. What gcc gives up for it is real: its udb3
-    // insert+delete 1.39x, ClickHouse's WatchID 1.18x, the score 0.940. The empty table's allocation
+    // insert+delete 1.39x, ClickHouse's WatchID 1.24x, the score 0.940. The empty table's allocation
     // is in here and not in the caller: left there as a cold branch, it alone was enough to push the
     // caller's variables to the stack again. notes/index-design.md, "stored and reloaded", "caller
     // corpus" and "shape search".
