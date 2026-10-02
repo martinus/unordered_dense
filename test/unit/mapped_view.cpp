@@ -2,6 +2,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <fuzz/run.h> // for fuzz::detail::env
 
 #if ANKERL_UNORDERED_DENSE_HAS_MAPPED_VIEW
 
@@ -18,7 +19,9 @@
 #    include <utility>
 #    include <vector>
 
-#    include <unistd.h> // for getpid
+#    include <fcntl.h>    // for open
+#    include <sys/mman.h> // for mmap, to write a file on hugetlbfs, which has no write()
+#    include <unistd.h>   // for getpid, ftruncate, close
 
 // A file holding a map's two arrays, mapped back three ways, read through the view and checked
 // against the map it was written from (#301).
@@ -84,6 +87,32 @@ auto mv_make(std::uint64_t n, std::uint64_t salt) -> mv_map_t {
     return m;
 }
 
+// Whether this process still has a mapping of the file.
+auto mv_is_mapped(std::string const& path) -> bool {
+    auto in = std::ifstream("/proc/self/maps");
+    auto line = std::string();
+    while (std::getline(in, line)) {
+        if (line.find(path) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Removes the file on every way out of a test, a failed REQUIRE included: a file left on hugetlbfs
+// holds its reserved pages.
+struct mv_remove_on_exit {
+    std::string path;
+    mv_remove_on_exit(mv_remove_on_exit const&) = delete;
+    mv_remove_on_exit(mv_remove_on_exit&&) = delete;
+    auto operator=(mv_remove_on_exit const&) -> mv_remove_on_exit& = delete;
+    auto operator=(mv_remove_on_exit&&) -> mv_remove_on_exit& = delete;
+    ~mv_remove_on_exit() {
+        auto ec = std::error_code();
+        std::filesystem::remove(path, ec);
+    }
+};
+
 void mv_require_same(mv_view_t const& v, mv_map_t const& m) {
     REQUIRE(v.size() == m.size());
     auto wrong = std::size_t{0};
@@ -106,10 +135,14 @@ TEST_CASE("mapped_view_round_trip") {
         REQUIRE((std::filesystem::file_size(path) >= (std::size_t{2} << 20U)) == (n == 150000));
         for (auto how : mv_all) {
             for (auto t : {ud::trust::checked, ud::trust::unchecked}) {
-                auto const mv = ud::mapped_view<mv_view_t>(path.c_str(), layout, t, how);
-                mv_require_same(mv.view(), m);
-                REQUIRE(mv.view().find(UINT64_C(0xDEAD)) == mv.view().end());
-                REQUIRE(mv.file().size() == std::filesystem::file_size(path));
+                {
+                    auto const mv = ud::mapped_view<mv_view_t>(path.c_str(), layout, t, how);
+                    mv_require_same(mv.view(), m);
+                    REQUIRE(mv.view().find(UINT64_C(0xDEAD)) == mv.view().end());
+                    REQUIRE(mv.file().size() == std::filesystem::file_size(path));
+                    REQUIRE(mv_is_mapped(path) == (how != ud::mapping::huge_copy));
+                }
+                REQUIRE(!mv_is_mapped(path)); // the destructor unmapped all of it
             }
         }
     }
@@ -225,6 +258,75 @@ TEST_CASE("mapped_view_rejects") {
                           std::invalid_argument);
     }
     std::filesystem::remove(path);
+}
+
+namespace {
+
+// A field of /proc/meminfo in kB, or -1.
+auto mv_meminfo_kb(char const* field) -> long {
+    auto in = std::ifstream("/proc/meminfo");
+    auto name = std::string();
+    auto kb = long{0};
+    while (in >> name >> kb) {
+        if (name == field) {
+            return kb;
+        }
+        in.ignore(64, '\n');
+    }
+    return -1;
+}
+
+} // namespace
+
+// Needs a hugetlbfs mount with free reserved pages, named by UDM_HUGETLBFS_DIR; skipped otherwise.
+// It counts HugePages_Free, so two processes running it at once fail each other:
+//
+//     sudo sysctl vm.nr_hugepages=64
+//     sudo mount -t hugetlbfs -o uid=$(id -u),gid=$(id -g),pagesize=2M none /mnt/huge
+//     UDM_HUGETLBFS_DIR=/mnt/huge ./udm-test -tc=mapped_view_hugetlbfs
+TEST_CASE("mapped_view_hugetlbfs") {
+    auto const dir = fuzz::detail::env("UDM_HUGETLBFS_DIR");
+    if (!dir) {
+        MESSAGE("UDM_HUGETLBFS_DIR is not set: skipped");
+        return;
+    }
+    auto const m = mv_make(150000, 0); // a 4 MB file: two huge pages
+    auto const src = mv_path("hugetlbfs_src");
+    auto const remove_src = mv_remove_on_exit{src};
+    auto const layout = mv_write(src, m);
+    auto const size = static_cast<std::size_t>(std::filesystem::file_size(src));
+    auto bytes = std::vector<char>(size);
+    std::ifstream(src, std::ios::binary).read(bytes.data(), static_cast<std::streamsize>(size));
+
+    // hugetlbfs takes only whole huge pages for a file's size, and data only through a mapping
+    auto const path = *dir + "/udm_mapped_view_" + std::to_string(getpid()) + ".bin";
+    auto const remove_path = mv_remove_on_exit{path};
+    auto const file_size = (size + (std::size_t{2} << 20U) - 1) / (std::size_t{2} << 20U) * (std::size_t{2} << 20U);
+    auto const fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644); // NOLINT(cppcoreguidelines-pro-type-vararg)
+    REQUIRE(fd >= 0);
+    REQUIRE(::ftruncate(fd, static_cast<off_t>(file_size)) == 0);
+    auto* p = ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    REQUIRE(p != MAP_FAILED); // NOLINT(cppcoreguidelines-pro-type-cstyle-cast,performance-no-int-to-ptr)
+    std::memcpy(p, bytes.data(), size);
+    ::munmap(p, file_size);
+    ::close(fd);
+
+    {
+        auto const mv = ud::mapped_view<mv_view_t>(path.c_str(), layout, ud::trust::checked);
+        REQUIRE(mv.file().size() == file_size);
+        mv_require_same(mv.view(), m);
+        REQUIRE(mv_is_mapped(path));
+    }
+    REQUIRE(!mv_is_mapped(path)); // munmap takes only whole huge pages; it took this length
+
+    // huge_copy of an ordinary file goes to MAP_HUGETLB while reserved pages are free
+    auto const free_before = mv_meminfo_kb("HugePages_Free:");
+    {
+        auto const mv = ud::mapped_view<mv_view_t>(src.c_str(), layout, ud::trust::checked, ud::mapping::huge_copy);
+        REQUIRE(mv_meminfo_kb("HugePages_Free:") == free_before - 2);
+        mv_require_same(mv.view(), m);
+    }
+    REQUIRE(mv_meminfo_kb("HugePages_Free:") == free_before);
 }
 
 #endif
