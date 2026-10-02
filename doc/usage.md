@@ -641,7 +641,7 @@ auto table2 = ud::mapped_view<view_t>(std::move(file), layout2, ud::trust::check
 
 The offsets decide the alignment, since a mapping starts on a page boundary: the view constructor
 rejects values not aligned for `value_type` and an index not aligned for `index_block`. A layout
-that reaches past the end of the file throws `std::out_of_range`; a file that cannot be opened or
+that reaches past the end of the file throws `std::invalid_argument`, as a misaligned one does; a file that cannot be opened or
 mapped throws `std::system_error`. Without exceptions both abort. `view()` is a reference into the
 object and does not compile on a temporary. The object moves (the mapping stays where it is, so the
 view stays valid) and does not copy or assign.
@@ -651,11 +651,13 @@ The last argument, `ud::mapping`, says where the bytes live:
 - `mapping::file`, the default: the file itself, `PROT_READ` and `MAP_SHARED`. Nothing is copied and
   nothing read until a lookup touches it, and every process that maps the file shares one copy in
   the page cache. The pages are the page cache's: 4 KB, unless the file is on hugetlbfs, where they
-  are 2 MB with nothing more to ask for.
+  are 2 MB with nothing more to ask for. `trust::checked` reads the whole index once, which pages
+  all of it in; the lazy start in the table below is `trust::unchecked`.
 - `mapping::file_populated`: the same, with `MAP_POPULATE`, so the whole file is read before the
   constructor returns, sequentially.
 - `mapping::huge_copy`: the file read into private anonymous memory on 2 MB pages (`MAP_HUGETLB` if
-  huge pages are reserved, else transparent huge pages through `MADV_HUGEPAGE`). A copy per process.
+  huge pages are reserved, else transparent huge pages through `MADV_HUGEPAGE`; a file under 2 MB
+  gets plain pages). A copy per process.
 
 Measured for `map<uint64_t, uint64_t>`, 1M to 64M entries, clang 22 and gcc 16 on a Ryzen 9 7950X,
 `scripts/ab/mapped_view.sh`. The 2 MB row is the `huge_copy` mechanism (this machine has no reserved

@@ -36,9 +36,9 @@
 #include <cstddef>      // for size_t, byte
 #include <cstdint>      // for uint8_t, uintptr_t
 #include <cstdlib>      // for abort
-#include <stdexcept>    // for out_of_range
+#include <stdexcept>    // for invalid_argument
 #include <system_error> // for system_error, generic_category
-#include <utility>      // for exchange
+#include <utility>      // for move, swap
 
 #if defined(__has_include)
 #    if __has_include(<sys/mman.h>) && __has_include(<unistd.h>) && __has_include(<fcntl.h>) && __has_include(<sys/stat.h>)
@@ -64,7 +64,9 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 // Where the bytes of a mapped_file live, and when they are read.
 //
 // `file` maps the file itself, read only and MAP_SHARED: no copy, nothing read until a lookup
-// touches it, and one copy in the page cache for every process that maps the same file. Its pages
+// touches it, and one copy in the page cache for every process that maps the same file. (A view
+// constructed with trust::checked reads the whole index once, which pages all of it in: lazy is
+// trust::unchecked, over bytes the caller vouches for.) Its pages
 // are the page cache's, which is 4 KB pages unless the file is on hugetlbfs, where they are 2 MB
 // with nothing else to ask for.
 //
@@ -81,10 +83,10 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 // over a mapped file"). Random hits on 2 MB pages are 1.03-1.13x as fast as on the file's pages from
 // 4M to 64M entries, the same as the owning map gains from huge_page::map; the 4 KB file mapping
 // runs at the owning map's speed there. At 1M the gap is 1.38x (clang) and 1.70x (gcc). With the
-// file in the page cache, the first 100000 lookups on a fresh `file` mapping take 2-17 ms, where
-// reading the owning map takes 14 ms to 1 s. With the file not in the page cache they take 17 ms at
-// 1M and 8.6 s at 64M, where `file_populated` has done them in 9-312 ms and `huge_copy` in 9-339
-// ms. So `file` is the default; `file_populated` is for a file that is likely not in the page cache;
+// file in the page cache, the first 100000 lookups on a fresh `file` mapping (trust::unchecked)
+// take 2-17 ms, where reading the owning map takes 14 ms to 1 s. With the file not in the page cache
+// they take 17 ms at 1M and 8.6 s at 64M, where `file_populated` has done them in 9-312 ms and
+// `huge_copy` in 9-339 ms. So `file` is the default; `file_populated` is for a file that is likely not in the page cache;
 // `huge_copy` is for a process that does many lookups and does not share the file with others.
 enum class mapping : std::uint8_t { file, file_populated, huge_copy };
 
@@ -102,7 +104,8 @@ namespace detail {
 
 [[noreturn]] inline void on_error_layout() {
 #    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()
-    throw std::out_of_range("ankerl::unordered_dense::mapped_view: the values or the index reach past the end of the file");
+    throw std::invalid_argument(
+        "ankerl::unordered_dense::mapped_view: the values or the index reach past the end of the file");
 #    else
     std::abort();
 #    endif
@@ -140,6 +143,13 @@ class mapped_file {
     // Private anonymous memory for the copy, on 2 MB pages if the kernel gives them. Every way to
     // get them is advice the kernel may decline, so only the final mmap failing is an error.
     [[nodiscard]] static auto map_anonymous(std::size_t len) -> std::byte* {
+        if (len < huge_page_size) {
+            auto* small = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (small == MAP_FAILED) { // NOLINT(cppcoreguidelines-pro-type-cstyle-cast,performance-no-int-to-ptr)
+                detail::on_error_mapping(errno, "ankerl::unordered_dense::mapped_file: mmap");
+            }
+            return static_cast<std::byte*>(small);
+        }
 #    if defined(MAP_HUGETLB)
         auto* hugetlb = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
         if (hugetlb != MAP_FAILED) { // NOLINT(cppcoreguidelines-pro-type-cstyle-cast,performance-no-int-to-ptr)
@@ -217,7 +227,9 @@ class mapped_file {
 public:
     mapped_file() noexcept = default;
 
-    explicit mapped_file(char const* path, mapping how = mapping::file) {
+    // Delegates, so that a throw after the mapping exists runs the destructor and unmaps it.
+    explicit mapped_file(char const* path, mapping how = mapping::file)
+        : mapped_file() {
         auto const d = descriptor(path);
         struct stat st{};
         if (::fstat(d.fd, &st) != 0) {
@@ -248,37 +260,29 @@ public:
             m_region_size = mapped_length(d.fd, m_size);
             return;
         }
-        m_region_size = (m_size + huge_page_size - 1) / huge_page_size * huge_page_size;
+        // Below one huge page there is no huge page to get: map exactly the file's size.
+        m_region_size = m_size < huge_page_size ? m_size : (m_size + huge_page_size - 1) / huge_page_size * huge_page_size;
         m_region = map_anonymous(m_region_size);
-#    if ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()
-        try {
-            read_into(d.fd);
-        } catch (...) {
-            release();
-            throw;
-        }
-#    else
         read_into(d.fd);
-#    endif
         ::mprotect(m_region, m_region_size, PROT_READ);
     }
 
     mapped_file(mapped_file const&) = delete;
     auto operator=(mapped_file const&) -> mapped_file& = delete;
 
-    mapped_file(mapped_file&& other) noexcept
-        : m_region(std::exchange(other.m_region, nullptr))
-        , m_region_size(std::exchange(other.m_region_size, 0))
-        , m_size(std::exchange(other.m_size, 0)) {}
+    mapped_file(mapped_file&& other) noexcept {
+        swap(other);
+    }
 
     auto operator=(mapped_file&& other) noexcept -> mapped_file& {
-        if (this != &other) {
-            release();
-            m_region = std::exchange(other.m_region, nullptr);
-            m_region_size = std::exchange(other.m_region_size, 0);
-            m_size = std::exchange(other.m_size, 0);
-        }
+        mapped_file(std::move(other)).swap(*this);
         return *this;
+    }
+
+    void swap(mapped_file& other) noexcept {
+        std::swap(m_region, other.m_region);
+        std::swap(m_region_size, other.m_region_size);
+        std::swap(m_size, other.m_size);
     }
 
     ~mapped_file() {
