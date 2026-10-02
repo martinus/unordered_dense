@@ -103,6 +103,8 @@ auto mv_is_mapped(std::string const& path) -> bool {
 // holds its reserved pages.
 struct mv_remove_on_exit {
     std::string path;
+    explicit mv_remove_on_exit(std::string p)
+        : path(std::move(p)) {}
     mv_remove_on_exit(mv_remove_on_exit const&) = delete;
     mv_remove_on_exit(mv_remove_on_exit&&) = delete;
     auto operator=(mv_remove_on_exit const&) -> mv_remove_on_exit& = delete;
