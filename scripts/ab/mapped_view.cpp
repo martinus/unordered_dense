@@ -19,12 +19,15 @@
 //                  the proxy for hugetlbfs where no huge pages are reserved (reported: AnonHugePages)
 //   view_hugetlb   the same copy into anonymous MAP_HUGETLB memory; prints `unavailable` when
 //                  /proc/sys/vm/nr_hugepages has none to give
+//   header_file, header_populated, header_huge
+//                  mapped_view.h itself: mapping::file, file_populated and huge_copy, trust::unchecked
+//   header_file_checked  mapping::file with trust::checked, which reads the whole index once
 //
 // Lookups are all hits, the key drawn from an rng and computed from its number, not read from an
 // array: throughput, several lookups in flight (notes: "measure throughput"). cycles and the two TLB
 // counters are read with perf_event_open around the timed loop only.
 //
-// The view modes do their own mmap rather than use mapped_view.h, to reach what the header does not
+// The view_* modes do their own mmap rather than use mapped_view.h, to reach what the header does not
 // offer (MADV_COLLAPSE, MAP_HUGETLB without the THP fallback, a 2 MB-aligned address for the file
 // mapping) and to keep the modes that produced the notes' numbers fixed. They differ from the
 // header in two ways that do not change the page size: the file is mapped MAP_PRIVATE outside the
@@ -35,6 +38,7 @@
 #include "max_rss.h"
 
 #include <ankerl/huge_page_allocator.h>
+#include <ankerl/mapped_view.h>
 #include <ankerl/unordered_dense.h>
 #include <bench/workloads.h>
 #include <third-party/nanobench.h>
@@ -189,6 +193,7 @@ using table_t = view_t;
 struct loaded {
     void* region = MAP_FAILED;
     std::size_t region_size = 0;
+    std::optional<ud::mapped_view<view_t>> mapped; // the header_* modes; before table, so it outlives it
     std::optional<table_t> table;
     loaded() = default;
     loaded(loaded const&) = delete;
@@ -238,7 +243,25 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
         std::exit(2);
     }
     auto const bytes = static_cast<std::size_t>(h.file_size);
-#if UDM_MODE_owning || UDM_MODE_owning_huge
+#if UDM_MODE_header_file || UDM_MODE_header_populated || UDM_MODE_header_huge || UDM_MODE_header_file_checked
+    static_cast<void>(bytes);
+    close(fd); // the header opens the file itself
+#    if UDM_MODE_header_populated
+    constexpr auto how = ud::mapping::file_populated;
+#    elif UDM_MODE_header_huge
+    constexpr auto how = ud::mapping::huge_copy;
+#    else
+    constexpr auto how = ud::mapping::file;
+#    endif
+#    if UDM_MODE_header_file_checked
+    constexpr auto t = ud::trust::checked;
+#    else
+    constexpr auto t = ud::trust::unchecked;
+#    endif
+    out.mapped.emplace(path, ud::mapped_layout{h.values_offset, h.num_values, h.index_offset, h.num_blocks}, t, how);
+    out.table.emplace(out.mapped->view()); // a copy of the view: two pointers into the mapping
+    return true;
+#elif UDM_MODE_owning || UDM_MODE_owning_huge
     out.table.emplace(read_owning<table_t>(fd, h));
 #elif UDM_MODE_view_file || UDM_MODE_view_populate || UDM_MODE_view_collapse
     auto flags = shared ? MAP_SHARED : MAP_PRIVATE;

@@ -1084,10 +1084,11 @@ the owning map on `std::allocator` and on `huge_page::map`, `map_view` over the 
 and with `MAP_POPULATE`, over a copy on `MADV_HUGEPAGE` memory (the hugetlbfs proxy for a machine
 without reserved huge pages), and on `MAP_HUGETLB` and `MADV_COLLAPSE` where the kernel gives them
 (`unavailable`, or the same as the file mapping, when it does not: check `anon_huge_MB` and
-`file_pmd_MB`). Three phases: `warm` (1M hits a round after a pass over every key, cycles and TLB
+`file_pmd_MB`). The `header_*` modes go through `mapped_view.h` itself: `mapping::file`,
+`file_populated`, `huge_copy`, and `file` with `trust::checked`. Three phases: `warm` (1M hits a round after a pass over every key, cycles and TLB
 counters from `perf_event_open` around the loop only), `cold` (load time and the first 100000
 hits, with the file in the page cache and evicted from it with `POSIX_FADV_DONTNEED`), `shared`
 (two processes, RSS, file RSS and PSS each, and the file's pages in the page cache by `mincore`).
-Five modes at the four default sizes take about 13 minutes per compiler, most of it the evicted
+Eight modes at the four default sizes take about 25 minutes per compiler, most of it the evicted
 64M lazy mapping (8.6 s per run). Smoke with `-n 100000 -r 1`. The numbers are in
 `notes/index-design.md`, "A map_view over a mapped file".
