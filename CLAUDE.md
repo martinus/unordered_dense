@@ -10,7 +10,7 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
 | the map, single implementation file | `include/ankerl/unordered_dense.h` (+ `stl.h` = its std includes, split out for `import std`; both are needed to copy the header) |
 | opt-in huge page allocator | `include/ankerl/huge_page_allocator.h` (separate: needs `<sys/mman.h>`; never referenced by the map) |
 | tests + benchmarks, one doctest binary `udm-test` | `test/unit/*.cpp`, `test/bench/*.cpp`, `test/bench/workloads.h` (the scored workloads), `test/app/` (doctest.h with `TEST_CASE_MAP`, allocator fixtures) |
-| evidence, ~170 entries | `notes/index-design.md` — grep it before proposing anything |
+| evidence, ~140 entries in 16 topic sections | `notes/index-design.md` — grep it before proposing anything; each section opens with **Where it stands** |
 | measurement harnesses | `scripts/ab/` — `README.md` there documents `run.sh` (paired), `maps.sh`/`maps_one.sh` (other maps, perf), the rest below |
 | mutation testing | `scripts/mutate/mutate.py`, bug files in `scripts/mutate/bugs/` |
 | fuzz corpora | `data/fuzz/<target>/`, replayed by the `fuzz` suite on every run |
@@ -34,9 +34,11 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
   anything heavy while a benchmark runs; pin benchmarks with `AB_CORE=2`.
 - `AB_BUILD` on `/home/martinus/gra/<name>`, never `/tmp` (tmpfs; a full `/tmp` wedges every shell
   command). Delete the directory once the numbers are in the notes.
-- Every measured result goes into `notes/index-design.md` as an entry (bold opening sentence = what
-  was tried and what happened; one index line per entry, same commit), and retractions are written
-  in place, never deleted. A negative result is an entry too.
+- Every measured result goes into `notes/index-design.md` as an entry at the end of its topic
+  section (`###` heading = what was tried and what happened, then a status line), and retractions
+  are written in place, never deleted. A negative result is an entry too. An entry that changes an
+  older one's conclusion adds `**Later (date):**` there. Then `scripts/lint/lint-notes.py --fix`
+  (regenerates the contents list; the linter fails CI on a stale list or a broken reference).
 
 ## Session mechanics (what cost turns last time)
 
@@ -61,9 +63,10 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
   test registered in `test/meson.build` (then the unity leg), CMake installs the directory so nothing
   else changes.
 - **Templates.** Issue: `## The number` (measured, with the notes entry name) / `## What to build` /
-  `## How to measure it` / `## Done means`. Notes entry: `**What was tried and what happened**
-  (YYYY-MM-DD, issue #N, Ryzen 9 7950X, clang 22 and gcc 16, the scripts used).` then tables, then
-  "what this says and does not say"; index line = the bold sentence. Commit: one sentence, body with
+  `## How to measure it` / `## Done means`. Notes entry: `### What was tried and what happened`, then
+  `*YYYY-MM-DD · #N · kept|rejected|retracted|superseded|open|method|info · Ryzen 9 7950X, clang 22
+  and gcc 16, the scripts used*`, then tables, then "what this says and does not say"; update the
+  section's **Where it stands** if the answer changed. Commit: one sentence, body with
   numbers, `Closes #N`. Comment on an issue only when asked ("comment that").
 - **The owner's requests, as phrased:** "Ok now 260" = implement issue 260 and open its PR. "Run
   simplify" = `/simplify` on the open PR, fix findings directly (never file them as issues unless
