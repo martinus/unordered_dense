@@ -77,15 +77,15 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 // every process.
 //
 // Measured on map<uint64_t, uint64_t> from 1M to 64M entries (notes/index-design.md, "A map_view
-// over a mapped file"). Random hits on 2 MB pages are 1.03-1.13x as fast as on the file's pages from
-// 4M to 64M entries, the same as the owning map gains from huge_page::map; the 4 KB file mapping
-// runs at the owning map's speed there. At 1M the gap is 1.4-2.1x, depending on how the file
-// entered the page cache. With the file in the page cache, the first 100000 lookups on a fresh
-// `file` mapping (trust::unchecked) take 2-17 ms, where reading the owning map takes 14 ms to 1 s.
-// With the file not in the page cache they take 17 ms at 1M and 8.6 s at 64M, where
-// `file_populated` has done them in 9-312 ms and `huge_copy` in 9-339 ms. So `file` is the default;
-// `file_populated` is for a file that is likely not in the page cache; `huge_copy` is for a process
-// that does many lookups and does not share the file with others.
+// over a mapped file"). Random hits on a file on hugetlbfs are 1.02-1.16x as fast as on the same file
+// on 4 KB pages from 4M to 64M entries and 2.2-2.4x at 1M, as fast as on `huge_copy` and as the
+// owning map on huge_page::map; the 4 KB file mapping runs at the owning map's speed. With the file in
+// the page cache, the first 100000 lookups on a fresh `file` mapping (trust::unchecked) take 2-17 ms,
+// where reading the owning map takes 16 ms to 1 s; on hugetlbfs, 1-4 ms. With a 4 KB file not in the
+// page cache they take 16 ms at 1M and 8.7 s at 64M, where `file_populated` has done them in 9-319 ms
+// and `huge_copy` in 8-347 ms. So `file` is the default, and on hugetlbfs it is the fastest choice in
+// every respect; `file_populated` is for a 4 KB file that is likely not in the page cache;
+// `huge_copy` is for a process that does many lookups, does not share the file and has no hugetlbfs.
 enum class mapping : std::uint8_t { file, file_populated, huge_copy };
 
 namespace detail {

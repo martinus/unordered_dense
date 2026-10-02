@@ -662,32 +662,44 @@ The last argument, `ud::mapping`, says where the bytes live:
   gets plain pages). A copy per process.
 
 Measured for `map<uint64_t, uint64_t>`, 1M to 64M entries, clang 22 and gcc 16 on a Ryzen 9 7950X,
-`scripts/ab/mapped_view.sh`. The 2 MB row is the `huge_copy` mechanism (this machine has no reserved
-huge pages, so it stands in for hugetlbfs, the same 2 MB pages):
+`scripts/ab/mapped_view.sh`, one sweep:
 
 | ns per random hit, several in flight, clang / gcc | 1M | 4M | 16M | 64M |
 |---|---|---|---|---|
-| owning `map`, read from the file | 12.0 / 9.5 | 33.3 / 28.8 | 38.4 / 32.8 | 39.9 / 34.2 |
-| `mapping::file`, 4 KB pages | 8.2 / 8.3 | 32.6 / 28.3 | 38.4 / 32.7 | 40.0 / 34.3 |
-| 2 MB pages | 6.0 / 4.9 | 30.3 / 27.5 | 34.9 / 30.3 | 35.6 / 30.9 |
+| owning `map`, read from the file | 13.0 / 10.1 | 34.8 / 28.7 | 38.1 / 33.1 | 40.1 / 34.4 |
+| `mapping::file`, 4 KB pages | 13.8 / 10.9 | 33.4 / 30.1 | 38.6 / 34.1 | 40.0 / 35.4 |
+| `mapping::file`, the file on hugetlbfs | 6.2 / 4.6 | 32.7 / 26.2 | 34.9 / 30.0 | 35.7 / 30.5 |
+| `mapping::huge_copy` | 6.1 / 4.8 | 32.0 / 27.1 | 35.2 / 33.1 | 35.5 / 31.0 |
 
 | ms from the constructor call until 100000 lookups are done, clang, one run per cell | 1M | 4M | 16M | 64M |
 |---|---|---|---|---|
-| owning `map`, file in the page cache | 17 | 64 | 253 | 1013 |
-| `mapping::file`, file in the page cache | 2 | 4 | 7 | 17 |
-| `mapping::file`, file not in the page cache | 17 | 87 | 233 | **8616** |
-| `mapping::file_populated`, not in the page cache | 9 | 35 | 92 | 312 |
-| `mapping::huge_copy`, not in the page cache | 9 | 40 | 99 | 339 |
+| owning `map`, file in the page cache | 16 | 66 | 255 | 994 |
+| `mapping::file`, file in the page cache | 1.9 | 4.4 | 7.3 | 17 |
+| `mapping::file`, file not in the page cache | 16 | 82 | 235 | **8715** |
+| `mapping::file_populated`, not in the page cache | 8.8 | 35 | 86 | 319 |
+| `mapping::huge_copy`, not in the page cache | 8.4 | 35 | 104 | 347 |
+| `mapping::file`, the file on hugetlbfs | 0.9 | 3.2 | 4.0 | 4.3 |
 
-So: 2 MB pages make lookups 1.03-1.13x faster from 4M entries up and 1.4-2.1x at 1M (how much depends
-on how the file entered the page cache: a sequential read gives TLB-friendly large folios), and a 4 KB
-file mapping looks up as fast as the owning map on the default allocator from 4M up, and faster
-at 1M. Two processes on
-`mapping::file` each show the whole file in their RSS and half of it in their PSS, and the page
-cache holds it once; on `huge_copy` each holds its own. A lazy mapping of a file that is not in the
-page cache pays one random read per page it touches, which at 64M entries is 26577 major faults
-for the first 100000 lookups: map a file that has just been copied in or not read for a while with
-`file_populated`.
+So: on hugetlbfs a view looks up 1.02-1.16x faster than on the file's 4 KB pages from 4M entries up
+and 2.2-2.4x at 1M, the same as `huge_copy` and as the owning map on `huge_page::map`. A 4 KB file
+mapping looks up as fast as the owning map on the default allocator. At 1M the 4 KB numbers depend
+on how the file entered the page cache: across three runs the view read 8.2-13.8 ns under clang, and
+a sequential read gives large folios, which the TLB holds in fewer entries.
+
+Two processes on `mapping::file` each show the whole file in their RSS and half of it in their PSS,
+and the page cache holds it once; on hugetlbfs they take no huge pages beyond the file's own; on
+`huge_copy` each holds its own copy. A lazy mapping of a file that is not in the page cache pays one
+random read per page it touches, which at 64M entries is about 26600 major faults for the first
+100000 lookups: map a file that has just been copied in or not read for a while with
+`file_populated`. A file on hugetlbfs is never evicted.
+
+A file on hugetlbfs needs reserved pages and a mount, once, as root, and hugetlbfs has no `write()`:
+`ftruncate` the file to a whole number of 2 MB pages, `mmap` it and copy the bytes in.
+
+```sh
+sudo sysctl vm.nr_hugepages=2048     # 4 GB of 2 MB pages, pinned until set back to 0
+sudo mount -t hugetlbfs -o uid=$(id -u),gid=$(id -g),pagesize=2M none /mnt/huge
+```
 
 The bytes have to stay what they were. What `trust::checked` checked holds for the bytes as they
 were when the view was constructed. A `mapping::file` mapping shows what another process writes
