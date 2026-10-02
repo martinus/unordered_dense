@@ -30,6 +30,7 @@ shapes `ankerl::unordered_dense::map` and `set` can be asked to take. The index 
 - [Loading a map from its values and its index](#loading-a-map-from-its-values-and-its-index)
   - [What the check covers and what only `verify()` covers](#what-the-check-covers-and-what-only-verify-covers)
   - [What is portable](#what-is-portable)
+  - [A custom index container](#a-custom-index-container)
 - [Taking the duplicates out of a vector](#taking-the-duplicates-out-of-a-vector)
 - [`std::erase_if`, and the version macros](#stderase_if-and-the-version-macros)
 - [Custom Container Types](#custom-container-types)
@@ -563,6 +564,55 @@ The id rejects every "no" in this table:
 
 The values are never written or read by the library, `std::string` included. Write them in
 whatever format the rest of the file uses, and hand the table a container of them.
+
+### A custom index container
+
+A table object that lives inside a blob, next to its two arrays, cannot hold plain pointers: the
+blob is copied or mapped at another address. The table holds the values in its value container,
+which can be your own type already (see [Custom Container Types](#custom-container-types)); give
+that type a member alias template, and the table takes the index container from it as well:
+
+```cpp
+template <typename T>
+class offset_values {
+    // ... the value container, read only: `using is_view = void;` and the interface below
+public:
+    template <typename Bucket>
+    using index_container = offset_index<Bucket>;
+};
+
+using blob_map = ankerl::unordered_dense::map<Key, T, Hash, KeyEqual, offset_values<std::pair<Key, T>>>;
+```
+
+The alias is looked up on the type in the allocator-or-container slot, before anything else: a
+container that names one gets it, a `map_view`'s values get the index view, everything else the
+library's own index. `test/unit/index_container.cpp` has a self-relative pair of containers for a
+table placed in a blob, and an owning one that forwards to `std::vector`.
+
+What the index container has to provide. Both kinds:
+
+- `using block = ankerl::unordered_dense::detail::group_block<Bucket>;` and `data()` returning a
+  pointer to `size()` blocks, aligned to `alignof(block)`. When it holds no blocks, `data()` returns
+  `ankerl::unordered_dense::detail::sentinel_blocks<Bucket>()`, never null: an empty table looks up
+  in it without a test. Both are `static_assert`ed.
+- `size()` (in blocks, 0 or a power of two of at least 4), `empty()`, `using allocator_type`, and
+  `static constexpr bool nothrow_move_assignable`.
+- a constructor from the table's allocator (`explicit`, any allocator type), and one from another
+  of its kind and the allocator.
+
+Read only, when the value container has `is_view`, the table only reads through it: a default
+constructor (the view constructor leaves it to that and then assigns), `assign(other)` to copy
+one, `assign(block const* data, std::size_t size)` for what the view
+constructor is given, and `clear()` for a table that was moved from. A write to such a table does
+not compile.
+
+Owning, everything the library's own index container has, with its meaning: `get_allocator()`,
+`set_allocator(a)` (give the blocks back and take `a`), `clear()` (give the blocks back),
+`resize(n)` (n value-initialized blocks, replacing what is there), `assign(other)` (a copy),
+`take(other)` (other's blocks, leaving it empty), `swap(other)`, `data()` in both constness and
+`clear_metadata()` (zero every block's fingerprints and counters). The constructor that loads an
+index into an owning table copies it with `resize()` and checks the copy, where the library's own
+container does both in one loop.
 
 ## Taking the duplicates out of a vector
 

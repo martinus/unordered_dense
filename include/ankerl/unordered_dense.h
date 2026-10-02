@@ -1635,6 +1635,23 @@ template <typename Group>
     return ok && used == num_values;
 }
 
+// check_index() for an owning table: no value pointed at twice either. The bitmap comes from `alloc`,
+// rebound. For an index container without group_storage's fused copy (#303); group_storage itself
+// runs check_index_block_unique() inside its copy loop.
+template <typename Group, typename Alloc>
+[[nodiscard]] auto
+check_index_unique(group_block<Group> const* blocks, std::size_t num_blocks, std::size_t num_values, Alloc const& alloc)
+    -> bool {
+    using word_alloc = typename std::allocator_traits<Alloc>::template rebind_alloc<std::uint64_t>;
+    auto seen = std::vector<std::uint64_t, word_alloc>((num_values / 64U) + 1U, 0, word_alloc(alloc));
+    auto used = std::size_t{0};
+    auto ok = true;
+    for (std::size_t i = 0; i < num_blocks; ++i) {
+        ok = check_index_block_unique(blocks[i], num_values, used, seen.data()) && ok;
+    }
+    return ok && used == num_values;
+}
+
 // Alloc is the table's value allocator; the block array rebinds it.
 //
 // A pointer and a count rather than a std::vector: the table never grows the array in place, so a
@@ -1895,6 +1912,10 @@ public:
     void assign(group_view const& other) noexcept {
         *this = other;
     }
+    // What the view constructor hands it: the caller's blocks.
+    void assign(block const* data, std::size_t size) noexcept {
+        *this = group_view(data, size);
+    }
     void clear() noexcept {
         *this = group_view();
     }
@@ -1964,13 +1985,24 @@ using detect_is_view = typename T::is_view;
 template <typename Container, typename It>
 using detect_range_assign = decltype(std::declval<Container&>().assign(std::declval<It>(), std::declval<It>()));
 
-// The index container for a value container: a view over a view's values, else an owning array on
-// the values' allocator. An ordered choice, so that another kind of index container (#303) is one
-// more case in front of these.
-template <typename Bucket, typename Values>
-using index_container_for = std::conditional_t<is_detected_v<detect_is_view, Values>,
-                                               group_view<Bucket>,
-                                               group_storage<Bucket, typename Values::allocator_type>>;
+// A container or allocator that brings its own index container (#303): a member alias template
+// `index_container<Bucket>`. See "A custom index container" in doc/usage.md for the contract.
+template <typename AllocatorOrContainer, typename Bucket>
+using detect_index_container = typename AllocatorOrContainer::template index_container<Bucket>;
+
+// The index container, in order: the one AllocatorOrContainer names, else a view over a view's
+// values, else an owning array on the values' allocator.
+template <typename Bucket, typename AllocatorOrContainer, typename Values>
+using index_container_for = typename detector<std::conditional_t<is_detected_v<detect_is_view, Values>,
+                                                                 group_view<Bucket>,
+                                                                 group_storage<Bucket, typename Values::allocator_type>>,
+                                              void,
+                                              detect_index_container,
+                                              AllocatorOrContainer,
+                                              Bucket>::type;
+
+template <typename Container>
+using detect_assign_checked = decltype(std::declval<Container&>().assign_checked(nullptr, 0, 0));
 
 // This is it, the table. Doubles as map and set, and uses `void` for T when its used as a set.
 template <class Key,
@@ -1994,7 +2026,12 @@ private:
     // IsSegmented is about the values -- stable references, no reallocation of the payload. The
     // index is two plain arrays either way: it is 5.5 bytes per slot, and a probe reads it by
     // pointer.
-    using bucket_container_type = detail::index_container_for<Bucket, value_container_type>;
+    using bucket_container_type = detail::index_container_for<Bucket, AllocatorOrContainer, value_container_type>;
+    static_assert(std::is_same_v<typename bucket_container_type::block, detail::group_block<Bucket>>,
+                  "an index container holds detail::group_block<Bucket>, see \"A custom index container\" in doc/usage.md");
+    static_assert(std::is_convertible_v<decltype(std::declval<bucket_container_type const&>().data()),
+                                        detail::group_block<Bucket> const*>,
+                  "an index container's data() returns a pointer to its blocks");
 
     // Slots per group, from the group. bucket_count() counts slots, m_group_mask counts groups.
     static constexpr std::size_t slots_per_group = std::tuple_size_v<decltype(Bucket::m_fingerprints)>;
@@ -2956,10 +2993,23 @@ private:
         if (index.empty()) {
             return;
         }
-        if (t == trust::unchecked) {
-            m_buckets.assign_unchecked(index.data(), index.size());
-        } else if (!m_buckets.assign_checked(index.data(), index.size(), num_values)) {
-            on_error_bad_index();
+        if constexpr (detail::is_detected_v<detail::detect_assign_checked, bucket_container_type>) {
+            if (t == trust::unchecked) {
+                m_buckets.assign_unchecked(index.data(), index.size());
+            } else if (!m_buckets.assign_checked(index.data(), index.size(), num_values)) {
+                on_error_bad_index();
+            }
+        } else {
+            // A custom index container (#303) has no fused copy: resize, copy, then the same check
+            // over the copy, and give the array back if it fails.
+            auto fresh = bucket_container_type(m_buckets.get_allocator());
+            fresh.resize(index.size());
+            std::memcpy(static_cast<void*>(fresh.data()), index.data(), index.size() * sizeof(index_block));
+            if (t == trust::checked &&
+                !detail::check_index_unique(fresh.data(), index.size(), num_values, m_buckets.get_allocator())) {
+                on_error_bad_index();
+            }
+            m_buckets.take(fresh);
         }
         describe_loaded_index(index.size());
     }
@@ -3974,7 +4024,7 @@ public:
             on_error_bad_index();
         }
         if (!index.empty()) {
-            m_buckets.assign(index);
+            m_buckets.assign(index.data(), index.size());
             describe_loaded_index(index.size());
         }
     }
