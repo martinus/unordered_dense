@@ -27,17 +27,22 @@
 
 # huge_copy maps memory and never reads the file into it
 <<<
-        try {
-            read_into(d.fd);
+        m_region = map_anonymous(m_region_size);
+        read_into(d.fd);
 ===
-        try {
+        m_region = map_anonymous(m_region_size);
 >>>
 
 # the move leaves the source owning the mapping: two munmaps of one region
 <<<
-        : m_region(std::exchange(other.m_region, nullptr))
+    mapped_file(mapped_file&& other) noexcept {
+        swap(other);
+    }
 ===
+    mapped_file(mapped_file&& other) noexcept
         : m_region(other.m_region)
+        , m_region_size(other.m_region_size)
+        , m_size(other.m_size) {}
 >>>
 
 # the view is built over the wrong array

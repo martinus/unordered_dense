@@ -24,6 +24,12 @@
 // array: throughput, several lookups in flight (notes: "measure throughput"). cycles and the two TLB
 // counters are read with perf_event_open around the timed loop only.
 //
+// The view modes do their own mmap rather than use mapped_view.h, to reach what the header does not
+// offer (MADV_COLLAPSE, MAP_HUGETLB without the THP fallback, a 2 MB-aligned address for the file
+// mapping) and to keep the modes that produced the notes' numbers fixed. They differ from the
+// header in two ways that do not change the page size: the file is mapped MAP_PRIVATE outside the
+// `shared` phase (read only, so the same page cache pages), at a 2 MB-aligned address.
+//
 // The file: a 4096 byte header, then the values at 2 MB, then the index at the next 2 MB boundary,
 // so that a mapping can put either array on huge pages.
 #include "max_rss.h"
@@ -171,13 +177,19 @@ auto gen(char const* path, std::size_t n) -> int {
     return 0;
 }
 
+#if UDM_MODE_owning
+using table_t = map_t;
+#elif UDM_MODE_owning_huge
+using table_t = huge_map_t;
+#else
+using table_t = view_t;
+#endif
+
 // What one load holds: the table, and whatever memory it reads.
 struct loaded {
     void* region = MAP_FAILED;
     std::size_t region_size = 0;
-    std::optional<map_t> owning;
-    std::optional<huge_map_t> owning_huge;
-    std::optional<view_t> view;
+    std::optional<table_t> table;
     loaded() = default;
     loaded(loaded const&) = delete;
     auto operator=(loaded const&) -> loaded& = delete;
@@ -185,16 +197,6 @@ struct loaded {
         if (region != MAP_FAILED) {
             munmap(region, region_size);
         }
-    }
-    template <typename F>
-    auto apply(F&& f) -> decltype(auto) {
-#if UDM_MODE_owning
-        return f(*owning);
-#elif UDM_MODE_owning_huge
-        return f(*owning_huge);
-#else
-        return f(*view);
-#endif
     }
 };
 
@@ -208,12 +210,12 @@ auto read_owning(int fd, header const& h) -> Map {
     return Map(std::move(values), {blocks.data(), blocks.size()}, ud::trust::unchecked);
 }
 
-// An anonymous region aligned to 2 MB, `bytes` rounded up to 2 MB.
-auto anonymous_huge(std::size_t bytes, int extra_flags) -> void* {
+// An anonymous region aligned to 2 MB, `bytes` rounded up to 2 MB: MAP_HUGETLB in view_hugetlb,
+// MADV_HUGEPAGE everywhere else.
+auto anonymous_huge(std::size_t bytes) -> void* {
 #if UDM_MODE_view_hugetlb
-    return mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | extra_flags, -1, 0);
+    return mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
 #else
-    static_cast<void>(extra_flags);
     auto* const raw = mmap(nullptr, bytes + huge, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (raw == MAP_FAILED) {
         return raw;
@@ -236,17 +238,15 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
         std::exit(2);
     }
     auto const bytes = static_cast<std::size_t>(h.file_size);
-#if UDM_MODE_owning
-    out.owning.emplace(read_owning<map_t>(fd, h));
-#elif UDM_MODE_owning_huge
-    out.owning_huge.emplace(read_owning<huge_map_t>(fd, h));
+#if UDM_MODE_owning || UDM_MODE_owning_huge
+    out.table.emplace(read_owning<table_t>(fd, h));
 #elif UDM_MODE_view_file || UDM_MODE_view_populate || UDM_MODE_view_collapse
     auto flags = shared ? MAP_SHARED : MAP_PRIVATE;
 #    if UDM_MODE_view_populate
     flags |= MAP_POPULATE;
 #    endif
     // A 2 MB-aligned address, so that a file offset at a 2 MB boundary can be PMD-mapped.
-    auto* const hint = anonymous_huge(bytes, 0);
+    auto* const hint = anonymous_huge(bytes);
     out.region = mmap(hint, bytes, PROT_READ, flags | MAP_FIXED, fd, 0);
     out.region_size = bytes;
 #    if UDM_MODE_view_collapse
@@ -260,7 +260,7 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
     }
 #    endif
 #elif UDM_MODE_view_thp_copy || UDM_MODE_view_hugetlb
-    out.region = anonymous_huge(bytes, MAP_HUGETLB);
+    out.region = anonymous_huge(bytes);
     out.region_size = bytes;
     if (out.region == MAP_FAILED) {
         close(fd);
@@ -277,9 +277,9 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
         std::exit(2);
     }
     auto const* base = static_cast<char const*>(out.region);
-    out.view.emplace(view_t::value_container_type(reinterpret_cast<value_t const*>(base + h.values_offset), h.num_values),
-                     map_t::index_view(reinterpret_cast<block_t const*>(base + h.index_offset), h.num_blocks),
-                     ud::trust::unchecked);
+    out.table.emplace(view_t::value_container_type(reinterpret_cast<value_t const*>(base + h.values_offset), h.num_values),
+                      map_t::index_view(reinterpret_cast<block_t const*>(base + h.index_offset), h.num_blocks),
+                      ud::trust::unchecked);
 #endif
     close(fd);
     return true;
@@ -345,26 +345,41 @@ auto smaps_kb(char const* field) -> long {
     return max_rss::status_kb(field, "/proc/self/smaps_rollup");
 }
 
+// A find for every key: every page of both arrays is faulted in.
+auto touch_all(table_t const& m, std::uint64_t n) -> std::uint64_t {
+    auto sum = std::uint64_t{0};
+    for (std::uint64_t i = 0; i < n; ++i) {
+        sum += m.find(key_of(i))->second;
+    }
+    return sum;
+}
+
+void drop_page_cache(char const* path) {
+    auto const fd = open(path, O_RDONLY);
+    posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    close(fd);
+}
+
 auto median(std::vector<double> v) -> double {
     std::sort(v.begin(), v.end());
     return v[v.size() / 2];
+}
+
+auto unavailable(header const& h) -> int {
+    std::printf("%zu unavailable\n", static_cast<std::size_t>(h.num_values));
+    return 0;
 }
 
 auto warm(char const* path, std::size_t rounds) -> int {
     auto const h = read_header(path);
     auto l = loaded();
     if (!load(path, h, l, false)) {
-        std::printf("%zu unavailable\n", static_cast<std::size_t>(h.num_values));
-        return 0;
+        return unavailable(h);
     }
     auto rng = ankerl::nanobench::Rng(7);
     auto sink = std::uint64_t{0};
     // one pass over every key first: the pages are faulted in and the caches hold what they will
-    l.apply([&](auto const& m) {
-        for (std::uint64_t i = 0; i < h.num_values; ++i) {
-            sink += m.find(key_of(i))->second;
-        }
-    });
+    sink += touch_all(*l.table, h.num_values);
     auto const anon_huge_kb = smaps_kb("AnonHugePages:");
     auto const file_pmd_kb = smaps_kb("FilePmdMapped:");
     auto const c = counters();
@@ -375,9 +390,7 @@ auto warm(char const* path, std::size_t rounds) -> int {
     for (std::size_t r = 0; r < rounds; ++r) {
         c.start();
         auto const t0 = clock_t_::now();
-        sink += l.apply([&](auto const& m) {
-            return lookups(m, rng, lookups_per_round, h.num_values);
-        });
+        sink += lookups(*l.table, rng, lookups_per_round, h.num_values);
         auto const t1 = clock_t_::now();
         auto const v = c.stop();
         ns.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count() / lookups_per_round);
@@ -406,23 +419,18 @@ auto faults() -> std::array<long, 2> {
 auto cold(char const* path, bool drop) -> int {
     auto const h = read_header(path);
     if (drop) {
-        auto const fd = open(path, O_RDONLY);
-        posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
-        close(fd);
+        drop_page_cache(path);
     }
     auto l = loaded();
     auto const f0 = faults();
     auto const t0 = clock_t_::now();
     if (!load(path, h, l, false)) {
-        std::printf("%zu unavailable\n", static_cast<std::size_t>(h.num_values));
-        return 0;
+        return unavailable(h);
     }
     auto const t1 = clock_t_::now();
     auto const f1 = faults();
     auto rng = ankerl::nanobench::Rng(11);
-    auto const sink = l.apply([&](auto const& m) {
-        return lookups(m, rng, cold_lookups, h.num_values);
-    });
+    auto const sink = lookups(*l.table, rng, cold_lookups, h.num_values);
     auto const t2 = clock_t_::now();
     auto const f2 = faults();
     ankerl::nanobench::doNotOptimizeAway(sink);
@@ -466,15 +474,12 @@ auto page_cache_mb(char const* path) -> long {
 // both still hold their mapping.
 auto shared(char const* path) -> int {
     auto const h = read_header(path);
-    {
-        auto const fd = open(path, O_RDONLY);
-        posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
-        close(fd);
-    }
+    drop_page_cache(path);
     int ready[2];
-    int go[2];
+    int go[2];   // one byte per child: read your numbers. A pipe per phase, or a fast child takes
+    int done[2]; // both bytes of one phase and the other one waits forever.
     int out[2];
-    if (pipe(ready) != 0 || pipe(go) != 0 || pipe(out) != 0) {
+    if (pipe(ready) != 0 || pipe(go) != 0 || pipe(done) != 0 || pipe(out) != 0) {
         return 2;
     }
     constexpr int procs = 2;
@@ -487,22 +492,16 @@ auto shared(char const* path) -> int {
                 static_cast<void>(write(ready[1], &c, 1));
                 static_cast<void>(read(go[0], &c, 1));
                 static_cast<void>(write(out[1], v.data(), sizeof(v)));
-                static_cast<void>(read(go[0], &c, 1));
+                static_cast<void>(read(done[0], &c, 1));
                 _exit(0);
             }
-            auto sink = l.apply([&](auto const& m) {
-                auto s = std::uint64_t{0};
-                for (std::uint64_t i = 0; i < h.num_values; ++i) {
-                    s += m.find(key_of(i))->second;
-                }
-                return s;
-            });
+            auto const sink = touch_all(*l.table, h.num_values);
             ankerl::nanobench::doNotOptimizeAway(sink);
             static_cast<void>(write(ready[1], &c, 1));
             static_cast<void>(read(go[0], &c, 1)); // both are loaded: now read the numbers
             std::array<long, 3> v{max_rss::status_kb("VmRSS:"), max_rss::status_kb("RssFile:"), smaps_kb("Pss:")};
             static_cast<void>(write(out[1], v.data(), sizeof(v)));
-            static_cast<void>(read(go[0], &c, 1)); // and hold the mapping until the parent has looked
+            static_cast<void>(read(done[0], &c, 1)); // and hold the mapping until the parent has looked
             _exit(0);
         }
     }
@@ -519,7 +518,7 @@ auto shared(char const* path) -> int {
         static_cast<void>(read(out[0], v.data(), sizeof(v)));
         std::printf(" proc%d rss_MB %ld file_MB %ld pss_MB %ld", p, v[0] >> 10, v[1] >> 10, v[2] >> 10);
     }
-    static_cast<void>(write(go[1], go_twice.data(), procs));
+    static_cast<void>(write(done[1], go_twice.data(), procs));
     for (int p = 0; p < procs; ++p) {
         wait(nullptr);
     }
