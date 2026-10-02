@@ -10,10 +10,10 @@
 #
 # `writing hits per round` is how many `operator[]` lookups on a present key each churn round does.
 # That is the path move_home() runs on, so 0 measures the drift and 1 or 4 measure what taking it
-# back is worth. Measured 2026-09-07 at load 0.799 over 200 turnovers, groups per miss: fresh 1.086,
-# churned 1.122, and 1.081 and 1.052 with one and four writing hits -- so with enough writing
-# lookups a churned table probes *better* than a freshly built one, because move_home() also pulls
-# home the entries the original build left away from it.
+# back is worth. At load 0.76 over 200 turnovers (2026-10-02), groups per hit / per miss: churned
+# 1.136 / 1.265, and 1.094 / 1.163 and 1.056 / 1.099 with one and four writing hits. The figures
+# this comment carried before (churned 1.122 per miss at 0.799, and a churned table probing
+# *better* than a fresh one) came from churning in sequential keys, which drift far less.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 build=${AB_BUILD:-$(mktemp -d)}
@@ -25,27 +25,29 @@ python3 - "$root/include/ankerl/unordered_dense.h" "$build/instrumented.h" <<'PY
 import sys
 src, dst = sys.argv[1], sys.argv[2]
 s = open(src).read()
-old = """        while (true) {
-            prefetch_index(groups, group_idx);
-            auto const& group = groups[group_idx];
-            auto lanes = match_fingerprint(group, word);
-            while (lanes != 0) {
-                auto const lane = first_lane(lanes);
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
-                auto const value_idx = group.m_index[lane];"""
-new = """        ++udm_probe_lookups;
+# Groups are counted in probe_from's loop and lookups in probe(). For an integer key probe() is
+# probe_from from the home group on, so the ratio is groups per lookup; a key whose compare is a
+# call takes its home group outside the loop, and is not what this counts.
+patches = [
+    ("""        auto const* groups = m_buckets.data();
+        while (true) {
+            prefetch_index(groups, group_idx);""",
+     """        auto const* groups = m_buckets.data();
         while (true) {
             ++udm_probe_groups;
-            prefetch_index(groups, group_idx);
-            auto const& group = groups[group_idx];
-            auto lanes = match_fingerprint(group, word);
-            while (lanes != 0) {
-                auto const lane = first_lane(lanes);
-                auto const slot = static_cast<value_idx_type>(std::size_t{group_idx} * slots_per_group + lane);
-                auto const value_idx = group.m_index[lane];"""
-if old not in s:
-    sys.exit("probe() no longer looks the way this patch expects; update scripts/ab/probe_length.sh")
-s = s.replace(old, new, 1)
+            prefetch_index(groups, group_idx);"""),
+    ("""        auto const home_idx = group_idx_from_hash(mh);
+        if constexpr (!detail::key_compare_is_call_v<Key>) {
+            return probe_from(key, word, counter, home_idx, 0);""",
+     """        auto const home_idx = group_idx_from_hash(mh);
+        ++udm_probe_lookups;
+        if constexpr (!detail::key_compare_is_call_v<Key>) {
+            return probe_from(key, word, counter, home_idx, 0);"""),
+]
+for old, new in patches:
+    if s.count(old) != 1:
+        sys.exit("probe_from()/probe() no longer look the way this patch expects; update scripts/ab/probe_length.sh")
+    s = s.replace(old, new, 1)
 s = s.replace("namespace ankerl::unordered_dense {",
               "extern unsigned long long udm_probe_groups;\nextern unsigned long long udm_probe_lookups;\n"
               "namespace ankerl::unordered_dense {", 1)

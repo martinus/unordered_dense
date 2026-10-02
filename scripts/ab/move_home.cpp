@@ -72,7 +72,6 @@ int main(int argc, char** argv) {
         m.try_emplace(k, 1);
     }
 
-    auto next = std::uint64_t{1} << 40U;
     auto churn = [&](std::size_t rounds) {
         for (std::size_t i = 0; i < rounds; ++i) {
             for (std::size_t h = 0; h < hits; ++h) {
@@ -80,7 +79,11 @@ int main(int argc, char** argv) {
             }
             auto const at = static_cast<std::size_t>(r() % present.size());
             m.erase(present[at]);
-            present[at] = next++;
+            // A random key, like the ones the table was filled with. A counter here (it was
+            // `next++` until 2026-10-02) leaves a churned table holding sequential keys,
+            // which the hash spreads almost evenly: drift read 1.036/1.061 groups per
+            // hit/miss instead of 1.136/1.265, and FIFO churn read exactly 1.000.
+            present[at] = r() >> 1U;
             m.try_emplace(present[at], 1);
         }
     };

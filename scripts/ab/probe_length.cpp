@@ -71,7 +71,6 @@ int main(int argc, char** argv) {
     // churn at a fixed size, with a key the map has never held. `hits` writing lookups per round:
     // operator[] on a key that is present is the path move_home() runs on, so this is what says
     // what move_home takes back.
-    auto next = std::uint64_t{1} << 40U;
     auto const hits = argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 0;
     for (std::size_t t = 0; t < turnovers; ++t) {
         for (std::size_t i = 0; i < n; ++i) {
@@ -80,7 +79,11 @@ int main(int argc, char** argv) {
             }
             auto const at = static_cast<std::size_t>(r() % present.size());
             m.erase(present[at]);
-            present[at] = next++;
+            // A random key, like the ones the table was filled with. A counter here (it was
+            // `next++` until 2026-10-02) leaves a churned table holding sequential keys,
+            // which the hash spreads almost evenly: drift read 1.036/1.061 groups per
+            // hit/miss instead of 1.136/1.265, and FIFO churn read exactly 1.000.
+            present[at] = r() >> 1U;
             m.try_emplace(present[at], 1);
         }
     }

@@ -18,13 +18,8 @@ python3 - "$root/include/ankerl/unordered_dense.h" "$build/off/unordered_dense.h
 import sys
 src, dst = sys.argv[1], sys.argv[2]
 s = open(src).read()
-old = """    void move_home(value_idx_type slot, std::uint64_t mh) {
-        auto const found_in"""
-new = """    void move_home(value_idx_type slot, std::uint64_t mh) {
-        (void)slot;
-        (void)mh;
-        return;
-        auto const found_in"""
+old = "    void move_home(value_idx_type found_in, std::uint8_t from_lane, std::uint64_t mh) {\n"
+new = old + "        (void)found_in;\n        (void)from_lane;\n        (void)mh;\n        return;\n"
 if old not in s:
     sys.exit("move_home() no longer looks the way this patch expects; update scripts/ab/move_home.sh")
 open(dst, "w").write(s.replace(old, new, 1))
