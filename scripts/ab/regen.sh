@@ -128,7 +128,7 @@ PY
     # they are listed separately, but they are doc/ output like everything else here and --redraw
     # has to refresh them or a change to the drawing code reaches every chart except these.
     if [ -f "$doc/bench_readme.csv" ]; then
-        local udm=udm,udm-segmented,udm-huge,udm-seg-huge
+        local udm=udm,udm-segmented,udm-big,udm-seg-big,udm-pmr,udm-seg-pmr,udm-pmr-big,udm-seg-pmr-big,udm-huge,udm-seg-huge,udm-huge-big,udm-seg-huge-big
         local panels=(buildfree:"build + destroy" find:"find, 50% hits" churn iterate rss:"peak memory")
         for k in u64 str; do
             "$root/scripts/ab/mapsplot.py" readme "$doc/bench_readme.csv" "$k" "$readme_base" \

@@ -2,7 +2,12 @@
 # The README's two benchmark graphs, end to end: build every map's own binary, run the five
 # workloads across an octave, write the CSV and draw the SVGs.
 #
-#   scripts/ab/bench_readme.sh [-c COMPILER] [-b BASE] [-r ROUNDS] [-o OUTDIR] [-w WORKLOAD,...] [map...]
+#   scripts/ab/bench_readme.sh [-c COMPILER] [-b BASE] [-r ROUNDS] [-o OUTDIR] [-w WORKLOAD,...] [-u REV] [map...]
+#
+# -u builds every unordered_dense row from REV's three headers instead of the working tree, so the
+# README can show the release a caller downloads (`-u v5.2.0`) rather than whatever main is today.
+# The harness itself stays the working tree's. The version goes into OUTDIR/bench_readme.ref, which
+# mapsplot.py reads for the label of the reference row.
 #
 # -w re-measures a subset and updates those rows of the CSV in place, leaving the rest as they
 # were -- the five workloads are independent processes and nothing in one reaches the others, so
@@ -27,14 +32,15 @@
 # The include paths are maps.sh's and are documented there. AB_CORE pins the measured process.
 set -euo pipefail
 export LC_ALL=C
-cxx=clang++ base=1000000 rounds=3 out=doc works=build,buildfree,find,churn,iterate,memory,rss
-while getopts "c:b:r:o:w:" opt; do
+cxx=clang++ base=1000000 rounds=3 out=doc works=build,buildfree,find,churn,iterate,memory,rss udm_rev=
+while getopts "c:b:r:o:w:u:" opt; do
     case $opt in
         c) cxx=$OPTARG ;;
         b) base=$OPTARG ;;
         r) rounds=$OPTARG ;;
         o) out=$OPTARG ;;
         w) works=$OPTARG ;;
+        u) udm_rev=$OPTARG ;;
         *) exit 1 ;;
     esac
 done
@@ -54,7 +60,22 @@ rename() { # <rev> <namespace> <MACRO> <out>
 }
 rename v4.11.0 udmbase UDMBASE_UNORDERED_DENSE "$build/base411.h"
 
-flags=(-O3 -DNDEBUG -std=c++20 -w -DUDM_DEFAULT_HASH -DUDM_VARIANTS -I"$build" -I"$nb" -I"$root/include" -I"$root/test")
+# The headers under test: the working tree, or REV's. Written only when they differ from what is
+# there, so that the staleness check below rebuilds exactly when the subject changed.
+udm_inc=$root/include
+if [ -n "$udm_rev" ]; then
+    udm_inc=$build/udm_include
+    mkdir -p "$udm_inc/ankerl"
+    for h in unordered_dense.h stl.h huge_page_allocator.h; do
+        git -C "$root" show "$udm_rev:include/ankerl/$h" > "$build/udm_tmp.h"
+        cmp -s "$build/udm_tmp.h" "$udm_inc/ankerl/$h" || mv "$build/udm_tmp.h" "$udm_inc/ankerl/$h"
+    done
+    rm -f "$build/udm_tmp.h"
+fi
+udm_version=$(awk '/define ANKERL_UNORDERED_DENSE_VERSION_(MAJOR|MINOR|PATCH)/ {v = v (v ? "." : "") $3} END {print v}' "$udm_inc/ankerl/unordered_dense.h")
+echo "== unordered_dense $udm_version from ${udm_rev:-the working tree}" >&2
+
+flags=(-O3 -DNDEBUG -std=c++20 -w -DUDM_DEFAULT_HASH -DUDM_VARIANTS -I"$build" -I"$nb" -I"$udm_inc" -I"$root/include" -I"$root/test")
 libs=(-ldl) srcs=()
 try() { local name=$1 header=$2; shift 2
     if printf '#include <%s>\nint main() {}\n' "$header" | "$cxx" -x c++ -std=c++20 -fsyntax-only "$@" - 2>/dev/null; then
@@ -112,7 +133,7 @@ for keys in u64 str; do
             # would report a number from code no longer in the tree and say nothing about it. The
             # map's own headers are in the list too -- a stale *subject* is worse than a stale
             # harness, and the first version of this check looked only at the harness.
-            if [ ! -f "$bin" ] || [ -n "$(find "$root/include" "$root/scripts/ab/bench_readme.cpp" "$root/scripts/ab/maps.h" -newer "$bin" -print -quit)" ]; then
+            if [ ! -f "$bin" ] || [ -n "$(find "$udm_inc" "$root/include" "$root/scripts/ab/bench_readme.cpp" "$root/scripts/ab/maps.h" -newer "$bin" -print -quit)" ]; then
                 "$cxx" "${flags[@]}" "${kflag[@]}" "${cflag[@]}" -DUDM_ONE_MAP="$i" \
                     "$root/scripts/ab/bench_readme.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$bin"
             fi
@@ -182,7 +203,8 @@ MEDIAN_EOF
 # libraries; the second is the same numbers for the shapes this map can be asked to take, which are
 # a configuration question rather than a library one and would otherwise take three of the rows a
 # reader is comparing libraries in.
-udm_rows=udm,udm-segmented,udm-huge,udm-seg-huge
+printf 'unordered_dense %s\n' "$udm_version" > "$out/bench_readme.ref"
+udm_rows=udm,udm-segmented,udm-big,udm-seg-big,udm-pmr,udm-seg-pmr,udm-pmr-big,udm-seg-pmr-big,udm-huge,udm-seg-huge,udm-huge-big,udm-seg-huge-big
 panels=(buildfree:"build + destroy" find:"find, 50% hits" churn iterate rss:"peak memory")
 for keys in u64 str; do
     python3 "$root/scripts/ab/mapsplot.py" readme "$csv" "$keys" "$base" "$out/bench-readme-$keys.svg" \

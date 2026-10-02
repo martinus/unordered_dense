@@ -177,6 +177,38 @@ UDM_MAP(a_udm411, "udm-4.11", udmbase::unordered_dense::map<Key, Val UDM_HASH(Ke
 // container, and every block of 2 MB and up on a huge page. Both are the shipped defaults of their
 // aliases, except the segment size, which is the one doc/usage.md recommends for the page.
 UDM_MAP(a_udm_seg, "udm-segmented", ankerl::unordered_dense::segmented_map<Key, Val UDM_HASH(Key)>);
+// The rest of the configuration space (#349): the 64-bit value index, and `pmr::` on the default
+// resource, each crossed with the segmented values. `pmr::` and `huge_page::` both fill the
+// allocator slot, so there is no row with both.
+UDM_MAP(a_udm_big,
+        "udm-big",
+        ankerl::unordered_dense::map<Key,
+                                     Val,
+                                     UDM_HASH_HERE(Key),
+                                     std::equal_to<Key>,
+                                     std::allocator<std::pair<Key, Val>>,
+                                     ankerl::unordered_dense::bucket_type::group_big>);
+UDM_MAP(a_udm_seg_big,
+        "udm-seg-big",
+        ankerl::unordered_dense::segmented_map<Key,
+                                               Val,
+                                               UDM_HASH_HERE(Key),
+                                               std::equal_to<Key>,
+                                               std::allocator<std::pair<Key, Val>>,
+                                               ankerl::unordered_dense::bucket_type::group_big>);
+#if defined(ANKERL_UNORDERED_DENSE_PMR)
+#    define UDM_HAVE_PMR 1
+UDM_MAP(a_udm_pmr, "udm-pmr", ankerl::unordered_dense::pmr::map<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_udm_seg_pmr, "udm-seg-pmr", ankerl::unordered_dense::pmr::segmented_map<Key, Val UDM_HASH(Key)>);
+UDM_MAP(a_udm_pmr_big,
+        "udm-pmr-big",
+        ankerl::unordered_dense::pmr::
+            map<Key, Val, UDM_HASH_HERE(Key), std::equal_to<Key>, ankerl::unordered_dense::bucket_type::group_big>);
+UDM_MAP(a_udm_seg_pmr_big,
+        "udm-seg-pmr-big",
+        ankerl::unordered_dense::pmr::
+            segmented_map<Key, Val, UDM_HASH_HERE(Key), std::equal_to<Key>, ankerl::unordered_dense::bucket_type::group_big>);
+#endif
 #ifdef UDM_HAVE_HUGE
 UDM_MAP(a_udm_huge, "udm-huge", ankerl::unordered_dense::huge_page::map<Key, Val UDM_HASH(Key)>);
 UDM_MAP(a_udm_seghuge,
@@ -186,6 +218,18 @@ UDM_MAP(a_udm_seghuge,
                                                           UDM_HASH_HERE(Key),
                                                           std::equal_to<Key>,
                                                           ankerl::unordered_dense::bucket_type::group,
+                                                          (std::size_t{16} << 20U)>);
+UDM_MAP(a_udm_huge_big,
+        "udm-huge-big",
+        ankerl::unordered_dense::huge_page::
+            map<Key, Val, UDM_HASH_HERE(Key), std::equal_to<Key>, ankerl::unordered_dense::bucket_type::group_big>);
+UDM_MAP(a_udm_seghuge_big,
+        "udm-seg-huge-big",
+        ankerl::unordered_dense::huge_page::segmented_map<Key,
+                                                          Val,
+                                                          UDM_HASH_HERE(Key),
+                                                          std::equal_to<Key>,
+                                                          ankerl::unordered_dense::bucket_type::group_big,
                                                           (std::size_t{16} << 20U)>);
 #endif
 UDM_MAP(a_boost, "boost", boost::unordered_flat_map<Key, Val UDM_HASH(Key)>);
@@ -384,17 +428,23 @@ struct maps_for;
 #    define UDM_LIST_IHTAB(K, V)
 #endif
 
-// The three shapes of this map a caller opts into, rather than three more indexes to compare. They
+// The shapes of this map a caller opts into, rather than more indexes to compare. They
 // are off unless a harness asks for them, because maps.cpp's `memory` mode counts with mallinfo2(),
-// which cannot see the huge page allocator's raw mmap and would report those two rows at near zero
+// which cannot see the huge page allocator's raw mmap and would report those rows at near zero
 // -- and because maps.sh's own numbers are a fixed list of maps that should not move under it.
 #if defined(UDM_VARIANTS)
 #    ifdef UDM_HAVE_HUGE
-#        define UDM_LIST_HUGE(K, V) , a_udm_huge<K, V>, a_udm_seghuge<K, V>
+#        define UDM_LIST_HUGE(K, V) , a_udm_huge<K, V>, a_udm_seghuge<K, V>, a_udm_huge_big<K, V>, a_udm_seghuge_big<K, V>
 #    else
 #        define UDM_LIST_HUGE(K, V)
 #    endif
-#    define UDM_LIST_VARIANTS(K, V) , a_udm_seg<K, V> UDM_LIST_HUGE(K, V)
+#    ifdef UDM_HAVE_PMR
+#        define UDM_LIST_PMR(K, V) , a_udm_pmr<K, V>, a_udm_seg_pmr<K, V>, a_udm_pmr_big<K, V>, a_udm_seg_pmr_big<K, V>
+#    else
+#        define UDM_LIST_PMR(K, V)
+#    endif
+#    define UDM_LIST_VARIANTS(K, V) \
+        , a_udm_seg<K, V>, a_udm_big<K, V>, a_udm_seg_big<K, V> UDM_LIST_PMR(K, V) UDM_LIST_HUGE(K, V)
 #else
 #    define UDM_LIST_VARIANTS(K, V)
 #endif

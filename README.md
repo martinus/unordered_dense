@@ -52,17 +52,17 @@ There's no free lunch, so there are a few disadvantages:
 
 ## Benchmarks
 
-Obviously this is my own map's README, so the bias is where you'd expect it. Rows are sorted by the geometric mean of all five panels, and one of the five is `iterate`, which a dense map wins by 5.5x to 13x. That column decides most of the order on its own. Sorted by `find` instead, this map is seventh of fourteen.
+Obviously this is my own map's README, so the bias is where you'd expect it. Rows are sorted by the geometric mean of all five panels, and one of the five is `iterate`, which a dense map wins by 5.4x to 13x. That column decides most of the order on its own. Sorted by `find` instead, `unordered_dense` is seventh of fourteen.
 
-Every map runs in the configuration you get by typing its type name, own hash included. Everything is relative to `ankerl::unordered_dense::map`, so 1.00 is level with it and 2.00 is twice the cost. Ryzen 9 7950X, clang 22.1.8, one binary per map, one million to two million entries. Raw numbers are in [doc/bench_readme.csv](doc/bench_readme.csv).
+Every map runs in the configuration you get by typing its type name, own hash included. Everything is relative to `ankerl::unordered_dense::map` from the latest release, 5.2.0, so 1.00 is level with it and 2.00 is twice the cost. Ryzen 9 7950X, clang 22.1.8, one binary per map, one million to two million entries. Raw numbers are in [doc/bench_readme.csv](doc/bench_readme.csv).
 
 ![benchmark results, uint64_t keys](doc/bench-readme-u64.svg)
 
 ![benchmark results, std::string keys](doc/bench-readme-str.svg)
 
-In short: iteration is what the dense layout buys, 0.19 ns per element against 5.5x to 13x for the flat maps and 110x for `std::unordered_map`. With `std::string` keys it builds and destroys 2.1x to 2.6x faster than any flat map. Integer `find` and `churn` are what that costs, 0.73 and 0.61 against `boost::unordered_flat_map`.
+In short: iteration is what the dense layout buys, 0.20 ns per element against 5.4x to 13x for the flat maps and 112x for `std::unordered_map`. With `std::string` keys it builds and destroys 2.1x to 2.6x faster than any flat map. Integer `find` and `churn` are what that costs, 0.73 and 0.59 against `boost::unordered_flat_map`.
 
-[doc/benchmarks.md](doc/benchmarks.md) has what each panel measures, what huge pages and `segmented_map` do to the same numbers, how the run was taken and what it does not say.
+[doc/benchmarks.md](doc/benchmarks.md) has what each panel measures, all twelve configurations of `unordered_dense` (`segmented_map`, `group_big`, `pmr`, huge pages and their combinations), how the run was taken and what it does not say.
 
 ## Installation
 
