@@ -22,6 +22,9 @@
 //   header_file, header_populated, header_huge
 //                  mapped_view.h itself: mapping::file, file_populated and huge_copy, trust::unchecked
 //   header_file_checked  mapping::file with trust::checked, which reads the whole index once
+//   header_hugetlbfs  mapping::file over a copy of the file on hugetlbfs (UDM_HUGETLBFS_DIR, a mount
+//                  with reserved pages), made before the clock starts and removed after the phase:
+//                  the page cache on 2 MB pages, shared, and never evicted
 //
 // Lookups are all hits, the key drawn from an rng and computed from its number, not read from an
 // array: throughput, several lookups in flight (notes: "measure throughput"). cycles and the two TLB
@@ -50,6 +53,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -243,7 +247,8 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
         std::exit(2);
     }
     auto const bytes = static_cast<std::size_t>(h.file_size);
-#if UDM_MODE_header_file || UDM_MODE_header_populated || UDM_MODE_header_huge || UDM_MODE_header_file_checked
+#if UDM_MODE_header_file || UDM_MODE_header_populated || UDM_MODE_header_huge || UDM_MODE_header_file_checked || \
+    UDM_MODE_header_hugetlbfs
     static_cast<void>(bytes);
     close(fd); // the header opens the file itself
 #    if UDM_MODE_header_populated
@@ -393,7 +398,58 @@ auto unavailable(header const& h) -> int {
     return 0;
 }
 
-auto warm(char const* path, std::size_t rounds) -> int {
+// The file the mode maps: in header_hugetlbfs a copy on hugetlbfs, which has no write(), so it is
+// filled through a mapping and removed when the phase is done; else the file itself.
+struct staged {
+    std::string path;
+    bool owned = false;
+    explicit staged(char const* original)
+        : path(original) {
+#if UDM_MODE_header_hugetlbfs
+        auto const* dir = std::getenv("UDM_HUGETLBFS_DIR");
+        if (dir == nullptr) {
+            std::fprintf(stderr, "header_hugetlbfs needs UDM_HUGETLBFS_DIR\n");
+            std::exit(2);
+        }
+        auto const in = open(original, O_RDONLY);
+        auto st = (struct stat){};
+        fstat(in, &st);
+        auto const bytes = static_cast<std::size_t>(st.st_size); // gen rounds it to 2 MB
+        path = std::string(dir) + "/" + std::filesystem::path(original).filename().string();
+        auto const out = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (out < 0 || ftruncate(out, static_cast<off_t>(bytes)) != 0) {
+            std::perror(path.c_str());
+            std::exit(2);
+        }
+        owned = true;
+        auto* const p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, out, 0);
+        if (p == MAP_FAILED) {
+            std::perror("mmap on hugetlbfs");
+            std::exit(2);
+        }
+        read_exact(in, p, bytes, 0);
+        munmap(p, bytes);
+        close(out);
+        close(in);
+#endif
+    }
+    staged(staged const&) = delete;
+    auto operator=(staged const&) -> staged& = delete;
+    ~staged() {
+        if (owned) {
+            unlink(path.c_str());
+        }
+    }
+};
+
+// MB of hugetlb pages mapped by this process, which RSS does not count.
+auto hugetlb_mb() -> long {
+    return (smaps_kb("Shared_Hugetlb:") + smaps_kb("Private_Hugetlb:")) >> 10;
+}
+
+auto warm(char const* original, std::size_t rounds) -> int {
+    auto const file = staged(original);
+    auto const* path = file.path.c_str();
     auto const h = read_header(path);
     auto l = loaded();
     if (!load(path, h, l, false)) {
@@ -405,6 +461,7 @@ auto warm(char const* path, std::size_t rounds) -> int {
     sink += touch_all(*l.table, h.num_values);
     auto const anon_huge_kb = smaps_kb("AnonHugePages:");
     auto const file_pmd_kb = smaps_kb("FilePmdMapped:");
+    auto const hugetlb = hugetlb_mb();
     auto const c = counters();
     auto ns = std::vector<double>();
     auto cyc = std::vector<double>();
@@ -422,14 +479,16 @@ auto warm(char const* path, std::size_t rounds) -> int {
         walks.push_back(v[2] / lookups_per_round);
     }
     ankerl::nanobench::doNotOptimizeAway(sink);
-    std::printf("%zu ns/lookup %.2f cycles %.1f l1_dtlb_miss %.3f page_walks %.3f anon_huge_MB %ld file_pmd_MB %ld\n",
+    std::printf("%zu ns/lookup %.2f cycles %.1f l1_dtlb_miss %.3f page_walks %.3f anon_huge_MB %ld file_pmd_MB %ld "
+                "hugetlb_MB %ld\n",
                 static_cast<std::size_t>(h.num_values),
                 median(ns),
                 median(cyc),
                 median(l1),
                 median(walks),
                 anon_huge_kb >> 10,
-                file_pmd_kb >> 10);
+                file_pmd_kb >> 10,
+                hugetlb);
     return 0;
 }
 
@@ -439,7 +498,9 @@ auto faults() -> std::array<long, 2> {
     return {u.ru_minflt, u.ru_majflt};
 }
 
-auto cold(char const* path, bool drop) -> int {
+auto cold(char const* original, bool drop) -> int {
+    auto const file = staged(original);
+    auto const* path = file.path.c_str();
     auto const h = read_header(path);
     if (drop) {
         drop_page_cache(path);
@@ -495,7 +556,9 @@ auto page_cache_mb(char const* path) -> long {
 // Two processes load the file the mode's way and look up every key, then each reports its RSS,
 // the part of it that is file pages, and its PSS (shared pages split between their users), while
 // both still hold their mapping.
-auto shared(char const* path) -> int {
+auto shared(char const* original) -> int {
+    auto const file = staged(original);
+    auto const* path = file.path.c_str();
     auto const h = read_header(path);
     drop_page_cache(path);
     int ready[2];
@@ -506,12 +569,14 @@ auto shared(char const* path) -> int {
         return 2;
     }
     constexpr int procs = 2;
+    // reserved huge pages the two children take between them: one copy, two, or none
+    auto const huge_free_before = max_rss::status_kb("HugePages_Free:", "/proc/meminfo");
     for (int p = 0; p < procs; ++p) {
         if (fork() == 0) {
             auto l = loaded();
             auto c = 'r';
             if (!load(path, h, l, true)) {
-                std::array<long, 3> v{-1, -1, -1};
+                std::array<long, 4> v{-1, -1, -1, -1};
                 static_cast<void>(write(ready[1], &c, 1));
                 static_cast<void>(read(go[0], &c, 1));
                 static_cast<void>(write(out[1], v.data(), sizeof(v)));
@@ -522,7 +587,8 @@ auto shared(char const* path) -> int {
             ankerl::nanobench::doNotOptimizeAway(sink);
             static_cast<void>(write(ready[1], &c, 1));
             static_cast<void>(read(go[0], &c, 1)); // both are loaded: now read the numbers
-            std::array<long, 3> v{max_rss::status_kb("VmRSS:"), max_rss::status_kb("RssFile:"), smaps_kb("Pss:")};
+            std::array<long, 4> v{
+                max_rss::status_kb("VmRSS:"), max_rss::status_kb("RssFile:"), smaps_kb("Pss:"), hugetlb_mb() << 10};
             static_cast<void>(write(out[1], v.data(), sizeof(v)));
             static_cast<void>(read(done[0], &c, 1)); // and hold the mapping until the parent has looked
             _exit(0);
@@ -533,19 +599,21 @@ auto shared(char const* path) -> int {
         static_cast<void>(read(ready[0], &c, 1));
     }
     auto const cache = page_cache_mb(path);
+    auto const huge_taken_mb = (huge_free_before - max_rss::status_kb("HugePages_Free:", "/proc/meminfo")) * 2;
     auto const go_twice = std::array<char, procs>{};
     static_cast<void>(write(go[1], go_twice.data(), procs));
     std::printf("%zu", static_cast<std::size_t>(h.num_values));
     for (int p = 0; p < procs; ++p) {
-        auto v = std::array<long, 3>{};
+        auto v = std::array<long, 4>{};
         static_cast<void>(read(out[0], v.data(), sizeof(v)));
-        std::printf(" proc%d rss_MB %ld file_MB %ld pss_MB %ld", p, v[0] >> 10, v[1] >> 10, v[2] >> 10);
+        std::printf(
+            " proc%d rss_MB %ld file_MB %ld pss_MB %ld hugetlb_MB %ld", p, v[0] >> 10, v[1] >> 10, v[2] >> 10, v[3] >> 10);
     }
     static_cast<void>(write(done[1], go_twice.data(), procs));
     for (int p = 0; p < procs; ++p) {
         wait(nullptr);
     }
-    std::printf(" page_cache_MB %ld\n", cache);
+    std::printf(" page_cache_MB %ld huge_pages_taken_MB %ld\n", cache, huge_taken_mb);
     return 0;
 }
 

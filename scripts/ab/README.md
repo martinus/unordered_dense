@@ -1085,7 +1085,9 @@ and with `MAP_POPULATE`, over a copy on `MADV_HUGEPAGE` memory (the hugetlbfs pr
 without reserved huge pages), and on `MAP_HUGETLB` and `MADV_COLLAPSE` where the kernel gives them
 (`unavailable`, or the same as the file mapping, when it does not: check `anon_huge_MB` and
 `file_pmd_MB`). The `header_*` modes go through `mapped_view.h` itself: `mapping::file`,
-`file_populated`, `huge_copy`, and `file` with `trust::checked`. Three phases: `warm` (1M hits a round after a pass over every key, cycles and TLB
+`file_populated`, `huge_copy`, and `file` with `trust::checked`. `header_hugetlbfs` maps a copy of the file on hugetlbfs and needs
+`UDM_HUGETLBFS_DIR` (a mount with reserved pages; `doc/usage.md`, "Mapping a file", has the two
+commands); `hugetlb_MB` and, in the shared phase, `huge_pages_taken_MB` say whether it took. Three phases: `warm` (1M hits a round after a pass over every key, cycles and TLB
 counters from `perf_event_open` around the loop only), `cold` (load time and the first 100000
 hits, with the file in the page cache and evicted from it with `POSIX_FADV_DONTNEED`), `shared`
 (two processes, RSS, file RSS and PSS each, and the file's pages in the page cache by `mincore`).
