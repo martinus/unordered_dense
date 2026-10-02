@@ -205,7 +205,10 @@ re-tested across the cache boundary".
 Two smaller tools answer questions the harnesses cannot. `scripts/ab/probe_length.sh` patches a
 counter into a copy of the probe and reports **groups visited per lookup**, fresh and after churn,
 with an argument for how many writing lookups each churn round does -- which is the only path
-`move_home()` runs on, so 0 measures the drift and 4 measures what taking it back is worth. And
+`move_home()` runs on, so 0 measures the drift and 4 measures what taking it back is worth. Until
+2026-10-02 it, and `scripts/ab/move_home.cpp`, churned in sequential keys (`next++`), which the hash
+spreads almost evenly: they read a quarter of the real drift and `move_home` at a tenth of what it
+is worth. Both draw random keys now. And
 `scripts/ab/placement.cpp` simulates bucketized placement against sliding-window placement with no
 map involved, which is how the ungrouped-window idea was priced without building it.
 
@@ -571,6 +574,22 @@ default maximum load factor swept".
 ```sh
 AB_BUILD=/home/martinus/gra/x scripts/ab/load_factor.sh clang++ | tee clang.txt   # 0.8 0.75 0.85 0.875 0.9, 28 minutes
 AB_BUILD=/home/martinus/gra/x scripts/ab/load_factor.sh g++ 0.8 0.875
+```
+
+## Which lines `prefetch_index` names, and what `place_element_at`'s `always_inline` is worth
+
+Two one-header-per-binary harnesses from the 2026-10-02 cross-read of the notes, both patching
+copies of the working tree's header so the tree is untouched, both compilers, rounds rotated,
+medians. `scripts/ab/prefetch_index.sh` times the scored benchmark's `find_all` with both of
+`prefetch_index`'s lines, with only `p + 87` and with only `p + 64`, from 50000 to 16M entries.
+`scripts/ab/place_inline.sh` builds a map from empty in a translation unit holding nothing else,
+with `place_element_at`'s `always_inline` and without, and reads `perf stat` instructions too. The
+results are in `notes/index-design.md`, "`prefetch_index`'s two lines re-measured" and
+"`always_inline` on `place_element_at` re-measured".
+
+```sh
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/prefetch_index.sh 5    # about an hour
+AB_BUILD=/home/martinus/gra/x AB_CORE=2 scripts/ab/place_inline.sh 5      # about ten minutes
 ```
 
 ## Instructions per `try_emplace` hit and insert, counted around the loop
