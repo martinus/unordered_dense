@@ -67,9 +67,8 @@
         , m_view(make_view(m_file, layout, t == trust::checked ? trust::unchecked : t, hash, equal)) {}
 >>>
 
-# The first of the two below needs a hugetlbfs mount: run with UDM_HUGETLBFS_DIR set and --lanes 1
-# (mapped_view_hugetlbfs says how; it counts HugePages_Free, which parallel lanes share), else that
-# test skips and the mutant survives.
+# The first of the two below needs a hugetlbfs mount: run with UDM_HUGETLBFS_DIR set
+# (mapped_view_hugetlbfs says how), else that test skips and the mutant survives.
 
 # huge_copy never asks for MAP_HUGETLB: reserved huge pages stay unused, THP is all it gets
 <<<

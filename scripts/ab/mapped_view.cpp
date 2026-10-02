@@ -72,6 +72,11 @@
 #    define MADV_COLLAPSE 25
 #endif
 
+// The modes that go through mapped_view.h, which opens and maps the file itself.
+#define UDM_HEADER_MODE                                                                                           \
+    (UDM_MODE_header_file || UDM_MODE_header_populated || UDM_MODE_header_huge || UDM_MODE_header_file_checked || \
+     UDM_MODE_header_hugetlbfs)
+
 namespace {
 
 namespace ud = ankerl::unordered_dense;
@@ -241,16 +246,8 @@ auto anonymous_huge(std::size_t bytes) -> void* {
 }
 
 auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool shared) -> bool {
-    auto const fd = open(path, O_RDONLY);
-    if (fd < 0) {
-        std::perror(path);
-        std::exit(2);
-    }
-    auto const bytes = static_cast<std::size_t>(h.file_size);
-#if UDM_MODE_header_file || UDM_MODE_header_populated || UDM_MODE_header_huge || UDM_MODE_header_file_checked || \
-    UDM_MODE_header_hugetlbfs
-    static_cast<void>(bytes);
-    close(fd); // the header opens the file itself
+#if UDM_HEADER_MODE
+    // the header opens the file itself
 #    if UDM_MODE_header_populated
     constexpr auto how = ud::mapping::file_populated;
 #    elif UDM_MODE_header_huge
@@ -266,6 +263,15 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
     out.mapped.emplace(path, ud::mapped_layout{h.values_offset, h.num_values, h.index_offset, h.num_blocks}, t, how);
     out.table.emplace(out.mapped->view()); // a copy of the view: two pointers into the mapping
     return true;
+#else
+    auto const fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        std::perror(path);
+        std::exit(2);
+    }
+    [[maybe_unused]] auto const bytes = static_cast<std::size_t>(h.file_size);
+#endif
+#if UDM_HEADER_MODE
 #elif UDM_MODE_owning || UDM_MODE_owning_huge
     out.table.emplace(read_owning<table_t>(fd, h));
 #elif UDM_MODE_view_file || UDM_MODE_view_populate || UDM_MODE_view_collapse
@@ -299,7 +305,7 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
 #else
 #    error "set -DUDM_MODE_<mode>=1"
 #endif
-#if !UDM_MODE_owning && !UDM_MODE_owning_huge
+#if !UDM_MODE_owning && !UDM_MODE_owning_huge && !UDM_HEADER_MODE
     if (out.region == MAP_FAILED) {
         std::perror("mmap");
         std::exit(2);
@@ -309,8 +315,10 @@ auto load(char const* path, header const& h, loaded& out, [[maybe_unused]] bool 
                       map_t::index_view(reinterpret_cast<block_t const*>(base + h.index_offset), h.num_blocks),
                       ud::trust::unchecked);
 #endif
+#if !UDM_HEADER_MODE
     close(fd);
     return true;
+#endif
 }
 
 template <typename Map>
@@ -411,10 +419,8 @@ struct staged {
             std::fprintf(stderr, "header_hugetlbfs needs UDM_HUGETLBFS_DIR\n");
             std::exit(2);
         }
+        auto const bytes = static_cast<std::size_t>(read_header(original).file_size); // gen rounds it to 2 MB
         auto const in = open(original, O_RDONLY);
-        auto st = (struct stat){};
-        fstat(in, &st);
-        auto const bytes = static_cast<std::size_t>(st.st_size); // gen rounds it to 2 MB
         path = std::string(dir) + "/" + std::filesystem::path(original).filename().string();
         auto const out = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
         if (out < 0 || ftruncate(out, static_cast<off_t>(bytes)) != 0) {
@@ -588,7 +594,7 @@ auto shared(char const* original) -> int {
             static_cast<void>(write(ready[1], &c, 1));
             static_cast<void>(read(go[0], &c, 1)); // both are loaded: now read the numbers
             std::array<long, 4> v{
-                max_rss::status_kb("VmRSS:"), max_rss::status_kb("RssFile:"), smaps_kb("Pss:"), hugetlb_mb() << 10};
+                max_rss::status_kb("VmRSS:"), max_rss::status_kb("RssFile:"), smaps_kb("Pss:"), hugetlb_mb() << 10}; // all kB
             static_cast<void>(write(out[1], v.data(), sizeof(v)));
             static_cast<void>(read(done[0], &c, 1)); // and hold the mapping until the parent has looked
             _exit(0);

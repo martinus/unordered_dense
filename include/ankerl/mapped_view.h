@@ -76,16 +76,14 @@ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
 // else, if the kernel gives neither, 4 KB pages. It pays the read up front and holds its own copy in
 // every process.
 //
-// Measured on map<uint64_t, uint64_t> from 1M to 64M entries (notes/index-design.md, "A map_view
-// over a mapped file"). Random hits on a file on hugetlbfs are 1.02-1.16x as fast as on the same file
-// on 4 KB pages from 4M to 64M entries and 2.2-2.4x at 1M, as fast as on `huge_copy` and as the
-// owning map on huge_page::map; the 4 KB file mapping runs at the owning map's speed. With the file in
-// the page cache, the first 100000 lookups on a fresh `file` mapping (trust::unchecked) take 2-17 ms,
-// where reading the owning map takes 16 ms to 1 s; on hugetlbfs, 1-4 ms. With a 4 KB file not in the
-// page cache they take 16 ms at 1M and 8.7 s at 64M, where `file_populated` has done them in 9-319 ms
-// and `huge_copy` in 8-347 ms. So `file` is the default, and on hugetlbfs it is the fastest choice in
-// every respect; `file_populated` is for a 4 KB file that is likely not in the page cache;
-// `huge_copy` is for a process that does many lookups, does not share the file and has no hugetlbfs.
+// Which to pick, from map<uint64_t, uint64_t> measured at 1M to 64M entries (the numbers are in
+// doc/usage.md, "Mapping a file", and notes/index-design.md, "A map_view over a mapped file"):
+// `file` is the default. It starts fastest when the file is in the page cache, shares one copy
+// between processes, and on hugetlbfs it is also as fast as anything here. On 4 KB pages random
+// lookups past the cache are about a tenth slower than on 2 MB pages. `file_populated` is for a 4 KB
+// file that is likely not in the page cache, where a lazy mapping pays one random read per page it
+// touches. `huge_copy` is for a process that does many lookups, does not share the file and has no
+// hugetlbfs.
 enum class mapping : std::uint8_t { file, file_populated, huge_copy };
 
 namespace detail {
