@@ -41,26 +41,6 @@ namespace {
     return true;
 }
 
-auto env(char const* varname) -> std::optional<std::string> {
-#ifdef _MSC_VER
-    char* pValue = nullptr;
-    size_t len = 0;
-    errno_t err = _dupenv_s(&pValue, &len, varname);
-    if (err || nullptr == pValue) {
-        return {};
-    }
-    auto str = std::string(pValue);
-    free(pValue);
-    return str;
-#else
-    char const* val = std::getenv(varname); // NOLINT(concurrency-mt-unsafe,clang-analyzer-cplusplus.StringChecker)
-    if (nullptr == val) {
-        return {};
-    }
-    return val;
-#endif
-}
-
 [[nodiscard]] auto read_file(std::filesystem::path const& p) -> std::optional<std::string> {
     auto f = std::ifstream(p);
     if (!f) {
@@ -101,6 +81,34 @@ auto env(char const* varname) -> std::optional<std::string> {
 
 } // namespace
 
+auto env(char const* varname) -> std::optional<std::string> {
+#ifdef _MSC_VER
+    char* pValue = nullptr;
+    size_t len = 0;
+    errno_t err = _dupenv_s(&pValue, &len, varname);
+    if (err || nullptr == pValue) {
+        return {};
+    }
+    auto str = std::string(pValue);
+    free(pValue);
+    return str;
+#else
+    char const* val = std::getenv(varname); // NOLINT(concurrency-mt-unsafe,clang-analyzer-cplusplus.StringChecker)
+    if (nullptr == val) {
+        return {};
+    }
+    return val;
+#endif
+}
+
+auto corpus_base_dir() -> std::filesystem::path {
+    auto dir = find_fuzz_corpus_base_dir();
+    if (!dir) {
+        throw std::runtime_error("could not find corpus base dir :-(");
+    }
+    return dir.value();
+}
+
 void evaluate_corpus(std::function<void(provider)> const& op) {
     if (!is_valid_filename(doctest::current_test_name())) {
         throw std::runtime_error("test case name needs to be a valid filename. only [a-zA-Z0-9_-+] are allowed");
@@ -108,12 +116,7 @@ void evaluate_corpus(std::function<void(provider)> const& op) {
 
     // 2 ways
 
-    auto corpus_base_dir = find_fuzz_corpus_base_dir();
-    if (!corpus_base_dir) {
-        throw std::runtime_error("could not find corpus base dir :-(");
-    }
-
-    auto path = std::filesystem::path(corpus_base_dir.value()) / doctest::current_test_name();
+    auto path = corpus_base_dir() / doctest::current_test_name();
     INFO("path=\"" << path.string() << "\"");
     auto num_files = size_t();
     for (auto const& dir_entry : std::filesystem::directory_iterator(path)) {

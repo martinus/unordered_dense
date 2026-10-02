@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ALL_TARGETS = ("fuzz_api", "fuzz_group_index", "fuzz_insert_erase", "fuzz_replace_map", "fuzz_string")
+ALL_TARGETS = ("fuzz_api", "fuzz_group_index", "fuzz_index_view", "fuzz_insert_erase", "fuzz_replace_map", "fuzz_string")
 FINDINGS = Path(os.environ.get("FINDINGS") or ROOT / "fuzz-findings")  # gitignored, see .gitignore
 BUILD_AFL = Path("builddir/afl")
 BUILD_AFL_FAST = Path("builddir/afl-fast")

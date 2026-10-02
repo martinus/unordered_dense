@@ -2,7 +2,10 @@
 
 #include <fuzz/provider.h>
 
+#include <filesystem>
 #include <functional>
+#include <optional>
+#include <string>
 
 #if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
 extern "C" {
@@ -15,6 +18,12 @@ namespace fuzz {
 namespace detail {
 
 void evaluate_corpus(std::function<void(provider)> const& op);
+
+// data/fuzz, found the way the corpus is; other test data lives beside it (data/index_format).
+[[nodiscard]] auto corpus_base_dir() -> std::filesystem::path;
+
+// The environment variable, or nothing; std::getenv is deprecated under MSVC.
+[[nodiscard]] auto env(char const* varname) -> std::optional<std::string>;
 
 } // namespace detail
 

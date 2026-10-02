@@ -73,6 +73,11 @@ namespace {
 //
 // The values from 17 to 144 changed on 2026-09-06, when that range became independent blocks;
 // everything shorter and everything longer hashes exactly as it did.
+// The values in this file were pinned at this hash_version. A change that makes this file go red
+// changes the bytes of every saved index too (#299): bump detail::hash_version in the header in the
+// same commit, and this number with it, so that index_format_id rejects indexes placed by the old hash.
+static_assert(ankerl::unordered_dense::detail::hash_version == 1, "regenerated the values? bump hash_version too");
+
 TEST_CASE("wyhash_golden_values_by_length") {
     if (skip_on_big_endian()) {
         return;

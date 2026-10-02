@@ -1059,3 +1059,17 @@ every variant as a ratio to the plain map. The full grid of one kind is 15 varia
 for strings; `-v` cuts it (13 variants of `u64`: ~35 minutes). Smoke with
 `-k u64 -b 1000 -o 10000 -v 'map|seg4096$'`. The numbers are in `notes/index-design.md`, "segment
 size".
+
+## Loading a map from its values and its index (#299)
+
+    AB_CORE=2 AB_BUILD=/home/martinus/gra/x scripts/ab/index_load.sh [-c g++] [-k u64|str] [-n 1000000,4000000,16000000,64000000] [-r 7]
+
+One binary per mode (`index_load.cpp` lists them): building by inserting, the owning constructor
+with `trust::checked` and `trust::unchecked`, `map_view` with both, and `verify(spot)` and
+`verify(full)`. The values and the index sit in 64-aligned memory before the clock starts; a mode
+that builds a map hands it out of the clock to be destroyed, because freeing a million strings is
+not a load. Prints the median ns per entry over the rounds and the peak RSS of one load in a forked
+child, measured before the timed rounds (after them the arena is warm and the child reads near
+zero). `u64` at the four default sizes and `str` at 1M and 4M take about 12 minutes per compiler.
+Smoke with `-n 10000 -r 1`. The numbers are in `notes/index-design.md`, "Loading a map from its
+values and its index".

@@ -53,6 +53,7 @@ test_sources = [
     'unit/extract.cpp',
     'unit/fuzz_api.cpp',
     'unit/fuzz_group_index.cpp',
+    'unit/fuzz_index_view.cpp',
     'unit/fuzz_insert_erase.cpp',
     'unit/fuzz_replace_map.cpp',
     'unit/fuzz_string.cpp',
@@ -65,6 +66,7 @@ test_sources = [
     'unit/hash_golden.cpp',
     'unit/huge_page_allocator.cpp',
     'unit/include_only.cpp',
+    'unit/index_view.cpp',
     'unit/initializer_list.cpp',
     'unit/insert_or_assign.cpp',
     'unit/insert.cpp',
@@ -277,6 +279,17 @@ test(
     timeout: 600,
     verbose: true)
 
+# map_view and set_view are read only, and a write on one is a compile error naming that (#299).
+# A static_assert in a function body cannot be detected from inside the suite, so this compiles
+# each writer separately and expects the message. gcc and clang, which share the flags it uses.
+if compiler.get_id() in ['gcc', 'clang']
+    test(
+        'view_read_only',
+        find_program(meson.current_source_dir() / '..' / 'scripts' / 'test_view_readonly.py'),
+        args: [meson.current_source_dir() / '..' / 'include', get_option('cpp_std')] + compiler.cmd_array(),
+        timeout: 300)
+endif
+
 # libFuzzer targets. The unit suite replays data/fuzz/<name> on every build, which by construction
 # only finds what has already been found; these are the binaries that go looking. They are clang
 # only (-fsanitize=fuzzer), and not built by default because nothing in a normal build or test run
@@ -308,7 +321,7 @@ if compiler.get_id() == 'clang'
         fuzz_compile_sanitizers += '-fsanitize=address,undefined'
         fuzz_link_sanitizers += '-fsanitize=address,undefined'
     endif
-    foreach fuzz_target : ['fuzz_api', 'fuzz_group_index', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
+    foreach fuzz_target : ['fuzz_api', 'fuzz_group_index', 'fuzz_index_view', 'fuzz_insert_erase', 'fuzz_replace_map', 'fuzz_string']
         executable(
             fuzz_target,
             ['unit/' + fuzz_target + '.cpp', 'app/counter.cpp'],
