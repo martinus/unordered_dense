@@ -48,12 +48,22 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
 - **Smoke every harness at the smallest size, one round, before the real run.** Three scripts this
   week failed only at run time: `env VAR=x fn` cannot call a shell function; `ls_l1_d_tlb_miss.all_l2_dtlb_miss`
   is not an event; `$!` after `cmd | tee &` is `tee`'s pid.
+- **Never `pkill -f <pattern>` inside a Bash call**: the pattern is in that shell's own command line,
+  it kills itself (exit 144) and the rest of the command never runs (a commit and push were lost
+  in #359). Stop a background task by its pid or with TaskStop.
+- **A variant of code under development is a template parameter or an API, not a patch**:
+  `index_load_nocheck.patch` went stale three times in one afternoon (#299) and became
+  `trust::unchecked`. Patches are for variants of code that is not changing.
+- **A timed function that creates a map hands it out of the clock to be destroyed, and RSS is
+  measured before the timed rounds**: #299's string loads read 14 ns/entry of frees as load time,
+  and an RSS after the rounds read 0.2 B/entry for a 27 B/entry map.
 - **Verify the mechanism is engaged before A/B-ing it.** A setting that did not take effect measures
   as a clean null. Huge pages: `AnonHugePages` in `/proc/<pid>/smaps_rollup` mid-run, or `perf stat
   -e ls_l1_d_tlb_miss.tlb_reload_2m_l2_hit`. Prefetch/inlining: the symbol table (`nm -C | grep -c`)
   and `perf record` of the hot function.
-- **CI watcher** (pending shows as `pending` in the tabular view; JSON `conclusion` is `""`):
-  `for i in $(seq 1 55); do t=$(gh pr checks N | awk -F'\t' '{print $2}' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}'); grep -q pending <<<"$t" || { echo "$t"; break; }; sleep 60; done`
+- **CI watcher**: `.claude/skills/issues/watch_ci.sh N` with `run_in_background`. It waits for the
+  runs on the PR's *current head*; a loop over `gh pr checks` exits at once after a push (no checks
+  yet, or the old head's; on 2026-10-02 one exited before any check existed)
   — then `gh pr merge N --rebase --delete-branch=false` only if the user said "merge when green".
 - **perf events that exist on this machine** (Zen 4, perf 6.x): `cycles`, `instructions`,
   `branch-misses`, `dTLB-load-misses`, `ls_l1_d_tlb_miss.{all,all_l2_miss,tlb_reload_4k_l2_hit,tlb_reload_2m_l2_hit,tlb_reload_coalesced_page_hit}`.
@@ -83,7 +93,8 @@ CXX="ccache clang++" meson setup --buildtype release builddir/clang_release   # 
 CXX="ccache g++"     meson setup --buildtype release builddir/gcc_release     # the compiler that does not fold
 ninja -C builddir/clang_release && ./builddir/clang_release/test/udm-test   # every header change; ~830 cases
 ./builddir/clang_release/test/udm-test -tc='huge_page*'                     # filter by test case glob
-python3 scripts/lint/all.py            # clang-tidy-18 cannot run on this machine: its failure is expected, the other four must pass
+python3 scripts/lint/all.py            # its clang-tidy is 22 here and flags existing code: expected; the other five must pass
+UNORDERED_DENSE_CLANG_TIDY=clang-tidy-18 scripts/lint/lint-clang-tidy.py 2>&1 | grep 'unordered_dense.h.*error:'   # CI's version: must print nothing (it fails parsing gcc 16's libstdc++ but still checks the header)
 clang-format -i <file>                 # version 21 pinned; the format linter's verdict is its exit code
 ```
 
@@ -93,6 +104,7 @@ dirs: `builddir/{clang_release,gcc_release,san_address,unity16,fuzz,...}`; `ninj
 CI legs to reproduce locally before pushing header or test changes, each caught a green-elsewhere failure:
 - 32-bit (gcc and clang): `g++ -m32 -std=c++17 -fsyntax-only -Wall -Wextra -Wconversion -Wold-style-cast -pedantic-errors -Iinclude -Itest -I$(dirname $(find subprojects/doctest-2.5.3 -name doctest.h)) <file>` — clang and MSVC each catch narrowings the other misses.
 - `-fno-exceptions` (both compilers) for anything that throws; the header has `ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()`.
+- MSVC (`/W4 /WX`, no local compiler): no `std::getenv` in tests, C4996 (#359 went red on four legs); use `fuzz::detail::env()`. A test's `if` on a constant: `if constexpr`.
 - **Unity leg whenever a test file is added or removed**: `ninja -C builddir/unity16 && ./builddir/unity16/test/udm-test` (`--unity=on --unity-size=16`). A new file shifts every later file's chunk and can collide anonymous-namespace names.
 - ASan+UBSan (`builddir/san_address`) for anything touching memory or the index.
 - Any leg: `meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++<matrix cpp_std, default 17> <matrix setup_args> && meson test -C builddir --print-errorlogs <matrix test_args>`.
@@ -229,6 +241,11 @@ scripts/fuzz_afl.py run|sweep|minimize [target]
 `fuzz_group_index` hashes with the identity and is the only target that reaches the index's own
 structure (it re-finds the unbounded miss, which a review found). `data/fuzz/fuzz_group_index/cb8d5c38…` is the hang input;
 coverage minimization drops it — put it back. `afl-fuzz` needs `core_pattern` not piped.
+A new target needs two or more corpus files before the suite passes: fuzz, then `-merge=1 data/fuzz/<t> scratch`.
+`-fork=N` crashed libFuzzer's *parent* (SEGV at a low address, `crash: 0`) on `fuzz_index_view`; use
+`-jobs=16 -workers=16`. ASan misses a read inside a vector's capacity: also fuzz from
+`meson setup builddir/fuzz_assert -Dfuzz_sanitizers=true -Dcpp_args=-D_GLIBCXX_ASSERTIONS`, which is
+what found #299's two-slots-on-one-value read past the end.
 
 ## Already measured — do not propose again without new evidence (grep the phrase in the notes)
 
