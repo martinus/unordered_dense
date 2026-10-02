@@ -62,10 +62,15 @@ auto mv_write(std::string const& path, Table const& m) -> ud::mapped_layout {
     layout.index_offset = (layout.values_offset + (values.size() * sizeof(values[0])) + 4095) / 4096 * 4096;
     layout.num_blocks = index.size();
     auto bytes = std::vector<char>(layout.index_offset + (index.size() * sizeof(typename Table::index_block)));
-    std::memcpy(bytes.data() + layout.values_offset, values.data(), values.size() * sizeof(values[0]));
-    std::memcpy(bytes.data() + layout.index_offset,
-                static_cast<void const*>(index.data()),
-                index.size() * sizeof(typename Table::index_block));
+    // an empty map's values() has a null data(), which memcpy must not get
+    if (!values.empty()) {
+        std::memcpy(bytes.data() + layout.values_offset, values.data(), values.size() * sizeof(values[0]));
+    }
+    if (!index.empty()) {
+        std::memcpy(bytes.data() + layout.index_offset,
+                    static_cast<void const*>(index.data()),
+                    index.size() * sizeof(typename Table::index_block));
+    }
     auto out = std::ofstream(path, std::ios::binary | std::ios::trunc);
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     return layout;
