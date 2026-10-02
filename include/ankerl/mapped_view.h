@@ -42,13 +42,10 @@
 
 #if defined(__has_include)
 #    if __has_include(<sys/mman.h>) && __has_include(<unistd.h>) && __has_include(<fcntl.h>) && __has_include(<sys/stat.h>)
-#        include <fcntl.h>    // for open, O_RDONLY, O_CLOEXEC
-#        include <sys/mman.h> // for mmap, munmap, mprotect, madvise
-#        include <sys/stat.h> // for fstat
-#        include <unistd.h>   // for close, pread
-#        if defined(__linux__)
-#            include <sys/vfs.h> // for fstatfs
-#        endif
+#        include <fcntl.h>                               // for open, O_RDONLY, O_CLOEXEC
+#        include <sys/mman.h>                            // for mmap, munmap, mprotect, madvise
+#        include <sys/stat.h>                            // for fstat
+#        include <unistd.h>                              // for close, pread
 #        define ANKERL_UNORDERED_DENSE_HAS_MAPPED_VIEW 1 // NOLINT(cppcoreguidelines-macro-usage)
 #    endif
 #endif
@@ -183,22 +180,6 @@ class mapped_file {
         return region;
     }
 
-    // What munmap needs for a mapping of `size` bytes of the file. On hugetlbfs the kernel rounds
-    // the mapping up to whole huge pages and munmap takes only a multiple of one.
-    [[nodiscard]] static auto mapped_length(int fd, std::size_t size) noexcept -> std::size_t {
-#    if defined(__linux__)
-        struct statfs fs{};
-        constexpr auto hugetlbfs_magic = std::uint32_t{0x958458f6U};
-        if (::fstatfs(fd, &fs) == 0 && static_cast<std::uint32_t>(fs.f_type) == hugetlbfs_magic && fs.f_bsize > 0) {
-            auto const page = static_cast<std::size_t>(fs.f_bsize);
-            return (size + page - 1) / page * page;
-        }
-#    else
-        static_cast<void>(fd);
-#    endif
-        return size;
-    }
-
     void read_into(int fd) const {
         auto done = std::size_t{0};
         while (done != m_size) {
@@ -258,7 +239,9 @@ public:
                 detail::on_error_mapping(errno, "ankerl::unordered_dense::mapped_file: mmap");
             }
             m_region = static_cast<std::byte*>(p);
-            m_region_size = mapped_length(d.fd, m_size);
+            // On hugetlbfs, munmap takes only whole huge pages; a file there always is (ftruncate
+            // rejects any other size), so the file's size is the length on every file system.
+            m_region_size = m_size;
             return;
         }
         // Below one huge page there is no huge page to get: map exactly the file's size.

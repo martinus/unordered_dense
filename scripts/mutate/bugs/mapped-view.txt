@@ -66,3 +66,25 @@
 ===
         , m_view(make_view(m_file, layout, t == trust::checked ? trust::unchecked : t, hash, equal)) {}
 >>>
+
+# The first of the two below needs a hugetlbfs mount: run with UDM_HUGETLBFS_DIR set and --lanes 1
+# (mapped_view_hugetlbfs says how; it counts HugePages_Free, which parallel lanes share), else that
+# test skips and the mutant survives.
+
+# huge_copy never asks for MAP_HUGETLB: reserved huge pages stay unused, THP is all it gets
+<<<
+        auto* hugetlb = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+===
+        auto* hugetlb = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        ::munmap(hugetlb, len);
+        hugetlb = MAP_FAILED;
+>>>
+
+# the file mapping's munmap length is a page short: the last page of an ordinary file's mapping
+# leaks, and on hugetlbfs, where munmap takes only whole huge pages, nothing is unmapped at all.
+# (One byte short is equivalent: munmap rounds the length up to a page.)
+<<<
+            m_region_size = m_size;
+===
+            m_region_size = m_size - 4096;
+>>>
