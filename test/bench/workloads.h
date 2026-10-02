@@ -357,7 +357,7 @@ auto find_hits_busy(lookup_table<Map>* t, busy_sink* sink) -> size_t {
         auto const it = map.find(key_for<Map>(keys[r % num_keys]));
         auto const v = static_cast<uint64_t>(it->second);
         out[(r >> 23U) & out_mask] += v;
-        checksum += v;
+        checksum += static_cast<size_t>(v);
     }
     t->rng = std::move(rng);
     return checksum;
@@ -412,7 +412,7 @@ auto find_dense_ids_busy(dense_id_table<Map>* t, busy_sink* sink) -> size_t {
         auto const r = rng();
         auto const v = static_cast<uint64_t>(map.find(r % n)->second);
         out[(r >> 23U) & out_mask] += v;
-        checksum += v;
+        checksum += static_cast<size_t>(v);
     }
     t->rng = std::move(rng);
     return checksum;
