@@ -68,7 +68,8 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
   and gcc 16, the scripts used*`, then tables, then "what this says and does not say"; update the
   section's **Where it stands** if the answer changed. Commit: one sentence, body with
   numbers, `Closes #N`. Comment on an issue only when asked ("comment that").
-- **The owner's requests, as phrased:** "Ok now 260" = implement issue 260 and open its PR. "Run
+- **The owner's requests, as phrased:** "Do the issues" / "work the issues" = the `/issues` skill
+  (`.claude/skills/issues/SKILL.md`): every open owner issue to merged, then a reflection PR. "Ok now 260" = implement issue 260 and open its PR. "Run
   simplify" = `/simplify` on the open PR, fix findings directly (never file them as issues unless
   told). "Merge when green" = watch CI, merge on 34/34, otherwise report. "File 1 2 and 3" = one issue
   per numbered point in the last reply. "Comment that" = post the last reasoning as an issue comment.
