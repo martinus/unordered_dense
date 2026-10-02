@@ -77,6 +77,7 @@ test_sources = [
     'unit/iterators_insert.cpp',
     'unit/lazy_bucket_allocation.cpp',
     'unit/load_factor.cpp',
+    'unit/mapped_view.cpp',
     'unit/maps_of_maps.cpp',
     'unit/max.cpp',
     'unit/move_to_moved.cpp',

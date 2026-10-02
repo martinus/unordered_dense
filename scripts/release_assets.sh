@@ -8,8 +8,9 @@
 # archive carries the `ankerl/` directory, so unpacking it onto an include path is the whole
 # installation and `#include <ankerl/unordered_dense.h>` then works.
 #
-# `huge_page_allocator.h` is in there too. The map never references it and it needs <sys/mman.h>,
-# but it is a public header and someone who vendors the map should not have to come back for it.
+# `huge_page_allocator.h` and `mapped_view.h` are in there too. The map never references them and
+# they need <sys/mman.h>, but they are public headers and someone who vendors the map should not
+# have to come back for them.
 #
 # Both .tar.gz and .zip, because this is vendored on every platform, and a SHA256SUMS beside them.
 # Called by .github/workflows/release-assets.yml; runnable by hand to check what a release will get.
@@ -29,7 +30,8 @@ trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/ankerl" "$out"
 cp "$root/include/ankerl/unordered_dense.h" \
    "$root/include/ankerl/stl.h" \
-   "$root/include/ankerl/huge_page_allocator.h" "$stage/ankerl/"
+   "$root/include/ankerl/huge_page_allocator.h" \
+   "$root/include/ankerl/mapped_view.h" "$stage/ankerl/"
 cp "$root/LICENSE" "$stage/"
 
 # zip records a timestamp per entry and gzip one per stream, both of which would otherwise be "now".

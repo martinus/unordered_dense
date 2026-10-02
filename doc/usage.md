@@ -614,6 +614,83 @@ Owning, everything the library's own index container has, with its meaning: `get
 index into an owning table copies it with `resize()` and checks the copy, where the library's own
 container does both in one loop.
 
+### Mapping a file: `mapped_view.h`
+
+`include/ankerl/mapped_view.h` is a separate header (it needs `<sys/mman.h>`; on Windows it
+declares nothing and sets `ANKERL_UNORDERED_DENSE_HAS_MAPPED_VIEW` to 0). It opens a file, maps
+it, and owns both the mapping and a `map_view` or `set_view` over it, so that the view cannot
+outlive the mapping. It does not frame the file: the caller wrote it and says where the two arrays
+are.
+
+```cpp
+#include <ankerl/mapped_view.h>
+
+namespace ud = ankerl::unordered_dense;
+using view_t = ud::map_view<std::uint64_t, std::uint64_t>;
+
+// byte offsets from the start of the file, and the counts: values, then index().size() blocks
+auto layout = ud::mapped_layout{values_offset, num_values, index_offset, num_blocks};
+auto table = ud::mapped_view<view_t>("table.bin", layout, ud::trust::checked);
+auto it = table.view().find(key);
+
+// or map it first, read your own header out of the bytes, then hand the mapping over
+auto file = ud::mapped_file("table.bin");
+auto layout2 = read_my_header(file.data(), file.size());
+auto table2 = ud::mapped_view<view_t>(std::move(file), layout2, ud::trust::checked);
+```
+
+The offsets decide the alignment, since a mapping starts on a page boundary: the view constructor
+rejects values not aligned for `value_type` and an index not aligned for `index_block`. A layout
+that reaches past the end of the file throws `std::out_of_range`; a file that cannot be opened or
+mapped throws `std::system_error`. Without exceptions both abort. `view()` is a reference into the
+object and does not compile on a temporary. The object moves (the mapping stays where it is, so the
+view stays valid) and does not copy or assign.
+
+The last argument, `ud::mapping`, says where the bytes live:
+
+- `mapping::file`, the default: the file itself, `PROT_READ` and `MAP_SHARED`. Nothing is copied and
+  nothing read until a lookup touches it, and every process that maps the file shares one copy in
+  the page cache. The pages are the page cache's: 4 KB, unless the file is on hugetlbfs, where they
+  are 2 MB with nothing more to ask for.
+- `mapping::file_populated`: the same, with `MAP_POPULATE`, so the whole file is read before the
+  constructor returns, sequentially.
+- `mapping::huge_copy`: the file read into private anonymous memory on 2 MB pages (`MAP_HUGETLB` if
+  huge pages are reserved, else transparent huge pages through `MADV_HUGEPAGE`). A copy per process.
+
+Measured for `map<uint64_t, uint64_t>`, 1M to 64M entries, clang 22 and gcc 16 on a Ryzen 9 7950X,
+`scripts/ab/mapped_view.sh`. The 2 MB row is the `huge_copy` mechanism (this machine has no reserved
+huge pages, so it stands in for hugetlbfs, the same 2 MB pages):
+
+| ns per random hit, several in flight, clang / gcc | 1M | 4M | 16M | 64M |
+|---|---|---|---|---|
+| owning `map`, read from the file | 12.0 / 9.5 | 33.3 / 28.8 | 38.4 / 32.8 | 39.9 / 34.2 |
+| `mapping::file`, 4 KB pages | 8.2 / 8.3 | 32.6 / 28.3 | 38.4 / 32.7 | 40.0 / 34.3 |
+| 2 MB pages | 6.0 / 4.9 | 30.3 / 27.5 | 34.9 / 30.3 | 35.6 / 30.9 |
+
+| ms from the constructor call until 100000 lookups are done, clang, one run per cell | 1M | 4M | 16M | 64M |
+|---|---|---|---|---|
+| owning `map`, file in the page cache | 17 | 64 | 253 | 1013 |
+| `mapping::file`, file in the page cache | 2 | 4 | 7 | 17 |
+| `mapping::file`, file not in the page cache | 17 | 87 | 233 | **8616** |
+| `mapping::file_populated`, not in the page cache | 9 | 35 | 92 | 312 |
+| `mapping::huge_copy`, not in the page cache | 9 | 40 | 99 | 339 |
+
+So: 2 MB pages make lookups 1.03-1.13x faster from 4M entries up and 1.4-1.7x at 1M, and a 4 KB
+file mapping looks up as fast as the owning map on the default allocator from 4M up, and faster
+at 1M. Two processes on
+`mapping::file` each show the whole file in their RSS and half of it in their PSS, and the page
+cache holds it once; on `huge_copy` each holds its own. A lazy mapping of a file that is not in the
+page cache pays one random read per page it touches, which at 64M entries is 26577 major faults
+for the first 100000 lookups: map a file that has just been copied in or not read for a while with
+`file_populated`.
+
+The bytes have to stay what they were. What `trust::checked` checked holds for the bytes as they
+were when the view was constructed. A `mapping::file` mapping shows what another process writes
+to the file afterwards, and that can make a lookup read out of bounds; truncating the file under
+the mapping raises `SIGBUS` on the next lookup that touches a page past the new end. Write a new
+file and `rename()` it into place: a mapping keeps the old file's bytes, and the next mapping gets
+the new ones. A `huge_copy` is a copy and sees neither.
+
 ## Taking the duplicates out of a vector
 
 A `std::vector<std::string>` with repeats in it, and you want each string once. A dense set keeps

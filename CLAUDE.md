@@ -9,6 +9,7 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
 |---|---|
 | the map, single implementation file | `include/ankerl/unordered_dense.h` (+ `stl.h` = its std includes, split out for `import std`; both are needed to copy the header) |
 | opt-in huge page allocator | `include/ankerl/huge_page_allocator.h` (separate: needs `<sys/mman.h>`; never referenced by the map) |
+| opt-in file mapping for `map_view` | `include/ankerl/mapped_view.h` (separate: needs `<sys/mman.h>`; never referenced by the map) |
 | tests + benchmarks, one doctest binary `udm-test` | `test/unit/*.cpp`, `test/bench/*.cpp`, `test/bench/workloads.h` (the scored workloads), `test/app/` (doctest.h with `TEST_CASE_MAP`, allocator fixtures) |
 | evidence, ~140 entries in 16 topic sections | `notes/index-design.md` — grep it before proposing anything; each section opens with **Where it stands** |
 | measurement harnesses | `scripts/ab/` — `README.md` there documents `run.sh` (paired), `maps.sh`/`maps_one.sh` (other maps, perf), the rest below |

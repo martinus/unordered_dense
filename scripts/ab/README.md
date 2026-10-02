@@ -1073,3 +1073,21 @@ child, measured before the timed rounds (after them the arena is warm and the ch
 zero). `u64` at the four default sizes and `str` at 1M and 4M take about 12 minutes per compiler.
 Smoke with `-n 10000 -r 1`. The numbers are in `notes/index-design.md`, "Loading a map from its
 values and its index".
+
+## A map_view over a mapped file (#301)
+
+    AB_CORE=2 AB_BUILD=/home/martinus/gra/x scripts/ab/mapped_view.sh [-c g++] [-n 1000000,4000000,16000000,64000000] [-r 7] [-p warm,cold,shared] [-m owning,view_file]
+
+`map<uint64_t, uint64_t>` written to a file in `AB_BUILD` (on disk, not tmpfs), both arrays at
+2 MB boundaries, then read back one way per binary (`mapped_view.cpp` lists them): `read()` into
+the owning map on `std::allocator` and on `huge_page::map`, `map_view` over the file mapping lazily
+and with `MAP_POPULATE`, over a copy on `MADV_HUGEPAGE` memory (the hugetlbfs proxy for a machine
+without reserved huge pages), and on `MAP_HUGETLB` and `MADV_COLLAPSE` where the kernel gives them
+(`unavailable`, or the same as the file mapping, when it does not: check `anon_huge_MB` and
+`file_pmd_MB`). Three phases: `warm` (1M hits a round after a pass over every key, cycles and TLB
+counters from `perf_event_open` around the loop only), `cold` (load time and the first 100000
+hits, with the file in the page cache and evicted from it with `POSIX_FADV_DONTNEED`), `shared`
+(two processes, RSS, file RSS and PSS each, and the file's pages in the page cache by `mincore`).
+Five modes at the four default sizes take about 13 minutes per compiler, most of it the evicted
+64M lazy mapping (8.6 s per run). Smoke with `-n 100000 -r 1`. The numbers are in
+`notes/index-design.md`, "A map_view over a mapped file".
