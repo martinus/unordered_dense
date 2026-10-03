@@ -75,6 +75,8 @@ if try absl absl/container/flat_hash_map.h -I"$absl/include"; then
     libs+=(-Wl,--start-group "$absl"/lib64/libabsl_*.a -Wl,--end-group)
 fi
 folly=${FOLLY_ROOT:-/home/martinus/gra/folly}
+# folly checked out with gra lives one level down, in a worktree: take the first one that has the sources
+[ -d "$folly/folly" ] || for d in "$folly"/*/; do [ -d "$d/folly" ] && folly=${d%/} && break; done
 follycfg=${FOLLY_CONFIG:-/home/martinus/gra/folly-config}
 if try f14 folly/container/F14Map.h -I"$folly" -I"$follycfg"; then
     # F14's out-of-line half, plus the two files it needs to link.
