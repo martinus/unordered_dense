@@ -32,12 +32,19 @@ struct rng {
     }
 };
 
+// The i-th of n lookups: every key in turn when there are fewer keys than lookups, else n keys spread
+// over all of them. Until 2026-10-03 this took the first n, so with more keys than lookups a fresh
+// table's hit read only keys inserted before anything overflowed: 1.0000 groups at 65536 groups.
+auto pick(std::vector<std::uint64_t> const& keys, std::size_t i, std::size_t n) -> std::uint64_t {
+    return keys.size() <= n ? keys[i % keys.size()] : keys[i * keys.size() / n];
+}
+
 auto measure(map_t const& m, std::vector<std::uint64_t> const& keys, std::size_t n) -> double {
     udm_probe_groups = 0;
     udm_probe_lookups = 0;
     auto acc = std::size_t{0};
     for (std::size_t i = 0; i < n; ++i) {
-        acc += m.count(keys[i % keys.size()]);
+        acc += m.count(pick(keys, i, n));
     }
     if (acc == 12345678) {
         std::printf("x");
@@ -78,7 +85,7 @@ auto exact_counter_miss(map_t const& m, std::vector<std::uint64_t> const& keys, 
     }
     auto with_exact = std::size_t{0};
     for (std::size_t i = 0; i < n; ++i) {
-        auto const mh = hasher(keys[i % keys.size()]);
+        auto const mh = hasher(pick(keys, i, n));
         auto const c = class_of(mh);
         auto g = static_cast<std::size_t>(mh >> shifts);
         auto const home = g;

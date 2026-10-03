@@ -141,7 +141,9 @@ gh issue view M --json state -q .state                # for every issue the PR n
   partial PR, write "Does item 2 of #N" and rewrite the issue body to what is left
   (`gh issue edit N --body-file`).
 - After the merge, check the state of every issue the PR names, and close any left open with
-  `gh issue close N --reason completed`.
+  `gh issue close N --reason completed`. GitHub closes them a few seconds after the merge: #368's
+  four `Closes` lines read three issues OPEN at once and all four closed by the next command, so
+  check after `sleep 10`.
 - **Parallel work while CI runs.** Start the next subject in its own worktree:
   `gra -y work --path <new-branch>` from the repo folder or any worktree, then
   `git fetch origin main && git merge --ff-only origin/main` in it: gra branches from the last
