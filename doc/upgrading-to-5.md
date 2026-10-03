@@ -36,8 +36,8 @@ git ls-files -z '*.h' '*.hpp' '*.cpp' '*.cc' '*.cxx' | xargs -0 sed -i \
 
 ## 2. You passed a seventh template argument to `map` or `set`
 
-The `BucketContainer` parameter is gone. The index is one contiguous array in every configuration
-now, so there was nothing left for it to choose.
+The `BucketContainer` parameter is gone. A container type in the allocator-or-container slot can
+name the index container instead, see [A custom index container](usage.md#a-custom-index-container).
 
 ```cpp
 // 4.x - seven parameters
