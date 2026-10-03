@@ -88,6 +88,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [The default maximum load factor swept from 0.75 to 0.9: every step above 0.8 costs both compilers the same, and the one step below buys 0.8% for 6.7% more index](#the-default-maximum-load-factor-swept-from-075-to-09-every-step-above-08-costs-both-compilers-the-same-and-the-one-step-below-buys-08-for-67-more-index) · 2026-09-22 · rejected
   - [Double hashing with the step taken from the fingerprint, re-measured one header per binary after the churn harness was fixed: churned misses 1.07-1.18x faster, the score level, a fresh integer hit up to 5% slower under clang](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang) · 2026-10-02 · superseded
   - [Seven probe sequences and five ways of computing their step against the triangular one: a key-dependent step shortens a churned miss, and every way of computing it costs the walk a third live value that no source shape hides](#seven-probe-sequences-and-five-ways-of-computing-their-step-against-the-triangular-one-a-key-dependent-step-shortens-a-churned-miss-and-every-way-of-computing-it-costs-the-walk-a-third-live-value-that-no-source-shape-hides) · 2026-10-02 · rejected
+  - [The exact in-home counter built and timed (#366): 0.03 groups fewer per churned miss, and the miss is 2-5% slower at every size](#the-exact-in-home-counter-built-and-timed-366-003-groups-fewer-per-churned-miss-and-the-miss-is-2-5-slower-at-every-size) · 2026-10-03 · rejected
 - [Lookup: the probe, SIMD compare and prefetch](#lookup-the-probe-simd-compare-and-prefetch)
   - [A miss had no bound, and eight chosen keys made it loop forever](#a-miss-had-no-bound-and-eight-chosen-keys-made-it-loop-forever) · 2026-09-05 · kept
   - [gcc left `probe` out of line, and forcing it inline is the largest single gcc gain on the branch](#gcc-left-probe-out-of-line-and-forcing-it-inline-is-the-largest-single-gcc-gain-on-the-branch) · 2026-09-05 · kept
@@ -130,6 +131,9 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [The two value walks do not want the index prefetch the probe wants](#the-two-value-walks-do-not-want-the-index-prefetch-the-probe-wants) · 2026-09-12 · kept
   - [A slot back-pointer, re-tested across the cache boundary: the win is real, and it is cancelled by the inserts that put the elements there](#a-slot-back-pointer-re-tested-across-the-cache-boundary-the-win-is-real-and-it-is-cancelled-by-the-inserts-that-put-the-elements-there) · 2026-09-12 · rejected
   - [The #260/#262 sweep run over find and churn, and it comes back empty](#the-260262-sweep-run-over-find-and-churn-and-it-comes-back-empty) · 2026-09-12 · rejected
+  - [Rebuilding a drifted index at the same size (#363): the drift comes back within one or two turnovers, and the rebuild costs the churn round 4-17% for misses that are faster only in cache](#rebuilding-a-drifted-index-at-the-same-size-363-the-drift-comes-back-within-one-or-two-turnovers-and-the-rebuild-costs-the-churn-round-4-17-for-misses-that-are-faster-only-in-cache) · 2026-10-02 · rejected
+  - [A step-1 mask per group so an erase pulls a displaced sibling home without hashing (#364): churned misses 1.12-1.18x faster, the churn round 4-12% slower](#a-step-1-mask-per-group-so-an-erase-pulls-a-displaced-sibling-home-without-hashing-364-churned-misses-112-118x-faster-the-churn-round-4-12-slower) · 2026-10-03 · rejected
+  - [Storing the hash per value, for expensive keys (#365): a string erase 4-9% faster, growth no faster, churn a wash, 8% more memory](#storing-the-hash-per-value-for-expensive-keys-365-a-string-erase-4-9-faster-growth-no-faster-churn-a-wash-8-more-memory) · 2026-10-03 · rejected
 - [The rehash and its pipeline](#the-rehash-and-its-pipeline)
   - [Indexing the value container in the rehash cost clang a memory latency per element](#indexing-the-value-container-in-the-rehash-cost-clang-a-memory-latency-per-element) · 2026-09-05 · kept
   - [The rehash loop pipelined, and the partitioned rehash it was measured against](#the-rehash-loop-pipelined-and-the-partitioned-rehash-it-was-measured-against) · 2026-09-06 · kept
@@ -769,7 +773,7 @@ This section covers the shape of the group index: slots per group, counter width
 
 - Sixteen slots stays: eleven nets below 1.00, twenty-four reads 0.85 to 1.00 everywhere (it dilutes the eight counter classes), twelve 0.9888. [Eleven slots and twenty-four slots](#eleven-slots-and-twenty-four-slots-and-why-sixteen-is-where-it-stops)
 - Eight one-byte counters per group is the top of the counter axis: one counter 0.959, 16 nibbles 0.986, 32 two-bit 0.988. [The width of the overflow counter](#the-width-of-the-overflow-counter-all-four-divisions-of-a-groups-eight-counter-bytes-measured-against-the-designs-eight-one-byte-counters)
-- An exact in-home counter is worth 2-3% in cache only; ~80% of what the counter misses is siblings. [And the fifth point on that axis](#and-the-fifth-point-on-that-axis-an-exact-counter-worth-2-3). Per-step counter choice is a no-op or noise: [Which counter a probe consults at each step of its sequence](#which-counter-a-probe-consults-at-each-step-of-its-sequence)
+- An exact in-home counter, built and timed (#366): 0.03-0.07 groups fewer per churned miss, and the miss 2-5% slower at every size; the counter axis is closed. [The exact in-home counter built and timed](#the-exact-in-home-counter-built-and-timed-366-003-groups-fewer-per-churned-miss-and-the-miss-is-2-5-slower-at-every-size). ~80% of what the counter misses is siblings: [And the fifth point on that axis](#and-the-fifth-point-on-that-axis-an-exact-counter-worth-2-3). Per-step counter choice is a no-op or noise: [Which counter a probe consults at each step of its sequence](#which-counter-a-probe-consults-at-each-step-of-its-sequence)
 - The merged 88 byte block is kept (7% fewer lookup instructions, 28% fewer dTLB misses at 4M): [Two optimizations the charts point at](#two-optimizations-the-charts-point-at-one-measured-and-one-not-yet). Split arrays tie: [Fingerprints and counters in two arrays instead of ...](#fingerprints-and-counters-in-two-arrays-instead-of-one-24-byte-group). Line-aligned indices 0.993, second fingerprint 0.975, 16-bit indices 0.986: [Three layouts borrowed from other maps, all lost](#three-layouts-borrowed-from-other-maps-all-lost-line-aligned-value-indices-a-second-fingerprint-in-the-index-word-a-16-bit-index)
 - Triangular probing stays (#355, decided 2026-10-02): a step from the key takes 7-18% off a churned miss, all of it in the first step, and every way of computing it keeps a third value live across a walk whose start is on the integer hit path, +1.8-10% of the score's find instructions; peeling the home group off to avoid that loses 14-18% of a churned lookup under clang. [Seven probe sequences](#seven-probe-sequences-and-five-ways-of-computing-their-step-against-the-triangular-one-a-key-dependent-step-shortens-a-churned-miss-and-every-way-of-computing-it-costs-the-walk-a-third-live-value-that-no-source-shape-hides), following [the one-header re-measurement](#double-hashing-with-the-step-taken-from-the-fingerprint-re-measured-one-header-per-binary-after-the-churn-harness-was-fixed-churned-misses-107-118x-faster-the-score-level-a-fresh-integer-hit-up-to-5-slower-under-clang); a per-table seed is free on lookups, 3.5% of a build, macro material: [Three ideas the eighteen-map comparison suggested](#three-ideas-the-eighteen-map-comparison-suggested-all-measured-none-kept)
 - The sliding window wins 1-5% of a hit, nothing on a miss against counters, loses 24% of churn at 1M and forecloses counters and merged block: [The sliding window, built and measured rather than simulated](#the-sliding-window-built-and-measured-rather-than-simulated), [A dense map on flat_wmap's structure, measured against the shipped one](#a-dense-map-on-flat_wmaps-structure-measured-against-the-shipped-one-and-the-comparison-is-not-what-it-looks-like)
@@ -924,7 +928,7 @@ Calibration against a change that was kept: `move_home` took 0.107 groups off a 
 - a store into the home group on every insert that does not fit home, every matching erase and every `move_home`;
 - a second counter for the rehash, the erase and `move_home` to keep consistent, more of exactly the invariant the mutation sweeps keep finding uncovered.
 
-**Correction (2026-10-02):** the calibration above scaled from `move_home`'s worth as first measured, "11% in cache and nothing out of cache". Re-measured with random churn keys, `move_home` takes 0.10 groups off a churned miss (1.265 to 1.163 at load 0.76) and is worth 26-30% of that miss in cache and out, see [What `move_home` is actually worth, re-measured](#what-move_home-is-actually-worth-re-measured). Scaled the same way, the exact counter's 0.025 groups would be worth roughly 6-7% of a churned miss, in and out of cache, nothing on a fresh table. That is an estimate from the same proportion, not a measurement: the exact counter was never built. The rejection rests on its cost (a store into the home group on many inserts and erases, a second counter invariant), which is unchanged, so it stands; but the gap it leaves is larger than the 2-3% recorded here. **Open (2026-10-02):** worth building and timing on a churn-at-fixed-size workload with misses before calling the counter axis closed.
+**Correction (2026-10-02):** the calibration above scaled from `move_home`'s worth as first measured, "11% in cache and nothing out of cache". Re-measured with random churn keys, `move_home` takes 0.10 groups off a churned miss (1.265 to 1.163 at load 0.76) and is worth 26-30% of that miss in cache and out, see [What `move_home` is actually worth, re-measured](#what-move_home-is-actually-worth-re-measured). Scaled the same way, the exact counter's 0.025 groups would be worth roughly 6-7% of a churned miss, in and out of cache, nothing on a fresh table. That is an estimate from the same proportion, not a measurement: the exact counter was never built. The rejection rests on its cost (a store into the home group on many inserts and erases, a second counter invariant), which is unchanged, so it stands; but the gap it leaves is larger than the 2-3% recorded here. **Open (2026-10-02):** worth building and timing on a churn-at-fixed-size workload with misses before calling the counter axis closed. **Later (2026-10-03):** built and timed, and it makes the churned miss 2-5% slower at every size, see [The exact in-home counter built and timed](#the-exact-in-home-counter-built-and-timed-366-003-groups-fewer-per-churned-miss-and-the-miss-is-2-5-slower-at-every-size).
 
 So **this map's approximate counter is within 2-3% of the exact version of itself**, and the counter axis is closed: folly's single counter 0.959 on the score, nibble counters 0.986, two-bit counters 0.988, three fresh hash bits per step noise, exactness at step 0 worth 2-3% in cache only. What is left of a churned miss is siblings. The only thing that removes a sibling is putting it back home: `move_home` for the writing case, and for the reading case the erase-side pull-back, rejected for costing 20 ns per erase (see [Pulling a displaced sibling home on erase](#pulling-a-displaced-sibling-home-on-erase-to-take-the-churn-drift-back)).
 
@@ -1259,6 +1263,35 @@ Under clang the peeled `probe()` makes a churned lookup 14-18% slower; under gcc
 **Decision (2026-10-02):** the triangular sequence stays. Plain `dh` was offered as a trade (gcc churned misses 13-17% faster and everything else within ±3%, against a 2-5% slower clang fresh integer hit and +3.6% of its instructions) and declined.
 
 **What would reopen it:** a sequence whose step needs no value that the triangular walk does not already hold (class-only steps were the attempt, and the compilers still give the step a register of its own), or a caller where a register is free, which is not something the header can know. ARM, the caller corpus and `fuzz_group_index` were not run, since no variant became a candidate.
+
+### The exact in-home counter built and timed (#366): 0.03 groups fewer per churned miss, and the miss is 2-5% slower at every size
+
+*2026-10-03 · #366 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/exact_counter.patch` on `scripts/ab/block96.patch`, `scripts/ab/probe_length.sh` (offline column), `scripts/ab/drift_variants.sh`, one map per binary, three rounds rotated, medians*
+
+Built as eight more counter bytes per group (a 96 byte block): `m_extra[c]` counts entries of class c whose home is this group and that live elsewhere. Every placement past home increments it in the home group; erase and `move_home` decrement it; a miss stops at home when it is zero, whatever the overflow counter says. The patch passes the whole suite apart from the pinned format id.
+
+**Probe lengths.** The real header reads exactly what the offline reconstruction in `probe_length.cpp` predicts (1.2196 and 1.2196 groups per churned miss at load 0.76). Mean over turnovers 10-20:
+
+| load, writing hits | main | exact counter |
+|---|---|---|
+| 0.76, 0 | 1.247 | 1.213 |
+| 0.76, 1 | 1.155 | 1.132 |
+| 0.799, 0 | 1.427 | 1.356 |
+| 0.799, 1 | 1.260 | 1.214 |
+
+**Timing**, main over the variant, above 1.00 the variant is faster. 3M lookups on the table ten turnovers left at load 0.799:
+
+| entries | miss, no writing hits | miss, 1 writing hit | hit | churn round |
+|---|---|---|---|---|
+| 52363 | 0.961 | 0.954 | 0.977-0.978 | 0.961 / 0.975 |
+| 838860 | 0.977 | 0.977 | 0.941-1.004 | 0.983 / 0.906 |
+| 3355443 | 0.965 | 0.983 | 1.009-1.010 | 1.003 / 0.925 |
+
+The 96 byte block with nothing in it (`block96.patch`) reads 0.977-0.994 on the same misses, so most of the loss is the layout and the rest is the logic. The extra test at home did not pay for itself even where it saves the most (0.07 groups at 0.799).
+
+**What this says.** The 6-7% that [And the fifth point on that axis](#and-the-fifth-point-on-that-axis-an-exact-counter-worth-2-3) estimated by scaling `move_home` does not exist. That scaling assumed every group saved is worth the same. A group `move_home` saves is a branch that becomes predictable. A group this saves costs a test on every miss at home. The counter axis is closed at eight one-byte overflow counters.
+
+**What it does not say.** Integer keys only. A string miss pays a `memcmp` per fingerprint match in a walked group, so it could gain more; not measured.
 
 ## Lookup: the probe, SIMD compare and prefetch
 
@@ -2360,11 +2393,14 @@ What this does not say: the scored suite, a ~90-TU binary whose inlining budget 
 
 What an erase costs in `unordered_dense` and what was tried to make it cheaper: the backfill that re-finds the moved value's slot by a second hash, the drift a churned table builds up, and the round trips and prefetches on the erase path. The slot back-pointer that removes the second hash lost twice, because the insert pays what the erase saves. `move_home` is the one drift repair kept.
 
-**Where it stands** (as of 2026-09-12)
+**Where it stands** (as of 2026-10-03)
 
 - Slot back-pointer: rejected, default and knob. String erase by key 0.893-0.915 from 50000 to 4000000, churn a wash, score 0.9870 clang / 0.9729 gcc, +18.6% live bytes on an integer map (#266, [A slot back-pointer, re-tested across the cache boundary](#a-slot-back-pointer-re-tested-across-the-cache-boundary-the-win-is-real-and-it-is-cancelled-by-the-inserts-that-put-the-elements-there)). With distance nibbles: geomean 0.959 ([Three on the value vector](#three-on-the-value-vector-the-one-part-nothing-had-touched-all-keeping-it-dense)).
 - The second hash is about 7 ns for an integer key and about 50 ns for a string key at a million entries ([Why a dense erase is not slow, and where it is](#why-a-dense-erase-is-not-slow-and-where-it-is)).
 - `move_home`: kept, 1.26-1.30x on a miss of a churned table in and out of cache, 1.01-1.10x on a hit, 1.08x on the churn round itself, score 1.000 (re-measured 2026-10-02 with random churn keys; the first measurement read a tenth because its harness churned in sequential keys) ([What `move_home` is actually worth, re-measured](#what-move_home-is-actually-worth-re-measured)). Pulling a sibling home on erase: rejected, churn round 39.9 to 60.3 ns.
+- A step-1 mask so an erase pulls a sibling home without hashing (#364): churned misses 1.12-1.18x, the churn round 0.88-0.96, block 96 bytes; rejected ([A step-1 mask per group](#a-step-1-mask-per-group-so-an-erase-pulls-a-displaced-sibling-home-without-hashing-364-churned-misses-112-118x-faster-the-churn-round-4-12-slower)).
+- Storing the hash per value (#365): string erase by key 0.91 clang / 0.96 gcc, build 0.97-1.04, churn a wash, +8% memory; rejected ([Storing the hash per value](#storing-the-hash-per-value-for-expensive-keys-365-a-string-erase-4-9-faster-growth-no-faster-churn-a-wash-8-more-memory)).
+- Rebuilding a churned index at the same size (#363): rejected. The drift is two fifths back after half a turnover and nine tenths after four; a rebuild costs the churn round 4-17% and the misses gain 1.11-1.12x at 52363 entries, 1.02-1.06x at 838860 and lose at 3355443 ([Rebuilding a drifted index at the same size](#rebuilding-a-drifted-index-at-the-same-size-363-the-drift-comes-back-within-one-or-two-turnovers-and-the-rebuild-costs-the-churn-round-4-17-for-misses-that-are-faster-only-in-cache)).
 - Slot-number round trips removed in #260 and #262; the #268 sweep found nothing more ([The #260/#262 sweep run over find and churn](#the-260262-sweep-run-over-find-and-churn-and-it-comes-back-empty)).
 - The value walks are bounded for correctness; their 10% clang speedup is an inlining artifact (#254). They carry no `prefetch_index` (#263). Hoisting the moved element's hash: neutral, rejected.
 
@@ -2720,6 +2756,99 @@ Three candidates, none worth anything. #260 and #262 came from reading a hot pat
 **Why the ceiling was 0.2% and could have been read off in one command.** `perf record` on the baseline score binary shows `move_home` nowhere above 0.2%: the hot workload functions inline `do_try_emplace` and `move_home` with it, and the out-of-line copies serve cold instantiations. An out-of-line symbol is not evidence the hot call site pays for it; counting symbols is not counting calls. Profile first, then read the disassembly of what the profile named.
 
 **And the one candidate that looked best came from a scratch translation unit and was an artifact.** `place_group`'s loop stores `group.m_overflows[counter]`, a `std::uint8_t` store that may alias anything, then calls `next_group`, which reads `m_group_mask` through `this`: the hazard `uncount` was refactored for and `fill_buckets_from_values` is hand-written to avoid. In a one-map TU gcc emits `and 0x38(%r10),%r9d`, a reload every step. In the benchmark binary, inlined into `workloads::build`, it reads `and %r13d,%r10d`, mask and group pointer hoisted across the store. **A scratch TU can invent a redundancy as well as hide one**, the other half of #254's rule.
+
+### Rebuilding a drifted index at the same size (#363): the drift comes back within one or two turnovers, and the rebuild costs the churn round 4-17% for misses that are faster only in cache
+
+*2026-10-02 · #363 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/probe_length.sh` (turnover checkpoints and interval means, `PROBE_REBUILD_PCT`), `scripts/ab/drift_variants.sh` with `scripts/ab/rebuild_same_size.patch`, one map per binary, five rounds rotated, medians*
+
+Boost rehashes at the same size once enough erases have hit groups with an overflow bit set. Here a rebuild does not move values, so it looked cheap: clear the index and run `fill_buckets_from_values`. Asked first: how fast does the drift come back?
+
+**The curve.** Groups per lookup on one table as it churns, random replacement keys, no writing hits, 4096 groups (65536 groups reads the misses within 0.02):
+
+| turnovers | 0 (fresh) | 0.05 | 0.1 | 0.25 | 0.5 | 1 | 2 | 4 | 10 | 50 | 200 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| miss, load 0.76 | 1.052 | 1.068 | 1.083 | 1.103 | 1.142 | 1.184 | 1.215 | 1.243 | 1.248 | 1.265 | 1.265 |
+| hit, load 0.76 | 1.031 | 1.041 | 1.050 | 1.063 | 1.081 | 1.102 | 1.121 | 1.132 | 1.132 | 1.137 | 1.136 |
+| miss, load 0.799 | 1.086 | 1.119 | 1.139 | 1.181 | 1.241 | 1.320 | 1.355 | 1.437 | 1.416 | 1.443 | 1.432 |
+
+At load 0.76 two fifths of the drift (0.090 of 0.213 groups per miss) is back after half a turnover, three fifths after one, and nine tenths after four. With one writing hit per round (`move_home`) it levels off within one or two turnovers, at about 1.15 (0.76) and 1.26 (0.799). The 65536-group table's "fresh hit" reads 1.0000 because `measure()` looks up the first 200000 keys inserted, which all went in before anything overflowed; its miss and churned columns are not affected.
+
+**The trigger.** `m_drift` counts erases that free a slot in a group with any overflow counter up (the erase that leaves a gap a displaced entry wanted); when it exceeds a percentage of the capacity the erase rebuilds. Nothing on the insert path, no allocation, no growth. Mean groups per miss over turnovers 4 to 14, load 0.76:
+
+| trigger | rebuilds per turnover | mean groups per miss |
+|---|---|---|
+| none | 0 | 1.243 |
+| 10% | 2.7 | 1.090 |
+| 25% | 1.3 | 1.117 |
+| 50% | 0.7 | 1.141 |
+
+**The timing.** `move_home.cpp`'s churn at load 0.799, ten turnovers before the clock and four timed. `round` is the churn alone; `missmix` is a churn round and four misses, so the misses are read across the sawtooth. main over the variant, above 1.00 the variant is faster:
+
+| entries | writing hits | round 10% | round 25% | round 50% | missmix 10% | missmix 25% | missmix 50% |
+|---|---|---|---|---|---|---|---|
+| 52363 | 0 | 0.834 | 0.917 | 0.948 | 1.106 | 1.124 | 1.113 |
+| 838860 | 0 | 0.839 | 0.884 | 0.912 | 1.015 | 1.042 | 1.064 |
+| 3355443 | 0 | 0.889 | 0.924 | 0.957 | 0.958 | 0.988 | 0.986 |
+| 52363 | 1 | 0.855 | 0.912 | 0.940 | 0.997 | 1.013 | 1.016 |
+| 838860 | 1 | 0.915 | 0.962 | 0.963 | 0.993 | 1.003 | 1.014 |
+| 3355443 | 1 | 0.887 | 0.905 | 0.912 | 0.970 | 0.980 | 0.982 |
+
+`hitmix` (a round and four hits) reads 0.94-1.05. In cache the cost is what #363 estimated (about 4% per rebuild per turnover at 1.63 ns per element; the 50% trigger rebuilds 0.7 times per turnover and the round reads 0.948), and a tighter trigger pays for each extra rebuild in full. Past the cache, at 3.4M entries and an 18 MB index, a rebuild runs at out-of-cache speed. The misses gain less than the groups suggest: 1.11-1.12x at 52363 entries without writing hits, 1.02-1.06x at 838860, and a loss at 3355443. With `move_home` running there is little drift left to take.
+
+**What this says.** No trigger meets #363's bar: faster churned misses at all three sizes with the round no more than about 5% slower. Rejected. A rebuild in erase would also add a pause to a table that never grows, which nothing here has today.
+
+**What it does not say.** Integer keys only. A string key pays a hash per element in the rebuild, which makes it worse. There is no layout control: base and variant are different headers, and the `hitmix` spread (0.94-1.05) is that size. The round's 4-17% losses are larger than that.
+
+### A step-1 mask per group so an erase pulls a displaced sibling home without hashing (#364): churned misses 1.12-1.18x faster, the churn round 4-12% slower
+
+*2026-10-03 · #364 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/step1_pullback.patch` on `scripts/ab/block96.patch`, `scripts/ab/probe_length.sh` (`PROBE_PULLBACK=1`), `scripts/ab/drift_variants.sh`, one map per binary, three rounds rotated, medians*
+
+The triangular sequence's first step is +1, so an entry placed at step 1 in group g+1 has its home in g. One bit per lane, "placed at step 1", in the two spare bytes of a 96 byte block, marks exactly those entries. An erase that frees a lane in g reads g+1's mask, and if it is nonzero moves one entry home and takes it out of g's counter. No hash and no key access; this is what [Pulling a displaced sibling home on erase](#pulling-a-displaced-sibling-home-on-erase-to-take-the-churn-drift-back) lost on. The patch keeps the mask on every placement path (`place_group`, `fill_buckets_from_values`, `move_home`, erase) and passes the whole suite apart from the pinned format id.
+
+**Probe lengths**, mean over turnovers 10-20, groups per miss / per hit. A pull-back fires on 12% of erases at 0.76 and 15% at 0.799:
+
+| load, writing hits | main | pull-back | both #364 and #366 (offline) |
+|---|---|---|---|
+| 0.76, 0 | 1.247 / 1.133 | 1.169 / 1.082 | 1.118 |
+| 0.76, 1 | 1.155 / 1.087 | 1.127 / 1.062 | 1.091 |
+| 0.76, 4 | 1.094 / 1.055 | 1.087 / 1.047 | 1.064 |
+| 0.799, 0 | 1.427 / 1.204 | 1.316 / 1.140 | 1.217 |
+| 0.799, 1 | 1.260 / 1.131 | 1.227 / 1.102 | 1.158 |
+
+**Timing**, main over the variant, above 1.00 the variant is faster; load 0.799 after ten turnovers:
+
+| entries | miss, no writing hits | miss, 1 writing hit | hit, no writing hits | churn round, 0 / 1 writing hits | round + 4 misses, 0 / 1 |
+|---|---|---|---|---|---|
+| 52363 | **1.175** | 1.062 | 1.103 | 0.893 / 0.921 | 1.017 / 0.982 |
+| 838860 | **1.142** | 1.051 | 1.050 | 0.907 / 0.887 | 0.939 / 0.922 |
+| 3355443 | **1.117** | 1.034 | 1.033 | 0.958 / 0.883 | 0.978 / 0.979 |
+
+The empty 96 byte block reads 0.977-0.994 on these misses and 0.930-0.983 on the round, so against its own layout the pull-back is 1.14-1.20x on a churned miss without writing hits (1.05-1.08x with one) and 0.93-1.02 on the round.
+
+**What this says.** The pull-back is the largest gain on a churned miss measured since `move_home`, and unlike `move_home` it reaches a table that is only read after churning. It fails #364's bar because the churn round loses 4-12% against main (the extra load of the next block on every erase, the move, and the bigger block). It would also change the index format. Rejected by the owner on these numbers.
+
+**What it does not say.** Integer keys, clang only, no score run. With `move_home` active (one writing hit per round) the miss gain is 3-6%.
+
+### Storing the hash per value, for expensive keys (#365): a string erase 4-9% faster, growth no faster, churn a wash, 8% more memory
+
+*2026-10-03 · #365 · rejected · Ryzen 9 7950X, clang 22 and gcc 16; `scripts/ab/back_pointer.sh` with `AB_PATCH=stored_hash.patch AB_SWITCH=STORED_HASH`, one variant per binary, five rounds alternated, medians*
+
+A `std::vector<std::uint64_t>` beside the values: `m_hashes[i]` is the mixed hash of `m_values[i]`'s key. The erase backfill reads it instead of hashing the moved key, and so does `fill_buckets_from_values`, so growth hashes nothing. The prototype records the hash only on `try_emplace`/`operator[]`, which is all the harness uses. It passes a churn-and-grow check under ASan. Patched over main, below 1.00 the patch is faster, string keys:
+
+| workload | clang 50000 | clang 1M | clang 4M | gcc 50000 | gcc 1M | gcc 4M |
+|---|---|---|---|---|---|---|
+| build from empty | 1.018 | 0.973 | 0.976 | 1.043 | 1.004 | 1.006 |
+| churn | 0.986 | 1.015 | 0.991 | 0.994 | 1.033 | 1.017 |
+| erase by key | 0.923 | 0.913 | 0.910 | 1.048 | 0.964 | 0.961 |
+| erase by iterator | 0.942 | 0.972 | 0.970 | 0.945 | 0.969 | 0.960 |
+| find | 1.063 | 0.980 | 1.000 | 1.027 | 1.021 | 1.017 |
+| live bytes per entry | 1.097 | 1.083 | 1.083 | | | |
+
+For integer keys, as expected, it is pure cost (clang build 1.36-1.70x, churn 1.16-1.24x below 4M, erases 1.05-1.20x, +30-37% memory), so it could only ever have been an opt-in.
+
+**What this says.** The erase half is the slot back-pointer's result again ([A slot back-pointer, re-tested across the cache boundary](#a-slot-back-pointer-re-tested-across-the-cache-boundary-the-win-is-real-and-it-is-cancelled-by-the-inserts-that-put-the-elements-there)): 0.91-0.92 on a string erase by key under clang, less under gcc. The insert pays for it, so churn is a wash. The growth half, the part #266 could not give, is worth at most 2-3% of a build. The pipelined rehash already hides most of a string hash behind its prefetch ring, and a build is mostly inserts that hash their key once anyway. Rejected: neither a default nor an opt-in has a workload where it is worth 8% more memory.
+
+**What it does not say.** Hashes stored as 64 bits. The 32 bit variant the issue sketches would cost 4 bytes per entry and win the same.
 
 ## The rehash and its pipeline
 

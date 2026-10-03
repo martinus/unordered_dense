@@ -1,0 +1,29 @@
+# A 96 byte block, 8 spare bytes per group (m_extra) and nothing using them, as a patch against
+# include/ankerl/unordered_dense.h: the layout control for step1_pullback.patch and exact_counter.patch,
+# which apply on top of it, and #367's padded-stride question. Measured 2026-10-03, notes
+# "A step-1 mask per group".
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index fbad56c..d952a8b 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -834,6 +834,7 @@ struct basic_group {
+     using value_idx_type = ValueIdx;
+     std::array<std::uint8_t, 16> m_fingerprints; // one per slot; 0 is an empty slot
+     std::array<std::uint8_t, 8> m_overflows;     // how many entries with (fingerprint & 7) == i probed past this group
++    std::array<std::uint8_t, 8> m_extra;         // block96.patch (#364, #366, #367): 96 byte blocks, unused here
+ };
+ 
+ using group = basic_group<std::uint32_t>;
+@@ -1507,10 +1508,10 @@ struct group_block : Group {
+ // The bytes table::index() hands out (#299): no padding, so the bytes are the whole state, and the
+ // sizes every number about the index in notes/index-design.md is in. group_big's index is four bytes
+ // on a 32 bit target, which makes its block 88 there; index_format_id keeps the two apart.
+-static_assert(sizeof(group_block<bucket_type::group>) == 88 &&
++static_assert(sizeof(group_block<bucket_type::group>) == 96 &&
+                   std::has_unique_object_representations_v<group_block<bucket_type::group>>,
+               "group_block<group> must stay 88 bytes without padding");
+-static_assert((sizeof(std::size_t) != 8 || sizeof(group_block<bucket_type::group_big>) == 152) &&
++static_assert((sizeof(std::size_t) != 8 || sizeof(group_block<bucket_type::group_big>) == 160) &&
+                   std::has_unique_object_representations_v<group_block<bucket_type::group_big>>,
+               "group_block<group_big> must stay 152 bytes without padding on a 64 bit target");
+ 

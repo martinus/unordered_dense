@@ -9,6 +9,9 @@
 # cannot land on whichever one runs second, and each cell reports the median with its spread.
 #
 # AB_BUILD picks the build directory (default: a temporary one); AB_CORE pins the measured process.
+# AB_PATCH and AB_SWITCH measure another patch the same way: AB_PATCH=stored_hash.patch
+# AB_SWITCH=STORED_HASH (#365). The switch is the macro's name after ANKERL_UNORDERED_DENSE_.
+# AB_KEYS="str" runs only those key types (default "str u64 big").
 set -euo pipefail
 export LC_ALL=C
 cxx=clang++ rounds=5
@@ -31,20 +34,22 @@ mkdir -p "$build"
 # The patch's switch defaults to off and the macro is renamed with everything else (the same sed
 # run.sh uses to make base.h), so defining UDMBP_UNORDERED_DENSE_SLOT_BACK_POINTER turns it on for
 # this copy and for nothing else.
+patch_file=${AB_PATCH:-back_pointer.patch}
+switch=${AB_SWITCH:-SLOT_BACK_POINTER}
 cp "$root/include/ankerl/unordered_dense.h" "$build/bp_raw.h"
-patch -s -p3 "$build/bp_raw.h" < "$root/scripts/ab/back_pointer.patch" ||
-    { echo "back_pointer.patch no longer applies to the header -- the measurement it belongs to is" >&2
+patch -s -p3 "$build/bp_raw.h" < "$root/scripts/ab/$patch_file" ||
+    { echo "$patch_file no longer applies to the header -- the measurement it belongs to is" >&2
       echo "dated; the header it was taken against is named at the top of the patch" >&2
       exit 1; }
 sed 's/ankerl::unordered_dense/udmbp::unordered_dense/g; s/ANKERL_UNORDERED_DENSE/UDMBP_UNORDERED_DENSE/g; s/namespace ankerl/namespace udmbp/g; s|#        include "stl.h"|#        include <ankerl/stl.h>|' \
     "$build/bp_raw.h" > "$build/bp.h"
 
-flags=(-O3 -DNDEBUG -std=c++17 -DUDMBP_UNORDERED_DENSE_SLOT_BACK_POINTER=1 -I"$build" -I"$root/include" -I"$root/test")
+flags=(-O3 -DNDEBUG -std=c++17 "-DUDMBP_UNORDERED_DENSE_${switch}=1" -I"$build" -I"$root/include" -I"$root/test")
 for side in 0 1; do
     "$cxx" "${flags[@]}" -DBP_ONE_SIDE=$side "$root/scripts/ab/back_pointer.cpp" "$root/test/app/nanobench.cpp" \
         -o "$build/back_pointer_$side"
 done
-echo "back-pointer against the working tree's header, $cxx, $rounds rounds, one variant per binary, in $build" >&2
+echo "$patch_file against the working tree's header, $cxx, $rounds rounds, one variant per binary, in $build" >&2
 
 run() { ${AB_CORE:+taskset -c $AB_CORE} "$build/back_pointer_$1" "${@:2}"; }
 stats() { sort -g | awk '{v[NR]=$1} END {printf "%.2f %.2f %.2f", (NR%2)?v[(NR+1)/2]:(v[NR/2]+v[NR/2+1])/2, v[1], v[NR]}'; }
@@ -68,9 +73,9 @@ cell() {
     }'
 }
 
-for keys in str u64 big; do
+for keys in ${AB_KEYS:-str u64 big}; do
     echo
-    echo "== $keys keys, ns per operation, bp/base (below 1.00 means the back-pointer is faster), min-max of the rounds"
+    echo "== $keys keys, ns per operation, bp/base (below 1.00 means the patched side, $patch_file, is faster), min-max of the rounds"
     printf "%-10s %10s %10s %10s %8s\n" "workload" "n" "base" "bp" "bp/base"
     for work in build churn erasekey eraseiter find; do
         for n in "${sizes[@]}"; do cell "$keys" "$work" "$n"; done

@@ -1,6 +1,6 @@
 // What move_home() is worth, one map per binary.
 //
-//   scripts/ab/move_home.sh <miss|hit|round> <entries> <turnovers> <writing hits per round> <reps>
+//   scripts/ab/move_home.sh <miss|hit|round|missmix|hitmix> <entries> <turnovers> <writing hits per round> <reps>
 //
 // move_home() only ever runs on a hit inside a path that writes -- try_emplace, operator[], insert
 // -- so a table has to be churned *with* writing lookups for it to have done anything. Build, churn
@@ -97,6 +97,19 @@ int main(int argc, char** argv) {
         // the cost side: the churn itself, with move_home firing on every writing hit
         churn(reps);
         acc += m.size();
+    } else if (what == "missmix" || what == "hitmix") {
+        // a churn round and four lookups, repeated: the steady state of a table that is read while it
+        // churns, so anything that repairs the drift periodically (#363) is read across its whole
+        // sawtooth and not at one instant of it. ns/op is per round, lookups included.
+        auto const& pool = what == "hitmix" ? present : absent;
+        auto const sz = pool.size();
+        for (std::size_t i = 0; i < reps; ++i) {
+            churn(1);
+            for (int l = 0; l < 4; ++l) {
+                auto const at = static_cast<std::size_t>(((r() >> 32U) * sz) >> 32U);
+                acc += m.count(pool[at]);
+            }
+        }
     } else {
         auto const& pool = what == "hit" ? present : absent;
         auto const sz = pool.size();
