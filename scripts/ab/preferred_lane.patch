@@ -1,0 +1,156 @@
+# #347's preferred lane, as a patch against include/ankerl/unordered_dense.h: the four hash bits below
+# the group's pick a lane inside the home group; placement takes it when free, and the probe checks that
+# lane's fingerprint byte and key before the group compare. Rejected 2026-10-03: dense ids 0.85-0.91 in
+# a quiet loop, scrambled integer hits 1.3-1.8x slower. notes/index-design.md "A preferred lane".
+# Measured with: AB_BUILD=/home/martinus/gra/x scripts/ab/small_hits.sh 5 origin/main wt (patch applied).
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index fbad56c..bf0937b 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -2275,6 +2275,13 @@ private:
+     // 8 so that 0 means empty and (fingerprint & 7), which picks the counter, is unchanged.
+ 
+     // the fingerprint in all four bytes of a word, from the table above
++    // #347 experiment: the four hash bits just below the group's, a lane the key prefers inside its
++    // home group. For keys a multiplicative hash spreads evenly (dense ids) they are as even as the
++    // group bits, so a key nearly always sits in its own lane.
++    [[nodiscard]] auto preferred_lane(std::uint64_t mh) const -> unsigned {
++        return static_cast<unsigned>(mh >> (m_shifts - 4U)) & 15U;
++    }
++
+     [[nodiscard]] static constexpr auto fingerprint_word(std::uint64_t hash) -> std::uint32_t {
+         return detail::fingerprint_words[hash & 0xFFU];
+     }
+@@ -2539,6 +2546,17 @@ private:
+         auto const word = fingerprint_word(mh);
+         auto const counter = word & 7U;
+         auto const home_idx = group_idx_from_hash(mh);
++        {
++            // #347: the key's own lane first, a byte compare and the key, before the group compare
++            auto const lane = preferred_lane(mh);
++            auto const& home = m_buckets.data()[home_idx];
++            if (ANKERL_UNORDERED_DENSE_LIKELY(home.m_fingerprints[lane] == static_cast<std::uint8_t>(word))) {
++                auto const value_idx = home.m_index[lane];
++                if (ANKERL_UNORDERED_DENSE_LIKELY(m_equal(key, get_key(m_values[value_idx])))) {
++                    return {home_idx, value_idx, static_cast<std::uint8_t>(lane), true};
++                }
++            }
++        }
+         if constexpr (!detail::key_compare_is_call_v<Key>) {
+             return probe_from(key, word, counter, home_idx, 0);
+         } else {
+@@ -2568,16 +2586,21 @@ private:
+     // counts it.
+     ANKERL_UNORDERED_DENSE_FORCEINLINE void place_group(std::uint64_t mh, value_idx_type value_idx) {
+         auto const word = fingerprint_word(mh);
+-        place_group(word, word & 7U, group_idx_from_hash(mh), value_idx);
++        place_group(word, word & 7U, group_idx_from_hash(mh), value_idx, preferred_lane(mh));
+     }
+ 
+     // The placement for a caller that has already taken the hash apart, and has just probed with
+     // exactly these three -- so this is the second of the two walks an insert does, not a third
+     // derivation of where to start it.
+     ANKERL_UNORDERED_DENSE_FORCEINLINE void
+-    place_group(std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type value_idx) {
++    place_group(std::uint32_t word, unsigned counter, value_idx_type group_idx, value_idx_type value_idx, unsigned lane = 16) {
+         static_assert(!is_view_v, "map_view and set_view are read only");
+         auto* groups = m_buckets.data();
++        if (lane < 16 && groups[group_idx].m_fingerprints[lane] == 0) {
++            groups[group_idx].m_fingerprints[lane] = static_cast<std::uint8_t>(word);
++            groups[group_idx].m_index[lane] = value_idx;
++            return;
++        }
+         value_idx_type delta = 0;
+         while (true) {
+             auto& group = groups[group_idx];
+@@ -3100,6 +3123,15 @@ private:
+             auto const word = fingerprint_word(mh);
+             auto const counter = word & 7U;
+             auto group_idx = static_cast<value_idx_type>(mh >> shifts);
++            {
++                auto const lane = static_cast<unsigned>(mh >> (shifts - 4U)) & 15U;
++                auto& home = groups[group_idx];
++                if (home.m_fingerprints[lane] == 0) {
++                    home.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
++                    home.m_index[lane] = static_cast<value_idx_type>(value_idx);
++                    continue;
++                }
++            }
+             value_idx_type delta = 0;
+             while (true) {
+                 auto& group = groups[group_idx];
+@@ -3258,7 +3290,7 @@ private:
+     // which inlines it anyway, unchanged for integers.
+     template <typename... Args>
+     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+-    place_element_at(std::uint32_t word, unsigned counter, value_idx_type home_idx, Args&&... args)
++    place_element_at(std::uint32_t word, unsigned counter, value_idx_type home_idx, unsigned lane, Args&&... args)
+         -> std::pair<iterator, bool> {
+         static_assert(!is_view_v, "map_view and set_view are read only");
+         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
+@@ -3270,7 +3302,7 @@ private:
+                 increase_size(); // places every value, the new one included
+             }
+         else {
+-            place_group(word, counter, home_idx, value_idx);
++            place_group(word, counter, home_idx, value_idx, lane);
+         }
+         return {begin() + static_cast<difference_type>(value_idx), true};
+     }
+@@ -3431,7 +3463,7 @@ private:
+             move_home(r.group_idx, r.lane, mh);
+             return;
+         }
+-        place_element_at(word, counter, home_idx, std::forward<V>(value));
++        place_element_at(word, counter, home_idx, preferred_lane(mh), std::forward<V>(value));
+     }
+ 
+     // Closes the gaps a merge left behind, on the table it took them out of: compacts everything
+@@ -3603,7 +3635,7 @@ private:
+                     continue;
+                 }
+                 ++read; // this one is leaving, however the placement below ends
+-                place_element_at(word, counter, home_idx, std::move(value));
++                place_element_at(word, counter, home_idx, preferred_lane(mh), std::move(value));
+             }
+         };
+ 
+@@ -3697,7 +3729,8 @@ private:
+         allocate_buckets_if_none();
+         auto const counter = word & 7U;
+         if (ANKERL_UNORDERED_DENSE_LIKELY(m_buckets.data()[home_idx].m_overflows[counter] == 0)) {
+-            return place_new<Piecewise>(word, counter, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
++            return place_new<Piecewise>(
++                word, counter, home_idx, preferred_lane(mh), std::forward<K>(key), std::forward<Args>(args)...);
+         }
+         return find_or_place_far<Piecewise>(mh, word, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
+     }
+@@ -3716,23 +3749,25 @@ private:
+             move_home(r.group_idx, r.lane, mh);
+             return {begin() + static_cast<difference_type>(r.value_idx), false};
+         }
+-        return place_new<Piecewise>(word, counter, home_idx, std::forward<K>(key), std::forward<Args>(args)...);
++        return place_new<Piecewise>(
++            word, counter, home_idx, preferred_lane(mh), std::forward<K>(key), std::forward<Args>(args)...);
+     }
+ 
+     template <bool Piecewise, typename K, typename... Args>
+     ANKERL_UNORDERED_DENSE_FORCEINLINE auto
+-    place_new(std::uint32_t word, unsigned counter, value_idx_type home_idx, K&& key, Args&&... args)
++    place_new(std::uint32_t word, unsigned counter, value_idx_type home_idx, unsigned lane, K&& key, Args&&... args)
+         -> std::pair<iterator, bool> {
+         if constexpr (Piecewise) {
+             return place_element_at(word,
+                                     counter,
+                                     home_idx,
++                                    lane,
+                                     std::piecewise_construct,
+                                     std::forward_as_tuple(std::forward<K>(key)),
+                                     std::forward_as_tuple(std::forward<Args>(args)...));
+         } else {
+             // key is one of args, which the value is built from
+-            return place_element_at(word, counter, home_idx, std::forward<Args>(args)...);
++            return place_element_at(word, counter, home_idx, lane, std::forward<Args>(args)...);
+         }
+     }
+ 
