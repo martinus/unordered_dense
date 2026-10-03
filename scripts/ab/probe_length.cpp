@@ -12,7 +12,6 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
-#include <utility>
 #include <vector>
 
 unsigned long long udm_probe_groups = 0;
@@ -49,8 +48,8 @@ auto measure(map_t const& m, std::vector<std::uint64_t> const& keys, std::size_t
 // entries homed in this group live outside it. A miss whose home has zero there stops at home even
 // when the overflow counter, which also counts entries that only passed through, says go on.
 // Computed offline from index() and values(); the walk past home is the real one over the real
-// counters. Returns {real, exact} groups per miss, the real one as a cross-check of measure().
-auto exact_counter_miss(map_t const& m, std::vector<std::uint64_t> const& keys, std::size_t n) -> std::pair<double, double> {
+// counters, which reproduced measure() exactly, and a header with the counter built read the same.
+auto exact_counter_miss(map_t const& m, std::vector<std::uint64_t> const& keys, std::size_t n) -> double {
     auto const idx = m.index();
     auto const* blocks = idx.data();
     auto const num_groups = idx.size();
@@ -77,7 +76,6 @@ auto exact_counter_miss(map_t const& m, std::vector<std::uint64_t> const& keys, 
             }
         }
     }
-    auto real = std::size_t{0};
     auto with_exact = std::size_t{0};
     for (std::size_t i = 0; i < n; ++i) {
         auto const mh = hasher(keys[i % keys.size()]);
@@ -89,10 +87,9 @@ auto exact_counter_miss(map_t const& m, std::vector<std::uint64_t> const& keys, 
             g = (g + delta) & group_mask;
             ++walked;
         }
-        real += walked;
         with_exact += exact[home][c] == 0 ? 1 : walked;
     }
-    return {static_cast<double>(real) / static_cast<double>(n), static_cast<double>(with_exact) / static_cast<double>(n)};
+    return static_cast<double>(with_exact) / static_cast<double>(n);
 }
 } // namespace
 
@@ -157,7 +154,9 @@ int main(int argc, char** argv) {
         present[at] = r() >> 1U;
         m.try_emplace(present[at], 1);
     };
-    // the interval mean samples every 0.05 turnovers with fewer lookups, so that a long run stays cheap
+    // the interval mean samples every 0.05 turnovers with fewer lookups, and only when there are
+    // intervals to compare: a single checkpoint reads the table at its end, as it always did
+    auto const sampling = checkpoints.size() > 1;
     auto const sample_every = n / 20 == 0 ? std::size_t{1} : n / 20;
     for (auto const turnovers : checkpoints) {
         auto const rounds = static_cast<std::size_t>(turnovers * static_cast<double>(n) + 0.5);
@@ -169,18 +168,17 @@ int main(int argc, char** argv) {
         auto samples = std::size_t{0};
         for (; rounds_done < rounds; ++rounds_done) {
             churn_round();
-            if ((rounds_done + 1) % sample_every == 0) {
+            if (sampling && (rounds_done + 1) % sample_every == 0) {
                 sum_hit += measure(m, present, 20000);
                 sum_miss += measure(m, absent, 20000);
-                sum_exact += exact_counter_miss(m, absent, 20000).second;
+                sum_exact += exact_counter_miss(m, absent, 20000);
                 ++samples;
             }
         }
         auto const churn_hit = measure(m, present, 200000);
         auto const churn_miss = measure(m, absent, 200000);
         std::printf("  %g turnovers: groups per hit churned %.4f, per miss churned %.4f", turnovers, churn_hit, churn_miss);
-        auto const ex = exact_counter_miss(m, absent, 200000);
-        std::printf("; exact counter: miss %.4f (walk %.4f)", ex.second, ex.first);
+        std::printf("; exact counter: miss %.4f", exact_counter_miss(m, absent, 200000));
         if (samples != 0) {
             std::printf("; interval mean hit %.4f, miss %.4f, exact-counter miss %.4f, %llu rebuilds, %llu pullbacks",
                         sum_hit / static_cast<double>(samples),

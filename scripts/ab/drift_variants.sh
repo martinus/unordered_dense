@@ -38,7 +38,8 @@ for spec in $variant_specs; do
     cp "$root/include/ankerl/unordered_dense.h" "$root/include/ankerl/stl.h" "$build/$name/ankerl/"
     IFS=+ read -ra plist <<<"$patches"
     for p in "${plist[@]}"; do
-        patch -s -d "$build/$name" -p2 <"$root/scripts/ab/$p"
+        patch -s -d "$build/$name" -p2 <"$root/scripts/ab/$p" ||
+            { echo "$p no longer applies to the header; the measurement it belongs to is dated" >&2; exit 1; }
     done
     # shellcheck disable=SC2086 # flags is a list
     "$cxx" -O3 -DNDEBUG -std=c++17 -w ${flags:-} -I"$build/$name" -I"$build/$name/ankerl" \

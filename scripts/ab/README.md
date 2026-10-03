@@ -214,8 +214,9 @@ is worth. Both draw random keys now. Its turnover argument takes ascending check
 (`0.1,0.5,1,10`, a few seconds each), and every checkpoint also prints the mean over the interval
 since the previous one, sampled every 0.05 turnovers, which is the number to read when something
 rebuilds the index periodically. It prints what an exact in-home counter (#366) would make the
-miss, computed offline from `index()`; `PROBE_PULLBACK=1` adds the erase-side pull-back of #364 and
-`PROBE_REBUILD_PCT=<n>` the same-size rebuild of #363.
+miss, computed offline from `index()`; `PROBE_PATCHES=block96.patch+step1_pullback.patch` measures a patch stack from `scripts/ab/`
+(here the erase-side pull-back of #364), with `PROBE_CXXFLAGS` for its switches, and counts the
+rebuilds and pull-backs of the two patches that have them.
 
 `scripts/ab/drift_variants.sh <rounds>` times patched copies of the header against a baseline
 revision, one map per binary, over `move_home.cpp`'s churn at 52363, 838860 and 3355443 entries:

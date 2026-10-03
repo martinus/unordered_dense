@@ -2759,7 +2759,7 @@ Three candidates, none worth anything. #260 and #262 came from reading a hot pat
 
 ### Rebuilding a drifted index at the same size (#363): the drift comes back within one or two turnovers, and the rebuild costs the churn round 4-17% for misses that are faster only in cache
 
-*2026-10-02 · #363 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/probe_length.sh` (turnover checkpoints and interval means, `PROBE_REBUILD_PCT`), `scripts/ab/drift_variants.sh` with `scripts/ab/rebuild_same_size.patch`, one map per binary, five rounds rotated, medians*
+*2026-10-02 · #363 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/probe_length.sh` (turnover checkpoints and interval means, `PROBE_PATCHES=rebuild_same_size.patch`), `scripts/ab/drift_variants.sh` with `scripts/ab/rebuild_same_size.patch`, one map per binary, five rounds rotated, medians*
 
 Boost rehashes at the same size once enough erases have hit groups with an overflow bit set. Here a rebuild does not move values, so it looked cheap: clear the index and run `fill_buckets_from_values`. Asked first: how fast does the drift come back?
 
@@ -2801,7 +2801,7 @@ At load 0.76 two fifths of the drift (0.090 of 0.213 groups per miss) is back af
 
 ### A step-1 mask per group so an erase pulls a displaced sibling home without hashing (#364): churned misses 1.12-1.18x faster, the churn round 4-12% slower
 
-*2026-10-03 · #364 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/step1_pullback.patch` on `scripts/ab/block96.patch`, `scripts/ab/probe_length.sh` (`PROBE_PULLBACK=1`), `scripts/ab/drift_variants.sh`, one map per binary, three rounds rotated, medians*
+*2026-10-03 · #364 · rejected · Ryzen 9 7950X, clang 22; `scripts/ab/step1_pullback.patch` on `scripts/ab/block96.patch`, `scripts/ab/probe_length.sh` (`PROBE_PATCHES=block96.patch+step1_pullback.patch`), `scripts/ab/drift_variants.sh`, one map per binary, three rounds rotated, medians*
 
 The triangular sequence's first step is +1, so an entry placed at step 1 in group g+1 has its home in g. One bit per lane, "placed at step 1", in the two spare bytes of a 96 byte block, marks exactly those entries. An erase that frees a lane in g reads g+1's mask, and if it is nonzero moves one entry home and takes it out of g's counter. No hash and no key access; this is what [Pulling a displaced sibling home on erase](#pulling-a-displaced-sibling-home-on-erase-to-take-the-churn-drift-back) lost on. The patch keeps the mask on every placement path (`place_group`, `fill_buckets_from_values`, `move_home`, erase) and passes the whole suite apart from the pinned format id.
 
