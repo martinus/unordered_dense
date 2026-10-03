@@ -46,6 +46,12 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
 - **Long runs: one background call, no polling.** Start it with `run_in_background`, `tee` its
   output to `/home/martinus/gra/<name>/*.txt` (the task's own output file is on `/tmp`), and do
   independent work until the notification. The command cap is 1 hour: split sweeps at ~45 min.
+- **A long run's variants are fixed when it compiles, so make them patches or template parameters,
+  never "the working tree"**: on 2026-10-02 a trigger edited after a run had built its binaries
+  meant a 25-minute restart. `scripts/ab/drift_variants.sh` applies patches to a copy.
+- **A timed region under a few milliseconds is noise**: `drift_variants.sh`'s first `miss`/`hit`
+  cells timed 5236 lookups (40 us) and read 0.96-1.08 for a layout-only change; 3M lookups made
+  them consistent across sizes. Size the reps from time, not from the table.
 - **Smoke every harness at the smallest size, one round, before the real run.** Three scripts this
   week failed only at run time: `env VAR=x fn` cannot call a shell function; `ls_l1_d_tlb_miss.all_l2_dtlb_miss`
   is not an event; `$!` after `cmd | tee &` is `tee`'s pid.
