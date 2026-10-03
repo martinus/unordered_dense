@@ -97,7 +97,7 @@ def quoted_phrases():
     ).stdout.split()
     found = []
     for f in files:
-        if f.startswith(("notes/", "subprojects/", "handoff/")):
+        if f.startswith(("notes/", "subprojects/")):
             continue
         path = ROOT / f
         try:

@@ -28,6 +28,7 @@ shapes `ankerl::unordered_dense::map` and `set` can be asked to take. The index 
   - [`auto visit(FwdIt first, FwdIt last, F f) -> size_t`](#auto-visitfwdit-first-fwdit-last-f-f---size_t)
   - [`void merge(map& source)`](#void-mergemap-source)
 - [Loading a map from its values and its index](#loading-a-map-from-its-values-and-its-index)
+  - [Mapping a file: `mapped_view.h`](#mapping-a-file-mapped_viewh)
   - [What the check covers and what only `verify()` covers](#what-the-check-covers-and-what-only-verify-covers)
   - [What is portable](#what-is-portable)
   - [A custom index container](#a-custom-index-container)
@@ -77,7 +78,7 @@ wrap the header in a module of your own and build it with gcc, you need to do th
 using is_avalanching = void;
 ```
 
-This is the case for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, and `std::basic_string_view<C>`.
+This is the case for the specializations `bool`, `char`, `signed char`, `unsigned char`, `char8_t`, `char16_t`, `char32_t`, `wchar_t`, `short`, `unsigned short`, `int`, `unsigned int`, `long`, `long long`, `unsigned long`, `unsigned long long`, `T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`, `enum`, `std::basic_string<C>`, `std::basic_string_view<C>`, `std::pair<A, B>`, and `std::tuple<Args...>`.
 
 Hashes that do not contain this marker are assumed to be of low quality and receive an additional mixing step inside the map/set implementation. The marker can also be spelled `using is_avalanching = std::true_type;`, and given for a hash you cannot edit -- see [Marking a Hash Avalanching From Outside](#marking-a-hash-avalanching-from-outside).
 
@@ -290,7 +291,7 @@ Extracts the internally used container. `*this` is emptied.
 
 Similar to `erase()`, there is an API call `extract()`. It behaves exactly the same as `erase`, except that the return value is the moved element that is removed from the container:
 
-* `auto extract(const_iterator it) -> value_type`
+* `auto extract(iterator it) -> value_type` and `auto extract(const_iterator it) -> value_type`
 * `auto extract(Key const& key) -> std::optional<value_type>`
 * `template <class K> auto extract(K&& key) -> std::optional<value_type>`
 
@@ -346,13 +347,13 @@ auto const status_hash = map.hash_for("status");
 auto it = map.find("status", status_hash);
 ```
 
-The key is still needed -- a lookup that lands on a bucket still has to compare keys to know it found the right one. What is skipped is the hashing, so the longer the key the more there is to gain (clang 18, x86-64, half hits and half misses):
+The key is still needed -- a lookup that finds a matching fingerprint still has to compare keys to know it found the right one. What is skipped is the hashing, so the longer the key the more there is to gain (`bench_precomputed_hash`, 10000 entries, half hits and half misses, clang 22 on a Ryzen 9 7950X, median of three runs):
 
 | key length | `find(key)` | `find(key, hash)` | |
 | ---------: | ----------: | ----------------: | ---: |
-| 8 bytes | 5.6 ns | 4.0 ns | 1.4x |
-| 32 bytes | 7.1 ns | 4.3 ns | 1.7x |
-| 200 bytes | 22.5 ns | 7.4 ns | 3.0x |
+| 8 bytes | 3.8 ns | 3.5 ns | 1.1x |
+| 32 bytes | 4.7 ns | 3.8 ns | 1.3x |
+| 200 bytes | 14.9 ns | 6.3 ns | 2.4x |
 
 `precomputed_hash` is a distinct type rather than a plain integer, because the number a lookup wants is *not* what `hash_function()` returns -- the table finalizes that further -- and an integer parameter would happily accept the wrong one. An integer does not convert to it; the value inside stays reachable, so a hash can be stored or moved around freely.
 
@@ -368,8 +369,10 @@ What it does not survive is the key changing. Looking up a key with the hash of 
 Heterogeneous lookup works as usual when the hash and equality are transparent, and the hash may be taken from one key type and used with another:
 
 ```cpp
-auto const h = map.hash_for(std::string_view("status"));
-auto it = map.find("status"s, h);
+using namespace std::literals;
+auto tmap = ankerl::unordered_dense::map<std::string, int, string_hash, std::equal_to<>>(); // string_hash from above
+auto const h = tmap.hash_for(std::string_view("status"));
+auto it = tmap.find("status"s, h);
 ```
 
 Only lookups take a precomputed hash, and insertion never will: a lookup given the wrong hash merely misses, while an insertion given one files the element under a probe chain it is not on, losing it for good and letting a second copy of the same key in beside it. Erase is left out for a duller reason -- it hashes the moved element as well as the key, so precomputing the key's hash would save it only half its hashing.
@@ -646,7 +649,7 @@ mapped throws `std::system_error`. Without exceptions both abort. `view()` is a 
 object and does not compile on a temporary. The object moves (the mapping stays where it is, so the
 view stays valid) and does not copy or assign.
 
-The last argument, `ud::mapping`, says where the bytes live:
+The last argument of the path constructor, or the second argument of `mapped_file`, a `ud::mapping`, says where the bytes live:
 
 - `mapping::file`, the default: the file itself, `PROT_READ` and `MAP_SHARED`. Nothing is copied and
   nothing read until a lookup touches it, and every process that maps the file shares one copy in
@@ -848,13 +851,13 @@ works.
 
 ### `ankerl::unordered_dense::bucket_type::group`
 
-* Up to 2^32 = 4.29 billion elements.
+* Up to 2^32 = 4.29 billion elements on a 64 bit target, 2^31 on a 32 bit one.
 * 5.5 bytes overhead per slot: one 88 byte block per group of sixteen slots, holding the sixteen fingerprints, the group's eight overflow counters and sixteen 4 byte value indices.
 
 ### `ankerl::unordered_dense::bucket_type::group_big`
 
-* Up to 2^63 = 9,223,372,036,854,775,808 elements.
-* 9.5 bytes overhead per slot: the same block with 8 byte value indices instead of 4 byte ones, so 152 bytes per group.
+* Up to 2^63 elements on a 64 bit target.
+* 9.5 bytes overhead per slot: the same block with 8 byte value indices instead of 4 byte ones, so 152 bytes per group. On a 32 bit target `std::size_t` is 4 bytes, so it is the same as `group`.
 
 ## Disabling the Vector Probe
 
