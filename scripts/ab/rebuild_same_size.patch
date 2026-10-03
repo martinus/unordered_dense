@@ -1,0 +1,62 @@
+# The same-size index rebuild of #363, as a patch against include/ankerl/unordered_dense.h: an erase
+# that frees a slot in a group with a counter up counts as drift, and once that count passes
+# UDM_DRIFT_PCT percent of the capacity the erase rebuilds the index in place. Rejected 2026-10-02,
+# notes/index-design.md "Rebuilding a drifted index at the same size". Applied by drift_variants.sh
+# and by probe_length.sh (PROBE_REBUILD_PCT).
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index fbad56c..d6d7117 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -2190,6 +2190,7 @@ private:
+     Hash m_hash{};
+     KeyEqual m_equal{};
+     std::uint8_t m_shifts = initial_shifts;
++    value_idx_type m_drift = 0;
+ 
+     // The goal of mixed_hash is to always produce a high quality 64bit hash.
+     template <typename K>
+@@ -2623,6 +2624,20 @@ private:
+         auto const counter = fingerprint_word(mh) & 7U;
+         groups[found_in].m_fingerprints[lane] = 0;
+         uncount(groups, mask, home_idx, counter, found_in);
++        std::uint64_t overflows{};
++        std::memcpy(&overflows, groups[found_in].m_overflows.data(), sizeof(overflows));
++        m_drift = static_cast<value_idx_type>(m_drift + (overflows != 0 ? 1U : 0U));
++    }
++
++#ifndef UDM_DRIFT_PCT
++#    define UDM_DRIFT_PCT 50
++#endif
++    void rebuild_if_drifted() {
++        if (ANKERL_UNORDERED_DENSE_UNLIKELY(std::size_t{m_drift} * 100U > m_max_bucket_capacity * UDM_DRIFT_PCT))
++            ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
++                clear_buckets();
++                fill_buckets_from_values();
++            }
+     }
+ 
+     // A hit found past its home group moves home if there is room there now, and comes out of
+@@ -2939,6 +2954,7 @@ private:
+         // index-allocating path goes through, which is what makes a failed growth leave the old
+         // index intact and consistent rather than unusable.
+         m_shifts = shifts;
++        m_drift = 0;
+         describe_buckets(num_groups);
+     }
+ 
+@@ -3029,6 +3045,7 @@ private:
+         // Clearing the groups empties every slot and zeroes every counter; the value indices
+         // beside them are never read for an empty slot.
+         m_buckets.clear_metadata();
++        m_drift = 0;
+     }
+ 
+     // Into an index just allocated, so already empty.
+@@ -3188,6 +3205,7 @@ private:
+         }
+ 
+         finish_erase(value_idx_to_remove);
++        rebuild_if_drifted();
+     }
+ 
+     template <typename K, typename Op>

@@ -200,7 +200,9 @@ renames it into its own namespace so the two variants can be built as two binari
 slot back-pointer of #266 -- `build`, `churn`, `erasekey`, `eraseiter` and `find` at five sizes for
 three value shapes, plus live bytes per entry -- and `find` is the control, because no variant of
 that change can reach it. The answer is in `notes/index-design.md` under "A slot back-pointer,
-re-tested across the cache boundary".
+re-tested across the cache boundary". `AB_PATCH=stored_hash.patch AB_SWITCH=STORED_HASH` runs the same
+grid for the stored hash per value of #365 ("Storing the hash per value"), and `AB_KEYS=str` limits
+it to one key type.
 
 Two smaller tools answer questions the harnesses cannot. `scripts/ab/probe_length.sh` patches a
 counter into a copy of the probe and reports **groups visited per lookup**, fresh and after churn,
@@ -208,7 +210,19 @@ with an argument for how many writing lookups each churn round does -- which is 
 `move_home()` runs on, so 0 measures the drift and 4 measures what taking it back is worth. Until
 2026-10-02 it, and `scripts/ab/move_home.cpp`, churned in sequential keys (`next++`), which the hash
 spreads almost evenly: they read a quarter of the real drift and `move_home` at a tenth of what it
-is worth. Both draw random keys now. And
+is worth. Both draw random keys now. Its turnover argument takes ascending checkpoints on one table
+(`0.1,0.5,1,10`, a few seconds each), and every checkpoint also prints the mean over the interval
+since the previous one, sampled every 0.05 turnovers, which is the number to read when something
+rebuilds the index periodically. It prints what an exact in-home counter (#366) would make the
+miss, computed offline from `index()`; `PROBE_PULLBACK=1` adds the erase-side pull-back of #364 and
+`PROBE_REBUILD_PCT=<n>` the same-size rebuild of #363.
+
+`scripts/ab/drift_variants.sh <rounds>` times patched copies of the header against a baseline
+revision, one map per binary, over `move_home.cpp`'s churn at 52363, 838860 and 3355443 entries:
+the churn round, a round plus four misses or hits (`missmix`, `hitmix`), and lookups on the table the
+churn left. `AB_VARIANTS` names each variant's patch stack from `scripts/ab/`
+(`rebuild_same_size.patch`, `block96.patch`, `step1_pullback.patch`, `exact_counter.patch`). About
+six minutes per round for four variants and three modes. And
 `scripts/ab/placement.cpp` simulates bucketized placement against sliding-window placement with no
 map involved, which is how the ungrouped-window idea was priced without building it.
 

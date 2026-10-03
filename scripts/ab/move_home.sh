@@ -2,7 +2,7 @@
 # Build scripts/ab/move_home.cpp twice, with move_home() on and turned into a no-op, and run both.
 # One map per binary, because this is a 10% question about a path that is not on the scored suite.
 #
-#   scripts/ab/move_home.sh <miss|hit|round> <entries> <turnovers> <writing hits per round> <reps>
+#   scripts/ab/move_home.sh <miss|hit|round|missmix|hitmix> <entries> <turnovers> <writing hits per round> <reps>
 #
 # The switch does not live in the header -- it would be a knob nobody should turn -- so this patches
 # a copy of it, the way run.sh copies the baseline. Nothing in the working tree is touched.

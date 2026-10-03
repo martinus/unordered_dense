@@ -1,0 +1,80 @@
+# On top of block96.patch: a mask per group, one bit per lane, "placed at step 1", so an erase pulls
+# that entry of the next group into the lane it frees (#364). Rejected 2026-10-03, notes
+# "A step-1 mask per group".
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index d952a8b..26eb1ed 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -2572,6 +2572,19 @@ private:
+         place_group(word, word & 7U, group_idx_from_hash(mh), value_idx);
+     }
+ 
++    // step1_pullback.patch (#364): m_extra's first two bytes are a mask, one bit per lane, "the entry
++    // here was placed at step 1", so its home is the group before this one.
++    template <typename G>
++    static auto step1_mask(G const& g) -> std::uint16_t {
++        std::uint16_t m{};
++        std::memcpy(&m, g.m_extra.data(), sizeof(m));
++        return m;
++    }
++    template <typename G>
++    static void set_step1_mask(G& g, std::uint16_t m) {
++        std::memcpy(g.m_extra.data(), &m, sizeof(m));
++    }
++
+     // The placement for a caller that has already taken the hash apart, and has just probed with
+     // exactly these three -- so this is the second of the two walks an insert does, not a third
+     // derivation of where to start it.
+@@ -2587,6 +2600,9 @@ private:
+                 auto const lane = first_lane(empties);
+                 group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
+                 group.m_index[lane] = value_idx;
++                if (delta == 1) {
++                    set_step1_mask(group, static_cast<std::uint16_t>(step1_mask(group) | (1U << lane)));
++                }
+                 return;
+             }
+             if (group.m_overflows[counter] != 255) {
+@@ -2622,8 +2638,23 @@ private:
+         auto const mask = m_group_mask;
+         auto const home_idx = group_idx_from_hash(mh);
+         auto const counter = fingerprint_word(mh) & 7U;
+-        groups[found_in].m_fingerprints[lane] = 0;
++        auto& freed = groups[found_in];
++        freed.m_fingerprints[lane] = 0;
++        set_step1_mask(freed, static_cast<std::uint16_t>(step1_mask(freed) & ~(1U << lane)));
+         uncount(groups, mask, home_idx, counter, found_in);
++        auto const next_idx = static_cast<value_idx_type>((found_in + 1U) & mask);
++        auto& next = groups[next_idx];
++        auto const pull = step1_mask(next);
++        if (pull != 0) {
++            auto const from_lane = static_cast<std::uint8_t>(first_lane(pull));
++            auto const fp = next.m_fingerprints[from_lane];
++            freed.m_fingerprints[lane] = fp;
++            freed.m_index[lane] = next.m_index[from_lane];
++            next.m_fingerprints[from_lane] = 0;
++            set_step1_mask(next, static_cast<std::uint16_t>(pull & (pull - 1U)));
++            // it passed `found_in` at step 0 and was counted there, nowhere else
++            uncount(groups, mask, found_in, fp & 7U, next_idx);
++        }
+     }
+ 
+     // A hit found past its home group moves home if there is room there now, and comes out of
+@@ -2666,6 +2697,7 @@ private:
+         home.m_fingerprints[lane] = from.m_fingerprints[from_lane];
+         home.m_index[lane] = from.m_index[from_lane];
+         from.m_fingerprints[from_lane] = 0;
++        set_step1_mask(from, static_cast<std::uint16_t>(step1_mask(from) & ~(1U << from_lane)));
+         uncount(groups, mask, home_idx, counter, found_in);
+     }
+ 
+@@ -3109,6 +3141,9 @@ private:
+                     auto const lane = first_lane(empties);
+                     group.m_fingerprints[lane] = static_cast<std::uint8_t>(word);
+                     group.m_index[lane] = static_cast<value_idx_type>(value_idx);
++                    if (delta == 1) {
++                        set_step1_mask(group, static_cast<std::uint16_t>(step1_mask(group) | (1U << lane)));
++                    }
+                     break;
+                 }
+                 if (group.m_overflows[counter] != 255) {

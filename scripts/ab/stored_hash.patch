@@ -1,0 +1,97 @@
+# Stored hashes (#365), as a patch against include/ankerl/unordered_dense.h, behind
+# ANKERL_UNORDERED_DENSE_STORED_HASH (default 0): a std::vector<std::uint64_t> beside the values,
+# m_hashes[i] the mixed hash of m_values[i]'s key, read by the erase backfill and by the rehash
+# instead of hashing again. A prototype for timing: only do_find_or_place (try_emplace,
+# operator[]) records the hash, so emplace(), insert(), ranges, replace() and merge() leave it
+# wrong. It is what scripts/ab/back_pointer.sh's build, churn, erasekey, eraseiter and find use.
+# Measured 2026-10-02, notes/index-design.md "Storing the hash per value".
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index fbad56c..7dbd099 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -174,6 +174,9 @@
+ 
+ #    endif
+ 
++#ifndef ANKERL_UNORDERED_DENSE_STORED_HASH
++#    define ANKERL_UNORDERED_DENSE_STORED_HASH 0
++#endif
+ namespace ankerl::unordered_dense {
+ inline namespace ANKERL_UNORDERED_DENSE_NAMESPACE {
+ 
+@@ -2190,6 +2193,10 @@ private:
+     Hash m_hash{};
+     KeyEqual m_equal{};
+     std::uint8_t m_shifts = initial_shifts;
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++    std::vector<std::uint64_t> m_hashes{}; // m_hashes[i] is mixed_hash of m_values[i]'s key
++    std::uint64_t m_last_mh = 0;           // set by do_find_or_place, pushed by append_value
++#endif
+ 
+     // The goal of mixed_hash is to always produce a high quality 64bit hash.
+     template <typename K>
+@@ -3081,8 +3088,15 @@ private:
+         auto ring = std::array<std::uint64_t, ahead>{};
+         auto it = m_values.begin();
+         auto const end = m_values.end();
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++        auto const* stored = m_hashes.data();
++#endif
+         auto const fetch = [&](std::size_t i) -> void {
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++            auto const mh = *stored++;
++#else
+             auto const mh = mixed_hash(get_key(*it));
++#endif
+             ++it;
+             ring[i] = mh;
+             prefetch_block(groups, static_cast<std::size_t>(mh >> shifts));
+@@ -3156,10 +3170,18 @@ private:
+ 
+             // update the value index of the moved entry
+             auto const values_idx_back = static_cast<value_idx_type>(m_values.size() - 1);
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++            auto const mh = m_hashes.back();
++            m_hashes[value_idx_to_remove] = mh;
++#else
+             auto const mh = mixed_hash(get_key(val));
++#endif
+             repoint_value(mh, values_idx_back, value_idx_to_remove);
+         }
+         m_values.pop_back();
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++        m_hashes.pop_back();
++#endif
+     }
+ 
+     // `at` is the slot that points at the value; mh is the value's mixed hash, which the counters
+@@ -3217,6 +3239,9 @@ private:
+     template <typename... Args>
+     ANKERL_UNORDERED_DENSE_FORCEINLINE ANKERL_UNORDERED_DENSE_FLATTEN void append_value(Args&&... args) {
+         m_values.emplace_back(std::forward<Args>(args)...);
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++        m_hashes.push_back(m_last_mh);
++#endif
+     }
+ 
+     // Appends the value and points a slot at it. What it needs to know is where the key belongs, and
+@@ -3650,6 +3675,9 @@ private:
+     ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_find_or_place(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+         static_assert(!is_view_v, "map_view and set_view are read only");
+         auto const mh = mixed_hash(key);
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++        m_last_mh = mh;
++#endif
+         // Taken apart once for both halves: a probe that misses is followed by a placement starting
+         // from the same group with the same fingerprint.
+         auto const word = fingerprint_word(mh);
+@@ -4157,6 +4185,9 @@ public:
+     void clear() {
+         if (!empty()) {
+             m_values.clear();
++#if ANKERL_UNORDERED_DENSE_STORED_HASH
++            m_hashes.clear();
++#endif
+             clear_buckets();
+         }
+     }
