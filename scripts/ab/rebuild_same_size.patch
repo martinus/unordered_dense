@@ -2,7 +2,7 @@
 # that frees a slot in a group with a counter up counts as drift, and once that count passes
 # UDM_DRIFT_PCT percent of the capacity the erase rebuilds the index in place. Rejected 2026-10-02,
 # notes/index-design.md "Rebuilding a drifted index at the same size". Applied by drift_variants.sh
-# and by probe_length.sh (PROBE_REBUILD_PCT).
+# and by probe_length.sh (PROBE_PATCHES=rebuild_same_size.patch PROBE_CXXFLAGS=-DUDM_DRIFT_PCT=25).
 diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
 index fbad56c..d6d7117 100644
 --- a/include/ankerl/unordered_dense.h

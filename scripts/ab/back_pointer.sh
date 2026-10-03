@@ -30,10 +30,10 @@ root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 build=${AB_BUILD:-$(mktemp -d)}
 mkdir -p "$build"
 
-# The second variant: the shipped header with back_pointer.patch applied, in a namespace of its own.
-# The patch's switch defaults to off and the macro is renamed with everything else (the same sed
-# run.sh uses to make base.h), so defining UDMBP_UNORDERED_DENSE_SLOT_BACK_POINTER turns it on for
-# this copy and for nothing else.
+# The second variant: the shipped header with the patch applied, in a namespace of its own. The
+# patch's switch defaults to off and the macro is renamed with everything else (the same sed run.sh
+# uses to make base.h), so defining UDMBP_UNORDERED_DENSE_<switch> turns it on for this copy and for
+# nothing else.
 patch_file=${AB_PATCH:-back_pointer.patch}
 switch=${AB_SWITCH:-SLOT_BACK_POINTER}
 cp "$root/include/ankerl/unordered_dense.h" "$build/bp_raw.h"
@@ -75,8 +75,8 @@ cell() {
 
 for keys in ${AB_KEYS:-str u64 big}; do
     echo
-    echo "== $keys keys, ns per operation, bp/base (below 1.00 means the patched side, $patch_file, is faster), min-max of the rounds"
-    printf "%-10s %10s %10s %10s %8s\n" "workload" "n" "base" "bp" "bp/base"
+    echo "== $keys keys, ns per operation, patched/base (below 1.00 means $patch_file is faster), min-max of the rounds"
+    printf "%-10s %10s %10s %10s %8s\n" "workload" "n" "base" "patched" "ratio"
     for work in build churn erasekey eraseiter find; do
         for n in "${sizes[@]}"; do cell "$keys" "$work" "$n"; done
     done

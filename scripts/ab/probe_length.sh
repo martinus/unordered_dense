@@ -5,9 +5,10 @@
 #   scripts/ab/probe_length.sh [load] [turnovers] [writing hits per round] [groups, default 4096]
 #
 # `turnovers` is one number or ascending checkpoints, "0.1,0.5,1,10", all on one table as it keeps
-# churning; fractions are fine. Each checkpoint prints the table at that instant and the mean over
-# the interval since the previous one, sampled every 0.05 turnovers, which is the number to read
-# when something rebuilds the index periodically and an instant lands anywhere in its sawtooth.
+# churning; fractions are fine. Each checkpoint prints the table at that instant and, with more
+# than one checkpoint, the mean over the interval since the previous one, sampled every 0.05
+# turnovers: the number to read when something rebuilds the index periodically and an instant lands
+# anywhere in its sawtooth ("10,20" reads the saturated mean over turnovers 10-20).
 #
 # The counter cannot live in the header -- it would be in everybody's probe -- so this patches a
 # copy of it, exactly the way run.sh makes its baseline copy, and builds against that. Nothing in
@@ -28,14 +29,19 @@ cxx=${CXX_PROBE:-clang++}
 
 # the probe, with a counter in it
 header=${AB_HEADER:-$root/include/ankerl/unordered_dense.h}
-# PROBE_REBUILD_PCT=<n> (#363): the same-size rebuild of scripts/ab/rebuild_same_size.patch, at that
-# trigger; the rebuilds are counted
-if [ -n "${PROBE_REBUILD_PCT:-}" ]; then
-    mkdir -p "$build/rebuild/ankerl"
-    cp "$header" "$build/rebuild/ankerl/unordered_dense.h"
-    patch -s -d "$build/rebuild" -p2 <"$root/scripts/ab/rebuild_same_size.patch"
-    header=$build/rebuild/ankerl/unordered_dense.h
-    PROBE_CXXFLAGS="${PROBE_CXXFLAGS:-} -DUDM_DRIFT_PCT=$PROBE_REBUILD_PCT"
+# PROBE_PATCHES="a.patch+b.patch": scripts/ab/ patches applied to a copy first, with PROBE_CXXFLAGS
+# for their switches. The same-size rebuild (#363): rebuild_same_size.patch with
+# PROBE_CXXFLAGS=-DUDM_DRIFT_PCT=25; the step-1 pull-back (#364): block96.patch+step1_pullback.patch.
+# Their rebuilds and pull-backs are counted.
+if [ -n "${PROBE_PATCHES:-}" ]; then
+    mkdir -p "$build/patched/ankerl"
+    cp "$header" "$build/patched/ankerl/unordered_dense.h"
+    IFS=+ read -ra plist <<<"$PROBE_PATCHES"
+    for p in "${plist[@]}"; do
+        patch -s -d "$build/patched" -p2 <"$root/scripts/ab/$p" ||
+            { echo "$p no longer applies to the header; the measurement it belongs to is dated" >&2; exit 1; }
+    done
+    header=$build/patched/ankerl/unordered_dense.h
 fi
 python3 - "$header" "$build/instrumented.h" <<'PY'
 import sys
@@ -64,41 +70,19 @@ for old, new in patches:
     if s.count(old) != 1:
         sys.exit("probe_from()/probe() no longer look the way this patch expects; update scripts/ab/probe_length.sh")
     s = s.replace(old, new, 1)
-# PROBE_PULLBACK=1 (#364): an erase that frees a lane in group g pulls an entry of group g+1 whose
-# home is g into it. The header would know such an entry by a step-1 bit per lane; this finds it by
-# hashing, which costs time and not probe length, and probe length is all this counts.
-if __import__("os").environ.get("PROBE_PULLBACK") == "1":
-    old = """        groups[found_in].m_fingerprints[lane] = 0;
-        uncount(groups, mask, home_idx, counter, found_in);
-"""
-    new = old + """        {
-            auto const next = static_cast<value_idx_type>((found_in + 1U) & mask);
-            auto& from = groups[next];
-            for (std::uint8_t l = 0; l < from.m_fingerprints.size(); ++l) {
-                if (from.m_fingerprints[l] == 0) {
-                    continue;
-                }
-                auto const cmh = mixed_hash(get_key(m_values[from.m_index[l]]));
-                if (group_idx_from_hash(cmh) != found_in) {
-                    continue;
-                }
-                groups[found_in].m_fingerprints[lane] = from.m_fingerprints[l];
-                groups[found_in].m_index[lane] = from.m_index[l];
-                from.m_fingerprints[l] = 0;
-                uncount(groups, mask, found_in, fingerprint_word(cmh) & 7U, next);
-                ++udm_pullbacks;
-                break;
-            }
-        }
-"""
+# the rebuilds and pull-backs of the patches that have them; a patch named but not hooked is an error,
+# or "0 rebuilds" would read the same as "the counter is not there"
+hooks = [
+    ("rebuild_same_size.patch", """                clear_buckets();
+                fill_buckets_from_values();""", "                ++udm_rebuilds;\n"),
+    ("step1_pullback.patch", """            uncount(groups, mask, found_in, fp & 7U, next_idx);""", "            ++udm_pullbacks;\n"),
+]
+for patch, old, add in hooks:
+    if patch not in __import__("os").environ.get("PROBE_PATCHES", ""):
+        continue
     if s.count(old) != 1:
-        sys.exit("erase_group_slot() no longer looks the way PROBE_PULLBACK expects; update scripts/ab/probe_length.sh")
-    s = s.replace(old, new, 1)
-# optional: count the same-size rebuilds of a churned table (#363), where a header has them
-s = s.replace("""                clear_buckets();
-                fill_buckets_from_values();""", """                ++udm_rebuilds;
-                clear_buckets();
-                fill_buckets_from_values();""", 1)
+        sys.exit(f"{patch} no longer looks the way scripts/ab/probe_length.sh counts it; update the hook")
+    s = s.replace(old, add + old, 1)
 s = s.replace("namespace ankerl::unordered_dense {",
               "extern unsigned long long udm_probe_groups;\nextern unsigned long long udm_probe_lookups;\n"
               "extern unsigned long long udm_rebuilds;\nextern unsigned long long udm_pullbacks;\n"
