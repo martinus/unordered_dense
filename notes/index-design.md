@@ -103,6 +103,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [An empty table reads a shared, never written sentinel index, so `find` and the insert's inlined lookup drop their `empty()` test: `find` up to 5% fewer instructions (3-5% for integer keys on both compilers; clang's big-value find +0.9%), gcc's small-table counting now ahead of 4.1.2, clang's 0.1-0.3 cycles closer, the score level; the index became a pointer and a count, so the map is 64 bytes, 8 fewer than 5.2.0](#an-empty-table-reads-a-shared-never-written-sentinel-index-so-find-and-the-inserts-inlined-lookup-drop-their-empty-test-find-up-to-5-fewer-instructions-3-5-for-integer-keys-on-both-compilers-clangs-big-value-find-09-gccs-small-table-counting-now-ahead-of-412-clangs-01-03-cycles-closer-the-score-level-the-index-became-a-pointer-and-a-count-so-the-map-is-64-bytes-8-fewer-than-520) · 2026-09-27 · kept
   - [#341, main's `find` hit against 4.5.0's in Redpanda's loop: half of the +20-27 instructions per call is the group probe itself (+11-14 in a bare loop) and half the caller around it; boost's `unordered_flat_map` runs as many instructions and 9-16% fewer cycles in that loop, and three candidates -- the walk past home out of line, no index prefetch, a speculative value prefetch from a preferred lane -- each cost cycles or did not move them, so nothing changed](#341-mains-find-hit-against-450s-in-redpandas-loop-half-of-the-20-27-instructions-per-call-is-the-group-probe-itself-11-14-in-a-bare-loop-and-half-the-caller-around-it-boosts-unordered_flat_map-runs-as-many-instructions-and-9-16-fewer-cycles-in-that-loop-and-three-candidates----the-walk-past-home-out-of-line-no-index-prefetch-a-speculative-value-prefetch-from-a-preferred-lane----each-cost-cycles-or-did-not-move-them-so-nothing-changed) · 2026-09-28 · rejected
   - [`prefetch_index`'s two lines re-measured one header per binary: dropping either is within 3% on both compilers from 50000 to 16M entries, so both stay, but not for the reason the audit gave](#prefetch_indexs-two-lines-re-measured-one-header-per-binary-dropping-either-is-within-3-on-both-compilers-from-50000-to-16m-entries-so-both-stay-but-not-for-the-reason-the-audit-gave) · 2026-10-02 · kept
+  - [The 10 instructions per hit against `indivi::flat_wmap`, accounted (#367): clang only, gcc runs 1.4 fewer, and the 10 cycles are the third dependent load on both](#the-10-instructions-per-hit-against-indiviflat_wmap-accounted-367-clang-only-gcc-runs-14-fewer-and-the-10-cycles-are-the-third-dependent-load-on-both) · 2026-10-03 · info
 - [Platforms: ARM, Windows and the CI matrix](#platforms-arm-windows-and-the-ci-matrix)
   - [Before NEON: on ARM the branch was 1.11x main, the same overall as on x86, split the opposite way](#before-neon-on-arm-the-branch-was-111x-main-the-same-overall-as-on-x86-split-the-opposite-way) · 2026-09-05 · superseded
   - [NEON closed the ARM lookup gap, and it was the whole gap](#neon-closed-the-arm-lookup-gap-and-it-was-the-whole-gap) · 2026-09-05 · kept
@@ -1297,7 +1298,7 @@ The 96 byte block with nothing in it (`block96.patch`) reads 0.977-0.994 on the 
 
 This section covers the lookup path of the group index: the probe loop and its bound, the SSE2 match, what is inlined and what is called, the shape of `probe_result`, the two prefetch helpers, the empty-table sentinel, and the hit against 4.5.0 and boost in a real caller. The probe, the match and the prefetches have been audited down to the instruction, and most proposals to change them measured as losses. Why boost's hit takes fewer cycles at the same instruction count (#341) is answered in [Why boost's `unordered_flat_map` finds faster (#341)](#why-boosts-unordered_flat_map-finds-faster-341-it-needs-no-value-index-so-the-first-thing-a-lookup-touches-is-1-byte-of-metadata-per-slot-against-this-maps-55-which-leaves-l2-at-a-far-smaller-table-from-46080-entries-to-460800-this-map-takes-17-21x-boosts-l3-fills-per-find-and-14-35-more-cycles-under-clang-093-104-under-gcc-while-in-l2-it-is-compiler-codegen-alone-this-maps-cycles-083-088-of-boosts-under-gcc-122-125-under-clang): the value index past L2, codegen inside it.
 
-**Where it stands** (as of 2026-09-28)
+**Where it stands** (as of 2026-10-03)
 
 - Every miss is bounded by `|| delta == m_group_mask`; without it eight chosen keys hang `contains()` ([A miss had no bound](#a-miss-had-no-bound-and-eight-chosen-keys-made-it-loop-forever)).
 - `probe` is force-inlined; under gcc that took the score against main from 1.149 to 1.244 ([gcc left `probe` out of line](#gcc-left-probe-out-of-line-and-forcing-it-inline-is-the-largest-single-gcc-gain-on-the-branch)). Fingerprint words come from a 256-entry table ([The gcc string-lookup gap, explained and mostly closed](#the-gcc-string-lookup-gap-explained-and-mostly-closed)).
@@ -1305,6 +1306,7 @@ This section covers the lookup path of the group index: the probe loop and its b
 - The shipped `probe_result` is a local optimum; both narrower shapes cost the string find (+4.1% and +1.1% under clang) ([`probe_result`'s shape swept two ways, a third argued down from the return sequence](#probe_results-shape-swept-two-ways-a-third-argued-down-from-the-return-sequence-and-the-one-that-ships-is-the-best-of-them)).
 - The SSE2 match has nothing left to remove. `prefetch_index` names two lines; dropping either one is within 3% on both compilers from 50000 to 16M entries (2026-10-02), so both stay. Dropping both costs gcc 12% at four million entries ([`prefetch_index`'s two lines re-measured](#prefetch_indexs-two-lines-re-measured-one-header-per-binary-dropping-either-is-within-3-on-both-compilers-from-50000-to-16m-entries-so-both-stay-but-not-for-the-reason-the-audit-gave); the first audit's reason is corrected there).
 - Both prefetch helpers ask for two consecutive lines from where they start, clamped into the block. Naming a third line loses ([A block's prefetches should step from its start](#a-blocks-prefetches-should-step-from-its-start-not-jump-to-its-end), [`prefetch_index` was a line short for `group_big`](#prefetch_index-was-a-line-short-for-group_big-and-covering-that-line-is-not-the-fix)).
+- The 10 instructions per hit against `flat_wmap` are clang's (gcc: 1.4 fewer); the 10 cycles are the third dependent load (the value index) on both; a 96 byte block's cheaper stride buys nothing (#367, [The 10 instructions per hit against `indivi::flat_wmap`, accounted](#the-10-instructions-per-hit-against-indiviflat_wmap-accounted-367-clang-only-gcc-runs-14-fewer-and-the-10-cycles-are-the-third-dependent-load-on-both)).
 - A string hit is the hash, one cache miss for the stored key and `memcmp`; none has a lever left ([Where a string hit's ~90 cycles go, from perf](#where-a-string-hits-90-cycles-go-from-perf-and-two-more-things-it-led-to-that-lost)).
 - Seven folly F14 ideas, none kept ([Seven ideas from reading folly F14 and from the F14Vector string gap](#seven-ideas-from-reading-folly-f14-and-from-the-f14vector-string-gap-all-measured-on-2026-09-07-none-kept)).
 - An empty table reads a static sentinel index, so `find` has no `empty()` test, and the map is 64 bytes (#329).
@@ -1702,6 +1704,42 @@ Absolute, clang hit64: 5.86 / 7.37 / 21.78 / 45.06 / 49.98 ns for both lines; gc
 **Every cell is within 0.97-1.03; none clears the ±3% code-layout band.** The audit's clang win does not reproduce (its table was one run per cell, on a different loop). Under gcc, keeping both is slightly better at 1M (0.971-0.976). So the decision stands, both lines stay, and the reason is that no single-line variant is measurably better, not that a gcc gain outweighs a clang cost.
 
 What this does not say: the lookups draw their key from an array (`find_all` reads `keys[]`), which adds the same misses to every variant and dilutes a ratio past the cache; it is the scored loop, so that is the loop the decision is for. ARM is still unmeasured.
+
+### The 10 instructions per hit against `indivi::flat_wmap`, accounted (#367): clang only, gcc runs 1.4 fewer, and the 10 cycles are the third dependent load on both
+
+*2026-10-03 · #367 · info · Ryzen 9 7950X, clang 22 and gcc 16; `scripts/ab/maps_one.sh` (`hit`, `none`, 50000 `uint64_t` keys, 30M lookups), `perf annotate` of the hot loop, `objdump`; marginal counts from 30M against 60M lookups; the 96 byte block from `scripts/ab/drift_variants.sh` (`block96.patch`)*
+
+Per hit, one map per binary, with the empty loop (`none`) subtracted:
+
+| | clang instructions | clang cycles | gcc instructions | gcc cycles | L1 misses |
+|---|---|---|---|---|---|
+| this map | 39.2 | 25.3 | 37.2 | 24.9 | 4.23 |
+| `flat_wmap` | 29.7 | 14.8 | 35.6 | 16.1 | 3.29 |
+
+The marginal counts (user mode, 60M minus 30M lookups) say the same under gcc: 53.9 against 55.3 for the whole loop. **The instruction gap is clang's, and the cycle gap is both compilers'.**
+
+**Clang, instruction by instruction.** The rng, key pick and loop counter are identical in both loops. The map's part of a hit at home on the first fingerprint match is 35 instructions here against 29, and the loop tail has 2 more:
+
+| difference | this map | `flat_wmap` |
+|---|---|---|
+| the harness's `find() != end()`: `add`, `cmp` against an end pointer reloaded from the stack, `setne`; `flat_wmap` materialises `1` on its found branch | +3 | |
+| group address `idx * 88`: `mov`, `imul $0x58`, `lea`; `flat_wmap` instead forms its slot address, `mov` and `shl` for its prefetch and `add`, `and`, `shl` after the match | +3 | +5 |
+| the value index: its load and `shl` | +2 | |
+| the second `prefetcht0` of `prefetch_index` | +1 | |
+| the miss path's counter class (`and $7`), taken before the hit is known | +1 | |
+| the shift and the loop's state reloaded from the stack, register copies | +5 | +1 |
+| the fingerprint word into a GPR (the counter needs it) and then `movd` | +1 | |
+| `movdqa` (it keeps the group for its empty test), the multiply's high half copied | | +2 |
+
+That is +16 against +8, a static difference of 8; the measured 9.5 adds the walks past home and the false fingerprint matches. Of the 8, 3 are the iterator compare, 4 are register allocation (this loop keeps the group mask, the delta and the class live for its miss path), 2 are the value index, and 2 are the second prefetch and the eager class. The 88 byte stride costs 2 fewer instructions than `flat_wmap`'s slot arithmetic, and the two maps' remaining copies net out at -1. Under gcc this loop keeps its state in registers, and `flat_wmap`'s spills its 128-bit multiply result through the stack, which is why gcc reverses the sign.
+
+**The cycles.** Ten cycles per hit on both compilers, at equal instruction counts under gcc. The structural difference is the chain: here hash, group, value index, value (three dependent loads, on up to three lines of an 88 byte block plus the value), there hash, metadata, slot (two). 0.94 more L1 misses per hit is that third line.
+
+**The stride.** Both compilers form `idx * 88` with one `imul` (3 cycles latency on the critical path). A 96 byte block turns it into `lea (x, x, 2)` and a shift, two instructions and 2 cycles. Timed one map per binary as `block96.patch`: hits 0.985, 1.024 and 1.007 of main at 52363, 838860 and 3355443 entries without writing hits, misses 0.977-0.994, and the churn round 0.93-0.98 (the 9% bigger index). The cycle it saves does not show. Not kept, so no score run.
+
+**Tried and dropped:** telling both compilers that a found index is below `size()` (`__builtin_unreachable` in `do_find_hashed`), to fold the `!= end()` compare. The counts stayed at 59.6 and 54.6: neither compiler links the index bound to the end pointer.
+
+**What this says.** Nothing in the instruction gap is worth chasing. The largest piece is the caller's iterator compare, the next is clang's register allocation of a loop that also carries the miss path, and gcc already shows both maps at the same count. What separates the two maps is a load, and that load is the dense design: the value index is what keeps the values contiguous.
 
 ## Platforms: ARM, Windows and the CI matrix
 

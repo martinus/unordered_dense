@@ -32,15 +32,24 @@ mkdir -p "$build"
 nb=${NANOBENCH_INCLUDE:-$root/test}
 absl=${ABSL_ROOT:-/home/martinus/gra/abseil-install}
 folly=${FOLLY_ROOT:-/home/martinus/gra/folly}
+# folly checked out with gra lives one level down, in a worktree: take the first one that has the sources
+[ -d "$folly/folly" ] || for d in "$folly"/*/; do [ -d "$d/folly" ] && folly=${d%/} && break; done
+follycfg=${FOLLY_CONFIG:-/home/martinus/gra/folly-config}
 flags=(-O3 -DNDEBUG -std=c++20 -w -I"$build" -I"$nb" -I"$root/include" -I"$root/test"
-       -I"$absl/include" -I"$folly" -I"${FOLLY_CONFIG:-/home/martinus/gra/folly-config}"
+       -I"$absl/include"
        -I"${EMHASH_INCLUDE:-/home/martinus/gra/emhash/include}"
        -I"${INDIVI_INCLUDE:-/home/martinus/gra/indivi_collection/calmsand/src}"
        -I"${VERSTABLE_INCLUDE:-/home/martinus/gra/Verstable/softwave}"
        -I"${IHTAB_INCLUDE:-/home/martinus/gra/ihtab/sololynx}")
 [ "$keys" = str ] && flags+=(-DUDM_ONE_STR)
 [ "$keys" = big ] && flags+=(-DUDM_ONE_BIG)
-srcs=("$folly/folly/container/detail/F14Table.cpp" "$folly/folly/lang/SafeAssert.cpp" "$folly/folly/lang/ToAscii.cpp")
+# F14 only where maps.sh found it too (its config header is what maps.sh's compile test needs), or
+# map indices here would not match the names `maps` prints
+srcs=()
+if [ -f "$follycfg/folly/folly-config.h" ] && [ -f "$folly/folly/container/F14Map.h" ]; then
+    flags+=(-I"$folly" -I"$follycfg")
+    srcs=("$folly/folly/container/detail/F14Table.cpp" "$folly/folly/lang/SafeAssert.cpp" "$folly/folly/lang/ToAscii.cpp")
+fi
 libs=(-Wl,--start-group "$absl"/lib64/libabsl_*.a -Wl,--end-group)
 nbo="$build/nanobench_$(basename "$cxx").o"
 
@@ -57,7 +66,9 @@ for i in "${!names[@]}"; do
         for w in "${want[@]}"; do [ "$w" = "$name" ] && found=1; done
         [ $found = 1 ] || continue
     fi
-    bin="$build/one_${keys}_${i}"
+    # the compiler in the name: a -c g++ run after a clang one used to overwrite the clang binaries, and
+    # a perf annotate of "the clang loop" then read gcc's (#367)
+    bin="$build/one_${keys}_${i}_$(basename "$cxx")"
     "$cxx" "${flags[@]}" -DUDM_ONE_MAP="$i" "$root/scripts/ab/maps_one.cpp" "$nbo" "${srcs[@]}" "${libs[@]}" -o "$bin"
     # task-clock rather than an external timer: `/usr/bin/time -f %e` has 10 ms of resolution,
     # which over a run of a fifth of a second quantises ns/op into visible steps.
