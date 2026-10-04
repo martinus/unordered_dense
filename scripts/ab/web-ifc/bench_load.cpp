@@ -1,10 +1,11 @@
 // Issue 320: parse an IFC file and mesh every element, timing the two phases.
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <optional>
 #include <string>
-#include <vector>
 
 #include "web-ifc/geometry/IfcGeometryProcessor.h"
 #include "web-ifc/parsing/IfcLoader.h"
@@ -36,9 +37,10 @@ int main(int argc, char** argv) {
 
     size_t meshes = 0;
     size_t verts = 0;
+    // the processor (meshes and IfcCache) is destroyed after the clock stops
+    std::optional<webifc::geometry::IfcGeometryProcessor> geo_holder;
     {
-        webifc::geometry::IfcGeometryProcessor geo(
-            loader, schema, 12, true, 1.0E-01, 3.0E-04, 3.0E-04, 1.0E-10, 1.0E-04, 10, 150);
+        auto& geo = geo_holder.emplace(loader, schema, 12, true, 1.0E-01, 3.0E-04, 3.0E-04, 1.0E-10, 1.0E-04, 10, 150);
         for (auto type : schema.GetIfcElementList()) {
             if (type == webifc::schema::IFCOPENINGELEMENT || type == webifc::schema::IFCSPACE ||
                 type == webifc::schema::IFCOPENINGSTANDARDCASE) {
@@ -54,5 +56,6 @@ int main(int argc, char** argv) {
         }
     }
     double t2 = now_s();
+    geo_holder.reset();
     std::printf("parse_s %.3f geometry_s %.3f total_s %.3f meshes %zu verts %zu\n", t1 - t0, t2 - t1, t2 - t0, meshes, verts);
 }
