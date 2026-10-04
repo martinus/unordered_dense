@@ -39,65 +39,245 @@ a good hash and it is 3x slower than the map. A hash map cannot keep the identit
 its group from the top bits of the hash, so an order-preserving hash would have to know how many IDs
 are coming. The answer is a structure indexed by the ID itself.
 
-## Architecture
+## How `id_map` stores its data
 
-### Two levels, nothing deeper
+`id_map` finds a value with two memory reads: one into a small directory that sits in the cache, one
+into the page that holds the value. For 8 byte values it needs 8.2 bytes per entry when the IDs are
+dense and 14.3 bytes when only every 1.75th ID exists. `unordered_dense::map` needs 24.1 bytes for
+the same data. This chapter builds the design up one step at a time, with one ID as the running
+example, and counts every byte on the way.
 
-```mermaid
-flowchart LR
-    id["ID 9 001 234"] --> split["page = ID >> 12 (2197)<br/>slot = ID & 4095 (2402)"]
-    split --> dir["directory[2197]<br/>{ values pointer, meta pointer, direct? }<br/>24 bytes per 4096 IDs"]
-    dir -->|"direct page"| d["value = values[slot]<br/>bit test in meta beside it"]
-    dir -->|"packed page"| p["value = values[rank(slot)]<br/>rank = count before the word + popcount(word & mask)"]
-    dir -->|"no page"| e["shared empty meta:<br/>every bit is 0, a miss"]
+If you know how a hash map works, you know everything needed here. A hash map turns a key into a
+position with a hash function. `id_map` does the same with a much simpler function: the ID *is* the
+position. Everything else is about what to do with the gaps.
+
+### A vector is almost the right answer
+
+The simplest container for IDs is a `std::vector<T>` indexed by the ID, with some marker for "this ID
+does not exist". A lookup is `values[id]`: one read, no hashing, no probing. In web-ifc this plain
+vector loaded the Holter Tower model 17% faster than `std::unordered_map`, which is hard to beat.
+
+Unfortunately the vector has two problems. First, it pays a full slot for every ID that does not
+exist. IFC files skip lots of IDs, the largest ID is 1.7 to 2.0 times the number of lines, so 40 to 50% of
+the vector is empty. With IDs that use only 1/16 of their range, the vector needed 327
+bytes per entry in the microbenchmark. Second, it grows by doubling. When the largest ID crosses the
+capacity, the vector allocates twice the size, copies everything, and for a moment holds both copies.
+
+`id_map` keeps the "the ID is the position" idea and fixes the two problems. It cuts the ID range
+into pages, and every page decides for itself how to store its values.
+
+### Step 1: an ID is a page number and a slot
+
+`id_map` splits every ID into two parts. The lower 12 bits are the *slot*, the position inside a
+page of 4096 IDs. The remaining upper bits are the *page number*. Figure 1 shows the split for ID
+10,000, which we will follow through the whole chapter.
+
+```text
+ID 10,000 in binary (32 bits):
+
+  0000 0000 0000 0000 0010 | 0111 0001 0000
+  upper 20 bits            | lower 12 bits
+  page = 10,000 >> 12 = 2  | slot = 10,000 & 4095 = 1808
 ```
 
-The directory is a `std::vector` with one 24 byte entry per 4096 IDs of range: 21 KB for 3.5M IDs,
-small enough to stay in the L1 or L2 cache. A lookup loads the entry, then the value. There is no tree:
-Linux's `xarray` and Judy, both radix trees, need 4-6 dependent loads at this size.
+*Figure 1: ID 10,000 lives in page 2, slot 1808.*
 
-### A page
+Both parts are a shift and a mask, so the split costs nothing. Page 0 holds IDs 0 to 4095, page 1
+holds 4096 to 8191, page 2 holds 8192 to 12287, and so on.
 
-```mermaid
-flowchart TB
-    subgraph meta["meta, 652 bytes per page"]
-        bits["bits: 64 words x 64 bits, one per ID"]
-        before["before: 64 x uint16, entries before each word (packed pages only)"]
-        counts["cap, top (highest slot + 1), live (entries)"]
-    end
-    subgraph packed["packed values"]
-        pv["one value per entry, in ID order<br/>capacity grows 1.25x"]
-    end
-    subgraph direct["direct values"]
-        dv["one slot per ID from 0 to a power of two past the highest ID<br/>grows 2x up to 4096 slots"]
-    end
-    meta --- packed
-    meta --- direct
+### Step 2: the directory finds the page
+
+The directory is a `std::vector` with one entry per page. Each entry is 24 bytes on a 64-bit
+machine, laid out as in Figure 2.
+
+```text
+byte  0               8               16  17              24
+      +---------------+---------------+---+---------------+
+      | values (T*)   | meta (meta*)  | d | padding       |
+      +---------------+---------------+---+---------------+
+
+values  where the page's values are
+meta    the page's bitmap and counters (Step 3)
+d       direct flag: is the page stored packed or direct (Step 4)
 ```
 
-A packed page stores only the entries that exist. To find entry `s`, it counts the set bits before
-`s`: the `before` count of its 64-bit word plus a popcount of the word masked below `s`. A direct
-page stores a slot for every ID up to its highest one, so the value's address is `values + s` and
-needs nothing from the bitmap. The bit test still decides hit or miss, but it runs in parallel with
-the value load.
+*Figure 2: a directory entry, 24 bytes per 4096 IDs.*
 
-### A page's life
+24 bytes per 4096 IDs is 0.006 bytes per ID of the range. For 3.5M dense IDs the whole directory is
+855 entries, 21 KB, which means that it stays in the L1 or L2 cache while the program runs. Reading
+`directory[2]` for our ID 10,000 is a cache hit practically every time.
 
-```mermaid
-stateDiagram-v2
-    [*] --> empty
-    empty --> packed: first insert
-    packed --> direct: at least 64 entries,<br/>filling at least half the slots up to the highest ID
-    direct --> direct: insert past capacity:<br/>grow 2x, up to the page
-    direct --> packed: erase below 1/8 of its slots
-    packed --> empty: last erase frees the page
-    direct --> empty: last erase frees the page
+Pages that hold no ID at all still have a directory entry, because the directory is indexed by page
+number. Their `meta` pointer does not point to nothing, it points to one shared, static, empty `meta`
+whose bits are all zero. A lookup in a page that does not exist reads that empty `meta`, finds the bit
+not set, and reports a miss. There is no `if (meta == nullptr)` on the lookup path. This trick comes
+from EnTT's sparse set.
+
+### Step 3: a bitmap says which IDs exist
+
+Each page that holds at least one ID gets a `meta` block. Figure 3 shows what is in it.
+
+```text
+meta, 656 bytes per page
+
+  bits[64]     512 bytes   64 words x 64 bits: bit s is 1 if slot s holds a value
+  before[64]   128 bytes   64 x uint16: number of values in the words before word w
+  cap            4 bytes   how many values the values array can hold
+  top            4 bytes   highest slot ever used, plus 1
+  live           4 bytes   number of values in the page
+  (padding)      4 bytes
 ```
 
-The switch is decided per page from that page's own entries, never from the map as a whole. Dense
-regions of the ID space become direct and sparse regions stay packed in the same map. The gap
-between the two thresholds (1/2 to go direct, 1/8 to go back) keeps a page at the boundary from
-converting back and forth.
+*Figure 3: the `meta` block of a page.*
+
+The bitmap answers "does slot s exist?" with one 64-bit word. Slot 1808 is in word 1808 / 64 = 28,
+at bit 1808 % 64 = 16. So the lookup for ID 10,000 reads `bits[28]`, shifts it right by 16 and looks
+at the lowest bit. If it is 0, the ID does not exist and we are done.
+
+The `before` array is only needed for packed pages, which Step 4 explains. `cap`, `top` and `live`
+are bookkeeping for growing, switching and freeing the page.
+
+### Step 4: a page stores its values packed or direct
+
+This is the central idea. A page can store its values in two ways, and Figure 4 shows both for a toy
+page of 16 slots in which slots 3, 5, 6 and 9 hold a value.
+
+```text
+slot:       15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0
+bits:        0  0  0  0  0  0  1  0  0  1  1  0  1  0  0  0
+
+packed:  values = [ v3, v5, v6, v9 ]                       4 values
+direct:  values = [ -, -, -, v3, -, v5, v6, -, -, v9 ]     a slot for every ID up to 9
+```
+
+*Figure 4: the same four values stored packed and direct.*
+
+A *direct* page keeps a slot for every ID, like the vector from the beginning, but only for this
+page. The value of slot `s` is simply `values[s]`. The address does not depend on the bitmap at all,
+so the CPU can load the value and the bit at the same time. This is as fast as a lookup gets.
+
+A *packed* page keeps only the values that exist, in ID order, without gaps. To find the value of
+slot `s`, it counts how many values come before `s`: that count is the position in the array, called
+the *rank*. For slot 6 in Figure 4, the set bits below 6 are 3 and 5, so the rank is 2 and the value
+is `values[2] = v6`. Counting set bits is one CPU instruction, `popcount`, when the build allows it ([Disadvantages](#disadvantages) has the details).
+
+With 4096 slots, counting all the bits below `s` would mean up to 64 popcounts. This is what the
+`before` array is for: `before[w]` already holds the number of values in words 0 to w-1, so the rank
+is
+
+```cpp
+rank(s) = before[s / 64] + popcount(bits[s / 64] & ((1ull << (s % 64)) - 1))
+```
+
+For ID 10,000 in a packed page that is `before[28] + popcount(bits[28] & 0xFFFF)`: one array read and
+one popcount. The price is that `before` must be updated on every insert into the page, up to 63
+increments, which the compiler turns into SSE2 additions. This rank trick comes from Judy arrays.
+
+So which one is better? It depends on how full the page is. A direct page costs `sizeof(T)` bytes per
+slot, used or not. A packed page costs `sizeof(T)` per value plus the rank computation on every
+lookup. For a page where most IDs exist, direct wastes little and is faster. For a page where few IDs
+exist, direct wastes a lot and packed is the better deal.
+
+### Step 5: every page picks its own layout
+
+A page starts packed. After each insert it checks two conditions: it holds at least 64 values, and
+these values fill at least half of the slots up to its highest ID (`2 * live >= top`). When both are
+true, the page converts to direct once: it allocates a new array, moves each value from its rank to
+its slot, and frees the packed array.
+
+The direct array does not need all 4096 slots right away. It gets the next power of two at or above
+`top`, at least 64, and grows like a vector, by doubling, when a higher slot shows up. A table with
+only the IDs 0 to 999 becomes one direct page of 1024 slots, not 4096.
+
+Here is what happens with the three ID patterns from the benchmark, inserting in ascending order:
+
+- **Dense IDs (0, 1, 2, ...)**: after 64 inserts `top` is 64, the page is completely full, and it
+  goes direct with 64 slots. It doubles to 128, 256, ... up to 4096 as more IDs arrive.
+- **web-ifc-like IDs (every 1.75th)**: after 64 inserts `top` is about 112. 2 * 64 = 128 is at least
+  112, so the page goes direct too. It ends up with 4096 slots for about 2341 values.
+- **Sparse IDs (1/16 of the range)**: after 64 inserts `top` is about 1024, and 128 is much less. The
+  page stays packed and ends up with 256 values in a packed array.
+
+Erasing works the other way around. A direct page whose `live` count drops below 1/8 of its slots
+converts back to packed, and a page whose last value is erased is freed, its directory entry pointing
+to the shared empty `meta` again. The gap between "go direct at 1/2" and "go back at 1/8" is there
+so that a page right at the limit does not convert back and forth on every insert and erase.
+
+Note that this decision is made per page, from the values already in that page. The same map can be
+direct where the IDs are dense and packed where they are sparse. It never guesses about IDs that have
+not been inserted yet.
+
+### A lookup, all steps together
+
+Stripped of templates, `find` looks like this:
+
+```cpp
+T* find(uint32_t id) {
+    size_t page = id >> 12;
+    if (page >= directory.size()) return nullptr;      // past the largest ID
+    entry const& e = directory[page];                   // read 1: the directory (cached)
+    size_t slot = id & 4095;
+    uint64_t word = e.meta->bits[slot / 64];            // read 2a: the bit
+    if (((word >> (slot % 64)) & 1) == 0) return nullptr;
+    if (e.direct) return &e.values[slot];               // read 2b: the value, in parallel with 2a
+    return &e.values[e.meta->before[slot / 64] + popcount(word & ((1ull << (slot % 64)) - 1))];
+}
+```
+
+For a direct page the CPU needs the directory entry, which is in the cache, and then two independent
+reads: the bit word and the value. A vector indexed by ID needs one read. `unordered_dense::map`
+needs its hash, a 16 byte fingerprint group, and then the value index and the value.
+
+Surprisingly, how this `if (e.direct)` is written matters. The first version wrote it as
+`e.direct ? slot : rank(slot)`, which the compiler turned into a select: it computed the rank on every
+lookup, direct page or not, and that read `before` from a second cache line. Written as a branch,
+which the CPU predicts correctly as long as most pages are direct, the lookup at 3.5M dense IDs went
+from 7.2 to 6.4 ns.
+
+### Where every byte goes
+
+With all parts known, we can compute the memory per entry. Table 1 does it for 1M entries with 8
+byte values and compares with what the benchmark measured as malloc's bytes in use.
+
+| bytes per entry, 8 byte values | dense IDs | web-ifc-like (1 in 1.75) | sparse (1 in 16) |
+|---|---|---|---|
+| page layout | direct | direct | packed |
+| values per page of 4096 IDs | 4096 | about 2341 | about 256 |
+| values array | 4096 x 8 / 4096 = **8.00** | 4096 x 8 / 2341 = **14.00** | capacity 293 x 8 / 256 = **9.16** |
+| `meta` (656 bytes per page) | 656 / 4096 = **0.16** | 656 / 2341 = **0.28** | 656 / 256 = **2.56** |
+| directory (24 bytes per page) | **0.006** | **0.010** | **0.094** |
+| sum | 8.17 | 14.29 | 11.81 |
+| measured | 8.2 | 14.3 | 11.9 |
+| `unordered_dense::map` 5.3.1, measured | 24.1 | 24.1 | 24.1 |
+
+*Table 1: computed and measured memory per entry at 1M entries.*
+
+The packed array for 256 values has capacity 293 because packed arrays grow by 25% at a time (4, 5,
+6, ... 235, 293), so on average a packed page carries about 12% unused capacity. The remaining 0.1
+bytes between the sum and the measurement are malloc's own headers, two allocations per page.
+
+For comparison, `unordered_dense::map` stores each entry as a `std::pair<uint32_t, T>`, 12 bytes, in
+a vector that grew by doubling to 1,048,576 entries (12.6 MB). On top of that it has its index: 2^17
+groups of 88 bytes each (11.5 MB), sized so the table stays below 80% load. Together that is 24.1
+bytes per entry, about two thirds of it in places `id_map` does not need: the key, the index and the
+growth slack.
+
+### The bytes it pays where the IDs do not fit
+
+The same arithmetic shows where `id_map` is expensive.
+
+- **A lonely ID.** A page with a single value costs a 656 byte `meta`, a packed array of 4 values
+  (32 bytes), two malloc headers and its 24 byte directory entry: about 740 bytes for one entry. If
+  your IDs are scattered so that most pages hold only a handful of values, a hash map is much much
+  cheaper.
+- **A stray large ID.** The directory is indexed by page number, so it must reach the largest page.
+  One ID near 2^32 makes the directory 2^32 / 4096 = 1,048,576 entries of 24 bytes: 25 MB, for one
+  entry. `id_map` is for IDs, not for arbitrary integers or hash values.
+- **`std::pair` iterators.** A standard map's iterator hands out a `std::pair<const K, T>&`. That
+  needs the key stored next to every value, so each value becomes 12 bytes instead of 8, and Table 1
+  goes to 12.2, 21.3 and 16.5 bytes per entry. The prototype offers both: by default it stores only
+  the value and its iterator hands out a small proxy `{key, T&}`, with `Pairs = true` it stores the
+  pair.
 
 ## Why it is fast
 
