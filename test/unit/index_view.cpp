@@ -3,6 +3,7 @@
 #include <app/bombing_allocator.h>
 #include <app/doctest.h>
 #include <app/hashers.h>
+#include <app/view_reads.h>
 #include <fuzz/run.h>
 
 #include <algorithm>
@@ -201,81 +202,6 @@ TEST_CASE_TEMPLATE("index_view_round_trip",
     }
 }
 
-namespace {
-
-// Every read a map_view or set_view has, called on V, which is a view or a view const: a member
-// that is a template is only compiled for a view when something calls it on one, so a read that
-// does not compile there (visit, #374; cbegin) stays invisible until a user finds it. A new read
-// member belongs in here.
-template <typename V, typename Table>
-void iv_require_reads(V& v, Table const& source, std::size_t n) {
-    using key_type = typename Table::key_type;
-    constexpr auto is_map = !std::is_same_v<key_type, typename Table::value_type>;
-
-    REQUIRE(v.size() == source.size());
-    REQUIRE(v.empty() == source.empty());
-    REQUIRE(v.bucket_count() == source.bucket_count());
-    REQUIRE(v.load_factor() == source.load_factor());
-    REQUIRE(v.max_load_factor() == source.max_load_factor());
-    REQUIRE(v.max_size() == source.max_size());
-    REQUIRE(v.max_bucket_count() == source.max_bucket_count());
-    REQUIRE(v.index_bytes() == source.index_bytes());
-    REQUIRE(v.values().size() == source.size());
-    REQUIRE(v.index().size() == source.index().size());
-    REQUIRE(v.verify(ud::verify_level::full));
-    REQUIRE(v == v);
-    (void)v.hash_function();
-    (void)v.key_eq();
-    (void)v.get_allocator();
-
-    static_assert(std::is_same_v<decltype(v.cbegin()), typename Table::view_type::const_iterator>);
-    REQUIRE(std::equal(v.cbegin(), v.cend(), source.begin(), source.end()));
-    REQUIRE(std::equal(v.begin(), v.end(), source.begin(), source.end()));
-
-    auto keys = std::vector<key_type>();
-    for (std::size_t i = 0; i < n + 50; ++i) {
-        keys.push_back(iv_make_key<key_type>(i));
-        auto const& key = keys.back();
-        auto const expected = source.find(key);
-        auto const found = expected != source.end();
-        // every lookup overload, with and without a precomputed hash
-        auto const lookups = [&](auto const& k, auto... ph) {
-            auto const it = v.find(k, ph...);
-            REQUIRE((it != v.end()) == found);
-            if (found) {
-                REQUIRE(it - v.begin() == expected - source.begin());
-            }
-            REQUIRE(v.contains(k, ph...) == found);
-            REQUIRE(v.count(k, ph...) == (found ? 1U : 0U));
-            auto const r = v.equal_range(k, ph...);
-            REQUIRE(std::distance(r.first, r.second) == (found ? 1 : 0));
-            if constexpr (is_map) {
-                if (found) {
-                    REQUIRE(v.at(k, ph...) == expected->second);
-                }
-            }
-        };
-        lookups(key);
-        lookups(key, v.hash_for(key));
-        if constexpr (std::is_same_v<key_type, std::string>) {
-            // the transparent overloads: no std::string is built for the lookup
-            auto const sv = std::string_view(key);
-            lookups(sv);
-            lookups(sv, v.hash_for(sv));
-        }
-    }
-
-    auto const* const first = v.values().data();
-    auto const visited = v.visit(keys.begin(), keys.end(), [&](auto& e) {
-        static_assert(std::is_const_v<std::remove_reference_t<decltype(e)>>);
-        REQUIRE(&e >= first);
-        REQUIRE(&e < first + v.size());
-    });
-    REQUIRE(visited == source.size());
-}
-
-} // namespace
-
 TEST_CASE_TEMPLATE(
     "index_view_every_read",
     Table,
@@ -293,8 +219,9 @@ TEST_CASE_TEMPLATE(
         CAPTURE(n);
         auto const source = iv_make_table<Table>(n, true);
         auto view = source.view();
-        iv_require_reads(view, source, n);
-        iv_require_reads(std::as_const(view), source, n);
+        auto const make_key = iv_make_key<typename Table::key_type>;
+        test::require_view_reads(view, source, n, make_key);
+        test::require_view_reads(std::as_const(view), source, n, make_key);
     }
 }
 

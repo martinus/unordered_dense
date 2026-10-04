@@ -1,6 +1,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <app/doctest.h>
+#include <app/view_reads.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -334,8 +335,9 @@ TEST_CASE_TEMPLATE("index_container_table_inside_a_blob", Bucket, ud::bucket_typ
                 ud::trust::checked);
     ic_require_same(*t, source, n);
     REQUIRE(t->verify(ud::verify_level::full));
-    // ic_offset_values has no cbegin(), and the table's must not need one
-    REQUIRE(std::equal(t->cbegin(), t->cend(), source.begin(), source.end()));
+    // every read, on a value container that is not the library's (it has no cbegin(), for one)
+    test::require_view_reads(*t, source, n, ic_key);
+    test::require_view_reads(std::as_const(*t), source, n, ic_key);
 
     // The whole blob, table object included, copied byte for byte somewhere else: everything in it
     // is relative, so it reads the same there. This is the use the container exists for; the copy is
