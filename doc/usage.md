@@ -390,8 +390,8 @@ auto total_of(ankerl::unordered_dense::map<std::string, std::size_t> const& map,
 }
 ```
 
-`f` receives `value_type&`, or `value_type const&` on a `const` map, so a visit can modify what it
-finds. Keys that are absent are not reported; the count says how many were there.
+`f` receives `value_type&`, or `value_type const&` on a `const` map and on a `map_view` or
+`set_view`, so a visit can modify what it finds. Keys that are absent are not reported; the count says how many were there.
 
 **Why it is faster than the same loop of `find()`.** A lookup on a table past the cache is two
 dependent memory accesses, the group's block and then the value the slot points at, and a loop doing
