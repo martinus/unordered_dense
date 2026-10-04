@@ -1,0 +1,179 @@
+== redpanda 80 keys
+clang++: median ms, v4.5.0 / origin/main
+  std_map                       7.333   7.335
+  absl_flat                     4.809   4.829
+  absl_node                     4.942   4.930
+  absl_btree                    8.001   8.256
+  unordered_dense               4.548   5.041
+  unordered_dense_segmented     4.953   5.187
+  id_map                        4.594   4.604
+g++: median ms, v4.5.0 / origin/main
+  std_map                       8.520   8.488
+  absl_flat                     5.582   5.607
+  absl_node                     5.608   5.599
+  absl_btree                    8.274   8.367
+  unordered_dense               5.383   5.575
+  unordered_dense_segmented     5.500   5.582
+  id_map                        5.368   5.378
+== redpanda 92160 keys
+clang++: median ms, v4.5.0 / origin/main
+  std_map                      28.978  29.251
+  absl_flat                     5.608   5.820
+  absl_node                     8.946   8.975
+  absl_btree                   20.005  20.102
+  unordered_dense               4.809   5.544
+  unordered_dense_segmented     6.386   5.854
+  id_map                        3.708   3.728
+g++: median ms, v4.5.0 / origin/main
+  std_map                      37.871  37.934
+  absl_flat                     6.446   6.688
+  absl_node                     9.793   9.773
+  absl_btree                   19.423  19.519
+  unordered_dense               5.031   5.981
+  unordered_dense_segmented     5.998   6.240
+  id_map                        3.917   3.912
+== small_hits
+clang++ uint64 1000 quiet 3.068
+clang++ uint64 1000 busy 4.387
+clang++ uint64 4000 quiet 3.682
+clang++ uint64 4000 busy 4.944
+clang++ uint64 16000 quiet 4.450
+clang++ uint64 16000 busy 6.416
+clang++ seq 1000 quiet 2.100
+clang++ seq 1000 busy 2.976
+clang++ seq 4000 quiet 2.320
+clang++ seq 4000 busy 3.090
+clang++ seq 16000 quiet 2.671
+clang++ seq 16000 busy 3.848
+clang++ seq_id_map 1000 quiet 1.363
+clang++ seq_id_map 1000 busy 2.288
+clang++ seq_id_map 4000 quiet 1.362
+clang++ seq_id_map 4000 busy 2.283
+clang++ seq_id_map 16000 quiet 1.374
+clang++ seq_id_map 16000 busy 2.366
+clang++ string 1000 quiet 15.562
+clang++ string 1000 busy 18.149
+clang++ string 4000 quiet 16.852
+clang++ string 4000 busy 19.729
+clang++ string 16000 quiet 21.108
+clang++ string 16000 busy 24.000
+g++ uint64 1000 quiet 3.079
+g++ uint64 1000 busy 4.107
+g++ uint64 4000 quiet 3.644
+g++ uint64 4000 busy 4.587
+g++ uint64 16000 quiet 4.287
+g++ uint64 16000 busy 5.911
+g++ seq 1000 quiet 1.842
+g++ seq 1000 busy 2.876
+g++ seq 4000 quiet 2.026
+g++ seq 4000 busy 2.967
+g++ seq 16000 quiet 2.300
+g++ seq 16000 busy 3.662
+g++ seq_id_map 1000 quiet 1.257
+g++ seq_id_map 1000 busy 2.502
+g++ seq_id_map 4000 quiet 1.257
+g++ seq_id_map 4000 busy 2.513
+g++ seq_id_map 16000 quiet 1.262
+g++ seq_id_map 16000 busy 2.571
+g++ string 1000 quiet 15.055
+g++ string 1000 busy 19.239
+g++ string 4000 quiet 16.332
+g++ string 4000 busy 20.771
+g++ string 16000 quiet 20.800
+g++ string 16000 busy 24.852
+clang++ uint64 1000 quiet 3.078
+clang++ uint64 1000 busy 4.390
+clang++ uint64 4000 quiet 3.663
+clang++ uint64 4000 busy 4.936
+clang++ uint64 16000 quiet 4.439
+clang++ uint64 16000 busy 6.417
+clang++ seq 1000 quiet 2.115
+clang++ seq 1000 busy 2.983
+clang++ seq 4000 quiet 2.311
+clang++ seq 4000 busy 3.103
+clang++ seq 16000 quiet 2.699
+clang++ seq 16000 busy 3.872
+clang++ seq_id_map 1000 quiet 1.370
+clang++ seq_id_map 1000 busy 2.299
+clang++ seq_id_map 4000 quiet 1.369
+clang++ seq_id_map 4000 busy 2.294
+clang++ seq_id_map 16000 quiet 1.377
+clang++ seq_id_map 16000 busy 2.388
+clang++ string 1000 quiet 15.578
+clang++ string 1000 busy 18.095
+clang++ string 4000 quiet 16.959
+clang++ string 4000 busy 19.886
+clang++ string 16000 quiet 21.277
+clang++ string 16000 busy 24.296
+g++ uint64 1000 quiet 3.091
+g++ uint64 1000 busy 4.133
+g++ uint64 4000 quiet 3.641
+g++ uint64 4000 busy 4.629
+g++ uint64 16000 quiet 4.304
+g++ uint64 16000 busy 5.962
+g++ seq 1000 quiet 1.843
+g++ seq 1000 busy 2.880
+g++ seq 4000 quiet 2.014
+g++ seq 4000 busy 2.981
+g++ seq 16000 quiet 2.299
+g++ seq 16000 busy 3.662
+g++ seq_id_map 1000 quiet 1.258
+g++ seq_id_map 1000 busy 2.510
+g++ seq_id_map 4000 quiet 1.258
+g++ seq_id_map 4000 busy 2.524
+g++ seq_id_map 16000 quiet 1.261
+g++ seq_id_map 16000 busy 2.583
+g++ string 1000 quiet 15.039
+g++ string 1000 busy 19.347
+g++ string 4000 quiet 16.420
+g++ string 4000 busy 20.849
+g++ string 16000 quiet 20.858
+g++ string 16000 busy 24.919
+clang++ uint64 1000 quiet 3.088
+clang++ uint64 1000 busy 4.420
+clang++ uint64 4000 quiet 3.659
+clang++ uint64 4000 busy 4.951
+clang++ uint64 16000 quiet 4.453
+clang++ uint64 16000 busy 6.509
+clang++ seq 1000 quiet 2.103
+clang++ seq 1000 busy 2.978
+clang++ seq 4000 quiet 2.301
+clang++ seq 4000 busy 3.079
+clang++ seq 16000 quiet 2.677
+clang++ seq 16000 busy 3.882
+clang++ seq_id_map 1000 quiet 1.365
+clang++ seq_id_map 1000 busy 2.316
+clang++ seq_id_map 4000 quiet 1.365
+clang++ seq_id_map 4000 busy 2.315
+clang++ seq_id_map 16000 quiet 1.377
+clang++ seq_id_map 16000 busy 2.399
+clang++ string 1000 quiet 15.648
+clang++ string 1000 busy 18.200
+clang++ string 4000 quiet 16.876
+clang++ string 4000 busy 19.820
+clang++ string 16000 quiet 21.196
+clang++ string 16000 busy 24.120
+g++ uint64 1000 quiet 3.051
+g++ uint64 1000 busy 4.139
+g++ uint64 4000 quiet 3.595
+g++ uint64 4000 busy 4.634
+g++ uint64 16000 quiet 4.296
+g++ uint64 16000 busy 6.029
+g++ seq 1000 quiet 1.842
+g++ seq 1000 busy 2.877
+g++ seq 4000 quiet 2.028
+g++ seq 4000 busy 2.985
+g++ seq 16000 quiet 2.336
+g++ seq 16000 busy 3.707
+g++ seq_id_map 1000 quiet 1.257
+g++ seq_id_map 1000 busy 2.508
+g++ seq_id_map 4000 quiet 1.259
+g++ seq_id_map 4000 busy 2.516
+g++ seq_id_map 16000 quiet 1.261
+g++ seq_id_map 16000 busy 2.574
+g++ string 1000 quiet 15.059
+g++ string 1000 busy 19.339
+g++ string 4000 quiet 16.308
+g++ string 4000 busy 20.871
+g++ string 16000 quiet 20.890
+g++ string 16000 busy 25.066

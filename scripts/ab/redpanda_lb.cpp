@@ -21,6 +21,9 @@
 #include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/node_hash_map.h>
+#ifdef WITH_ID_MAP
+#    include "id_map/id_map.h" // #379: -DWITH_ID_MAP adds the id_map prototype as a seventh container
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -169,6 +172,9 @@ using absl_node = absl::node_hash_map<K, V>;
 using absl_btree = absl::btree_map<K, V>;
 using ud_map = ankerl::unordered_dense::map<K, V>;
 using ud_segmented = ankerl::unordered_dense::segmented_map<K, V>;
+#ifdef WITH_ID_MAP
+using id_map = idm::id_map<K, V>;
+#endif
 
 } // namespace
 
@@ -190,6 +196,9 @@ int main(int argc, char** argv) {
         {"absl_btree", &one_run<absl_btree>, {}},
         {"unordered_dense", &one_run<ud_map>, {}},
         {"unordered_dense_segmented", &one_run<ud_segmented>, {}},
+#ifdef WITH_ID_MAP
+        {"id_map", &one_run<id_map>, {}},
+#endif
     };
     if (!only.empty()) {
         variants.erase(std::remove_if(variants.begin(),

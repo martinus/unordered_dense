@@ -1,0 +1,232 @@
+== clang++ pass 1
+dense    1000       map            build   7.02 ns/id  find   3.25 ns/op   23.58 B/entry
+dense    1000       default        build   4.91 ns/id  find   1.38 ns/op    8.21 B/entry
+dense    1000       one_alloc      build   4.98 ns/id  find   1.46 ns/op    8.91 B/entry
+dense    1000       grow4          build   4.37 ns/id  find   1.53 ns/op    8.21 B/entry
+dense    1000       one+grow4      build   3.69 ns/id  find   1.60 ns/op    8.91 B/entry
+dense    100000     map            build   7.12 ns/id  find   4.92 ns/op   22.94 B/entry
+dense    100000     default        build   4.21 ns/id  find   1.75 ns/op    8.10 B/entry
+dense    100000     one_alloc      build   4.23 ns/id  find   1.81 ns/op    8.21 B/entry
+dense    100000     grow4          build   3.77 ns/id  find   1.91 ns/op    8.26 B/entry
+dense    100000     one+grow4      build   3.08 ns/id  find   2.00 ns/op    8.37 B/entry
+dense    1000000    map            build  11.72 ns/id  find  15.37 ns/op   24.12 B/entry
+dense    1000000    default        build   4.22 ns/id  find   2.42 ns/op    8.17 B/entry
+dense    1000000    one_alloc      build   4.00 ns/id  find   2.33 ns/op    8.19 B/entry
+dense    1000000    grow4          build   3.53 ns/id  find   2.39 ns/op    8.17 B/entry
+dense    1000000    one+grow4      build   2.89 ns/id  find   2.71 ns/op    8.19 B/entry
+dense    3500000    map            build  26.00 ns/id  find  31.71 ns/op   27.56 B/entry
+dense    3500000    default        build   4.04 ns/id  find   5.48 ns/op    8.17 B/entry
+dense    3500000    one_alloc      build   4.10 ns/id  find   5.82 ns/op    8.18 B/entry
+dense    3500000    grow4          build   3.66 ns/id  find   6.22 ns/op    8.18 B/entry
+dense    3500000    one+grow4      build   3.00 ns/id  find   6.28 ns/op    8.19 B/entry
+ifc      100000     map            build   6.74 ns/id  find   5.11 ns/op   22.94 B/entry
+ifc      100000     default        build   4.07 ns/id  find   2.21 ns/op   14.30 B/entry
+ifc      100000     one_alloc      build   4.15 ns/id  find   2.38 ns/op   14.42 B/entry
+ifc      100000     grow4          build   3.74 ns/id  find   2.32 ns/op   14.30 B/entry
+ifc      100000     one+grow4      build   3.12 ns/id  find   2.43 ns/op   14.42 B/entry
+ifc      1000000    map            build  11.46 ns/id  find  11.58 ns/op   24.12 B/entry
+ifc      1000000    default        build   4.19 ns/id  find   2.75 ns/op   14.30 B/entry
+ifc      1000000    one_alloc      build   4.24 ns/id  find   3.24 ns/op   14.32 B/entry
+ifc      1000000    grow4          build   3.86 ns/id  find   2.91 ns/op   14.30 B/entry
+ifc      1000000    one+grow4      build   3.18 ns/id  find   3.11 ns/op   14.32 B/entry
+ifc      3500000    map            build  27.43 ns/id  find  32.61 ns/op   27.56 B/entry
+ifc      3500000    default        build   4.39 ns/id  find  12.35 ns/op   14.31 B/entry
+ifc      3500000    one_alloc      build   4.45 ns/id  find  13.55 ns/op   14.32 B/entry
+ifc      3500000    grow4          build   4.03 ns/id  find  13.95 ns/op   14.31 B/entry
+ifc      3500000    one+grow4      build   3.39 ns/id  find  13.07 ns/op   14.33 B/entry
+sparse   100000     map            build   6.49 ns/id  find   5.19 ns/op   22.94 B/entry
+sparse   100000     default        build   8.25 ns/id  find   5.44 ns/op   11.83 B/entry
+sparse   100000     one_alloc      build   8.09 ns/id  find   5.72 ns/op   11.83 B/entry
+sparse   100000     grow4          build   8.25 ns/id  find   5.64 ns/op   11.83 B/entry
+sparse   100000     one+grow4      build   7.95 ns/id  find   5.79 ns/op   11.83 B/entry
+sparse   1000000    map            build  10.49 ns/id  find  10.16 ns/op   24.12 B/entry
+sparse   1000000    default        build   8.51 ns/id  find   7.96 ns/op   11.90 B/entry
+sparse   1000000    one_alloc      build   8.37 ns/id  find  10.59 ns/op   11.90 B/entry
+sparse   1000000    grow4          build   8.55 ns/id  find   8.22 ns/op   11.90 B/entry
+sparse   1000000    one+grow4      build   8.21 ns/id  find  11.22 ns/op   11.90 B/entry
+churn    100000     map            op  21.11 ns     22.94 B/live entry
+churn    100000     default        op  15.10 ns     26.68 B/live entry
+churn    100000     one_alloc      op  15.36 ns     26.69 B/live entry
+churn    100000     grow4          op  15.93 ns     26.68 B/live entry
+churn    100000     back4          op  30.14 ns     30.98 B/live entry
+churn    100000     all            op  37.11 ns     30.99 B/live entry
+churn    1000000    map            op  42.82 ns     24.12 B/live entry
+churn    1000000    default        op  19.74 ns     26.67 B/live entry
+churn    1000000    one_alloc      op  19.99 ns     26.69 B/live entry
+churn    1000000    grow4          op  20.16 ns     26.67 B/live entry
+churn    1000000    back4          op  36.40 ns     31.36 B/live entry
+churn    1000000    all            op  42.59 ns     31.37 B/live entry
+== g++ pass 1
+dense    1000       map            build   6.98 ns/id  find   3.12 ns/op   23.58 B/entry
+dense    1000       default        build   5.83 ns/id  find   1.88 ns/op    8.21 B/entry
+dense    1000       one_alloc      build   5.84 ns/id  find   1.88 ns/op    8.91 B/entry
+dense    1000       grow4          build   5.39 ns/id  find   1.88 ns/op    8.21 B/entry
+dense    1000       one+grow4      build   5.31 ns/id  find   1.87 ns/op    8.91 B/entry
+dense    100000     map            build   6.62 ns/id  find   5.03 ns/op   22.94 B/entry
+dense    100000     default        build   5.19 ns/id  find   2.03 ns/op    8.10 B/entry
+dense    100000     one_alloc      build   5.24 ns/id  find   2.04 ns/op    8.21 B/entry
+dense    100000     grow4          build   4.79 ns/id  find   2.02 ns/op    8.26 B/entry
+dense    100000     one+grow4      build   5.06 ns/id  find   2.03 ns/op    8.37 B/entry
+dense    1000000    map            build  10.52 ns/id  find   9.67 ns/op   24.12 B/entry
+dense    1000000    default        build   5.15 ns/id  find   2.60 ns/op    8.17 B/entry
+dense    1000000    one_alloc      build   5.18 ns/id  find   2.66 ns/op    8.19 B/entry
+dense    1000000    grow4          build   4.79 ns/id  find   2.64 ns/op    8.17 B/entry
+dense    1000000    one+grow4      build   4.83 ns/id  find   2.67 ns/op    8.19 B/entry
+dense    3500000    map            build  25.14 ns/id  find  32.40 ns/op   27.56 B/entry
+dense    3500000    default        build   5.17 ns/id  find   6.97 ns/op    8.17 B/entry
+dense    3500000    one_alloc      build   5.20 ns/id  find   6.96 ns/op    8.18 B/entry
+dense    3500000    grow4          build   4.82 ns/id  find   6.78 ns/op    8.18 B/entry
+dense    3500000    one+grow4      build   4.83 ns/id  find   6.84 ns/op    8.19 B/entry
+ifc      100000     map            build   6.97 ns/id  find   5.42 ns/op   22.94 B/entry
+ifc      100000     default        build   5.37 ns/id  find   2.64 ns/op   14.30 B/entry
+ifc      100000     one_alloc      build   5.46 ns/id  find   2.66 ns/op   14.42 B/entry
+ifc      100000     grow4          build   4.93 ns/id  find   2.64 ns/op   14.30 B/entry
+ifc      100000     one+grow4      build   5.08 ns/id  find   2.65 ns/op   14.42 B/entry
+ifc      1000000    map            build  11.48 ns/id  find  12.51 ns/op   24.12 B/entry
+ifc      1000000    default        build   5.38 ns/id  find   3.43 ns/op   14.30 B/entry
+ifc      1000000    one_alloc      build   5.41 ns/id  find   3.40 ns/op   14.32 B/entry
+ifc      1000000    grow4          build   4.96 ns/id  find   3.36 ns/op   14.30 B/entry
+ifc      1000000    one+grow4      build   4.99 ns/id  find   3.39 ns/op   14.32 B/entry
+ifc      3500000    map            build  27.24 ns/id  find  37.57 ns/op   27.56 B/entry
+ifc      3500000    default        build   5.50 ns/id  find  13.51 ns/op   14.31 B/entry
+ifc      3500000    one_alloc      build   5.52 ns/id  find  14.56 ns/op   14.32 B/entry
+ifc      3500000    grow4          build   5.04 ns/id  find  14.01 ns/op   14.31 B/entry
+ifc      3500000    one+grow4      build   5.06 ns/id  find  13.43 ns/op   14.33 B/entry
+sparse   100000     map            build   6.63 ns/id  find   5.51 ns/op   22.94 B/entry
+sparse   100000     default        build  10.38 ns/id  find   5.80 ns/op   11.83 B/entry
+sparse   100000     one_alloc      build  10.75 ns/id  find   5.81 ns/op   11.83 B/entry
+sparse   100000     grow4          build  10.40 ns/id  find   5.83 ns/op   11.83 B/entry
+sparse   100000     one+grow4      build  10.50 ns/id  find   5.84 ns/op   11.83 B/entry
+sparse   1000000    map            build  10.41 ns/id  find  10.43 ns/op   24.12 B/entry
+sparse   1000000    default        build  10.57 ns/id  find   8.47 ns/op   11.90 B/entry
+sparse   1000000    one_alloc      build  10.96 ns/id  find   8.44 ns/op   11.90 B/entry
+sparse   1000000    grow4          build  10.61 ns/id  find   8.46 ns/op   11.90 B/entry
+sparse   1000000    one+grow4      build  10.69 ns/id  find   8.47 ns/op   11.90 B/entry
+churn    100000     map            op  20.70 ns     22.94 B/live entry
+churn    100000     default        op  11.62 ns     26.68 B/live entry
+churn    100000     one_alloc      op  11.82 ns     26.69 B/live entry
+churn    100000     grow4          op  11.23 ns     26.68 B/live entry
+churn    100000     back4          op  18.39 ns     30.98 B/live entry
+churn    100000     all            op  18.20 ns     30.99 B/live entry
+churn    1000000    map            op  39.81 ns     24.12 B/live entry
+churn    1000000    default        op  15.83 ns     26.67 B/live entry
+churn    1000000    one_alloc      op  15.89 ns     26.69 B/live entry
+churn    1000000    grow4          op  15.46 ns     26.67 B/live entry
+churn    1000000    back4          op  24.53 ns     31.36 B/live entry
+churn    1000000    all            op  24.17 ns     31.37 B/live entry
+== clang++ pass 2
+dense    1000       map            build   6.41 ns/id  find   3.03 ns/op   23.58 B/entry
+dense    1000       default        build   4.47 ns/id  find   1.29 ns/op    8.21 B/entry
+dense    1000       one_alloc      build   4.59 ns/id  find   1.37 ns/op    8.91 B/entry
+dense    1000       grow4          build   4.16 ns/id  find   1.43 ns/op    8.21 B/entry
+dense    1000       one+grow4      build   3.27 ns/id  find   1.49 ns/op    8.91 B/entry
+dense    100000     map            build   6.50 ns/id  find   4.56 ns/op   22.94 B/entry
+dense    100000     default        build   3.91 ns/id  find   1.62 ns/op    8.10 B/entry
+dense    100000     one_alloc      build   3.95 ns/id  find   1.70 ns/op    8.21 B/entry
+dense    100000     grow4          build   3.65 ns/id  find   1.73 ns/op    8.26 B/entry
+dense    100000     one+grow4      build   3.18 ns/id  find   1.87 ns/op    8.37 B/entry
+dense    1000000    map            build  10.70 ns/id  find   8.84 ns/op   24.12 B/entry
+dense    1000000    default        build   3.95 ns/id  find   2.23 ns/op    8.17 B/entry
+dense    1000000    one_alloc      build   3.97 ns/id  find   2.32 ns/op    8.19 B/entry
+dense    1000000    grow4          build   3.75 ns/id  find   2.34 ns/op    8.17 B/entry
+dense    1000000    one+grow4      build   3.39 ns/id  find   2.52 ns/op    8.19 B/entry
+dense    3500000    map            build  25.62 ns/id  find  32.49 ns/op   27.56 B/entry
+dense    3500000    default        build   4.05 ns/id  find   5.55 ns/op    8.17 B/entry
+dense    3500000    one_alloc      build   4.08 ns/id  find   5.87 ns/op    8.18 B/entry
+dense    3500000    grow4          build   3.77 ns/id  find   6.41 ns/op    8.18 B/entry
+dense    3500000    one+grow4      build   2.99 ns/id  find   6.23 ns/op    8.19 B/entry
+ifc      100000     map            build   6.74 ns/id  find   5.11 ns/op   22.94 B/entry
+ifc      100000     default        build   4.08 ns/id  find   2.21 ns/op   14.30 B/entry
+ifc      100000     one_alloc      build   4.20 ns/id  find   2.39 ns/op   14.42 B/entry
+ifc      100000     grow4          build   3.76 ns/id  find   2.32 ns/op   14.30 B/entry
+ifc      100000     one+grow4      build   3.20 ns/id  find   2.46 ns/op   14.42 B/entry
+ifc      1000000    map            build  11.30 ns/id  find  11.13 ns/op   24.12 B/entry
+ifc      1000000    default        build   4.20 ns/id  find   2.75 ns/op   14.30 B/entry
+ifc      1000000    one_alloc      build   4.22 ns/id  find   2.97 ns/op   14.32 B/entry
+ifc      1000000    grow4          build   3.86 ns/id  find   2.85 ns/op   14.30 B/entry
+ifc      1000000    one+grow4      build   3.18 ns/id  find   3.07 ns/op   14.32 B/entry
+ifc      3500000    map            build  27.29 ns/id  find  32.32 ns/op   27.56 B/entry
+ifc      3500000    default        build   4.37 ns/id  find  11.70 ns/op   14.31 B/entry
+ifc      3500000    one_alloc      build   4.43 ns/id  find  12.62 ns/op   14.32 B/entry
+ifc      3500000    grow4          build   4.03 ns/id  find  12.78 ns/op   14.31 B/entry
+ifc      3500000    one+grow4      build   3.38 ns/id  find  13.32 ns/op   14.33 B/entry
+sparse   100000     map            build   6.61 ns/id  find   5.20 ns/op   22.94 B/entry
+sparse   100000     default        build   8.22 ns/id  find   5.40 ns/op   11.83 B/entry
+sparse   100000     one_alloc      build   8.09 ns/id  find   5.70 ns/op   11.83 B/entry
+sparse   100000     grow4          build   8.26 ns/id  find   5.62 ns/op   11.83 B/entry
+sparse   100000     one+grow4      build   8.01 ns/id  find   5.78 ns/op   11.83 B/entry
+sparse   1000000    map            build  10.40 ns/id  find   9.72 ns/op   24.12 B/entry
+sparse   1000000    default        build   8.49 ns/id  find   8.00 ns/op   11.90 B/entry
+sparse   1000000    one_alloc      build   8.33 ns/id  find   8.32 ns/op   11.90 B/entry
+sparse   1000000    grow4          build   8.52 ns/id  find   8.17 ns/op   11.90 B/entry
+sparse   1000000    one+grow4      build   8.19 ns/id  find   8.40 ns/op   11.90 B/entry
+churn    100000     map            op  21.02 ns     22.94 B/live entry
+churn    100000     default        op  14.95 ns     26.68 B/live entry
+churn    100000     one_alloc      op  15.20 ns     26.69 B/live entry
+churn    100000     grow4          op  15.90 ns     26.68 B/live entry
+churn    100000     back4          op  29.76 ns     30.98 B/live entry
+churn    100000     all            op  37.17 ns     30.99 B/live entry
+churn    1000000    map            op  41.59 ns     24.12 B/live entry
+churn    1000000    default        op  19.73 ns     26.67 B/live entry
+churn    1000000    one_alloc      op  19.87 ns     26.69 B/live entry
+churn    1000000    grow4          op  20.15 ns     26.67 B/live entry
+churn    1000000    back4          op  36.33 ns     31.36 B/live entry
+churn    1000000    all            op  42.62 ns     31.37 B/live entry
+== g++ pass 2
+dense    1000       map            build   6.97 ns/id  find   3.13 ns/op   23.58 B/entry
+dense    1000       default        build   5.87 ns/id  find   1.88 ns/op    8.21 B/entry
+dense    1000       one_alloc      build   5.76 ns/id  find   1.88 ns/op    8.91 B/entry
+dense    1000       grow4          build   5.41 ns/id  find   1.86 ns/op    8.21 B/entry
+dense    1000       one+grow4      build   5.33 ns/id  find   1.86 ns/op    8.91 B/entry
+dense    100000     map            build   6.50 ns/id  find   5.02 ns/op   22.94 B/entry
+dense    100000     default        build   5.14 ns/id  find   2.02 ns/op    8.10 B/entry
+dense    100000     one_alloc      build   5.18 ns/id  find   2.01 ns/op    8.21 B/entry
+dense    100000     grow4          build   4.77 ns/id  find   2.04 ns/op    8.26 B/entry
+dense    100000     one+grow4      build   4.82 ns/id  find   2.02 ns/op    8.37 B/entry
+dense    1000000    map            build  10.61 ns/id  find   9.46 ns/op   24.12 B/entry
+dense    1000000    default        build   5.14 ns/id  find   2.60 ns/op    8.17 B/entry
+dense    1000000    one_alloc      build   5.17 ns/id  find   2.67 ns/op    8.19 B/entry
+dense    1000000    grow4          build   4.78 ns/id  find   2.65 ns/op    8.17 B/entry
+dense    1000000    one+grow4      build   4.80 ns/id  find   2.64 ns/op    8.19 B/entry
+dense    3500000    map            build  25.99 ns/id  find  32.83 ns/op   27.56 B/entry
+dense    3500000    default        build   5.17 ns/id  find   7.34 ns/op    8.17 B/entry
+dense    3500000    one_alloc      build   5.19 ns/id  find   6.83 ns/op    8.18 B/entry
+dense    3500000    grow4          build   4.79 ns/id  find   6.49 ns/op    8.18 B/entry
+dense    3500000    one+grow4      build   4.81 ns/id  find   6.79 ns/op    8.19 B/entry
+ifc      100000     map            build   6.92 ns/id  find   5.39 ns/op   22.94 B/entry
+ifc      100000     default        build   5.36 ns/id  find   2.66 ns/op   14.30 B/entry
+ifc      100000     one_alloc      build   5.35 ns/id  find   2.67 ns/op   14.42 B/entry
+ifc      100000     grow4          build   4.93 ns/id  find   2.65 ns/op   14.30 B/entry
+ifc      100000     one+grow4      build   4.93 ns/id  find   2.67 ns/op   14.42 B/entry
+ifc      1000000    map            build  11.34 ns/id  find  12.68 ns/op   24.12 B/entry
+ifc      1000000    default        build   5.42 ns/id  find   3.31 ns/op   14.30 B/entry
+ifc      1000000    one_alloc      build   5.40 ns/id  find   3.34 ns/op   14.32 B/entry
+ifc      1000000    grow4          build   4.97 ns/id  find   3.30 ns/op   14.30 B/entry
+ifc      1000000    one+grow4      build   4.99 ns/id  find   3.35 ns/op   14.32 B/entry
+ifc      3500000    map            build  27.59 ns/id  find  37.22 ns/op   27.56 B/entry
+ifc      3500000    default        build   5.51 ns/id  find  13.53 ns/op   14.31 B/entry
+ifc      3500000    one_alloc      build   5.50 ns/id  find  13.56 ns/op   14.32 B/entry
+ifc      3500000    grow4          build   5.04 ns/id  find  13.31 ns/op   14.31 B/entry
+ifc      3500000    one+grow4      build   5.05 ns/id  find  13.48 ns/op   14.33 B/entry
+sparse   100000     map            build   6.50 ns/id  find   5.48 ns/op   22.94 B/entry
+sparse   100000     default        build  10.32 ns/id  find   5.90 ns/op   11.83 B/entry
+sparse   100000     one_alloc      build  10.67 ns/id  find   5.90 ns/op   11.83 B/entry
+sparse   100000     grow4          build  10.36 ns/id  find   5.87 ns/op   11.83 B/entry
+sparse   100000     one+grow4      build  10.41 ns/id  find   5.89 ns/op   11.83 B/entry
+sparse   1000000    map            build  10.38 ns/id  find   9.91 ns/op   24.12 B/entry
+sparse   1000000    default        build  10.51 ns/id  find   8.48 ns/op   11.90 B/entry
+sparse   1000000    one_alloc      build  10.87 ns/id  find   8.50 ns/op   11.90 B/entry
+sparse   1000000    grow4          build  10.56 ns/id  find   8.45 ns/op   11.90 B/entry
+sparse   1000000    one+grow4      build  10.63 ns/id  find   8.47 ns/op   11.90 B/entry
+churn    100000     map            op  20.87 ns     22.94 B/live entry
+churn    100000     default        op  11.64 ns     26.68 B/live entry
+churn    100000     one_alloc      op  11.93 ns     26.69 B/live entry
+churn    100000     grow4          op  11.28 ns     26.68 B/live entry
+churn    100000     back4          op  18.54 ns     30.98 B/live entry
+churn    100000     all            op  18.11 ns     30.99 B/live entry
+churn    1000000    map            op  39.22 ns     24.12 B/live entry
+churn    1000000    default        op  15.84 ns     26.67 B/live entry
+churn    1000000    one_alloc      op  16.00 ns     26.69 B/live entry
+churn    1000000    grow4          op  15.39 ns     26.67 B/live entry
+churn    1000000    back4          op  24.48 ns     31.36 B/live entry
+churn    1000000    all            op  24.18 ns     31.37 B/live entry

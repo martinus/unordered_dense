@@ -197,6 +197,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [Valhalla's CostMatrix (valhalla#4552) re-run with the map Valhalla ships (4.5.0), main and absl: all three within 1.1% on every row, as the original found ("all in all it hardly matters"), because the map is a few percent of a matrix request (`ReachedMap::add` 3.6%, out-of-line map code 0.36%)](#valhallas-costmatrix-valhalla4552-re-run-with-the-map-valhalla-ships-450-main-and-absl-all-three-within-11-on-every-row-as-the-original-found-all-in-all-it-hardly-matters-because-the-map-is-a-few-percent-of-a-matrix-request-reachedmapadd-36-out-of-line-map-code-036) · 2026-09-28 · info
   - [OSRM's e2e benchmarks (osrm-backend#6922) re-run on a quiet, pinned core with the 4.4.0 #6922 tried and with main: both take map matching to 1.21-1.27x the requests per second of `std::unordered_map`, CH table to 1.10x and CH trip to 1.05x, and main is not ahead of 4.4.0 -- equal on most rows, behind on CH match (1.255 against 1.274) and MLD table (0.986 against 1.009)](#osrms-e2e-benchmarks-osrm-backend6922-re-run-on-a-quiet-pinned-core-with-the-440-6922-tried-and-with-main-both-take-map-matching-to-121-127x-the-requests-per-second-of-stdunordered_map-ch-table-to-110x-and-ch-trip-to-105x-and-main-is-not-ahead-of-440----equal-on-most-rows-behind-on-ch-match-1255-against-1274-and-mld-table-0986-against-1009) · 2026-09-28 · info
   - [web-ifc's IFC loader (engine_web-ifc#1952) on its public models: 5.1.0 is level with 4.8.1 or up to 6% faster with 2-3.5% less peak memory, `std::unordered_map` beats both by up to 1.34x in the parse because the express IDs are nearly sequential and libstdc++ hashes them to themselves, and a vector indexed by ID beats std by 4-18% of the total](#web-ifcs-ifc-loader-engine_web-ifc1952-on-its-public-models-510-is-level-with-481-or-up-to-6-faster-with-2-35-less-peak-memory-stdunordered_map-beats-both-by-up-to-134x-in-the-parse-because-the-express-ids-are-nearly-sequential-and-libstdc-hashes-them-to-themselves-and-a-vector-indexed-by-id-beats-std-by-4-18-of-the-total) · 2026-10-04 · info
+  - [An `id_map` for integer IDs the caller knows are nearly dense (#379), built from five existing designs: two fixed levels, pages packed by rank until they are dense and a slot per ID after; web-ifc within 2% of a vector indexed by ID with the least memory of any variant, Redpanda 0.65-0.96 of main, 1/16-sparse IDs at half the map's memory](#an-id_map-for-integer-ids-the-caller-knows-are-nearly-dense-379-built-from-five-existing-designs-two-fixed-levels-pages-packed-by-rank-until-they-are-dense-and-a-slot-per-id-after-web-ifc-within-2-of-a-vector-indexed-by-id-with-the-least-memory-of-any-variant-redpanda-065-096-of-main-116-sparse-ids-at-half-the-maps-memory) · 2026-10-04 · open
 - [The robin hood index before 5.0, and its dead ends](#the-robin-hood-index-before-50-and-its-dead-ends)
   - [Optimization dead ends (verified with paired A/B runs; re-test before assuming they still hold)](#optimization-dead-ends-verified-with-paired-ab-runs-re-test-before-assuming-they-still-hold) · rejected
   - [Where a year of this got to, measured against 4.8.1](#where-a-year-of-this-got-to-measured-against-481) · 2026-09-06 · info
@@ -4715,6 +4716,7 @@ These entries put `unordered_dense` into real programs and measure the program, 
 - Valhalla's CostMatrix: 4.5.0, main and absl within 1.1% on every row; the map is a few percent of a request ([Valhalla's CostMatrix (valhalla#4552) re-run ](#valhallas-costmatrix-valhalla4552-re-run-with-the-map-valhalla-ships-450-main-and-absl-all-three-within-11-on-every-row-as-the-original-found-all-in-all-it-hardly-matters-because-the-map-is-a-few-percent-of-a-matrix-request-reachedmapadd-36-out-of-line-map-code-036)).
 - OSRM: both 4.4.0 and main take map matching to 1.21-1.27x the requests per second of `std::unordered_map`; main is not ahead of 4.4.0 ([OSRM's e2e benchmarks (osrm-backend#6922) re-run on a quiet](#osrms-e2e-benchmarks-osrm-backend6922-re-run-on-a-quiet-pinned-core-with-the-440-6922-tried-and-with-main-both-take-map-matching-to-121-127x-the-requests-per-second-of-stdunordered_map-ch-table-to-110x-and-ch-trip-to-105x-and-main-is-not-ahead-of-440----equal-on-most-rows-behind-on-ch-match-1255-against-1274-and-mld-table-0986-against-1009)).
 - web-ifc's IFC loader: 5.1.0 level with 4.8.1 or up to 6% faster, 2-3.5% less peak memory; `std::unordered_map` beats both by up to 1.34x in the parse (nearly sequential express IDs, identity hash), and a vector indexed by ID beats std by 4-18% of the total. #1952's 1.27x does not reproduce ([web-ifc's IFC loader (engine_web-ifc#1952) on its public models](#web-ifcs-ifc-loader-engine_web-ifc1952-on-its-public-models-510-is-level-with-481-or-up-to-6-faster-with-2-35-less-peak-memory-stdunordered_map-beats-both-by-up-to-134x-in-the-parse-because-the-express-ids-are-nearly-sequential-and-libstdc-hashes-them-to-themselves-and-a-vector-indexed-by-id-beats-std-by-4-18-of-the-total)).
+- An `id_map` for nearly dense integer IDs, prototyped from xarray, Judy, EnTT, flecs and LLVM's designs (#379, open): web-ifc within 2% of a vector indexed by ID with the least memory, Redpanda 0.65-0.96 of main, dense lookups 0.21-0.61 of the map's time in 0.30-0.61 of its memory ([An `id_map` for integer IDs](#an-id_map-for-integer-ids-the-caller-knows-are-nearly-dense-379-built-from-five-existing-designs-two-fixed-levels-pages-packed-by-rank-until-they-are-dense-and-a-slot-per-id-after-web-ifc-within-2-of-a-vector-indexed-by-id-with-the-least-memory-of-any-variant-redpanda-065-096-of-main-116-sparse-ids-at-half-the-maps-memory)).
 - udb3 is not in this section: see [udb3's `++h[key]` ran 70% slower under clang on 5.2.0 than on 5.1.0](#udb3s-hkey-ran-70-slower-under-clang-on-520-than-on-510-and-it-was-a-loop-variable-stored-and-reloaded-across-a-store-with-a-late-address-on-zen-4-that-with-a-division-on-the-way-to-the-next-key-stops-the-loop-overlapping-its-misses-5x-in-a-loop-with-no-map-at-all-the-part-of-the-insert-after-a-miss-is-called-again-under-clang).
 
 ### MySQL's int join never reaches the map, which makes it the control for how much relinking mysqld moves a query: 2.4%, the size of every MySQL difference measured for #321 and #323
@@ -5030,6 +5032,88 @@ What this says and does not say:
 - This map cannot take the identity's place: the group is `hash >> m_shifts`, so an order-preserving hash would have to know how many IDs are coming, which is a guess about caller data ("birthday"). Nearly sequential IDs are the dense ids of [Hits in cache-resident tables](#hits-in-cache-resident-tables-1000-to-16000-entries-450-against-main-346-main-takes-041-061-of-450s-time-on-scrambled-integer-keys-and-071-079-on-strings-from-a-quiet-loop-and-a-busy-one-and-102-143x-of-it-on-dense-ids-0n-1-which-a-multiplicative-hash-places-without-collisions----450s-best-case-and-the-keys-redpandas-and-osrms-callers-have), here past the cache, and the same input [Integer keys must not be small sequential values](#integer-keys-must-not-be-small-sequential-values) keeps out of the score.
 - For web-ifc, a table indexed by ID is the answer, and nothing in this repository is needed for it.
 - Four models, one machine, a busy desktop. "Resort" (940 MB) was not run.
+
+### An `id_map` for integer IDs the caller knows are nearly dense (#379), built from five existing designs: two fixed levels, pages packed by rank until they are dense and a slot per ID after; web-ifc within 2% of a vector indexed by ID with the least memory of any variant, Redpanda 0.65-0.96 of main, 1/16-sparse IDs at half the map's memory
+
+*2026-10-04 · #379, #320 · open · Ryzen 9 7950X, clang 22 and gcc 16; `scripts/ab/id_map/` (`id_map.h`, `check.cpp`, `idbench.cpp`), `scripts/ab/web-ifc/build.sh`, `scripts/ab/redpanda_lb.sh` and `scripts/ab/small_hits.cpp` with `-DWITH_ID_MAP`*
+
+#320 found web-ifc's express IDs nearly sequential, and a vector indexed by ID 4-18% faster than `std::unordered_map` in the whole load, where this map is 0.98-1.12 of std. The same keys are Redpanda's raft groups and OSRM's nodes (#346). A default hash map cannot exploit them; a separate type, picked by a caller who knows its keys are IDs, can. Five implementations of that idea were read before writing one:
+
+| read | took | left |
+|---|---|---|
+| Linux `xarray` (64-slot radix tree, height follows the largest index) | allocate leaves on demand; growth never copies | the tree: 4 levels and 5 dependent loads at 3.5 M, each level's `shift` on the critical path |
+| Judy (`JudyL`, 256-way, ~70 node types) | a bitmap with values packed by rank (`LeafB1`, bitmap and pointer in one line); the representation chosen per node from its own count | the depth (about 6 dependent loads) and the type switch at every level |
+| EnTT (`sparse_set`, `storage`) | fixed pages behind a pointer directory; one shared empty page in place of a null check; values paged so they never move | the packed dense array: 4 dependent loads, insertion order, swap-and-pop |
+| flecs (entity index, sparse set) | inline values in pages of 1024 | its fallback to a hash map past a density it measures (a guess about caller data) and 32-bit truncation of keys |
+| LLVM (`IndexedMap`, `SparseSet`, `SparseBitVector`) | the key-to-index idea | `SparseSet`'s universe-sized array, `IndexedMap`'s in-band `NullVal` |
+
+Four layouts were built as separate class templates in `id_map.h` and measured in one binary: `paged_map` (pointer directory, a page is a bitmap and a slot per ID), `packed_map` with a 64 byte header per 256 IDs and values packed by rank, the same header with a slot per ID, and both switching at half. Two findings set the design:
+- The rank, not the directory, is what a packed lookup costs: with a slot per ID the 64 byte headers read 11.1 ns at 3.5 M dense IDs against `paged_map`'s 9.6 and the packed values 19.8, and level in cache (1.39 / 1.45 / 3.07 ns at 16000).
+- Where the direct/packed choice is made matters: `direct ? s : rank(s)` compiled to a select computes the rank and loads its counts on every lookup, 1.1 ns of 7.2 at 3.5 M; a branch (`__builtin_expect`) removes it.
+
+`idm::id_map<K, T, PageBits = 12>`: a directory entry per 4096 IDs (values pointer, metadata pointer, a direct flag; 24 bytes, 21 KB at 3.5 M, so it stays in L1 or L2; corrected 2026-10-04: said 7 KB, which is `paged_map`'s 8 byte pointer). A page is packed until it holds 64 entries that fill half its slots up to its highest ID, then a slot per ID from 0 to a power of two past its highest ID, growing like a vector up to the page. A direct lookup addresses the value from the directory entry alone, the bit test beside it. Pages are never freed on erase; iteration is in ID order; `emplace` on a present ID does nothing. `check.cpp` compares every layout against `std::map` under ASan+UBSan (random keys at three densities, web-ifc's ascending pattern, the conversion at a power-of-two top slot); fifteen mutations of the layouts were each caught, one (a hybrid that never converts) is a speed property and shows only in the benchmark.
+
+`idbench.cpp`, a million independent lookups (throughput), median of five after a warm-up, malloc's bytes per entry; keys computed from the entry number (dense `i`, web-ifc-like `1.75 i`, sparse `16 i + hash(i) & 15`). find ns / build ns per ID / bytes per entry, clang:
+
+| | std | map | vector | `paged_map` 4096 | packed | `id_map` |
+|---|---|---|---|---|---|---|
+| dense 1000 | 1.52 / 11.9 / 40 | 2.86 / 6.5 / 24 | 1.28 / 1.5 / 12 | 1.41 / 1.8 / 33 | 3.27 / 4.6 / 8.3 | 1.41 / 3.8 / 8.2 |
+| dense 100000 | 3.78 / 11.7 / 46 | 4.78 / 6.5 / 23 | 1.62 / 1.6 / 16 | 1.55 / 1.7 / 8.3 | 3.60 / 4.4 / 8.4 | 1.68 / 3.4 / 8.1 |
+| dense 3.5 M | 28.3 / 14.0 / 46 | 32.4 / 26.1 / 28 | 9.43 / 2.3 / 14 | 5.37 / 1.8 / 8.1 | 13.6 / 4.8 / 8.4 | 6.83 / 3.5 / 8.2 |
+| ifc 1 M | 23.3 / 16.7 / 44 | 11.0 / 11.8 / 24 | 5.58 / 3.1 / 25 | 2.73 / 2.0 / 14 | 6.49 / 4.7 / 9.4 | 2.97 / 3.6 / 14 |
+| ifc 3.5 M | 40.5 / 26.2 / 46 | 32.7 / 27.7 / 28 | 12.8 / 3.8 / 29 | 11.6 / 2.1 / 14 | 14.0 / 5.2 / 9.5 | 13.2 / 3.9 / 14 |
+| sparse 1 M | 31.5 / 37.6 / 44 | 10.3 / 10.2 / 24 | 13.7 / 34.8 / 327 | 15.6 / 3.6 / 130 | 7.72 / 5.6 / 13 | 8.11 / 8.2 / 12 |
+
+gcc reads the same within about 15%, except that `id_map` builds at 5.0-5.6 ns per dense ID (3.3-3.8 under clang) and its dense lookups are 0.2-0.8 ns slower. Earlier runs of the same `id_map` read 6.0-6.4 ns at dense 3.5 M, so that cell moves by 0.8 ns between runs.
+
+Real programs:
+
+| web-ifc, total, ratio to std (clang / gcc, eleven rounds) | 5.3.1 | vector indexed by ID | `id_map` |
+|---|---|---|---|
+| Holter Tower | 0.973 / 0.975 | 0.830 / 0.849 | 0.847 / 0.863 |
+| LTU A-House | 1.109 / 1.098 | 0.932 / 0.938 | 0.927 / 0.935 |
+| ISSUE_098 | 1.001 / 1.003 | 0.969 / 0.973 | 0.971 / 0.975 |
+| ISSUE_068 | 1.024 / 1.022 | 0.949 / 0.958 | 0.951 / 0.959 |
+| peak RSS | 0.904-0.949 | 0.914-0.984 | 0.870-0.909 |
+
+Same meshes and vertex counts on all four models. Redpanda's leader balancer, median ms over four alternations of 30 rounds, `id_map` against main's `map` and 4.5.0's: 80 keys 4.60 against 5.04 and 4.55 (clang), 5.38 against 5.58 and 5.38 (gcc); 92160 keys 3.71 against 5.54 and 4.81 (clang), 3.91 against 5.98 and 5.03 (gcc), the fastest of the seven containers. `small_hits`' dense IDs (#346), `id_map` over main's `map`: 0.51-0.68 quiet and 0.62-0.87 busy at 1000-16000 entries, both compilers.
+
+What this says and does not say:
+- `id_map` meets #379's bar on web-ifc (within 2% of the vector, peak RSS under 5.3.1's) and beats the map on every dense cell, in cache and past it, at 0.30-0.61 of its memory. On 1/16-sparse IDs it finds faster than the map (8.1 against 10.3 ns at 1 M) in half the memory, and builds slower (8.0-11.1 against 6.6-10.2 ns per ID): packed pages grow by 1.25x and keep 64 counts per page current.
+- The per-page switch decides a layout from the page's own count. It guesses nothing about IDs not yet inserted and changes no result, but it is a decision taken from the data, and whether that sits within the "birthday" rule is the owner's call.
+- The directory costs 24 bytes per 4096 IDs up to the largest ID: a stray ID near 2^32 costs 25 MB of directory. A caller with arbitrary 64-bit keys needs a hash map; the type is for IDs.
+- Not measured: values larger than 16 bytes, MSVC.
+
+**Later (2026-10-04), the API and churn:** two questions decided whether a public header is worth writing, a standard-shaped API and erase-heavy use.
+
+*Churn.* `idbench`'s churn cell keeps n live IDs in an array and 10 n times erases a random one and inserts the next new ID, so the table stays at n while its IDs drift upward. The `id_map` above, whose pages were never freed and never went back from direct, read 6.9-10.8 ns per erase+insert and 89-90 B per live entry, against the map's 13.3-40.4 ns and 23-24 B: survivors spread over eleven times the original range, and a direct page stayed direct with a handful left. Now a page counts its entries, a page with none is freed, and a direct page erased below an eighth of its slots goes back to packed (half to go direct, an eighth to go back, so a page at the boundary does not flip). Churn after the change, ns per erase+insert / B per live entry, clang (gcc within 25%, faster on `id_map`):
+
+| n | std | map | vector | `id_map` | `id_map`, pairs |
+|---|---|---|---|---|---|
+| 16000 | 31.3 / 42 | 15.1 / 24 | 3.8 / 197 | 13.4 / 26 | 16.3 / 39 |
+| 100000 | 45.2 / 46 | 20.7 / 23 | 6.5 / 252 | 15.0 / 27 | 18.2 / 39 |
+| 1000000 | 147 / 44 | 40.7 / 24 | 16.2 / 201 | 19.6 / 27 | 23.5 / 39 |
+
+*The API.* `id_map<K, T, 12, true>` stores `std::pair<K, T>` and its iterators hand out `std::pair<K, T>&`, as this repository's map does; the default stores `T` and hands out a proxy `{K, T&}`. In `idbench` the pairs cost about 50% more memory (dense 12.2 against 8.2 B/entry, web-ifc-like 21.3 against 14.3, sparse 16.5 against 11.9; the map is 23-28) and lookups within 0-20%, except dense at 3.5 M, a cell that moves between 6 and 13 ns from run to run for the same code. In web-ifc, eleven rounds, ratio to std (clang / gcc):
+
+| total | 5.3.1 | vector | `id_map` | `id_map`, pairs |
+|---|---|---|---|---|
+| Holter Tower | 0.969 / 0.975 | 0.829 / 0.849 | 0.837 / 0.854 | 0.847 / 0.866 |
+| LTU A-House | 1.104 / 1.094 | 0.927 / 0.935 | 0.920 / 0.929 | 0.928 / 0.935 |
+| ISSUE_098 | 1.002 / 1.000 | 0.968 / 0.972 | 0.971 / 0.974 | 0.976 / 0.978 |
+| ISSUE_068 | 1.025 / 1.022 | 0.951 / 0.956 | 0.949 / 0.955 | 0.960 / 0.962 |
+| peak RSS | 0.904-0.948 | 0.914-0.984 | 0.870-0.909 | 0.899-0.935 |
+
+Same meshes for both. `check.cpp` gained the pair layout and a drain (fill dense IDs, erase all in random order with comparisons, refill); three mutations of the way back (stale counts, a page left direct, an empty page not reset) are caught, and an uncounted insert, which only stops pages from being freed, is a memory property the churn cell shows.
+
+*`POPCNT`.* Built for x86-64 without `-mpopcnt`, the rank is a software popcount (the `0x5555...`/`0x3333...` sequence, about 14 instructions); the per-word count updates are already SSE2 (`paddw`/`psubw`). With `-mpopcnt` the sparse cells take 0.72-0.76 of the lookup time and 0.78-0.80 of the build time (`id_map` 1 M: 8.16 to 6.21 ns), and direct pages do not move (dense 1000: 1.41 both). A header cannot have it without the caller's flags: a `target("popcnt")` function is not inlined into baseline code. Callers building for x86-64-v2 or `-march=native` get it.
+
+*Three knobs, all rejected* (`id_map`'s `tune<OneAlloc, GrowShift, BackDiv>`, `idbench tune`, two passes per compiler alternated, clang / gcc):
+- One allocation per direct page, its metadata then its slots, to put the bit beside the value: the default already reads 5.48 / 5.55 ns at dense 3.5 M under clang in these passes, `paged_map`'s figure, so the 0.6 ns gap it was meant to close was run-to-run variation of that cell. The single block reads 5.82 / 5.87 there and 2.97-3.24 against 2.75 at web-ifc-like 1 M under clang, level under gcc.
+- Direct pages growing 4x instead of 2x: build 4.1 to 3.7 ns per ID (clang) and 5.2 to 4.8 (gcc), and under clang in-cache dense lookups 6-10% slower in both passes (1.29-1.38 to 1.43-1.53 ns at 1000) with the same final capacities, gcc level. Not taken: a lookup is worth more than a build.
+- Going back to packed at a quarter instead of an eighth: under churn 31.0-31.4 B per live entry against 26.7 and 1.5-2x the time (100000: 15.1 to 30.1 ns, clang), because a packed page keeps the capacity it peaked at and inserts into packed pages of up to 1024 entries shift. The churn memory over the map (26.7 against 23-24 B) is that kept capacity and direct pages left part full, not the threshold; shrinking a packed page's array below half its capacity is the unmeasured next step.
+
+What the second round says: the standard-shaped API keeps web-ifc within 0.4-1.4% of the proxy layout and 0-2.2% of the vector, faster than 5.3.1 by 11-16% on the two large models, with peak memory under 5.3.1's on three models and level on the fourth. The memory lead over the map in a microbenchmark goes from 0.30-0.61 to 0.44-0.93 with pairs, and under churn both layouts take more memory than the map (1.1-1.2x and 1.6-1.7x) while running 0.38-0.89 (proxy) and 0.41-1.08 (pairs) of its time.
 
 ## The robin hood index before 5.0, and its dead ends
 

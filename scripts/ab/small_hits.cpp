@@ -17,6 +17,9 @@
 #include <ankerl/unordered_dense.h>
 
 #include <bench/workloads.h>
+#ifdef WITH_ID_MAP
+#    include "id_map/id_map.h" // #379: -DWITH_ID_MAP adds "seq_id_map", the dense ids in the id_map prototype
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -84,6 +87,9 @@ auto main() -> int {
     auto out = workloads::busy_sink();
     sizes<workloads::lookup_table<ankerl::unordered_dense::map<std::uint64_t, std::size_t>>>("uint64", &out);
     sizes<workloads::dense_id_table<ankerl::unordered_dense::map<std::uint64_t, std::size_t>>>("seq", &out);
+#ifdef WITH_ID_MAP
+    sizes<workloads::dense_id_table<idm::id_map<std::uint64_t, std::size_t>>>("seq_id_map", &out);
+#endif
     sizes<workloads::lookup_table<ankerl::unordered_dense::map<std::string, std::size_t>>>("string", &out);
     return 0;
 }

@@ -23,6 +23,12 @@ if [ ! -d src-vec ]; then
     sed -i 's/ankerl::unordered_dense::map<uint32_t, IfcLine>/dense_lines<IfcLine>/g' src-vec/web-ifc/parsing/IfcLoader.{h,cpp}
     sed -i 's|#include <ankerl/unordered_dense.h>|&\n#include "dense_lines.h"|' src-vec/web-ifc/parsing/IfcLoader.h
 fi
+if [ ! -d src-idmap ]; then # #379's prototype in place of _lines
+    cp -r "$WEBIFC" src-idmap
+    cp "$HERE/../id_map/id_map.h" src-idmap/web-ifc/parsing/
+    sed -i 's/ankerl::unordered_dense::map<uint32_t, IfcLine>/idm::id_map<uint32_t, IfcLine>/g' src-idmap/web-ifc/parsing/IfcLoader.{h,cpp}
+    sed -i 's|#include <ankerl/unordered_dense.h>|&\n#include "id_map.h"|' src-idmap/web-ifc/parsing/IfcLoader.h
+fi
 conf() { # build-dir compiler header-version web-ifc-src
     CXX=$2 cmake -S "$HERE" -B $1 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_SCAN_FOR_MODULES=OFF -DFETCHCONTENT_BASE_DIR="$WIFC/deps" \
@@ -33,4 +39,5 @@ for c in clang:clang++ gcc:g++; do
     for v in "${versions[@]}"; do conf b-${c%%:*}-$v ${c#*:} $v "$WEBIFC"; done
     conf b-${c%%:*}-std ${c#*:} ${versions[-1]} "$WIFC/src-std" # the std tree still includes the header
     conf b-${c%%:*}-vec ${c#*:} ${versions[-1]} "$WIFC/src-vec" # IfcCache keeps the newest map
+    conf b-${c%%:*}-idmap ${c#*:} ${versions[-1]} "$WIFC/src-idmap"
 done
