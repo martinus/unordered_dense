@@ -3773,7 +3773,7 @@ private:
                 auto const& group = *block[i];
                 // The element, once it is known: converging on a pointer rather than a found-flag
                 // keeps the call to f in one place instead of one per way of arriving at it.
-                value_type* element = nullptr;
+                std::conditional_t<is_view_v, value_type const, value_type>* element = nullptr;
                 auto remaining = lanes[i];
                 while (remaining != 0) {
                     auto const lane = first_lane(remaining);

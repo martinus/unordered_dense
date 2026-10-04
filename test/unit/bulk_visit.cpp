@@ -169,3 +169,66 @@ TEST_CASE("visit_on_a_set") {
     }) == 2U);
     REQUIRE(seen == std::vector<std::string>{"alpha", "beta"});
 }
+
+TEST_CASE_TEMPLATE("visit_on_read_only_views",
+                   owner_t,
+                   ankerl::unordered_dense::map<std::uint64_t, std::uint64_t, test::identity_hash>,
+                   ankerl::unordered_dense::set<std::uint64_t, test::identity_hash>,
+                   big_map<std::uint64_t, std::uint64_t, test::identity_hash>,
+                   big_set<std::uint64_t, test::identity_hash>) {
+    namespace ud = ankerl::unordered_dense;
+    using value_type = typename owner_t::value_type;
+    using view_t = typename owner_t::view_type;
+    auto owner = owner_t();
+    auto keys = std::vector<std::uint64_t>();
+    owner.reserve(17);
+    for (std::uint64_t i = 0; i < 17; ++i) {
+        auto const key = (i << 8U) | 0x03U;
+        if constexpr (std::is_same_v<value_type, std::uint64_t>) {
+            owner.emplace(key);
+        } else {
+            owner.try_emplace(key, i);
+        }
+        keys.push_back(key);
+    }
+    keys.push_back((std::uint64_t{17} << 8U) | 0x03U);
+    keys.push_back(keys.back());
+    keys.push_back(keys.front());
+    auto const repeated = keys;
+    keys.insert(keys.end(), repeated.begin(), repeated.end());
+    auto const original_values = owner.values();
+
+    auto check = [&](auto& view) {
+        for (std::size_t len = 0; len <= keys.size(); ++len) {
+            auto expected = std::vector<value_type>();
+            for (std::size_t i = 0; i < len; ++i) {
+                auto const it = owner.find(keys[i]);
+                if (it != owner.end()) {
+                    expected.push_back(*it);
+                }
+            }
+            auto seen = std::vector<value_type>();
+            auto const found = view.visit(keys.begin(), keys.begin() + static_cast<std::ptrdiff_t>(len), [&](auto& value) {
+                static_assert(std::is_const_v<std::remove_reference_t<decltype(value)>>);
+                seen.push_back(value);
+            });
+            REQUIRE(found == expected.size());
+            REQUIRE(seen == expected);
+            REQUIRE(owner.values() == original_values);
+        }
+    };
+    auto view = view_t({owner.values().data(), owner.size()}, owner.index(), ud::trust::checked);
+    check(view);
+    check(std::as_const(view));
+    REQUIRE(view.verify(ud::verify_level::full));
+
+    auto empty = view_t();
+    auto calls = 0;
+    REQUIRE(empty.visit(keys.begin(), keys.end(), [&](auto&) {
+        ++calls;
+    }) == 0U);
+    REQUIRE(std::as_const(empty).visit(keys.begin(), keys.end(), [&](auto&) {
+        ++calls;
+    }) == 0U);
+    REQUIRE(calls == 0);
+}
