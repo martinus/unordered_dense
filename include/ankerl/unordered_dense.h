@@ -4119,7 +4119,7 @@ public:
     }
 
     auto cbegin() const noexcept -> const_iterator {
-        return m_values.cbegin();
+        return begin(); // the const one: a value container need not have cbegin()
     }
 
     auto end() noexcept -> iterator {
@@ -4127,7 +4127,7 @@ public:
     }
 
     auto cend() const noexcept -> const_iterator {
-        return m_values.cend();
+        return end();
     }
 
     auto end() const noexcept -> const_iterator {
@@ -4824,8 +4824,8 @@ public:
     // getting that backwards is a wrong answer rather than a crash.
     //
     // f is taken by value, as the standard algorithms take a callable, and is called with
-    // value_type& -- or value_type const& on a const map. Keys that are absent are not reported; the
-    // return value counts the ones that were found.
+    // value_type& -- or value_type const& on a const map and on any map_view or set_view. Keys that
+    // are absent are not reported; the return value counts the ones that were found.
     template <typename FwdIt, typename F>
     auto visit(FwdIt first, FwdIt last, F f) -> std::size_t {
         return do_visit(first, last, std::move(f));
