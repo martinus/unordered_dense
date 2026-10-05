@@ -17,7 +17,6 @@ import matplotlib
 
 matplotlib.use("svg")
 import matplotlib.pyplot as plt  # noqa: E402
-import matplotlib.ticker  # noqa: E402
 from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 
 HERE = Path(__file__).parent
@@ -119,16 +118,13 @@ def fig_lookups(cells, t, mode):
             ax.plot(sizes, ys, color=t["series"][k], lw=2, solid_capstyle="round", solid_joinstyle="round", zorder=3)
             ax.plot(sizes[-1], ys[-1], "o", ms=8, color=t["series"][k], mec=t["surface"], mew=2, zorder=4)
         ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_yticks([1, 2, 5, 10, 20, 50], ["1", "2", "5", "10", "20", "50"])
-        ax.yaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-        ax.set_ylim(0.9, 60)
+        ax.set_ylim(bottom=0)
         ax.set_title(title, fontsize=10, loc="left", color=t["ink"])
         ax.set_xlabel("entries")
         idm = cells[("clang++", p, sizes[-1], "id_map")][0]
         ax.annotate(f"{idm:.1f} ns", (sizes[-1], idm), xytext=(6, 0), textcoords="offset points", va="center",
                     fontsize=9, color=t["ink"])
-    axes[0].set_ylabel("ns per lookup, log scale (lower is better)")
+    axes[0].set_ylabel("ns per lookup (lower is better)")
     legend(fig, keys, t, y=1.08)
     save(fig, "lookups", mode)
 

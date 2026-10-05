@@ -1,200 +1,200 @@
 == clang++
-dense    1000       std            build  14.00 ns/id  find   1.70 ns/op   40.40 B/entry
-dense    1000       map            build   7.07 ns/id  find   2.89 ns/op   23.58 B/entry
-dense    1000       vector         build   1.90 ns/id  find   1.29 ns/op   12.30 B/entry
-dense    1000       paged12        build   1.82 ns/id  find   1.52 ns/op   33.30 B/entry
-dense    1000       packed         build   4.88 ns/id  find   3.55 ns/op    8.26 B/entry
-dense    1000       id_map         build   4.63 ns/id  find   1.69 ns/op    8.21 B/entry
-dense    1000       id_map_pairs   build   4.86 ns/id  find   1.68 ns/op   12.30 B/entry
-dense    16000      std            build  13.20 ns/id  find   2.41 ns/op   42.36 B/entry
-dense    16000      map            build   7.09 ns/id  find   3.24 ns/op   23.55 B/entry
-dense    16000      vector         build   1.54 ns/id  find   1.29 ns/op   12.29 B/entry
-dense    16000      paged12        build   1.88 ns/id  find   1.49 ns/op    8.32 B/entry
-dense    16000      packed         build   4.78 ns/id  find   3.52 ns/op    8.26 B/entry
-dense    16000      id_map         build   4.15 ns/id  find   1.70 ns/op    8.20 B/entry
-dense    16000      id_map_pairs   build   4.24 ns/id  find   1.73 ns/op   12.29 B/entry
-dense    100000     std            build  13.88 ns/id  find   4.44 ns/op   45.83 B/entry
-dense    100000     map            build   7.18 ns/id  find   5.11 ns/op   22.94 B/entry
-dense    100000     vector         build   1.67 ns/id  find   1.69 ns/op   15.73 B/entry
-dense    100000     paged12        build   1.85 ns/id  find   1.75 ns/op    8.32 B/entry
-dense    100000     packed         build   4.87 ns/id  find   4.00 ns/op    8.39 B/entry
-dense    100000     id_map         build   4.17 ns/id  find   1.98 ns/op    8.09 B/entry
-dense    100000     id_map_pairs   build   4.25 ns/id  find   2.24 ns/op   12.11 B/entry
-dense    1000000    std            build  13.58 ns/id  find  16.45 ns/op   43.58 B/entry
-dense    1000000    map            build  11.31 ns/id  find   9.53 ns/op   24.12 B/entry
-dense    1000000    vector         build   1.50 ns/id  find   2.10 ns/op   12.58 B/entry
-dense    1000000    paged12        build   1.72 ns/id  find   2.19 ns/op    8.16 B/entry
-dense    1000000    packed         build   4.49 ns/id  find   5.52 ns/op    8.32 B/entry
-dense    1000000    id_map         build   3.92 ns/id  find   2.44 ns/op    8.17 B/entry
-dense    1000000    id_map_pairs   build   4.02 ns/id  find   2.54 ns/op   12.17 B/entry
-dense    3500000    std            build  15.04 ns/id  find  29.66 ns/op   45.64 B/entry
-dense    3500000    map            build  26.50 ns/id  find  32.18 ns/op   27.56 B/entry
-dense    3500000    vector         build   2.43 ns/id  find   8.65 ns/op   14.38 B/entry
-dense    3500000    paged12        build   1.80 ns/id  find   5.74 ns/op    8.14 B/entry
-dense    3500000    packed         build   4.53 ns/id  find  11.80 ns/op    8.36 B/entry
-dense    3500000    id_map         build   4.04 ns/id  find   6.15 ns/op    8.17 B/entry
-dense    3500000    id_map_pairs   build   4.24 ns/id  find  10.70 ns/op   12.17 B/entry
-ifc      16000      std            build  13.66 ns/id  find   6.52 ns/op   42.36 B/entry
-ifc      16000      map            build   6.79 ns/id  find   3.46 ns/op   23.55 B/entry
-ifc      16000      vector         build   2.00 ns/id  find   1.47 ns/op   24.58 B/entry
-ifc      16000      paged12        build   1.99 ns/id  find   1.61 ns/op   14.57 B/entry
-ifc      16000      packed         build   4.56 ns/id  find   3.53 ns/op    9.34 B/entry
-ifc      16000      id_map         build   4.11 ns/id  find   1.83 ns/op   14.34 B/entry
-ifc      16000      id_map_pairs   build   4.39 ns/id  find   1.84 ns/op   21.51 B/entry
-ifc      100000     std            build  15.32 ns/id  find   5.43 ns/op   45.83 B/entry
-ifc      100000     map            build   7.09 ns/id  find   5.13 ns/op   22.94 B/entry
-ifc      100000     vector         build   2.22 ns/id  find   2.05 ns/op   31.46 B/entry
-ifc      100000     paged12        build   1.98 ns/id  find   2.22 ns/op   14.32 B/entry
-ifc      100000     packed         build   4.45 ns/id  find   4.16 ns/op    9.51 B/entry
-ifc      100000     id_map         build   4.10 ns/id  find   2.55 ns/op   14.29 B/entry
-ifc      100000     id_map_pairs   build   4.40 ns/id  find   2.62 ns/op   21.34 B/entry
-ifc      1000000    std            build  17.96 ns/id  find  22.90 ns/op   43.58 B/entry
-ifc      1000000    map            build  11.33 ns/id  find  11.28 ns/op   24.12 B/entry
-ifc      1000000    vector         build   3.13 ns/id  find   5.90 ns/op   25.17 B/entry
-ifc      1000000    paged12        build   1.94 ns/id  find   2.75 ns/op   14.25 B/entry
-ifc      1000000    packed         build   4.54 ns/id  find   6.50 ns/op    9.38 B/entry
-ifc      1000000    id_map         build   4.19 ns/id  find   3.23 ns/op   14.30 B/entry
-ifc      1000000    id_map_pairs   build   4.48 ns/id  find   3.85 ns/op   21.30 B/entry
-ifc      3500000    std            build  26.45 ns/id  find  40.32 ns/op   45.64 B/entry
-ifc      3500000    map            build  29.06 ns/id  find  34.86 ns/op   27.56 B/entry
-ifc      3500000    vector         build   3.79 ns/id  find  11.75 ns/op   28.76 B/entry
-ifc      3500000    paged12        build   2.06 ns/id  find  11.73 ns/op   14.24 B/entry
-ifc      3500000    packed         build   4.64 ns/id  find  14.32 ns/op    9.46 B/entry
-ifc      3500000    id_map         build   4.39 ns/id  find  14.11 ns/op   14.31 B/entry
-ifc      3500000    id_map_pairs   build   4.82 ns/id  find  14.74 ns/op   21.31 B/entry
-churn    16000      std            op  31.25 ns     42.34 B/live entry
-churn    16000      map            op  15.14 ns     23.55 B/live entry
-churn    16000      vector         op   3.83 ns    196.61 B/live entry
-churn    16000      id_map         op  13.43 ns     25.97 B/live entry
-churn    16000      id_map_pairs   op  16.31 ns     38.45 B/live entry
-churn    100000     std            op  45.19 ns     45.83 B/live entry
-churn    100000     map            op  20.66 ns     22.94 B/live entry
-churn    100000     vector         op   6.47 ns    251.66 B/live entry
-churn    100000     id_map         op  14.95 ns     26.66 B/live entry
-churn    100000     id_map_pairs   op  18.16 ns     39.23 B/live entry
-churn    1000000    std            op 147.12 ns     43.58 B/live entry
-churn    1000000    map            op  40.74 ns     24.12 B/live entry
-churn    1000000    vector         op  16.16 ns    201.33 B/live entry
-churn    1000000    id_map         op  19.60 ns     26.67 B/live entry
-churn    1000000    id_map_pairs   op  23.54 ns     39.20 B/live entry
-sparse   16000      std            build  16.83 ns/id  find   4.96 ns/op   42.36 B/entry
-sparse   16000      map            build   7.10 ns/id  find   3.78 ns/op   23.55 B/entry
-sparse   16000      vector         build  13.10 ns/id  find   2.20 ns/op  319.49 B/entry
-sparse   16000      paged12        build   2.48 ns/id  find   2.56 ns/op  131.10 B/entry
-sparse   16000      packed         build   5.34 ns/id  find   3.95 ns/op   12.95 B/entry
-sparse   16000      id_map         build   8.49 ns/id  find   4.20 ns/op   11.26 B/entry
-sparse   16000      id_map_pairs   build   9.70 ns/id  find   4.32 ns/op   15.89 B/entry
-sparse   100000     std            build  20.27 ns/id  find  11.74 ns/op   45.83 B/entry
-sparse   100000     map            build   6.87 ns/id  find   5.52 ns/op   22.94 B/entry
-sparse   100000     vector         build  16.29 ns/id  find   3.52 ns/op  204.47 B/entry
-sparse   100000     paged12        build   2.22 ns/id  find   3.04 ns/op  130.23 B/entry
-sparse   100000     packed         build   5.34 ns/id  find   5.80 ns/op   14.22 B/entry
-sparse   100000     id_map         build   8.39 ns/id  find   5.73 ns/op   11.83 B/entry
-sparse   100000     id_map_pairs   build   9.72 ns/id  find   6.20 ns/op   16.46 B/entry
-sparse   1000000    std            build  38.82 ns/id  find  30.40 ns/op   43.58 B/entry
-sparse   1000000    map            build  11.03 ns/id  find  10.17 ns/op   24.12 B/entry
-sparse   1000000    vector         build  34.89 ns/id  find  13.56 ns/op  327.16 B/entry
-sparse   1000000    paged12        build   3.62 ns/id  find  15.57 ns/op  130.12 B/entry
-sparse   1000000    packed         build   5.52 ns/id  find   7.82 ns/op   13.19 B/entry
-sparse   1000000    id_map         build   8.60 ns/id  find   8.39 ns/op   11.90 B/entry
-sparse   1000000    id_map_pairs   build   9.97 ns/id  find   9.46 ns/op   16.52 B/entry
+dense    1000       std            build  14.15 ns/id  find   1.84 ns/op   40.40 B/entry
+dense    1000       map            build   6.92 ns/id  find   3.50 ns/op   23.58 B/entry
+dense    1000       vector         build   1.70 ns/id  find   1.82 ns/op   12.30 B/entry
+dense    1000       paged12        build   1.84 ns/id  find   1.83 ns/op   33.30 B/entry
+dense    1000       packed         build   5.04 ns/id  find   3.58 ns/op    8.26 B/entry
+dense    1000       id_map         build   4.68 ns/id  find   2.23 ns/op    8.21 B/entry
+dense    1000       id_map_pairs   build   5.07 ns/id  find   2.46 ns/op   12.30 B/entry
+dense    16000      std            build  12.77 ns/id  find   2.67 ns/op   42.36 B/entry
+dense    16000      map            build   7.04 ns/id  find   3.89 ns/op   23.55 B/entry
+dense    16000      vector         build   1.51 ns/id  find   1.75 ns/op   12.29 B/entry
+dense    16000      paged12        build   1.80 ns/id  find   1.84 ns/op    8.32 B/entry
+dense    16000      packed         build   5.00 ns/id  find   3.51 ns/op    8.26 B/entry
+dense    16000      id_map         build   4.18 ns/id  find   2.25 ns/op    8.20 B/entry
+dense    16000      id_map_pairs   build   4.44 ns/id  find   2.49 ns/op   12.29 B/entry
+dense    100000     std            build  13.90 ns/id  find   4.83 ns/op   45.83 B/entry
+dense    100000     map            build   6.96 ns/id  find   5.61 ns/op   22.94 B/entry
+dense    100000     vector         build   1.71 ns/id  find   2.40 ns/op   15.73 B/entry
+dense    100000     paged12        build   1.82 ns/id  find   2.25 ns/op    8.32 B/entry
+dense    100000     packed         build   4.93 ns/id  find   4.28 ns/op    8.39 B/entry
+dense    100000     id_map         build   4.20 ns/id  find   2.50 ns/op    8.10 B/entry
+dense    100000     id_map_pairs   build   4.45 ns/id  find   3.07 ns/op   12.11 B/entry
+dense    1000000    std            build  14.95 ns/id  find  17.92 ns/op   43.58 B/entry
+dense    1000000    map            build  10.86 ns/id  find  10.51 ns/op   24.12 B/entry
+dense    1000000    vector         build   1.53 ns/id  find   2.92 ns/op   12.58 B/entry
+dense    1000000    paged12        build   1.72 ns/id  find   2.79 ns/op    8.16 B/entry
+dense    1000000    packed         build   4.62 ns/id  find   5.90 ns/op    8.32 B/entry
+dense    1000000    id_map         build   3.99 ns/id  find   2.94 ns/op    8.17 B/entry
+dense    1000000    id_map_pairs   build   4.20 ns/id  find   3.40 ns/op   12.17 B/entry
+dense    3500000    std            build  15.19 ns/id  find  30.21 ns/op   45.64 B/entry
+dense    3500000    map            build  25.26 ns/id  find  32.41 ns/op   27.56 B/entry
+dense    3500000    vector         build   2.26 ns/id  find  13.16 ns/op   14.38 B/entry
+dense    3500000    paged12        build   1.79 ns/id  find   6.48 ns/op    8.14 B/entry
+dense    3500000    packed         build   4.68 ns/id  find  12.15 ns/op    8.36 B/entry
+dense    3500000    id_map         build   4.04 ns/id  find   7.71 ns/op    8.17 B/entry
+dense    3500000    id_map_pairs   build   4.43 ns/id  find  14.32 ns/op   12.17 B/entry
+ifc      16000      std            build  13.25 ns/id  find   6.79 ns/op   42.36 B/entry
+ifc      16000      map            build   6.63 ns/id  find   3.99 ns/op   23.55 B/entry
+ifc      16000      vector         build   1.99 ns/id  find   2.01 ns/op   24.58 B/entry
+ifc      16000      paged12        build   1.88 ns/id  find   2.10 ns/op   14.57 B/entry
+ifc      16000      packed         build   4.59 ns/id  find   3.76 ns/op    9.34 B/entry
+ifc      16000      id_map         build   4.09 ns/id  find   2.35 ns/op   14.34 B/entry
+ifc      16000      id_map_pairs   build   4.49 ns/id  find   2.70 ns/op   21.51 B/entry
+ifc      100000     std            build  14.81 ns/id  find   5.72 ns/op   45.83 B/entry
+ifc      100000     map            build   6.78 ns/id  find   5.56 ns/op   22.94 B/entry
+ifc      100000     vector         build   2.21 ns/id  find   2.83 ns/op   31.46 B/entry
+ifc      100000     paged12        build   1.95 ns/id  find   2.73 ns/op   14.32 B/entry
+ifc      100000     packed         build   4.58 ns/id  find   4.44 ns/op    9.51 B/entry
+ifc      100000     id_map         build   4.12 ns/id  find   3.02 ns/op   14.30 B/entry
+ifc      100000     id_map_pairs   build   4.50 ns/id  find   3.50 ns/op   21.35 B/entry
+ifc      1000000    std            build  17.92 ns/id  find  23.56 ns/op   43.58 B/entry
+ifc      1000000    map            build  12.04 ns/id  find  13.26 ns/op   24.12 B/entry
+ifc      1000000    vector         build   3.07 ns/id  find   9.56 ns/op   25.17 B/entry
+ifc      1000000    paged12        build   1.99 ns/id  find   3.40 ns/op   14.25 B/entry
+ifc      1000000    packed         build   4.68 ns/id  find   6.96 ns/op    9.38 B/entry
+ifc      1000000    id_map         build   4.21 ns/id  find   3.78 ns/op   14.30 B/entry
+ifc      1000000    id_map_pairs   build   4.66 ns/id  find   5.19 ns/op   21.30 B/entry
+ifc      3500000    std            build  28.53 ns/id  find  45.59 ns/op   45.64 B/entry
+ifc      3500000    map            build  25.98 ns/id  find  37.70 ns/op   27.56 B/entry
+ifc      3500000    vector         build   3.79 ns/id  find  16.37 ns/op   28.76 B/entry
+ifc      3500000    paged12        build   2.10 ns/id  find  14.70 ns/op   14.24 B/entry
+ifc      3500000    packed         build   4.76 ns/id  find  15.57 ns/op    9.46 B/entry
+ifc      3500000    id_map         build   4.39 ns/id  find  15.60 ns/op   14.31 B/entry
+ifc      3500000    id_map_pairs   build   4.97 ns/id  find  20.00 ns/op   21.31 B/entry
+churn    16000      std            op  31.40 ns     42.34 B/live entry
+churn    16000      map            op  13.75 ns     23.55 B/live entry
+churn    16000      vector         op   3.70 ns    196.61 B/live entry
+churn    16000      id_map         op  13.49 ns     26.01 B/live entry
+churn    16000      id_map_pairs   op  16.25 ns     38.50 B/live entry
+churn    100000     std            op  45.20 ns     45.83 B/live entry
+churn    100000     map            op  21.15 ns     22.94 B/live entry
+churn    100000     vector         op   6.05 ns    251.66 B/live entry
+churn    100000     id_map         op  14.90 ns     26.68 B/live entry
+churn    100000     id_map_pairs   op  17.88 ns     39.23 B/live entry
+churn    1000000    std            op 142.20 ns     43.58 B/live entry
+churn    1000000    map            op  43.46 ns     24.12 B/live entry
+churn    1000000    vector         op  19.43 ns    201.33 B/live entry
+churn    1000000    id_map         op  19.58 ns     26.67 B/live entry
+churn    1000000    id_map_pairs   op  23.10 ns     39.20 B/live entry
+sparse   16000      std            build  17.25 ns/id  find   5.88 ns/op   42.36 B/entry
+sparse   16000      map            build   6.91 ns/id  find   4.07 ns/op   23.55 B/entry
+sparse   16000      vector         build  12.80 ns/id  find   3.12 ns/op  319.49 B/entry
+sparse   16000      paged12        build   2.10 ns/id  find   3.00 ns/op  131.10 B/entry
+sparse   16000      packed         build   5.47 ns/id  find   4.29 ns/op   12.95 B/entry
+sparse   16000      id_map         build   8.26 ns/id  find   4.42 ns/op   11.26 B/entry
+sparse   16000      id_map_pairs   build  10.15 ns/id  find   4.87 ns/op   15.89 B/entry
+sparse   100000     std            build  20.43 ns/id  find  13.18 ns/op   45.83 B/entry
+sparse   100000     map            build   6.66 ns/id  find   5.81 ns/op   22.94 B/entry
+sparse   100000     vector         build  15.40 ns/id  find   4.58 ns/op  204.47 B/entry
+sparse   100000     paged12        build   2.18 ns/id  find   3.45 ns/op  130.23 B/entry
+sparse   100000     packed         build   5.42 ns/id  find   6.27 ns/op   14.22 B/entry
+sparse   100000     id_map         build   8.25 ns/id  find   6.17 ns/op   11.83 B/entry
+sparse   100000     id_map_pairs   build   9.76 ns/id  find   7.09 ns/op   16.46 B/entry
+sparse   1000000    std            build  38.45 ns/id  find  32.62 ns/op   43.58 B/entry
+sparse   1000000    map            build  10.79 ns/id  find  11.35 ns/op   24.12 B/entry
+sparse   1000000    vector         build  34.61 ns/id  find  18.16 ns/op  327.16 B/entry
+sparse   1000000    paged12        build   3.68 ns/id  find  17.82 ns/op  130.12 B/entry
+sparse   1000000    packed         build   5.58 ns/id  find   8.59 ns/op   13.19 B/entry
+sparse   1000000    id_map         build   8.47 ns/id  find   9.05 ns/op   11.90 B/entry
+sparse   1000000    id_map_pairs   build   9.99 ns/id  find  10.87 ns/op   16.52 B/entry
 == g++
-dense    1000       std            build  13.61 ns/id  find   1.72 ns/op   40.40 B/entry
-dense    1000       map            build   7.08 ns/id  find   3.07 ns/op   23.58 B/entry
-dense    1000       vector         build   4.54 ns/id  find   1.29 ns/op   12.30 B/entry
-dense    1000       paged12        build   1.29 ns/id  find   1.53 ns/op   33.30 B/entry
-dense    1000       packed         build   8.05 ns/id  find   3.22 ns/op    8.26 B/entry
-dense    1000       id_map         build   5.58 ns/id  find   1.88 ns/op    8.21 B/entry
-dense    1000       id_map_pairs   build   5.78 ns/id  find   2.03 ns/op   12.30 B/entry
-dense    16000      std            build  12.87 ns/id  find   2.30 ns/op   42.36 B/entry
-dense    16000      map            build   6.74 ns/id  find   3.38 ns/op   23.55 B/entry
-dense    16000      vector         build   4.47 ns/id  find   1.31 ns/op   12.29 B/entry
-dense    16000      paged12        build   1.27 ns/id  find   1.54 ns/op    8.32 B/entry
-dense    16000      packed         build   7.40 ns/id  find   3.30 ns/op    8.26 B/entry
+dense    1000       std            build  13.43 ns/id  find   1.70 ns/op   40.40 B/entry
+dense    1000       map            build   7.07 ns/id  find   3.21 ns/op   23.58 B/entry
+dense    1000       vector         build   1.45 ns/id  find   1.30 ns/op   12.30 B/entry
+dense    1000       paged12        build   1.32 ns/id  find   1.70 ns/op   33.30 B/entry
+dense    1000       packed         build   7.60 ns/id  find   3.47 ns/op    8.26 B/entry
+dense    1000       id_map         build   5.68 ns/id  find   1.84 ns/op    8.21 B/entry
+dense    1000       id_map_pairs   build   5.96 ns/id  find   2.07 ns/op   12.30 B/entry
+dense    16000      std            build  12.25 ns/id  find   2.15 ns/op   42.36 B/entry
+dense    16000      map            build   7.08 ns/id  find   3.50 ns/op   23.55 B/entry
+dense    16000      vector         build   1.37 ns/id  find   1.32 ns/op   12.29 B/entry
+dense    16000      paged12        build   1.27 ns/id  find   1.71 ns/op    8.32 B/entry
+dense    16000      packed         build   7.47 ns/id  find   3.64 ns/op    8.26 B/entry
 dense    16000      id_map         build   5.21 ns/id  find   1.88 ns/op    8.20 B/entry
-dense    16000      id_map_pairs   build   5.28 ns/id  find   2.06 ns/op   12.29 B/entry
-dense    100000     std            build  13.88 ns/id  find   4.05 ns/op   45.83 B/entry
-dense    100000     map            build   6.68 ns/id  find   4.91 ns/op   22.94 B/entry
-dense    100000     vector         build   4.57 ns/id  find   1.68 ns/op   15.73 B/entry
-dense    100000     paged12        build   1.26 ns/id  find   1.80 ns/op    8.32 B/entry
-dense    100000     packed         build   7.46 ns/id  find   3.92 ns/op    8.39 B/entry
-dense    100000     id_map         build   5.16 ns/id  find   2.08 ns/op    8.09 B/entry
-dense    100000     id_map_pairs   build   5.26 ns/id  find   2.31 ns/op   12.11 B/entry
-dense    1000000    std            build  14.23 ns/id  find  15.04 ns/op   43.58 B/entry
-dense    1000000    map            build  10.71 ns/id  find   9.14 ns/op   24.12 B/entry
-dense    1000000    vector         build   4.51 ns/id  find   2.25 ns/op   12.58 B/entry
-dense    1000000    paged12        build   1.26 ns/id  find   2.38 ns/op    8.16 B/entry
-dense    1000000    packed         build   7.43 ns/id  find   5.74 ns/op    8.32 B/entry
-dense    1000000    id_map         build   5.22 ns/id  find   2.61 ns/op    8.17 B/entry
-dense    1000000    id_map_pairs   build   5.25 ns/id  find   2.65 ns/op   12.17 B/entry
-dense    3500000    std            build  15.10 ns/id  find  27.21 ns/op   45.64 B/entry
-dense    3500000    map            build  25.30 ns/id  find  32.17 ns/op   27.56 B/entry
-dense    3500000    vector         build   5.19 ns/id  find   8.80 ns/op   14.38 B/entry
-dense    3500000    paged12        build   1.29 ns/id  find   5.83 ns/op    8.14 B/entry
-dense    3500000    packed         build   7.51 ns/id  find  22.22 ns/op    8.36 B/entry
-dense    3500000    id_map         build   5.24 ns/id  find  12.73 ns/op    8.17 B/entry
-dense    3500000    id_map_pairs   build   5.39 ns/id  find  13.33 ns/op   12.17 B/entry
-ifc      16000      std            build  13.18 ns/id  find   5.37 ns/op   42.36 B/entry
-ifc      16000      map            build   7.03 ns/id  find   3.61 ns/op   23.55 B/entry
-ifc      16000      vector         build   4.92 ns/id  find   1.55 ns/op   24.58 B/entry
-ifc      16000      paged12        build   1.56 ns/id  find   1.81 ns/op   14.57 B/entry
-ifc      16000      packed         build   7.13 ns/id  find   3.68 ns/op    9.34 B/entry
-ifc      16000      id_map         build   5.34 ns/id  find   2.14 ns/op   14.34 B/entry
-ifc      16000      id_map_pairs   build   5.49 ns/id  find   2.41 ns/op   21.51 B/entry
-ifc      100000     std            build  15.34 ns/id  find   5.16 ns/op   45.83 B/entry
-ifc      100000     map            build   6.94 ns/id  find   5.26 ns/op   22.94 B/entry
-ifc      100000     vector         build   5.20 ns/id  find   2.15 ns/op   31.46 B/entry
-ifc      100000     paged12        build   1.55 ns/id  find   2.44 ns/op   14.32 B/entry
-ifc      100000     packed         build   7.12 ns/id  find   4.38 ns/op    9.51 B/entry
-ifc      100000     id_map         build   5.39 ns/id  find   2.66 ns/op   14.29 B/entry
-ifc      100000     id_map_pairs   build   5.47 ns/id  find   2.86 ns/op   21.34 B/entry
-ifc      1000000    std            build  17.51 ns/id  find  20.77 ns/op   43.58 B/entry
-ifc      1000000    map            build  11.10 ns/id  find  10.40 ns/op   24.12 B/entry
-ifc      1000000    vector         build   5.88 ns/id  find   7.19 ns/op   25.17 B/entry
-ifc      1000000    paged12        build   1.55 ns/id  find   3.02 ns/op   14.25 B/entry
-ifc      1000000    packed         build   7.22 ns/id  find   6.69 ns/op    9.38 B/entry
-ifc      1000000    id_map         build   5.38 ns/id  find   3.29 ns/op   14.30 B/entry
-ifc      1000000    id_map_pairs   build   5.52 ns/id  find   4.08 ns/op   21.30 B/entry
-ifc      3500000    std            build  25.93 ns/id  find  36.12 ns/op   45.64 B/entry
-ifc      3500000    map            build  27.77 ns/id  find  33.25 ns/op   27.56 B/entry
-ifc      3500000    vector         build   6.56 ns/id  find  12.01 ns/op   28.76 B/entry
-ifc      3500000    paged12        build   1.62 ns/id  find  12.87 ns/op   14.24 B/entry
-ifc      3500000    packed         build   7.29 ns/id  find  14.26 ns/op    9.46 B/entry
-ifc      3500000    id_map         build   5.50 ns/id  find  13.82 ns/op   14.31 B/entry
-ifc      3500000    id_map_pairs   build   5.80 ns/id  find  15.41 ns/op   21.31 B/entry
-churn    16000      std            op  33.24 ns     42.34 B/live entry
-churn    16000      map            op  13.01 ns     23.55 B/live entry
-churn    16000      vector         op   5.74 ns    196.61 B/live entry
-churn    16000      id_map         op  10.44 ns     25.97 B/live entry
-churn    16000      id_map_pairs   op  11.02 ns     38.45 B/live entry
-churn    100000     std            op  48.06 ns     45.83 B/live entry
-churn    100000     map            op  20.74 ns     22.94 B/live entry
-churn    100000     vector         op   7.46 ns    251.66 B/live entry
-churn    100000     id_map         op  11.77 ns     26.66 B/live entry
-churn    100000     id_map_pairs   op  12.62 ns     39.23 B/live entry
-churn    1000000    std            op 153.05 ns     43.58 B/live entry
-churn    1000000    map            op  41.78 ns     24.12 B/live entry
-churn    1000000    vector         op  18.40 ns    201.33 B/live entry
-churn    1000000    id_map         op  15.87 ns     26.67 B/live entry
-churn    1000000    id_map_pairs   op  17.25 ns     39.20 B/live entry
-sparse   16000      std            build  15.08 ns/id  find   4.38 ns/op   42.36 B/entry
-sparse   16000      map            build   7.23 ns/id  find   3.80 ns/op   23.55 B/entry
-sparse   16000      vector         build  16.01 ns/id  find   2.37 ns/op  319.49 B/entry
-sparse   16000      paged12        build   1.51 ns/id  find   2.60 ns/op  131.10 B/entry
-sparse   16000      packed         build   7.28 ns/id  find   4.07 ns/op   12.95 B/entry
-sparse   16000      id_map         build   9.68 ns/id  find   4.19 ns/op   11.26 B/entry
-sparse   16000      id_map_pairs   build  11.39 ns/id  find   4.52 ns/op   15.89 B/entry
-sparse   100000     std            build  18.61 ns/id  find  10.49 ns/op   45.83 B/entry
-sparse   100000     map            build   6.63 ns/id  find   5.56 ns/op   22.94 B/entry
-sparse   100000     vector         build  17.15 ns/id  find   3.60 ns/op  204.47 B/entry
-sparse   100000     paged12        build   1.48 ns/id  find   3.08 ns/op  130.23 B/entry
-sparse   100000     packed         build   7.28 ns/id  find   5.83 ns/op   14.22 B/entry
-sparse   100000     id_map         build   9.52 ns/id  find   5.93 ns/op   11.83 B/entry
-sparse   100000     id_map_pairs   build  11.44 ns/id  find   6.45 ns/op   16.46 B/entry
-sparse   1000000    std            build  37.44 ns/id  find  27.15 ns/op   43.58 B/entry
-sparse   1000000    map            build  10.78 ns/id  find  10.90 ns/op   24.12 B/entry
-sparse   1000000    vector         build  34.81 ns/id  find  13.69 ns/op  327.16 B/entry
-sparse   1000000    paged12        build   3.22 ns/id  find  15.13 ns/op  130.12 B/entry
-sparse   1000000    packed         build   7.65 ns/id  find   7.95 ns/op   13.19 B/entry
-sparse   1000000    id_map         build   9.74 ns/id  find   8.50 ns/op   11.90 B/entry
-sparse   1000000    id_map_pairs   build  11.84 ns/id  find   9.68 ns/op   16.52 B/entry
+dense    16000      id_map_pairs   build   5.41 ns/id  find   1.99 ns/op   12.29 B/entry
+dense    100000     std            build  13.25 ns/id  find   3.98 ns/op   45.83 B/entry
+dense    100000     map            build   6.69 ns/id  find   5.14 ns/op   22.94 B/entry
+dense    100000     vector         build   1.50 ns/id  find   1.66 ns/op   15.73 B/entry
+dense    100000     paged12        build   1.26 ns/id  find   1.92 ns/op    8.32 B/entry
+dense    100000     packed         build   7.06 ns/id  find   3.95 ns/op    8.39 B/entry
+dense    100000     id_map         build   5.17 ns/id  find   1.98 ns/op    8.10 B/entry
+dense    100000     id_map_pairs   build   5.43 ns/id  find   2.33 ns/op   12.11 B/entry
+dense    1000000    std            build  14.01 ns/id  find  15.04 ns/op   43.58 B/entry
+dense    1000000    map            build  10.87 ns/id  find  10.00 ns/op   24.12 B/entry
+dense    1000000    vector         build   1.41 ns/id  find   2.28 ns/op   12.58 B/entry
+dense    1000000    paged12        build   1.27 ns/id  find   2.64 ns/op    8.16 B/entry
+dense    1000000    packed         build   7.14 ns/id  find   5.98 ns/op    8.32 B/entry
+dense    1000000    id_map         build   5.16 ns/id  find   2.52 ns/op    8.17 B/entry
+dense    1000000    id_map_pairs   build   5.43 ns/id  find   2.80 ns/op   12.17 B/entry
+dense    3500000    std            build  14.86 ns/id  find  26.09 ns/op   45.64 B/entry
+dense    3500000    map            build  25.10 ns/id  find  32.95 ns/op   27.56 B/entry
+dense    3500000    vector         build   2.06 ns/id  find   9.25 ns/op   14.38 B/entry
+dense    3500000    paged12        build   1.29 ns/id  find   6.12 ns/op    8.14 B/entry
+dense    3500000    packed         build   7.24 ns/id  find  13.26 ns/op    8.36 B/entry
+dense    3500000    id_map         build   5.23 ns/id  find   6.59 ns/op    8.17 B/entry
+dense    3500000    id_map_pairs   build   5.55 ns/id  find  11.34 ns/op   12.17 B/entry
+ifc      16000      std            build  13.18 ns/id  find   5.22 ns/op   42.36 B/entry
+ifc      16000      map            build   7.06 ns/id  find   3.77 ns/op   23.55 B/entry
+ifc      16000      vector         build   1.95 ns/id  find   1.55 ns/op   24.58 B/entry
+ifc      16000      paged12        build   1.56 ns/id  find   1.93 ns/op   14.57 B/entry
+ifc      16000      packed         build   6.98 ns/id  find   3.71 ns/op    9.34 B/entry
+ifc      16000      id_map         build   5.38 ns/id  find   2.21 ns/op   14.34 B/entry
+ifc      16000      id_map_pairs   build   5.49 ns/id  find   2.29 ns/op   21.51 B/entry
+ifc      100000     std            build  14.78 ns/id  find   5.10 ns/op   45.83 B/entry
+ifc      100000     map            build   6.90 ns/id  find   5.51 ns/op   22.94 B/entry
+ifc      100000     vector         build   2.20 ns/id  find   2.19 ns/op   31.46 B/entry
+ifc      100000     paged12        build   1.55 ns/id  find   2.41 ns/op   14.32 B/entry
+ifc      100000     packed         build   7.00 ns/id  find   4.29 ns/op    9.51 B/entry
+ifc      100000     id_map         build   5.41 ns/id  find   2.65 ns/op   14.30 B/entry
+ifc      100000     id_map_pairs   build   5.48 ns/id  find   2.80 ns/op   21.35 B/entry
+ifc      1000000    std            build  17.74 ns/id  find  21.32 ns/op   43.58 B/entry
+ifc      1000000    map            build  12.20 ns/id  find  12.31 ns/op   24.12 B/entry
+ifc      1000000    vector         build   2.74 ns/id  find   6.90 ns/op   25.17 B/entry
+ifc      1000000    paged12        build   1.55 ns/id  find   2.95 ns/op   14.25 B/entry
+ifc      1000000    packed         build   7.46 ns/id  find   6.79 ns/op    9.38 B/entry
+ifc      1000000    id_map         build   5.44 ns/id  find   3.32 ns/op   14.30 B/entry
+ifc      1000000    id_map_pairs   build   5.58 ns/id  find   4.32 ns/op   21.30 B/entry
+ifc      3500000    std            build  26.15 ns/id  find  35.74 ns/op   45.64 B/entry
+ifc      3500000    map            build  29.03 ns/id  find  37.82 ns/op   27.56 B/entry
+ifc      3500000    vector         build   3.46 ns/id  find  11.90 ns/op   28.76 B/entry
+ifc      3500000    paged12        build   1.62 ns/id  find  12.99 ns/op   14.24 B/entry
+ifc      3500000    packed         build   8.10 ns/id  find  18.85 ns/op    9.46 B/entry
+ifc      3500000    id_map         build   5.56 ns/id  find  15.14 ns/op   14.31 B/entry
+ifc      3500000    id_map_pairs   build   5.91 ns/id  find  16.99 ns/op   21.31 B/entry
+churn    16000      std            op  31.58 ns     42.34 B/live entry
+churn    16000      map            op  13.09 ns     23.55 B/live entry
+churn    16000      vector         op   5.57 ns    196.61 B/live entry
+churn    16000      id_map         op  10.56 ns     26.01 B/live entry
+churn    16000      id_map_pairs   op  11.21 ns     38.50 B/live entry
+churn    100000     std            op  48.77 ns     45.83 B/live entry
+churn    100000     map            op  21.15 ns     22.94 B/live entry
+churn    100000     vector         op   9.48 ns    251.66 B/live entry
+churn    100000     id_map         op  11.89 ns     26.68 B/live entry
+churn    100000     id_map_pairs   op  12.78 ns     39.23 B/live entry
+churn    1000000    std            op 150.03 ns     43.58 B/live entry
+churn    1000000    map            op  39.44 ns     24.12 B/live entry
+churn    1000000    vector         op  18.09 ns    201.33 B/live entry
+churn    1000000    id_map         op  16.04 ns     26.67 B/live entry
+churn    1000000    id_map_pairs   op  17.23 ns     39.20 B/live entry
+sparse   16000      std            build  15.20 ns/id  find   4.13 ns/op   42.36 B/entry
+sparse   16000      map            build   7.14 ns/id  find   3.84 ns/op   23.55 B/entry
+sparse   16000      vector         build  17.85 ns/id  find   2.36 ns/op  319.49 B/entry
+sparse   16000      paged12        build   1.54 ns/id  find   2.54 ns/op  131.10 B/entry
+sparse   16000      packed         build   7.31 ns/id  find   4.14 ns/op   12.95 B/entry
+sparse   16000      id_map         build  10.62 ns/id  find   4.47 ns/op   11.26 B/entry
+sparse   16000      id_map_pairs   build  10.18 ns/id  find   4.61 ns/op   15.89 B/entry
+sparse   100000     std            build  18.59 ns/id  find  10.40 ns/op   45.83 B/entry
+sparse   100000     map            build   6.81 ns/id  find   5.56 ns/op   22.94 B/entry
+sparse   100000     vector         build  16.61 ns/id  find   3.61 ns/op  204.47 B/entry
+sparse   100000     paged12        build   1.50 ns/id  find   3.00 ns/op  130.23 B/entry
+sparse   100000     packed         build   7.32 ns/id  find   6.12 ns/op   14.22 B/entry
+sparse   100000     id_map         build  10.42 ns/id  find   6.06 ns/op   11.83 B/entry
+sparse   100000     id_map_pairs   build  10.22 ns/id  find   6.42 ns/op   16.46 B/entry
+sparse   1000000    std            build  50.76 ns/id  find  38.98 ns/op   43.58 B/entry
+sparse   1000000    map            build  11.47 ns/id  find  10.44 ns/op   24.12 B/entry
+sparse   1000000    vector         build  34.70 ns/id  find  13.63 ns/op  327.16 B/entry
+sparse   1000000    paged12        build   3.32 ns/id  find  15.53 ns/op  130.12 B/entry
+sparse   1000000    packed         build   7.88 ns/id  find   8.26 ns/op   13.19 B/entry
+sparse   1000000    id_map         build  10.99 ns/id  find   8.87 ns/op   11.90 B/entry
+sparse   1000000    id_map_pairs   build  10.70 ns/id  find   9.52 ns/op   16.52 B/entry

@@ -1,0 +1,148 @@
+== clang++ pass 1
+dense    1000       map            build   7.32 ns/id  find   3.26 ns/op   23.58 B/entry
+dense    1000       untagged       build   4.97 ns/id  find   1.38 ns/op    8.21 B/entry
+dense    1000       tagged         build   4.92 ns/id  find   1.38 ns/op    8.21 B/entry
+dense    100000     map            build   7.22 ns/id  find   4.99 ns/op   22.94 B/entry
+dense    100000     untagged       build   4.19 ns/id  find   1.69 ns/op    8.10 B/entry
+dense    100000     tagged         build   4.32 ns/id  find   1.71 ns/op    8.10 B/entry
+dense    1000000    map            build  10.92 ns/id  find  11.64 ns/op   24.12 B/entry
+dense    1000000    untagged       build   4.20 ns/id  find   2.36 ns/op    8.17 B/entry
+dense    1000000    tagged         build   4.21 ns/id  find   2.36 ns/op    8.17 B/entry
+dense    3500000    map            build  25.52 ns/id  find  31.56 ns/op   27.56 B/entry
+dense    3500000    untagged       build   4.05 ns/id  find   5.83 ns/op    8.17 B/entry
+dense    3500000    tagged         build   4.18 ns/id  find   5.73 ns/op    8.17 B/entry
+ifc      100000     map            build   6.86 ns/id  find   5.09 ns/op   22.94 B/entry
+ifc      100000     untagged       build   4.11 ns/id  find   2.20 ns/op   14.30 B/entry
+ifc      100000     tagged         build   4.24 ns/id  find   2.22 ns/op   14.29 B/entry
+ifc      1000000    map            build  12.53 ns/id  find  12.72 ns/op   24.12 B/entry
+ifc      1000000    untagged       build   4.22 ns/id  find   2.75 ns/op   14.30 B/entry
+ifc      1000000    tagged         build   4.36 ns/id  find   3.53 ns/op   14.29 B/entry
+ifc      3500000    map            build  27.50 ns/id  find  32.69 ns/op   27.56 B/entry
+ifc      3500000    untagged       build   4.40 ns/id  find  11.97 ns/op   14.31 B/entry
+ifc      3500000    tagged         build   4.48 ns/id  find  11.97 ns/op   14.30 B/entry
+sparse   100000     map            build   6.48 ns/id  find   5.17 ns/op   22.94 B/entry
+sparse   100000     untagged       build   8.07 ns/id  find   5.38 ns/op   11.83 B/entry
+sparse   100000     tagged         build   8.14 ns/id  find   5.30 ns/op   11.79 B/entry
+sparse   1000000    map            build  10.07 ns/id  find  10.03 ns/op   24.12 B/entry
+sparse   1000000    untagged       build   8.32 ns/id  find   7.94 ns/op   11.90 B/entry
+sparse   1000000    tagged         build   8.36 ns/id  find   7.81 ns/op   11.87 B/entry
+churn    100000     map            op  21.15 ns     22.94 B/live entry
+churn    100000     untagged       op  16.65 ns     26.67 B/live entry
+churn    100000     tagged         op  15.39 ns     26.64 B/live entry
+churn    1000000    map            op  46.07 ns     24.12 B/live entry
+churn    1000000    untagged       op  21.01 ns     26.67 B/live entry
+churn    1000000    tagged         op  20.38 ns     26.64 B/live entry
+stray    1001       map                  0.02 MB
+stray    1001       untagged            23.45 MB
+stray    1001       tagged              15.63 MB
+== g++ pass 1
+dense    1000       map            build   7.47 ns/id  find   3.12 ns/op   23.58 B/entry
+dense    1000       untagged       build   5.80 ns/id  find   1.89 ns/op    8.21 B/entry
+dense    1000       tagged         build   5.74 ns/id  find   1.82 ns/op    8.21 B/entry
+dense    100000     map            build   6.79 ns/id  find   5.02 ns/op   22.94 B/entry
+dense    100000     untagged       build   5.19 ns/id  find   2.10 ns/op    8.10 B/entry
+dense    100000     tagged         build   5.16 ns/id  find   2.16 ns/op    8.10 B/entry
+dense    1000000    map            build  10.12 ns/id  find   9.80 ns/op   24.12 B/entry
+dense    1000000    untagged       build   5.17 ns/id  find   2.62 ns/op    8.17 B/entry
+dense    1000000    tagged         build   5.14 ns/id  find   2.74 ns/op    8.17 B/entry
+dense    3500000    map            build  26.69 ns/id  find  32.42 ns/op   27.56 B/entry
+dense    3500000    untagged       build   5.21 ns/id  find   7.26 ns/op    8.17 B/entry
+dense    3500000    tagged         build   5.18 ns/id  find   9.35 ns/op    8.17 B/entry
+ifc      100000     map            build   7.23 ns/id  find   5.46 ns/op   22.94 B/entry
+ifc      100000     untagged       build   5.39 ns/id  find   2.66 ns/op   14.30 B/entry
+ifc      100000     tagged         build   5.18 ns/id  find   2.64 ns/op   14.29 B/entry
+ifc      1000000    map            build  12.59 ns/id  find  20.70 ns/op   24.12 B/entry
+ifc      1000000    untagged       build   5.48 ns/id  find   3.94 ns/op   14.30 B/entry
+ifc      1000000    tagged         build   5.28 ns/id  find   4.32 ns/op   14.29 B/entry
+ifc      3500000    map            build  31.15 ns/id  find  37.27 ns/op   27.56 B/entry
+ifc      3500000    untagged       build   5.55 ns/id  find  13.25 ns/op   14.31 B/entry
+ifc      3500000    tagged         build   5.34 ns/id  find  13.65 ns/op   14.30 B/entry
+sparse   100000     map            build   6.84 ns/id  find   5.50 ns/op   22.94 B/entry
+sparse   100000     untagged       build  10.32 ns/id  find   5.87 ns/op   11.83 B/entry
+sparse   100000     tagged         build   9.89 ns/id  find   6.02 ns/op   11.79 B/entry
+sparse   1000000    map            build  10.33 ns/id  find  10.51 ns/op   24.12 B/entry
+sparse   1000000    untagged       build  10.80 ns/id  find   8.45 ns/op   11.90 B/entry
+sparse   1000000    tagged         build  10.48 ns/id  find   8.73 ns/op   11.87 B/entry
+churn    100000     map            op  21.04 ns     22.94 B/live entry
+churn    100000     untagged       op  11.86 ns     26.67 B/live entry
+churn    100000     tagged         op  11.74 ns     26.64 B/live entry
+churn    1000000    map            op  39.74 ns     24.12 B/live entry
+churn    1000000    untagged       op  16.12 ns     26.67 B/live entry
+churn    1000000    tagged         op  15.61 ns     26.64 B/live entry
+stray    1001       map                  0.02 MB
+stray    1001       untagged            23.45 MB
+stray    1001       tagged              15.63 MB
+== clang++ pass 2
+dense    1000       map            build   6.52 ns/id  find   3.03 ns/op   23.58 B/entry
+dense    1000       untagged       build   4.62 ns/id  find   1.28 ns/op    8.21 B/entry
+dense    1000       tagged         build   4.57 ns/id  find   1.28 ns/op    8.21 B/entry
+dense    100000     map            build   6.62 ns/id  find   4.54 ns/op   22.94 B/entry
+dense    100000     untagged       build   3.90 ns/id  find   1.62 ns/op    8.10 B/entry
+dense    100000     tagged         build   3.93 ns/id  find   1.61 ns/op    8.10 B/entry
+dense    1000000    map            build  10.42 ns/id  find   9.66 ns/op   24.12 B/entry
+dense    1000000    untagged       build   3.95 ns/id  find   2.23 ns/op    8.17 B/entry
+dense    1000000    tagged         build   3.97 ns/id  find   2.23 ns/op    8.17 B/entry
+dense    3500000    map            build  25.50 ns/id  find  31.92 ns/op   27.56 B/entry
+dense    3500000    untagged       build   4.07 ns/id  find   5.83 ns/op    8.17 B/entry
+dense    3500000    tagged         build   4.05 ns/id  find   6.02 ns/op    8.17 B/entry
+ifc      100000     map            build   6.83 ns/id  find   5.07 ns/op   22.94 B/entry
+ifc      100000     untagged       build   4.13 ns/id  find   2.19 ns/op   14.30 B/entry
+ifc      100000     tagged         build   4.24 ns/id  find   2.21 ns/op   14.29 B/entry
+ifc      1000000    map            build  11.40 ns/id  find  10.92 ns/op   24.12 B/entry
+ifc      1000000    untagged       build   4.19 ns/id  find   2.74 ns/op   14.30 B/entry
+ifc      1000000    tagged         build   4.30 ns/id  find   2.82 ns/op   14.29 B/entry
+ifc      3500000    map            build  27.55 ns/id  find  32.35 ns/op   27.56 B/entry
+ifc      3500000    untagged       build   4.42 ns/id  find  11.79 ns/op   14.31 B/entry
+ifc      3500000    tagged         build   4.50 ns/id  find  11.99 ns/op   14.30 B/entry
+sparse   100000     map            build   6.63 ns/id  find   5.17 ns/op   22.94 B/entry
+sparse   100000     untagged       build   8.11 ns/id  find   5.42 ns/op   11.83 B/entry
+sparse   100000     tagged         build   8.10 ns/id  find   5.38 ns/op   11.79 B/entry
+sparse   1000000    map            build  10.09 ns/id  find   9.45 ns/op   24.12 B/entry
+sparse   1000000    untagged       build   8.32 ns/id  find   8.01 ns/op   11.90 B/entry
+sparse   1000000    tagged         build   8.38 ns/id  find   7.84 ns/op   11.87 B/entry
+churn    100000     map            op  21.20 ns     22.94 B/live entry
+churn    100000     untagged       op  16.58 ns     26.67 B/live entry
+churn    100000     tagged         op  15.29 ns     26.64 B/live entry
+churn    1000000    map            op  41.62 ns     24.12 B/live entry
+churn    1000000    untagged       op  20.88 ns     26.67 B/live entry
+churn    1000000    tagged         op  20.34 ns     26.64 B/live entry
+stray    1001       map                  0.02 MB
+stray    1001       untagged            23.45 MB
+stray    1001       tagged              15.63 MB
+== g++ pass 2
+dense    1000       map            build   7.25 ns/id  find   3.12 ns/op   23.58 B/entry
+dense    1000       untagged       build   5.77 ns/id  find   1.88 ns/op    8.21 B/entry
+dense    1000       tagged         build   5.75 ns/id  find   1.82 ns/op    8.21 B/entry
+dense    100000     map            build   6.79 ns/id  find   4.98 ns/op   22.94 B/entry
+dense    100000     untagged       build   5.16 ns/id  find   2.06 ns/op    8.10 B/entry
+dense    100000     tagged         build   5.14 ns/id  find   2.09 ns/op    8.10 B/entry
+dense    1000000    map            build  10.12 ns/id  find   9.42 ns/op   24.12 B/entry
+dense    1000000    untagged       build   5.21 ns/id  find   2.60 ns/op    8.17 B/entry
+dense    1000000    tagged         build   5.14 ns/id  find   2.74 ns/op    8.17 B/entry
+dense    3500000    map            build  33.24 ns/id  find  36.11 ns/op   27.56 B/entry
+dense    3500000    untagged       build   5.20 ns/id  find   7.03 ns/op    8.17 B/entry
+dense    3500000    tagged         build   5.17 ns/id  find   8.03 ns/op    8.17 B/entry
+ifc      100000     map            build   7.08 ns/id  find   5.40 ns/op   22.94 B/entry
+ifc      100000     untagged       build   5.36 ns/id  find   2.66 ns/op   14.30 B/entry
+ifc      100000     tagged         build   5.21 ns/id  find   2.62 ns/op   14.29 B/entry
+ifc      1000000    map            build  11.53 ns/id  find  11.57 ns/op   24.12 B/entry
+ifc      1000000    untagged       build   5.41 ns/id  find   3.30 ns/op   14.30 B/entry
+ifc      1000000    tagged         build   5.30 ns/id  find   3.34 ns/op   14.29 B/entry
+ifc      3500000    map            build  29.31 ns/id  find  37.58 ns/op   27.56 B/entry
+ifc      3500000    untagged       build   5.55 ns/id  find  13.27 ns/op   14.31 B/entry
+ifc      3500000    tagged         build   5.34 ns/id  find  13.49 ns/op   14.30 B/entry
+sparse   100000     map            build   6.80 ns/id  find   5.49 ns/op   22.94 B/entry
+sparse   100000     untagged       build  10.36 ns/id  find   5.83 ns/op   11.83 B/entry
+sparse   100000     tagged         build  10.00 ns/id  find   5.98 ns/op   11.79 B/entry
+sparse   1000000    map            build  10.91 ns/id  find  11.25 ns/op   24.12 B/entry
+sparse   1000000    untagged       build  10.51 ns/id  find   8.44 ns/op   11.90 B/entry
+sparse   1000000    tagged         build  10.10 ns/id  find   8.69 ns/op   11.87 B/entry
+churn    100000     map            op  21.13 ns     22.94 B/live entry
+churn    100000     untagged       op  11.89 ns     26.67 B/live entry
+churn    100000     tagged         op  11.69 ns     26.64 B/live entry
+churn    1000000    map            op  40.60 ns     24.12 B/live entry
+churn    1000000    untagged       op  16.12 ns     26.67 B/live entry
+churn    1000000    tagged         op  15.60 ns     26.64 B/live entry
+stray    1001       map                  0.02 MB
+stray    1001       untagged            23.45 MB
+stray    1001       tagged              15.63 MB

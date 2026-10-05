@@ -106,7 +106,7 @@ struct rng {
     }
 };
 
-enum class pattern { dense, ifc, sparse };
+enum class pattern { dense, ifc, sparse, scatter };
 auto id_of(pattern p, std::uint64_t i) -> std::uint64_t {
     switch (p) {
     case pattern::dense:
@@ -115,6 +115,8 @@ auto id_of(pattern p, std::uint64_t i) -> std::uint64_t {
         return (i * 7) / 4;
     case pattern::sparse:
         return i * 16 + (((i * 0x9E3779B97F4A7C15ULL) >> 60U) & 15U);
+    case pattern::scatter: // one ID per 4096: every 4096-ID page holds a single entry
+        return i * 4096 + (((i * 0x9E3779B97F4A7C15ULL) >> 52U) & 4095U);
     }
     return 0;
 }
@@ -148,7 +150,10 @@ void cell(char const* name, pattern p, char const* pname, std::size_t n) {
         auto const t2 = now();
         for (int q = 0; q < 1000000; ++q) {
             auto const i = ((r() >> 32U) * n) >> 32U;
-            sum += lookup(*m, id_of(p, i))->a;
+            // use the miss: dereferencing unchecked lets the compiler assume a hit and delete the
+            // presence test, which clang did for id_map's bitmap read (9 of 44 cycles per lookup)
+            auto const* v = lookup(*m, id_of(p, i));
+            sum += v != nullptr ? v->a : 7;
         }
         auto const t3 = now();
         sink = sink + sum;
@@ -239,23 +244,37 @@ void all(pattern p, char const* pname, std::size_t n) {
     cell<idm::id_map<K, value, 12, true>>("id_map_pairs", p, pname, n);
 }
 
-// id_map's knobs (#379): the default, each knob alone, all three
+// id_map's knobs (#379). The first round (one allocation per direct page, 4x growth, back to packed
+// at a quarter) is in data/tune.txt, the tagged directory entry in data/tag.txt; this round measures
+// the page metadata: direct pages without `before` (slim) and pages of 1024 IDs instead of 4096.
 template <class K>
 void tune_all(pattern p, char const* pname, std::size_t n) {
     cell<ankerl::unordered_dense::map<K, value>>("map", p, pname, n);
-    cell<idm::id_map<K, value, 12, false, idm::tune<false, 1, 8>>>("default", p, pname, n);
-    cell<idm::id_map<K, value, 12, false, idm::tune<true, 1, 8>>>("one_alloc", p, pname, n);
-    cell<idm::id_map<K, value, 12, false, idm::tune<false, 2, 8>>>("grow4", p, pname, n);
-    cell<idm::id_map<K, value, 12, false, idm::tune<true, 2, 8>>>("one+grow4", p, pname, n);
+    cell<idm::id_map<K, value, 12, false, idm::tune<>>>("default", p, pname, n);
+    cell<idm::id_map<K, value, 12, false, idm::tune<false, 1, 8, false, true>>>("slim", p, pname, n);
+    cell<idm::id_map<K, value, 10, false, idm::tune<>>>("p10", p, pname, n);
+    cell<idm::id_map<K, value, 10, false, idm::tune<false, 1, 8, false, true>>>("p10_slim", p, pname, n);
 }
 template <class K>
 void tune_churn(std::size_t n) {
     churn_cell<ankerl::unordered_dense::map<K, value>>("map", n);
-    churn_cell<idm::id_map<K, value, 12, false, idm::tune<false, 1, 8>>>("default", n);
-    churn_cell<idm::id_map<K, value, 12, false, idm::tune<true, 1, 8>>>("one_alloc", n);
-    churn_cell<idm::id_map<K, value, 12, false, idm::tune<false, 2, 8>>>("grow4", n);
-    churn_cell<idm::id_map<K, value, 12, false, idm::tune<false, 1, 4>>>("back4", n);
-    churn_cell<idm::id_map<K, value, 12, false, idm::tune<true, 2, 4>>>("all", n);
+    churn_cell<idm::id_map<K, value, 12, false, idm::tune<>>>("default", n);
+    churn_cell<idm::id_map<K, value, 12, false, idm::tune<false, 1, 8, false, true>>>("slim", n);
+    churn_cell<idm::id_map<K, value, 10, false, idm::tune<>>>("p10", n);
+    churn_cell<idm::id_map<K, value, 10, false, idm::tune<false, 1, 8, false, true>>>("p10_slim", n);
+}
+// the directory's worst case: 1000 dense IDs and one ID near 4 billion
+template <class M>
+void stray_cell(char const* name) {
+    auto const h0 = heap_bytes();
+    auto* m = new M();
+    for (std::uint32_t i = 0; i < 1000; ++i) {
+        m->emplace(i, value{i, 1});
+    }
+    m->emplace(4000000000U, value{0, 1});
+    auto const h1 = heap_bytes();
+    std::printf("stray    1001       %-14s %10.2f MB\n", name, static_cast<double>(h1 - h0) / 1e6);
+    delete m;
 }
 
 } // namespace
@@ -284,6 +303,11 @@ auto main(int argc, char** argv) -> int {
             tune_all<std::uint32_t>(pattern::sparse, "sparse", n);
         for (std::size_t n : {100000, 1000000})
             tune_churn<std::uint32_t>(n);
+        for (std::size_t n : {16000, 100000, 1000000})
+            tune_all<std::uint32_t>(pattern::scatter, "scatter", n);
+        stray_cell<ankerl::unordered_dense::map<std::uint32_t, value>>("map");
+        stray_cell<idm::id_map<std::uint32_t, value, 12, false, idm::tune<>>>("default");
+        stray_cell<idm::id_map<std::uint32_t, value, 10, false, idm::tune<>>>("p10");
         return 0;
     }
     if (want("churn")) {

@@ -1,0 +1,296 @@
+== clang++ pass 1
+dense    1000       map            build   7.06 ns/id  find   3.12 ns/op   23.58 B/entry
+dense    1000       default        build   4.95 ns/id  find   2.23 ns/op    8.21 B/entry
+dense    1000       slim           build   4.86 ns/id  find   2.44 ns/op    8.21 B/entry
+dense    1000       p10            build   4.78 ns/id  find   2.44 ns/op    8.21 B/entry
+dense    1000       p10_slim       build   4.50 ns/id  find   2.44 ns/op    8.21 B/entry
+dense    100000     map            build   7.21 ns/id  find   5.34 ns/op   22.94 B/entry
+dense    100000     default        build   4.24 ns/id  find   2.56 ns/op    8.10 B/entry
+dense    100000     slim           build   4.20 ns/id  find   2.75 ns/op    8.09 B/entry
+dense    100000     p10            build   4.53 ns/id  find   2.73 ns/op    8.22 B/entry
+dense    100000     p10_slim       build   4.54 ns/id  find   2.74 ns/op    8.19 B/entry
+dense    1000000    map            build  11.61 ns/id  find   9.91 ns/op   24.12 B/entry
+dense    1000000    default        build   4.20 ns/id  find   3.24 ns/op    8.16 B/entry
+dense    1000000    slim           build   4.22 ns/id  find   3.46 ns/op    8.14 B/entry
+dense    1000000    p10            build   4.54 ns/id  find   3.52 ns/op    8.21 B/entry
+dense    1000000    p10_slim       build   4.51 ns/id  find   3.52 ns/op    8.18 B/entry
+dense    3500000    map            build  26.25 ns/id  find  32.33 ns/op   27.56 B/entry
+dense    3500000    default        build   4.10 ns/id  find   7.68 ns/op    8.17 B/entry
+dense    3500000    slim           build   4.10 ns/id  find   7.96 ns/op    8.14 B/entry
+dense    3500000    p10            build   4.40 ns/id  find  10.29 ns/op    8.21 B/entry
+dense    3500000    p10_slim       build   4.39 ns/id  find   8.02 ns/op    8.18 B/entry
+ifc      100000     map            build   6.90 ns/id  find   5.19 ns/op   22.94 B/entry
+ifc      100000     default        build   4.14 ns/id  find   2.94 ns/op   14.30 B/entry
+ifc      100000     slim           build   4.13 ns/id  find   3.15 ns/op   14.26 B/entry
+ifc      100000     p10            build   5.13 ns/id  find   3.24 ns/op   14.37 B/entry
+ifc      100000     p10_slim       build   5.09 ns/id  find   3.23 ns/op   14.32 B/entry
+ifc      1000000    map            build  11.19 ns/id  find  11.20 ns/op   24.12 B/entry
+ifc      1000000    default        build   4.24 ns/id  find   3.80 ns/op   14.29 B/entry
+ifc      1000000    slim           build   4.18 ns/id  find   4.06 ns/op   14.24 B/entry
+ifc      1000000    p10            build   5.18 ns/id  find   4.37 ns/op   14.37 B/entry
+ifc      1000000    p10_slim       build   5.13 ns/id  find   4.27 ns/op   14.32 B/entry
+ifc      3500000    map            build  32.47 ns/id  find  36.79 ns/op   27.56 B/entry
+ifc      3500000    default        build   4.41 ns/id  find  14.98 ns/op   14.30 B/entry
+ifc      3500000    slim           build   4.39 ns/id  find  15.82 ns/op   14.25 B/entry
+ifc      3500000    p10            build   5.01 ns/id  find  17.93 ns/op   14.38 B/entry
+ifc      3500000    p10_slim       build   5.01 ns/id  find  17.52 ns/op   14.33 B/entry
+sparse   100000     map            build   6.81 ns/id  find   5.43 ns/op   22.94 B/entry
+sparse   100000     default        build   8.20 ns/id  find   6.08 ns/op   11.77 B/entry
+sparse   100000     slim           build   8.40 ns/id  find   6.29 ns/op   11.77 B/entry
+sparse   100000     p10            build   8.70 ns/id  find   6.59 ns/op   13.11 B/entry
+sparse   100000     p10_slim       build   8.79 ns/id  find   6.58 ns/op   13.11 B/entry
+sparse   1000000    map            build  10.24 ns/id  find  10.78 ns/op   24.12 B/entry
+sparse   1000000    default        build   8.43 ns/id  find   8.97 ns/op   11.84 B/entry
+sparse   1000000    slim           build   8.59 ns/id  find   9.29 ns/op   11.84 B/entry
+sparse   1000000    p10            build   8.82 ns/id  find  10.18 ns/op   13.13 B/entry
+sparse   1000000    p10_slim       build   8.90 ns/id  find  10.24 ns/op   13.13 B/entry
+churn    100000     map            op  21.22 ns     22.94 B/live entry
+churn    100000     default        op  15.00 ns     26.64 B/live entry
+churn    100000     slim           op  15.12 ns     26.55 B/live entry
+churn    100000     p10            op  12.92 ns     25.37 B/live entry
+churn    100000     p10_slim       op  13.28 ns     25.29 B/live entry
+churn    1000000    map            op  45.30 ns     24.12 B/live entry
+churn    1000000    default        op  19.92 ns     26.64 B/live entry
+churn    1000000    slim           op  20.02 ns     26.57 B/live entry
+churn    1000000    p10            op  17.93 ns     25.11 B/live entry
+churn    1000000    p10_slim       op  17.83 ns     25.04 B/live entry
+scatter  16000      map            build   7.17 ns/id  find   3.85 ns/op   23.55 B/entry
+scatter  16000      default        build  29.30 ns/id  find   9.32 ns/op  727.88 B/entry
+scatter  16000      slim           build  28.00 ns/id  find   9.61 ns/op  727.88 B/entry
+scatter  16000      p10            build  25.34 ns/id  find   9.01 ns/op  328.28 B/entry
+scatter  16000      p10_slim       build  25.37 ns/id  find   9.01 ns/op  328.28 B/entry
+scatter  100000     map            build   7.11 ns/id  find   5.76 ns/op   22.94 B/entry
+scatter  100000     default        build  34.12 ns/id  find  24.09 ns/op  735.35 B/entry
+scatter  100000     slim           build  32.77 ns/id  find  24.24 ns/op  735.35 B/entry
+scatter  100000     p10            build  31.24 ns/id  find  21.46 ns/op  357.69 B/entry
+scatter  100000     p10_slim       build  31.12 ns/id  find  21.83 ns/op  357.69 B/entry
+scatter  1000000    map            build  12.40 ns/id  find  10.87 ns/op   24.12 B/entry
+scatter  1000000    default        build  33.30 ns/id  find  62.98 ns/op  729.16 B/entry
+scatter  1000000    slim           build  31.96 ns/id  find  63.95 ns/op  729.16 B/entry
+scatter  1000000    p10            build  31.29 ns/id  find  58.93 ns/op  330.98 B/entry
+scatter  1000000    p10_slim       build  31.40 ns/id  find  59.62 ns/op  330.98 B/entry
+stray    1001       map                  0.02 MB
+stray    1001       default             23.45 MB
+stray    1001       p10                 93.76 MB
+== g++ pass 1
+dense    1000       map            build   7.33 ns/id  find   3.21 ns/op   23.58 B/entry
+dense    1000       default        build   5.84 ns/id  find   1.90 ns/op    8.21 B/entry
+dense    1000       slim           build   5.60 ns/id  find   1.88 ns/op    8.21 B/entry
+dense    1000       p10            build   5.33 ns/id  find   1.96 ns/op    8.21 B/entry
+dense    1000       p10_slim       build   5.48 ns/id  find   1.94 ns/op    8.21 B/entry
+dense    100000     map            build   6.80 ns/id  find   5.13 ns/op   22.94 B/entry
+dense    100000     default        build   5.17 ns/id  find   2.07 ns/op    8.10 B/entry
+dense    100000     slim           build   5.17 ns/id  find   2.09 ns/op    8.09 B/entry
+dense    100000     p10            build   5.25 ns/id  find   2.18 ns/op    8.22 B/entry
+dense    100000     p10_slim       build   5.47 ns/id  find   2.16 ns/op    8.19 B/entry
+dense    1000000    map            build  11.05 ns/id  find  18.92 ns/op   24.12 B/entry
+dense    1000000    default        build   5.17 ns/id  find   2.97 ns/op    8.16 B/entry
+dense    1000000    slim           build   5.24 ns/id  find   2.53 ns/op    8.14 B/entry
+dense    1000000    p10            build   5.27 ns/id  find   2.84 ns/op    8.21 B/entry
+dense    1000000    p10_slim       build   5.47 ns/id  find   2.82 ns/op    8.18 B/entry
+dense    3500000    map            build  25.92 ns/id  find  33.22 ns/op   27.56 B/entry
+dense    3500000    default        build   5.24 ns/id  find   7.16 ns/op    8.17 B/entry
+dense    3500000    slim           build   5.21 ns/id  find   7.14 ns/op    8.14 B/entry
+dense    3500000    p10            build   5.31 ns/id  find   7.26 ns/op    8.21 B/entry
+dense    3500000    p10_slim       build   5.52 ns/id  find   7.55 ns/op    8.18 B/entry
+ifc      100000     map            build   6.90 ns/id  find   5.57 ns/op   22.94 B/entry
+ifc      100000     default        build   5.40 ns/id  find   2.68 ns/op   14.30 B/entry
+ifc      100000     slim           build   5.36 ns/id  find   2.67 ns/op   14.26 B/entry
+ifc      100000     p10            build   5.86 ns/id  find   2.68 ns/op   14.37 B/entry
+ifc      100000     p10_slim       build   5.84 ns/id  find   2.69 ns/op   14.32 B/entry
+ifc      1000000    map            build  11.17 ns/id  find  12.28 ns/op   24.12 B/entry
+ifc      1000000    default        build   5.43 ns/id  find   3.35 ns/op   14.29 B/entry
+ifc      1000000    slim           build   5.43 ns/id  find   3.33 ns/op   14.24 B/entry
+ifc      1000000    p10            build   5.91 ns/id  find   3.52 ns/op   14.37 B/entry
+ifc      1000000    p10_slim       build   5.91 ns/id  find   3.55 ns/op   14.32 B/entry
+ifc      3500000    map            build  28.99 ns/id  find  37.58 ns/op   27.56 B/entry
+ifc      3500000    default        build   5.57 ns/id  find  13.90 ns/op   14.30 B/entry
+ifc      3500000    slim           build   5.54 ns/id  find  13.94 ns/op   14.25 B/entry
+ifc      3500000    p10            build   6.09 ns/id  find  14.07 ns/op   14.38 B/entry
+ifc      3500000    p10_slim       build   6.09 ns/id  find  13.99 ns/op   14.33 B/entry
+sparse   100000     map            build   6.92 ns/id  find   5.61 ns/op   22.94 B/entry
+sparse   100000     default        build   9.66 ns/id  find   6.21 ns/op   11.77 B/entry
+sparse   100000     slim           build   9.66 ns/id  find   6.15 ns/op   11.77 B/entry
+sparse   100000     p10            build  10.04 ns/id  find   6.42 ns/op   13.11 B/entry
+sparse   100000     p10_slim       build  10.63 ns/id  find   6.42 ns/op   13.11 B/entry
+sparse   1000000    map            build  10.31 ns/id  find  11.59 ns/op   24.12 B/entry
+sparse   1000000    default        build   9.96 ns/id  find   8.90 ns/op   11.84 B/entry
+sparse   1000000    slim           build  10.06 ns/id  find   8.79 ns/op   11.84 B/entry
+sparse   1000000    p10            build  10.53 ns/id  find   9.65 ns/op   13.13 B/entry
+sparse   1000000    p10_slim       build  11.06 ns/id  find   9.67 ns/op   13.13 B/entry
+churn    100000     map            op  20.94 ns     22.94 B/live entry
+churn    100000     default        op  11.79 ns     26.64 B/live entry
+churn    100000     slim           op  11.78 ns     26.55 B/live entry
+churn    100000     p10            op  11.43 ns     25.37 B/live entry
+churn    100000     p10_slim       op  11.27 ns     25.29 B/live entry
+churn    1000000    map            op  42.40 ns     24.12 B/live entry
+churn    1000000    default        op  16.04 ns     26.64 B/live entry
+churn    1000000    slim           op  15.92 ns     26.57 B/live entry
+churn    1000000    p10            op  16.04 ns     25.11 B/live entry
+churn    1000000    p10_slim       op  15.75 ns     25.04 B/live entry
+scatter  16000      map            build   7.43 ns/id  find   3.99 ns/op   23.55 B/entry
+scatter  16000      default        build  29.19 ns/id  find   9.14 ns/op  727.88 B/entry
+scatter  16000      slim           build  29.22 ns/id  find   9.12 ns/op  727.88 B/entry
+scatter  16000      p10            build  29.91 ns/id  find   9.16 ns/op  328.28 B/entry
+scatter  16000      p10_slim       build  30.20 ns/id  find   9.15 ns/op  328.28 B/entry
+scatter  100000     map            build   7.37 ns/id  find   5.95 ns/op   22.94 B/entry
+scatter  100000     default        build  33.19 ns/id  find  23.06 ns/op  735.35 B/entry
+scatter  100000     slim           build  33.56 ns/id  find  23.02 ns/op  735.35 B/entry
+scatter  100000     p10            build  35.21 ns/id  find  21.51 ns/op  357.69 B/entry
+scatter  100000     p10_slim       build  35.60 ns/id  find  21.49 ns/op  357.69 B/entry
+scatter  1000000    map            build  12.65 ns/id  find  10.64 ns/op   24.12 B/entry
+scatter  1000000    default        build  33.36 ns/id  find  58.00 ns/op  729.16 B/entry
+scatter  1000000    slim           build  33.41 ns/id  find  60.27 ns/op  729.16 B/entry
+scatter  1000000    p10            build  35.29 ns/id  find  56.73 ns/op  330.98 B/entry
+scatter  1000000    p10_slim       build  35.79 ns/id  find  56.85 ns/op  330.98 B/entry
+stray    1001       map                  0.02 MB
+stray    1001       default             23.45 MB
+stray    1001       p10                 93.76 MB
+== clang++ pass 2
+dense    1000       map            build   6.82 ns/id  find   2.92 ns/op   23.58 B/entry
+dense    1000       default        build   4.53 ns/id  find   2.08 ns/op    8.21 B/entry
+dense    1000       slim           build   4.34 ns/id  find   2.28 ns/op    8.21 B/entry
+dense    1000       p10            build   4.27 ns/id  find   2.28 ns/op    8.21 B/entry
+dense    1000       p10_slim       build   4.28 ns/id  find   2.27 ns/op    8.21 B/entry
+dense    100000     map            build   6.58 ns/id  find   4.80 ns/op   22.94 B/entry
+dense    100000     default        build   3.94 ns/id  find   2.25 ns/op    8.10 B/entry
+dense    100000     slim           build   3.92 ns/id  find   2.41 ns/op    8.09 B/entry
+dense    100000     p10            build   4.19 ns/id  find   2.43 ns/op    8.22 B/entry
+dense    100000     p10_slim       build   4.21 ns/id  find   2.41 ns/op    8.19 B/entry
+dense    1000000    map            build  10.93 ns/id  find   9.11 ns/op   24.12 B/entry
+dense    1000000    default        build   3.94 ns/id  find   3.10 ns/op    8.16 B/entry
+dense    1000000    slim           build   3.96 ns/id  find   3.14 ns/op    8.14 B/entry
+dense    1000000    p10            build   4.26 ns/id  find   3.33 ns/op    8.21 B/entry
+dense    1000000    p10_slim       build   4.25 ns/id  find   3.31 ns/op    8.18 B/entry
+dense    3500000    map            build  25.90 ns/id  find  31.99 ns/op   27.56 B/entry
+dense    3500000    default        build   4.09 ns/id  find   8.35 ns/op    8.17 B/entry
+dense    3500000    slim           build   4.04 ns/id  find   7.75 ns/op    8.14 B/entry
+dense    3500000    p10            build   4.36 ns/id  find   8.30 ns/op    8.21 B/entry
+dense    3500000    p10_slim       build   4.36 ns/id  find   8.14 ns/op    8.18 B/entry
+ifc      100000     map            build   6.85 ns/id  find   5.34 ns/op   22.94 B/entry
+ifc      100000     default        build   4.22 ns/id  find   2.95 ns/op   14.30 B/entry
+ifc      100000     slim           build   4.49 ns/id  find   3.17 ns/op   14.26 B/entry
+ifc      100000     p10            build   4.74 ns/id  find   3.26 ns/op   14.37 B/entry
+ifc      100000     p10_slim       build   4.64 ns/id  find   3.24 ns/op   14.32 B/entry
+ifc      1000000    map            build  11.13 ns/id  find  10.74 ns/op   24.12 B/entry
+ifc      1000000    default        build   4.20 ns/id  find   3.73 ns/op   14.29 B/entry
+ifc      1000000    slim           build   4.20 ns/id  find   3.96 ns/op   14.24 B/entry
+ifc      1000000    p10            build   4.75 ns/id  find   4.28 ns/op   14.37 B/entry
+ifc      1000000    p10_slim       build   4.72 ns/id  find   4.28 ns/op   14.32 B/entry
+ifc      3500000    map            build  27.69 ns/id  find  33.08 ns/op   27.56 B/entry
+ifc      3500000    default        build   4.42 ns/id  find  15.31 ns/op   14.30 B/entry
+ifc      3500000    slim           build   4.41 ns/id  find  15.64 ns/op   14.25 B/entry
+ifc      3500000    p10            build   4.99 ns/id  find  17.69 ns/op   14.38 B/entry
+ifc      3500000    p10_slim       build   4.99 ns/id  find  17.30 ns/op   14.33 B/entry
+sparse   100000     map            build   6.67 ns/id  find   5.42 ns/op   22.94 B/entry
+sparse   100000     default        build   8.72 ns/id  find   6.04 ns/op   11.77 B/entry
+sparse   100000     slim           build   8.47 ns/id  find   6.21 ns/op   11.77 B/entry
+sparse   100000     p10            build   8.63 ns/id  find   6.54 ns/op   13.11 B/entry
+sparse   100000     p10_slim       build   8.61 ns/id  find   6.55 ns/op   13.11 B/entry
+sparse   1000000    map            build  10.13 ns/id  find  10.12 ns/op   24.12 B/entry
+sparse   1000000    default        build   8.93 ns/id  find   8.82 ns/op   11.84 B/entry
+sparse   1000000    slim           build   8.64 ns/id  find   9.17 ns/op   11.84 B/entry
+sparse   1000000    p10            build   8.92 ns/id  find  10.19 ns/op   13.13 B/entry
+sparse   1000000    p10_slim       build   8.89 ns/id  find  10.13 ns/op   13.13 B/entry
+churn    100000     map            op  21.12 ns     22.94 B/live entry
+churn    100000     default        op  15.01 ns     26.64 B/live entry
+churn    100000     slim           op  14.93 ns     26.55 B/live entry
+churn    100000     p10            op  12.80 ns     25.37 B/live entry
+churn    100000     p10_slim       op  12.95 ns     25.29 B/live entry
+churn    1000000    map            op  43.81 ns     24.12 B/live entry
+churn    1000000    default        op  19.90 ns     26.64 B/live entry
+churn    1000000    slim           op  19.96 ns     26.57 B/live entry
+churn    1000000    p10            op  17.78 ns     25.11 B/live entry
+churn    1000000    p10_slim       op  17.76 ns     25.04 B/live entry
+scatter  16000      map            build   7.24 ns/id  find   3.84 ns/op   23.55 B/entry
+scatter  16000      default        build  30.89 ns/id  find   9.18 ns/op  727.88 B/entry
+scatter  16000      slim           build  28.10 ns/id  find   9.42 ns/op  727.88 B/entry
+scatter  16000      p10            build  25.83 ns/id  find   8.99 ns/op  328.28 B/entry
+scatter  16000      p10_slim       build  26.24 ns/id  find   8.99 ns/op  328.28 B/entry
+scatter  100000     map            build   7.13 ns/id  find   5.73 ns/op   22.94 B/entry
+scatter  100000     default        build  33.71 ns/id  find  24.37 ns/op  735.35 B/entry
+scatter  100000     slim           build  32.65 ns/id  find  32.52 ns/op  735.35 B/entry
+scatter  100000     p10            build  31.55 ns/id  find  38.64 ns/op  357.69 B/entry
+scatter  100000     p10_slim       build  31.87 ns/id  find  36.35 ns/op  357.69 B/entry
+scatter  1000000    map            build  12.37 ns/id  find  10.65 ns/op   24.12 B/entry
+scatter  1000000    default        build  33.41 ns/id  find  63.15 ns/op  729.16 B/entry
+scatter  1000000    slim           build  32.07 ns/id  find  64.36 ns/op  729.16 B/entry
+scatter  1000000    p10            build  31.06 ns/id  find  58.92 ns/op  330.98 B/entry
+scatter  1000000    p10_slim       build  31.54 ns/id  find  58.90 ns/op  330.98 B/entry
+stray    1001       map                  0.02 MB
+stray    1001       default             23.45 MB
+stray    1001       p10                 93.76 MB
+== g++ pass 2
+dense    1000       map            build   8.19 ns/id  find   3.22 ns/op   23.58 B/entry
+dense    1000       default        build   5.83 ns/id  find   1.89 ns/op    8.21 B/entry
+dense    1000       slim           build   5.63 ns/id  find   1.89 ns/op    8.21 B/entry
+dense    1000       p10            build   5.28 ns/id  find   1.95 ns/op    8.21 B/entry
+dense    1000       p10_slim       build   5.45 ns/id  find   1.94 ns/op    8.21 B/entry
+dense    100000     map            build   6.83 ns/id  find   5.13 ns/op   22.94 B/entry
+dense    100000     default        build   5.19 ns/id  find   2.09 ns/op    8.10 B/entry
+dense    100000     slim           build   5.16 ns/id  find   2.09 ns/op    8.09 B/entry
+dense    100000     p10            build   5.30 ns/id  find   2.20 ns/op    8.22 B/entry
+dense    100000     p10_slim       build   5.50 ns/id  find   2.17 ns/op    8.19 B/entry
+dense    1000000    map            build  10.63 ns/id  find   9.17 ns/op   24.12 B/entry
+dense    1000000    default        build   5.18 ns/id  find   2.53 ns/op    8.16 B/entry
+dense    1000000    slim           build   5.18 ns/id  find   2.52 ns/op    8.14 B/entry
+dense    1000000    p10            build   5.31 ns/id  find   2.85 ns/op    8.21 B/entry
+dense    1000000    p10_slim       build   5.46 ns/id  find   2.81 ns/op    8.18 B/entry
+dense    3500000    map            build  25.50 ns/id  find  33.23 ns/op   27.56 B/entry
+dense    3500000    default        build   5.20 ns/id  find   6.27 ns/op    8.17 B/entry
+dense    3500000    slim           build   5.20 ns/id  find   6.48 ns/op    8.14 B/entry
+dense    3500000    p10            build   5.35 ns/id  find   7.53 ns/op    8.21 B/entry
+dense    3500000    p10_slim       build   5.53 ns/id  find   7.51 ns/op    8.18 B/entry
+ifc      100000     map            build   6.82 ns/id  find   5.57 ns/op   22.94 B/entry
+ifc      100000     default        build   5.42 ns/id  find   2.68 ns/op   14.30 B/entry
+ifc      100000     slim           build   5.38 ns/id  find   2.70 ns/op   14.26 B/entry
+ifc      100000     p10            build   5.92 ns/id  find   2.70 ns/op   14.37 B/entry
+ifc      100000     p10_slim       build   5.86 ns/id  find   2.68 ns/op   14.32 B/entry
+ifc      1000000    map            build  11.10 ns/id  find  11.30 ns/op   24.12 B/entry
+ifc      1000000    default        build   5.47 ns/id  find   3.37 ns/op   14.29 B/entry
+ifc      1000000    slim           build   5.42 ns/id  find   3.34 ns/op   14.24 B/entry
+ifc      1000000    p10            build   5.98 ns/id  find   3.53 ns/op   14.37 B/entry
+ifc      1000000    p10_slim       build   5.90 ns/id  find   3.50 ns/op   14.32 B/entry
+ifc      3500000    map            build  29.23 ns/id  find  37.82 ns/op   27.56 B/entry
+ifc      3500000    default        build   5.60 ns/id  find  13.96 ns/op   14.30 B/entry
+ifc      3500000    slim           build   5.54 ns/id  find  13.58 ns/op   14.25 B/entry
+ifc      3500000    p10            build   6.12 ns/id  find  13.96 ns/op   14.38 B/entry
+ifc      3500000    p10_slim       build   6.12 ns/id  find  14.01 ns/op   14.33 B/entry
+sparse   100000     map            build   6.79 ns/id  find   5.53 ns/op   22.94 B/entry
+sparse   100000     default        build   9.67 ns/id  find   6.15 ns/op   11.77 B/entry
+sparse   100000     slim           build   9.74 ns/id  find   6.10 ns/op   11.77 B/entry
+sparse   100000     p10            build  10.35 ns/id  find   6.45 ns/op   13.11 B/entry
+sparse   100000     p10_slim       build  10.63 ns/id  find   6.44 ns/op   13.11 B/entry
+sparse   1000000    map            build  10.16 ns/id  find  10.08 ns/op   24.12 B/entry
+sparse   1000000    default        build  10.09 ns/id  find   8.92 ns/op   11.84 B/entry
+sparse   1000000    slim           build  10.03 ns/id  find   8.75 ns/op   11.84 B/entry
+sparse   1000000    p10            build  10.77 ns/id  find   9.60 ns/op   13.13 B/entry
+sparse   1000000    p10_slim       build  11.15 ns/id  find   9.59 ns/op   13.13 B/entry
+churn    100000     map            op  20.98 ns     22.94 B/live entry
+churn    100000     default        op  11.95 ns     26.64 B/live entry
+churn    100000     slim           op  11.77 ns     26.55 B/live entry
+churn    100000     p10            op  11.54 ns     25.37 B/live entry
+churn    100000     p10_slim       op  11.37 ns     25.29 B/live entry
+churn    1000000    map            op  41.32 ns     24.12 B/live entry
+churn    1000000    default        op  16.11 ns     26.64 B/live entry
+churn    1000000    slim           op  15.96 ns     26.57 B/live entry
+churn    1000000    p10            op  16.17 ns     25.11 B/live entry
+churn    1000000    p10_slim       op  16.31 ns     25.04 B/live entry
+scatter  16000      map            build   7.62 ns/id  find   4.18 ns/op   23.55 B/entry
+scatter  16000      default        build  35.14 ns/id  find   9.21 ns/op  727.88 B/entry
+scatter  16000      slim           build  32.85 ns/id  find   9.21 ns/op  727.88 B/entry
+scatter  16000      p10            build  29.45 ns/id  find   9.20 ns/op  328.28 B/entry
+scatter  16000      p10_slim       build  30.26 ns/id  find   9.20 ns/op  328.28 B/entry
+scatter  100000     map            build   7.38 ns/id  find   5.95 ns/op   22.94 B/entry
+scatter  100000     default        build  32.90 ns/id  find  34.23 ns/op  735.35 B/entry
+scatter  100000     slim           build  32.51 ns/id  find  20.56 ns/op  735.35 B/entry
+scatter  100000     p10            build  34.24 ns/id  find  21.68 ns/op  357.69 B/entry
+scatter  100000     p10_slim       build  35.61 ns/id  find  21.37 ns/op  357.69 B/entry
+scatter  1000000    map            build  12.68 ns/id  find  11.33 ns/op   24.12 B/entry
+scatter  1000000    default        build  32.81 ns/id  find  57.77 ns/op  729.16 B/entry
+scatter  1000000    slim           build  32.76 ns/id  find  57.86 ns/op  729.16 B/entry
+scatter  1000000    p10            build  35.19 ns/id  find  56.69 ns/op  330.98 B/entry
+scatter  1000000    p10_slim       build  35.36 ns/id  find  56.79 ns/op  330.98 B/entry
+stray    1001       map                  0.02 MB
+stray    1001       default             23.45 MB
+stray    1001       p10                 93.76 MB

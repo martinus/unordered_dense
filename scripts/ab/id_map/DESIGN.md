@@ -14,7 +14,7 @@ What it buys, measured on a Ryzen 9 7950X with clang 22 and gcc 16:
 - **web-ifc's IFC loader**: 3-16% less load time than with `std::unordered_map` and 3-17% less than
   with this repository's map 5.3.1 (the most on the two large models), within 1% of a plain vector
   indexed by ID, and the lowest peak memory of all of them.
-- **Lookups on dense IDs**: 1.6-5.2x faster than `unordered_dense::map` from 1000 to 3.5M entries,
+- **Lookups on dense IDs**: 1.6-5.0x faster than `unordered_dense::map` from 1000 to 3.5M entries,
   close to a plain vector.
 - **Memory**: 8.2 bytes per entry for 8 byte values on dense IDs (the map: 24; `std`: 44), 12 bytes
   on IDs that fill only 1/16 of their range.
@@ -103,7 +103,12 @@ d       direct flag: is the page stored packed or direct (Step 4)
 
 *Figure 2: a directory entry, 24 bytes per 4096 IDs.*
 
-24 bytes per 4096 IDs is 0.006 bytes per ID of the range. For 3.5M dense IDs the whole directory is
+The 7 bytes of padding are there because the struct must be a multiple of 8 bytes. Storing the flag
+in the lowest bit of the `meta` pointer, which is always 0 for an 8 byte aligned object, would make the
+entry 16 bytes: measured, it changes nothing per entry and costs 8-12% per lookup, because the `and`
+that clears the flag sits on the way to the bit word. The prototype keeps it as an option
+([Tried and rejected](#tried-and-rejected)). 24 bytes per 4096 IDs is
+0.006 bytes per ID of the range. For 3.5M dense IDs the whole directory is
 855 entries, 21 KB, which means that it stays in the L1 or L2 cache while the program runs. Reading
 `directory[2]` for our ID 10,000 is a cache hit practically every time.
 
@@ -118,14 +123,14 @@ from EnTT's sparse set.
 Each page that holds at least one ID gets a `meta` block. Figure 3 shows what is in it.
 
 ```text
-meta, 656 bytes per page
+meta, 648 bytes per page
 
   bits[64]     512 bytes   64 words x 64 bits: bit s is 1 if slot s holds a value
+  cap            2 bytes   how many values the values array can hold
+  top            2 bytes   highest slot ever used, plus 1
+  live           2 bytes   number of values in the page
+  (padding)      2 bytes
   before[64]   128 bytes   64 x uint16: number of values in the words before word w
-  cap            4 bytes   how many values the values array can hold
-  top            4 bytes   highest slot ever used, plus 1
-  live           4 bytes   number of values in the page
-  (padding)      4 bytes
 ```
 
 *Figure 3: the `meta` block of a page.*
@@ -225,14 +230,20 @@ T* find(uint32_t id) {
 ```
 
 For a direct page the CPU needs the directory entry, which is in the cache, and then two independent
-reads: the bit word and the value. A vector indexed by ID needs one read. `unordered_dense::map`
+reads: the bit word and the value.
+
+The caller has to look at the `nullptr`. A loop that does `sum += find(id)->a` without the check tells
+the compiler that `find` never misses, and clang then deletes the bit test completely: in
+`lookup_perf.cpp` that was 9 of 44 cycles per lookup. The first version of this document's benchmark
+had exactly that loop, so its clang numbers for `id_map` were too good. A vector indexed by ID needs one read. `unordered_dense::map`
 needs its hash, a 16 byte fingerprint group, and then the value index and the value.
 
 Surprisingly, how this `if (e.direct)` is written matters. The first version wrote it as
 `e.direct ? slot : rank(slot)`, which the compiler turned into a select: it computed the rank on every
 lookup, direct page or not, and that read `before` from a second cache line. Written as a branch,
 which the CPU predicts correctly as long as most pages are direct, the lookup at 3.5M dense IDs went
-from 7.2 to 6.4 ns.
+from 7.2 to 6.4 ns under clang. That measurement used the unchecked loop described above, so the
+exact size of the gain with the bit test kept is not known.
 
 ### Where every byte goes
 
@@ -244,9 +255,9 @@ byte values and compares with what the benchmark measured as malloc's bytes in u
 | page layout | direct | direct | packed |
 | values per page of 4096 IDs | 4096 | about 2341 | about 256 |
 | values array | 4096 x 8 / 4096 = **8.00** | 4096 x 8 / 2341 = **14.00** | capacity 293 x 8 / 256 = **9.16** |
-| `meta` (656 bytes per page) | 656 / 4096 = **0.16** | 656 / 2341 = **0.28** | 656 / 256 = **2.56** |
+| `meta` (648 bytes per page) | 648 / 4096 = **0.16** | 648 / 2341 = **0.28** | 648 / 256 = **2.53** |
 | directory (24 bytes per page) | **0.006** | **0.010** | **0.094** |
-| sum | 8.17 | 14.29 | 11.81 |
+| sum | 8.17 | 14.29 | 11.78 |
 | measured | 8.2 | 14.3 | 11.9 |
 | `unordered_dense::map` 5.3.1, measured | 24.1 | 24.1 | 24.1 |
 
@@ -266,8 +277,9 @@ growth slack.
 
 The same arithmetic shows where `id_map` is expensive.
 
-- **A lonely ID.** A page with a single value costs a 656 byte `meta`, a packed array of 4 values
-  (32 bytes), two malloc headers and its 24 byte directory entry: about 740 bytes for one entry. If
+- **A lonely ID.** A page with a single value costs a 648 byte `meta`, a packed array of 4 values
+  (32 bytes), two malloc headers and its 24 byte directory entry: about 735 bytes for one entry. The
+  `scatter` pattern, one ID per page, measured 728-735 bytes per entry. If
   your IDs are scattered so that most pages hold only a handful of values, a hash map is much much
   cheaper.
 - **A stray large ID.** The directory is indexed by page number, so it must reach the largest page.
@@ -290,17 +302,19 @@ Each item below was measured. The removed alternatives are in the notes entry.
    whose bits are all zero (from EnTT). A miss is the bounds check and one bit test.
 3. **A branch, not a select, between direct and packed.** Written as `direct ? s : rank(s)`, the
    compiler emitted a select, which computes the rank and loads its counts on every lookup. A branch
-   with `__builtin_expect` removed that: 7.2 to 6.4 ns at 3.5M dense IDs.
+   with `__builtin_expect` removed that: 7.2 to 6.4 ns at 3.5M dense IDs (clang, measured with the
+   unchecked loop described in the lookup section; not re-measured with the check kept).
 4. **Small dense tables become direct too.** The rule counts against the highest ID in the page, not
-   against 4096, so IDs 0..999 become a direct page of 1024 slots: 1000 dense lookups went from 3.5 ns
-   (packed) to 1.4 ns.
-5. **Building costs little.** Values are constructed in place and never moved when the directory
-   grows (EnTT, flecs); only packed pages keep their per-word counts, which took a build from 5.1 to
+   against 4096, so IDs 0..999 become a direct page of 1024 slots: 1000 dense lookups went from 3.2 ns
+   (packed) to 1.9 ns (gcc).
+5. **Building costs little.** Values are constructed in place, and growing the directory copies only
+   its 24 byte entries, never a value (EnTT, flecs); values do move inside their own page, see
+   [Disadvantages](#disadvantages); only packed pages keep their per-word counts, which took a build from 5.1 to
    3.3 ns per ID; the compiler turns the count update into SSE2 `paddw`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/lookups-dark.svg">
-  <img alt="Lookup time against table size for dense, web-ifc-like and sparse IDs: id_map and the vector stay at 1.3 to 2.5 ns up to a million dense IDs while the map and std rise to 10 and 16 ns." src="img/lookups-light.svg">
+  <img alt="Lookup time against table size for dense, web-ifc-like and sparse IDs: id_map and the vector stay at 1.8 to 2.9 ns up to a million dense IDs under clang while the map and std rise to 10.5 and 17.9 ns." src="img/lookups-light.svg">
 </picture>
 
 A million independent lookups of random present IDs (throughput, not latency), median of five
@@ -308,21 +322,23 @@ rounds after a warm-up, clang / gcc, ns per lookup:
 
 | | std::unordered_map | unordered_dense::map 5.3.1 | vector indexed by ID | id_map | id_map, std::pair API |
 |---|---|---|---|---|---|
-| dense 1,000 | 1.70 / 1.72 | 2.89 / 3.07 | 1.29 / 1.29 | 1.69 / 1.88 | 1.68 / 2.03 |
-| dense 16,000 | 2.41 / 2.30 | 3.24 / 3.38 | 1.29 / 1.31 | 1.70 / 1.88 | 1.73 / 2.06 |
-| dense 100,000 | 4.44 / 4.05 | 5.11 / 4.91 | 1.69 / 1.68 | 1.98 / 2.08 | 2.24 / 2.31 |
-| dense 1,000,000 | 16.45 / 15.04 | 9.53 / 9.14 | 2.10 / 2.25 | 2.44 / 2.61 | 2.54 / 2.65 |
-| dense 3,500,000 | 29.66 / 27.21 | 32.18 / 32.17 | 8.65 / 8.80 | 6.15 / 12.73 | 10.70 / 13.33 |
-| web-ifc-like 16,000 | 6.52 / 5.37 | 3.46 / 3.61 | 1.47 / 1.55 | 1.83 / 2.14 | 1.84 / 2.41 |
-| web-ifc-like 100,000 | 5.43 / 5.16 | 5.13 / 5.26 | 2.05 / 2.15 | 2.55 / 2.66 | 2.62 / 2.86 |
-| web-ifc-like 1,000,000 | 22.90 / 20.77 | 11.28 / 10.40 | 5.90 / 7.19 | 3.23 / 3.29 | 3.85 / 4.08 |
-| web-ifc-like 3,500,000 | 40.32 / 36.12 | 34.86 / 33.25 | 11.75 / 12.01 | 14.11 / 13.82 | 14.74 / 15.41 |
-| sparse 1/16 16,000 | 4.96 / 4.38 | 3.78 / 3.80 | 2.20 / 2.37 | 4.20 / 4.19 | 4.32 / 4.52 |
-| sparse 1/16 100,000 | 11.74 / 10.49 | 5.52 / 5.56 | 3.52 / 3.60 | 5.73 / 5.93 | 6.20 / 6.45 |
-| sparse 1/16 1,000,000 | 30.40 / 27.15 | 10.17 / 10.90 | 13.56 / 13.69 | 8.39 / 8.50 | 9.46 / 9.68 |
+| dense 1,000 | 1.84 / 1.70 | 3.50 / 3.21 | 1.82 / 1.30 | 2.23 / 1.84 | 2.46 / 2.07 |
+| dense 16,000 | 2.67 / 2.15 | 3.89 / 3.50 | 1.75 / 1.32 | 2.25 / 1.88 | 2.49 / 1.99 |
+| dense 100,000 | 4.83 / 3.98 | 5.61 / 5.14 | 2.40 / 1.66 | 2.50 / 1.98 | 3.07 / 2.33 |
+| dense 1,000,000 | 17.92 / 15.04 | 10.51 / 10.00 | 2.92 / 2.28 | 2.94 / 2.52 | 3.40 / 2.80 |
+| dense 3,500,000 | 30.21 / 26.09 | 32.41 / 32.95 | 13.16 / 9.25 | 7.71 / 6.59 | 14.32 / 11.34 |
+| web-ifc-like 16,000 | 6.79 / 5.22 | 3.99 / 3.77 | 2.01 / 1.55 | 2.35 / 2.21 | 2.70 / 2.29 |
+| web-ifc-like 100,000 | 5.72 / 5.10 | 5.56 / 5.51 | 2.83 / 2.19 | 3.02 / 2.65 | 3.50 / 2.80 |
+| web-ifc-like 1,000,000 | 23.56 / 21.32 | 13.26 / 12.31 | 9.56 / 6.90 | 3.78 / 3.32 | 5.19 / 4.32 |
+| web-ifc-like 3,500,000 | 45.59 / 35.74 | 37.70 / 37.82 | 16.37 / 11.90 | 15.60 / 15.14 | 20.00 / 16.99 |
+| sparse 1/16 16,000 | 5.88 / 4.13 | 4.07 / 3.84 | 3.12 / 2.36 | 4.42 / 4.47 | 4.87 / 4.61 |
+| sparse 1/16 100,000 | 13.18 / 10.40 | 5.81 / 5.56 | 4.58 / 3.61 | 6.17 / 6.06 | 7.09 / 6.42 |
+| sparse 1/16 1,000,000 | 32.62 / 38.98 | 11.35 / 10.44 | 18.16 / 13.63 | 9.05 / 8.87 | 10.87 / 9.52 |
 
 The dense 3.5M cell is the noisy one: the same `id_map` code read 5.5 to 12.7 ns across runs on
-this machine, so read that row as "5.5-13 ns, against 32 for the map".
+this machine, so read that row as "6-13 ns, against 32 for the map". An earlier version of this
+table was measured with a loop that dereferenced the result without checking it, which let clang
+delete `id_map`'s bit test and flattered its clang column by up to 0.8 ns; this table uses the miss.
 
 ## Why it is memory efficient
 
@@ -342,9 +358,9 @@ this machine, so read that row as "5.5-13 ns, against 32 for the map".
 
 | 1M entries, clang: build ns per ID / bytes per entry | std::unordered_map | unordered_dense::map 5.3.1 | vector indexed by ID | id_map | id_map, std::pair API |
 |---|---|---|---|---|---|
-| dense | 13.6 / 43.6 | 11.3 / 24.1 | 1.5 / 12.6 | 3.9 / 8.2 | 4.0 / 12.2 |
-| web-ifc-like | 18.0 / 43.6 | 11.3 / 24.1 | 3.1 / 25.2 | 4.2 / 14.3 | 4.5 / 21.3 |
-| sparse 1/16 | 38.8 / 43.6 | 11.0 / 24.1 | 34.9 / 327.2 | 8.6 / 11.9 | 10.0 / 16.5 |
+| dense | 14.9 / 43.6 | 10.9 / 24.1 | 1.5 / 12.6 | 4.0 / 8.2 | 4.2 / 12.2 |
+| web-ifc-like | 17.9 / 43.6 | 12.0 / 24.1 | 3.1 / 25.2 | 4.2 / 14.3 | 4.7 / 21.3 |
+| sparse 1/16 | 38.5 / 43.6 | 10.8 / 24.1 | 34.6 / 327.2 | 8.5 / 11.9 | 10.0 / 16.5 |
 
 Memory here is malloc's bytes in use after the build, divided by the entry count.
 
@@ -391,6 +407,23 @@ Five implementations were read before writing this one.
 
 ## Disadvantages
 
+**Addresses of values are not stable.** A pointer or reference to a value is invalidated by any insert
+or erase in the same page: a packed page moves all its values when its array grows and shifts the
+values behind an insert or erase, and a page moves all its values when it converts between packed and
+direct or when a direct page grows. Values in other pages and the directory growing do not move it.
+`unordered_dense::map` is not reference-stable either (one values vector that reallocates, erase
+moves the last value into the hole); `std::unordered_map` is. The prototype's iterators store the ID,
+not a pointer, so they survive moves, at the price of a lookup on every dereference. A stable variant
+would need direct pages allocated at their full 4096 slots and no packed pages at all, which brings
+back the 130 bytes per entry on sparse IDs.
+
+**Scattered IDs are its worst case.** With one ID per 4096 (the `scatter` pattern of `idbench`,
+`data/meta.txt`), every page holds a single entry, and a lookup misses on the directory entry, the
+page's metadata and its values. At 1M entries that is 729 bytes per entry against the map's 24.1 and
+63 ns per lookup against 10.9 (clang); at 16000 entries 728 bytes and 9.3 ns against 23.6 and 3.85.
+Pages of 1024 IDs halve the bytes (331 per entry) and leave lookups as slow; a hash map is the right
+tool for IDs this spread out.
+
 **It is for IDs, not for arbitrary integers.** The directory costs 24 bytes per 4096 IDs up to the
 largest ID: 25 MB for a single key near 2^32, and nothing sensible for 64-bit hashes or random keys.
 A hash map is the right tool there.
@@ -407,19 +440,19 @@ capacity they once had and direct pages stay partly filled:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/churn-dark.svg">
-  <img alt="Churn with a million live IDs: id_map 19.6 ns and 26.7 bytes per live entry, the map 40.7 ns and 24.1 bytes, std 147 ns and 43.6 bytes, the vector 16.2 ns and 201 bytes." src="img/churn-light.svg">
+  <img alt="Churn with a million live IDs: id_map 19.6 ns and 26.7 bytes per live entry, the map 43.5 ns and 24.1 bytes, std 142 ns and 43.6 bytes, the vector 19.4 ns and 201 bytes." src="img/churn-light.svg">
 </picture>
 
 | churn, clang: ns per erase + insert / bytes per live entry | std::unordered_map | unordered_dense::map 5.3.1 | vector indexed by ID | id_map | id_map, std::pair API |
 |---|---|---|---|---|---|
-| 16,000 | 31.2 / 42.3 | 15.1 / 23.6 | 3.8 / 196.6 | 13.4 / 26.0 | 16.3 / 38.5 |
-| 100,000 | 45.2 / 45.8 | 20.7 / 22.9 | 6.5 / 251.7 | 14.9 / 26.7 | 18.2 / 39.2 |
-| 1,000,000 | 147.1 / 43.6 | 40.7 / 24.1 | 16.2 / 201.3 | 19.6 / 26.7 | 23.5 / 39.2 |
+| 16,000 | 31.4 / 42.3 | 13.8 / 23.6 | 3.7 / 196.6 | 13.5 / 26.0 | 16.2 / 38.5 |
+| 100,000 | 45.2 / 45.8 | 21.1 / 22.9 | 6.0 / 251.7 | 14.9 / 26.7 | 17.9 / 39.2 |
+| 1,000,000 | 142.2 / 43.6 | 43.5 / 24.1 | 19.4 / 201.3 | 19.6 / 26.7 | 23.1 / 39.2 |
 
-**Building is slower than a vector** (3.9 against 1.5 ns per dense ID, clang), because a page spends
+**Building is slower than a vector** (4.0 against 1.5 ns per dense ID, clang), because a page spends
 its first 64 entries packed and then converts. On sparse IDs it builds slower than the map up to
-100000 entries (8.4-9.7 against 6.6-7.2 ns per ID, both compilers) and faster at a million (8.6-9.7
-against 10.8-11.0): packed pages grow by 1.25x and keep 64 counts per page current.
+100000 entries (8.2-10.6 against 6.7-7.1 ns per ID, both compilers) and level or faster at a million
+(8.5-11.0 against 10.8-11.5): packed pages grow by 1.25x and keep 64 counts per page current.
 
 **Sparse lookups depend on the build flags.** The rank uses a popcount. Built for baseline x86-64,
 that is a software popcount of about 14 instructions; with `-mpopcnt` (x86-64-v2 or `-march=native`)
@@ -436,7 +469,7 @@ from the caller's data, and this repository has declined optimizations that infe
 
 ## Tried and rejected
 
-Three changes looked promising and did not help (`idbench tune`, two passes per compiler):
+Five changes looked promising and did not help (`idbench tune`, two passes per compiler):
 
 - **Bitmap and slots in one allocation**: no faster; under clang 5.5 to 5.8-5.9 ns at 3.5M dense IDs.
   The gap it was meant to close was run-to-run variation.
@@ -444,6 +477,23 @@ Three changes looked promising and did not help (`idbench tune`, two passes per 
   clang. Lookups matter more.
 - **Back to packed at 1/4 instead of 1/8**: more memory under churn (31 against 26.7 bytes per live
   entry) and 1.5-2x the time, because packed pages keep their capacity and inserts into them shift.
+
+- **A 16 byte directory entry**, the direct flag stored in bit 0 of the meta pointer instead of a
+  separate `bool` with 7 bytes of padding: bytes per entry do not change (the directory is 0.006 bytes
+  per ID either way) and the stray-ID worst case goes from 23.45 to 15.63 MB. With `perf stat` on
+  `lookup_perf.cpp` (3.5M dense IDs, one layout per binary, three runs) it costs 8-12% more cycles per
+  lookup on both compilers (gcc 40.2-41.2 to 43.4-46.3, clang 43.9-44.4 to 47.3-48.8), with fewer L1
+  misses (2.55 against 2.80 per lookup) and the same TLB and branch misses: the `and` that clears the
+  flag sits between the load of the meta pointer and the load of the bit word. It stays a knob,
+  `tune<false, 1, 8, true>`.
+
+- **Smaller page metadata** (`data/meta.txt`). Direct pages never read `before`, so a slim variant
+  allocates only the bitmap and counters for them (520 instead of 648 bytes): it saves 0.03-0.06 bytes
+  per entry, under 1%, and clang's lookups read 2-9% slower in both passes (gcc level). Pages of
+  1024 IDs instead of 4096 (168 bytes of metadata): 3-17% slower lookups, because the directory no
+  longer fits L1, 13.1 instead of 11.8 bytes per entry on sparse IDs, 93.76 instead of 23.45 MB for
+  one stray ID, and half the bytes on scattered IDs (331 instead of 729), which stay 14x the map's.
+  Kept from this round: counters of 16 bits instead of 32, 8 bytes less per page at no measured cost.
 
 ## Reproducing
 

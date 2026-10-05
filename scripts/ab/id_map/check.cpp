@@ -162,6 +162,12 @@ int main() {
         check_drain<idm::id_map<std::uint32_t, int>>("id_map", n);
         check_drain<idm::id_map<std::uint32_t, int, 8, true>>("id_map pairs p8", n);
         check_drain<idm::id_map<std::uint32_t, int, 12, false, idm::tune<true, 2, 4>>>("id_map tuned", n);
+        check_drain<idm::id_map<std::uint32_t, int, 12, false, idm::tune<false, 1, 8, true>>>("id_map tagged", n);
+        check_drain<idm::id_map<std::uint32_t, int, 12, false, idm::tune<false, 1, 8, false, true>>>("id_map slim", n);
+        check_drain<idm::id_map<std::uint32_t, int, 10, true, idm::tune<true, 1, 8, false, true>>>(
+            "id_map p10 pairs slim one_alloc", n);
+        check_drain<idm::id_map<std::uint32_t, int, 8, true, idm::tune<true, 1, 8, true>>>("id_map pairs p8 tagged one_alloc",
+                                                                                           n);
         check_drain<idm::id_map<std::uint32_t, int, 8, true, idm::tune<true, 1, 8>>>("id_map pairs p8 one_alloc", n);
     }
     {
@@ -180,6 +186,8 @@ int main() {
         check_ascending<idm::id_map<std::uint32_t, int, 8>>("id_map p8", n);
         check_ascending<idm::id_map<std::uint32_t, int, 8, true>>("id_map pairs p8", n);
         check_ascending<idm::id_map<std::uint32_t, int, 12, false, idm::tune<true, 2, 4>>>("id_map tuned", n);
+        check_ascending<idm::id_map<std::uint32_t, int, 12, false, idm::tune<false, 1, 8, true>>>("id_map tagged", n);
+        check_ascending<idm::id_map<std::uint32_t, int, 10, false, idm::tune<false, 1, 8, false, true>>>("id_map p10 slim", n);
         check_ascending<idm::paged_map<std::uint32_t, int>>("paged", n);
         check_ascending<idm::packed_map<std::uint32_t, int>>("hybrid", n);
     }
@@ -207,6 +215,15 @@ int main() {
             "id_map pairs i64 str p8", range, 100000, str);
         check<idm::id_map<std::int64_t, std::string, 8, true, idm::tune<true, 2, 4>>, std::int64_t, std::string>(
             "id_map pairs i64 str p8 tuned", range, 100000, str);
+        check<idm::id_map<std::int64_t, std::string, 8, true, idm::tune<false, 1, 8, true>>, std::int64_t, std::string>(
+            "id_map pairs i64 str p8 tagged", range, 100000, str);
+        check<idm::id_map<std::uint32_t, int, 12, false, idm::tune<false, 1, 8, true>>, std::uint32_t, int>(
+            "id_map u32 int tagged", range, 300000, num);
+        check<idm::id_map<std::uint32_t, int, 12, false, idm::tune<false, 1, 8, false, true>>, std::uint32_t, int>(
+            "id_map u32 int slim", range, 300000, num);
+        check<idm::id_map<std::int64_t, std::string, 10, true, idm::tune<false, 1, 8, false, true>>,
+              std::int64_t,
+              std::string>("id_map pairs i64 str p10 slim", range, 100000, str);
         check<idm::packed_map<std::int64_t, std::string, idm::layout::packed>, std::int64_t, std::string>(
             "packed i64 str", range, 100000, str);
         check<idm::packed_map<std::int64_t, std::string, idm::layout::direct>, std::int64_t, std::string>(

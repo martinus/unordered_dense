@@ -602,12 +602,58 @@ public:
 //
 // Tune, the knobs under measurement: OneAlloc puts a direct page's metadata and slots in one block
 // (bitmap and value near each other); GrowShift is how a direct page grows (1: 2x, 2: 4x); BackDiv
-// is the fraction of its slots below which a direct page goes back to packed (8: an eighth).
-template <bool OneAlloc = false, unsigned GrowShift = 1, unsigned BackDiv = 8>
+// is the fraction of its slots below which a direct page goes back to packed (8: an eighth);
+// TagDirect stores the direct flag in bit 0 of the meta pointer, a 16 byte directory entry instead of 24.
+template <class E, class Meta, bool Tagged>
+struct dir_entry;
+
+// A directory entry of id_map, untagged: the direct flag is a separate bool, 24 bytes with 7 of padding.
+template <class E, class Meta>
+struct dir_entry<E, Meta, false> {
+    E* vals;
+    Meta* mp;
+    bool d;
+    auto m() const -> Meta* {
+        return mp;
+    }
+    auto direct() const -> bool {
+        return d;
+    }
+    void set_m(Meta* p) {
+        mp = p;
+    }
+    void set_direct(bool x) {
+        d = x;
+    }
+};
+
+// Tagged: the flag is bit 0 of the meta pointer, always 0 since meta is 8 byte aligned. 16 bytes;
+// reading the meta pointer costs an AND.
+template <class E, class Meta>
+struct dir_entry<E, Meta, true> {
+    E* vals;
+    std::uintptr_t mt;
+    auto m() const -> Meta* {
+        return reinterpret_cast<Meta*>(mt & ~std::uintptr_t{1});
+    }
+    auto direct() const -> bool {
+        return (mt & 1U) != 0;
+    }
+    void set_m(Meta* p) {
+        mt = reinterpret_cast<std::uintptr_t>(p) | (mt & 1U);
+    }
+    void set_direct(bool x) {
+        mt = (mt & ~std::uintptr_t{1}) | std::uintptr_t{x};
+    }
+};
+
+template <bool OneAlloc = false, unsigned GrowShift = 1, unsigned BackDiv = 8, bool TagDirect = false, bool SlimDirect = false>
 struct tune {
     static constexpr bool one_alloc = OneAlloc;
     static constexpr unsigned grow_shift = GrowShift;
     static constexpr unsigned back_div = BackDiv;
+    static constexpr bool tag_direct = TagDirect;
+    static constexpr bool slim_direct = SlimDirect; // direct pages allocate the head only, not `before`
 };
 
 template <class K, class T, unsigned PageBits = 12, bool Pairs = false, class Tune = tune<>>
@@ -619,20 +665,27 @@ class id_map {
     // a packed page becomes direct once it holds this many and they fill half the slots up to its top
     static constexpr std::size_t min_direct = slots < 128 ? slots / 2 : 64;
 
-    struct meta {
+    // counters never exceed the page's slot count
+    using count_t = std::conditional_t<(PageBits < 16), std::uint16_t, std::uint32_t>;
+
+    // what every page needs: one bit per slot and three counters
+    struct head {
         std::uint64_t bits[words];
-        std::uint16_t before[words]; // entries in the words before word w; only packed pages keep it
-        std::uint32_t cap;           // values allocated: packed, entries; direct, slots from 0
-        std::uint32_t top;           // highest slot ever set, plus one
-        std::uint32_t live;          // entries in the page
+        count_t cap;  // values allocated: packed, entries; direct, slots from 0
+        count_t top;  // highest slot ever set, plus one
+        count_t live; // entries in the page
         auto has(std::size_t s) const -> bool {
             return ((bits[s / 64] >> (s % 64)) & 1U) != 0;
         }
+    };
+    // what a packed page needs on top: the entries before each word, for the rank
+    struct meta : head {
+        std::uint16_t before[words];
         auto rank(std::size_t s) const -> std::size_t {
-            return before[s / 64] + detail::popcount(bits[s / 64] & ((std::uint64_t{1} << (s % 64)) - 1));
+            return before[s / 64] + detail::popcount(this->bits[s / 64] & ((std::uint64_t{1} << (s % 64)) - 1));
         }
         auto count() const -> std::size_t {
-            return before[words - 1] + detail::popcount(bits[words - 1]);
+            return before[words - 1] + detail::popcount(this->bits[words - 1]);
         }
     };
 
@@ -648,24 +701,32 @@ private:
             return e;
         }
     }
-    struct entry {
-        E* vals;
-        meta* m;
-        bool direct;
+    struct entry : dir_entry<E, head, Tune::tag_direct> {
+        // the full meta of a packed page (direct pages may have a head only)
+        auto pm() const -> meta* {
+            return static_cast<meta*>(this->m());
+        }
+        static auto make(E* v, head* m, bool direct) -> entry {
+            entry e{};
+            e.vals = v;
+            e.set_m(m);
+            e.set_direct(direct);
+            return e;
+        }
         auto pos(std::size_t s) const -> std::size_t {
             // a branch, not a select: a select computes the rank, and loads its counts, on every lookup
-            if (__builtin_expect(direct, 1)) {
+            if (__builtin_expect(this->direct(), 1)) {
                 return s;
             }
-            return m->rank(s);
+            return pm()->rank(s);
         }
         template <class F>
         void each(F f) const { // f(slot, position in vals), in ID order
             std::size_t r = 0;
             for (std::size_t w = 0; w < words; ++w) {
-                for (auto x = m->bits[w]; x != 0; x &= x - 1, ++r) {
+                for (auto x = this->m()->bits[w]; x != 0; x &= x - 1, ++r) {
                     auto const sl = w * 64 + detail::ctz(x);
-                    f(sl, direct ? sl : r);
+                    f(sl, this->direct() ? sl : r);
                 }
             }
         }
@@ -694,12 +755,12 @@ private:
         }
     }
     void set_bit(entry& e, std::size_t s) {
-        e.m->bits[s / 64] |= std::uint64_t{1} << (s % 64);
-        e.m->top = std::max(e.m->top, static_cast<std::uint32_t>(s + 1));
-        ++e.m->live;
-        if (!e.direct) {
+        e.m()->bits[s / 64] |= std::uint64_t{1} << (s % 64);
+        e.m()->top = std::max(e.m()->top, static_cast<count_t>(s + 1));
+        ++e.m()->live;
+        if (!e.direct()) {
             for (auto w = s / 64 + 1; w < words; ++w) {
-                ++e.m->before[w];
+                ++e.pm()->before[w];
             }
         }
         ++m_size;
@@ -714,59 +775,71 @@ private:
 
     // Storage of a page: packed, a meta and a values array; direct with Tune::one_alloc, one block
     // [meta | slots] whose meta pointer is the block, otherwise as packed.
-    static constexpr std::size_t meta_bytes = (sizeof(meta) + 63) / 64 * 64;
+    // the metadata a direct page allocates
+    using direct_meta = std::conditional_t<Tune::slim_direct, head, meta>;
+    static constexpr std::size_t meta_bytes = (sizeof(direct_meta) + 63) / 64 * 64;
     static_assert(alignof(E) <= 64, "slots follow a 64 byte aligned meta");
     struct storage {
-        meta* m;
+        head* m;
         E* vals;
     };
     // fresh direct storage with cap slots, its meta a copy of src
-    static auto new_direct(meta const& src, std::size_t cap) -> storage {
+    static auto copy_direct_meta(void* where, head const& src) -> head* {
+        if constexpr (Tune::slim_direct) {
+            return ::new (where) head(src);
+        } else {
+            return ::new (where) meta(static_cast<meta const&>(src)); // every page has a full meta
+        }
+    }
+    static auto new_direct(head const& src, std::size_t cap) -> storage {
         if constexpr (Tune::one_alloc) {
             auto* raw = static_cast<unsigned char*>(::operator new(meta_bytes + sizeof(E) * cap, std::align_val_t{64}));
-            auto* m = ::new (static_cast<void*>(raw)) meta(src);
-            return {m, reinterpret_cast<E*>(raw + meta_bytes)};
+            return {copy_direct_meta(raw, src), reinterpret_cast<E*>(raw + meta_bytes)};
         } else {
-            return {new meta(src), alloc(cap)};
+            return {copy_direct_meta(::operator new(sizeof(direct_meta)), src), alloc(cap)};
         }
     }
     static void delete_storage(storage st, bool direct) {
         if (Tune::one_alloc && direct) {
             ::operator delete(static_cast<void*>(st.m), std::align_val_t{64});
+            return;
+        }
+        ::operator delete(st.vals);
+        if (direct) {
+            ::operator delete(static_cast<void*>(st.m)); // a direct_meta, trivially destructible
         } else {
-            ::operator delete(st.vals);
-            delete st.m;
+            delete static_cast<meta*>(st.m);
         }
     }
     // once, when a packed page is dense enough: each value moves from its rank to its slot
     static void to_direct(entry& e) {
-        auto const cap = direct_cap(e.m->top);
-        auto st = new_direct(*e.m, cap);
+        auto const cap = direct_cap(e.m()->top);
+        auto st = new_direct(*e.m(), cap);
         e.each([&](std::size_t sl, std::size_t r) {
             ::new (static_cast<void*>(st.vals + sl)) E(std::move(e.vals[r]));
             e.vals[r].~E();
         });
-        delete_storage({e.m, e.vals}, false);
-        e.m = st.m;
+        delete_storage({e.m(), e.vals}, false);
+        e.set_m(st.m);
         e.vals = st.vals;
-        e.m->cap = static_cast<std::uint32_t>(cap);
-        e.direct = true;
+        e.m()->cap = static_cast<count_t>(cap);
+        e.set_direct(true);
     }
     // a direct page grows like a vector, up to the page
     static void grow_direct(entry& e, std::size_t need) {
         auto const cap = direct_cap(need);
-        auto st = new_direct(*e.m, cap);
+        auto st = new_direct(*e.m(), cap);
         e.each([&](std::size_t sl, std::size_t) {
             ::new (static_cast<void*>(st.vals + sl)) E(std::move(e.vals[sl]));
             e.vals[sl].~E();
         });
-        delete_storage({e.m, e.vals}, true);
-        e.m = st.m;
+        delete_storage({e.m(), e.vals}, true);
+        e.set_m(st.m);
         e.vals = st.vals;
-        e.m->cap = static_cast<std::uint32_t>(cap);
+        e.m()->cap = static_cast<count_t>(cap);
     }
     static void free_page(entry& e) {
-        if (e.m == &s_empty) {
+        if (e.m() == &s_empty) {
             return;
         }
         if constexpr (!std::is_trivially_destructible_v<E>) {
@@ -774,13 +847,14 @@ private:
                 e.vals[at].~E();
             });
         }
-        delete_storage({e.m, e.vals}, e.direct);
+        delete_storage({e.m(), e.vals}, e.direct());
     }
     // a direct page erased below 1/back_div of its slots: back to packed, the counts rebuilt
     static void to_packed(entry& e) {
-        auto const n = e.m->live;
+        auto const n = e.m()->live;
         auto const cap = std::max<std::size_t>(4, n + n / 4);
-        auto* m = new meta(*e.m);
+        auto* m = new meta{};
+        static_cast<head&>(*m) = *e.m();
         auto* v = alloc(cap);
         std::size_t r = 0;
         for (std::size_t w = 0; w < words; ++w) {
@@ -791,11 +865,11 @@ private:
                 e.vals[sl].~E();
             }
         }
-        delete_storage({e.m, e.vals}, true);
-        e.m = m;
+        delete_storage({e.m(), e.vals}, true);
+        e.set_m(m);
         e.vals = v;
-        e.m->cap = static_cast<std::uint32_t>(cap);
-        e.direct = false;
+        e.m()->cap = static_cast<count_t>(cap);
+        e.set_direct(false);
     }
 
 public:
@@ -811,14 +885,14 @@ public:
         : m_dir(o.m_dir)
         , m_size(o.m_size) {
         for (auto& e : m_dir) {
-            if (e.m == &s_empty) {
+            if (e.m() == &s_empty) {
                 continue;
             }
-            auto st = e.direct ? new_direct(*e.m, e.m->cap) : storage{new meta(*e.m), alloc(e.m->cap)};
+            auto st = e.direct() ? new_direct(*e.m(), e.m()->cap) : storage{new meta(*e.pm()), alloc(e.m()->cap)};
             e.each([&](std::size_t, std::size_t at) {
                 ::new (static_cast<void*>(st.vals + at)) E(e.vals[at]);
             });
-            e.m = st.m;
+            e.set_m(st.m);
             e.vals = st.vals;
         }
     }
@@ -842,7 +916,7 @@ public:
         }
         auto const& e = m_dir[p];
         auto const s = i & mask;
-        return e.m->has(s) ? e.vals + e.pos(s) : nullptr;
+        return e.m()->has(s) ? e.vals + e.pos(s) : nullptr;
     }
     auto find_ptr(K id) const -> T* {
         auto* e = find_elem(id);
@@ -864,27 +938,27 @@ public:
         auto const i = idx(id);
         auto const p = i >> PageBits;
         if (p >= m_dir.size()) {
-            m_dir.resize(p + 1, entry{nullptr, &s_empty, false});
+            m_dir.resize(p + 1, entry::make(nullptr, &s_empty, false));
         }
         auto& e = m_dir[p];
         auto const s = i & mask;
-        if (e.m->has(s)) {
+        if (e.m()->has(s)) {
             return {iterator(this, id, false), false};
         }
-        if (e.m == &s_empty) {
-            e.m = new meta{};
+        if (e.m() == &s_empty) {
+            e.set_m(new meta{});
         }
-        if (e.direct) {
-            if (s >= e.m->cap) {
+        if (e.direct()) {
+            if (s >= e.m()->cap) {
                 grow_direct(e, s + 1);
             }
             construct(e.vals + s, id, std::forward<Args>(args)...);
             set_bit(e, s);
             return {iterator(this, id, false), true};
         }
-        auto const n = e.m->count();
-        auto const r = e.m->rank(s);
-        if (n == e.m->cap) {
+        auto const n = e.pm()->count();
+        auto const r = e.pm()->rank(s);
+        if (n == e.m()->cap) {
             auto const cap = std::min<std::size_t>(slots, std::max<std::size_t>(4, n + n / 4));
             auto* v = alloc(cap);
             std::uninitialized_move_n(e.vals, r, v);
@@ -893,7 +967,7 @@ public:
             std::destroy_n(e.vals, n);
             ::operator delete(e.vals);
             e.vals = v;
-            e.m->cap = static_cast<std::uint32_t>(cap);
+            e.m()->cap = static_cast<count_t>(cap);
         } else if (r == n) {
             construct(e.vals + n, id, std::forward<Args>(args)...);
         } else {
@@ -905,7 +979,7 @@ public:
             construct(e.vals + r, id, std::forward<Args>(args)...);
         }
         set_bit(e, s);
-        if (n + 1 >= min_direct && 2 * (n + 1) >= e.m->top) {
+        if (n + 1 >= min_direct && 2 * (n + 1) >= e.m()->top) {
             to_direct(e);
         }
         return {iterator(this, id, false), true};
@@ -922,33 +996,33 @@ public:
     auto erase(K id) -> std::size_t {
         auto const i = idx(id);
         auto const p = i >> PageBits;
-        if (p >= m_dir.size() || !m_dir[p].m->has(i & mask)) {
+        if (p >= m_dir.size() || !m_dir[p].m()->has(i & mask)) {
             return 0;
         }
         auto& e = m_dir[p];
         auto const s = i & mask;
-        if (e.direct) {
+        if (e.direct()) {
             e.vals[s].~E();
         } else {
-            auto const n = e.m->count();
-            auto const r = e.m->rank(s);
+            auto const n = e.pm()->count();
+            auto const r = e.pm()->rank(s);
             e.vals[r].~E();
             for (auto k = r + 1; k < n; ++k) {
                 ::new (static_cast<void*>(e.vals + k - 1)) E(std::move(e.vals[k]));
                 e.vals[k].~E();
             }
         }
-        e.m->bits[s / 64] &= ~(std::uint64_t{1} << (s % 64));
-        if (!e.direct) {
+        e.m()->bits[s / 64] &= ~(std::uint64_t{1} << (s % 64));
+        if (!e.direct()) {
             for (auto w = s / 64 + 1; w < words; ++w) {
-                --e.m->before[w];
+                --e.pm()->before[w];
             }
         }
         --m_size;
-        if (--e.m->live == 0) {
+        if (--e.m()->live == 0) {
             free_page(e);
-            e = entry{nullptr, &s_empty, false};
-        } else if (e.direct && e.m->live * Tune::back_div < e.m->cap) {
+            e = entry::make(nullptr, &s_empty, false);
+        } else if (e.direct() && e.m()->live * Tune::back_div < e.m()->cap) {
             to_packed(e);
         }
         return 1;
@@ -974,7 +1048,7 @@ public:
     auto next_at_or_after(K id, K* out) const -> bool {
         auto i = idx(id);
         for (auto p = i >> PageBits; p < m_dir.size(); ++p, i = p << PageBits) {
-            auto const* m = m_dir[p].m;
+            auto const* m = m_dir[p].m();
             for (auto s = i & mask; s < slots; s = (s | 63) + 1) {
                 auto b = m->bits[s / 64] >> (s % 64);
                 if (b != 0) {
