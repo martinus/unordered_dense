@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::mapped_view /////////////////////////
 
 // A file mapping that owns a map_view or set_view over its bytes.
-// Version 5.3.1
+// Version 5.3.2
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.

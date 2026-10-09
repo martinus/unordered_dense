@@ -1,7 +1,7 @@
 ///////////////////////// ankerl::unordered_dense::huge_page_allocator /////////////////////////
 
 // An opt-in allocator that puts large blocks on transparent huge pages.
-// Version 5.3.1
+// Version 5.3.2
 // https://github.com/martinus/unordered_dense
 //
 // Licensed under the MIT License <http://opensource.org/licenses/MIT>.
