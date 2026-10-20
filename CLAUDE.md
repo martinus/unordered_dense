@@ -1,7 +1,15 @@
-# CLAUDE.md — ankerl::unordered_dense, operating rules for agent sessions
+# ankerl::unordered_dense: rules for agent sessions
 
-Reader: an agent session. Everything here is a rule, a command or a pointer; the evidence behind every
-rule is in `notes/index-design.md` under the grep phrase given. Nothing here is narrative.
+Every line is a rule, a command or a pointer. The evidence for each is in `notes/index-design.md`
+under the grep phrase given.
+
+## Performance work: load the `benchmarking` skill first
+
+Before any benchmark, A/B, perf profile, size sweep, speed or memory claim, edit to `scripts/ab/` or
+`test/bench/`, or optimization proposal, load the `benchmarking` skill
+(`.claude/skills/benchmarking/`). It holds the harness for each question, the measurement rules,
+the calibration constants, and `already-measured.md`, the list of closed ideas. Answering from
+memory has produced wrong numbers here more than once.
 
 ## Files
 
@@ -17,81 +25,30 @@ rule is in `notes/index-design.md` under the grep phrase given. Nothing here is 
 | fuzz corpora | `data/fuzz/<target>/`, replayed by the `fuzz` suite on every run |
 | linters | `scripts/lint/all.py` |
 | CI | `.github/workflows/main.yml` (34 legs), `bench.yml` (nine runners, push to `bench`) |
+| benchmarking rules, harness choice, closed ideas | `.claude/skills/benchmarking/SKILL.md`, `already-measured.md` next to it |
 
 ## Workflow
 
 - **PR only.** `enforce_admins` is on; direct pushes to main are blocked. Branch, `gh pr create`,
   `gh pr merge N --rebase --delete-branch=false` — rebase merges are the only kind allowed.
-- **Merge only when told** ("merge when green" = wait for 34/34 in `gh pr checks N`; the JSON
-  `conclusion` is `""` while pending, not null — read the tabular view).
+- **Merge only when told.** "Merge when green": start `.claude/skills/issues/watch_ci.sh N` with
+  `run_in_background` (it waits for the runs on the PR's current head; a loop over `gh pr checks`
+  exits at once after a push, before any check exists), then merge only if every leg of
+  `gh pr checks N` reads `pass` (34 legs in October 2026); otherwise report. Read the tabular view:
+  the JSON `conclusion` is `""` while pending, not null.
 - **Stacked PR** (edits lines an open PR adds): branch from that branch, `--base <that-branch>`; after
   the first rebase-merges, `git rebase --onto origin/main <first> <second>`, force-push with lease,
   wait for the re-run. #269→#270.
-- One PR per issue; commit message = one sentence in the repo's voice + the numbers + `Closes #N`.
+- One PR per issue; commit message per Templates.
 - `/simplify` after a PR is up; fix what it finds directly. It has caught a stale mutation block and
   two claims that outran their evidence.
 - Never bare `git stash` — other sessions share the stash. Prefer a WIP commit.
-- Do not edit a shell script while it runs (bash re-reads at the old offset). Do not run builds or
-  anything heavy while a benchmark runs; pin benchmarks with `AB_CORE=2`.
-- `AB_BUILD` on `/home/martinus/gra/<name>`, never `/tmp` (tmpfs; a full `/tmp` wedges every shell
-  command). Delete the directory once the numbers are in the notes.
-- Every measured result goes into `notes/index-design.md` as an entry at the end of its topic
-  section (`###` heading = what was tried and what happened, then a status line), and retractions
-  are written in place, never deleted. A negative result is an entry too. An entry that changes an
-  older one's conclusion adds `**Later (date):**` there. Then `scripts/lint/lint-notes.py --fix`
-  (regenerates the contents list; the linter fails CI on a stale list or a broken reference).
-
-## Session mechanics (what cost turns last time)
-
-- **Long runs: one background call, no polling.** Start it with `run_in_background`, `tee` its
-  output to `/home/martinus/gra/<name>/*.txt` (the task's own output file is on `/tmp`), and do
-  independent work until the notification. The command cap is 1 hour: split sweeps at ~45 min.
-- **A long run's variants are fixed when it compiles, so make them patches or template parameters,
-  never "the working tree"**: on 2026-10-02 a trigger edited after a run had built its binaries
-  meant a 25-minute restart. `scripts/ab/drift_variants.sh` applies patches to a copy.
-- **A timed region under a few milliseconds is noise**: `drift_variants.sh`'s first `miss`/`hit`
-  cells timed 5236 lookups (40 us) and read 0.96-1.08 for a layout-only change; 3M lookups made
-  them consistent across sizes. Size the reps from time, not from the table.
-- **Smoke every harness at the smallest size, one round, before the real run.** Three scripts this
-  week failed only at run time: `env VAR=x fn` cannot call a shell function; `ls_l1_d_tlb_miss.all_l2_dtlb_miss`
-  is not an event; `$!` after `cmd | tee &` is `tee`'s pid.
-- **Never `pkill -f <pattern>` inside a Bash call**: the pattern is in that shell's own command line,
-  it kills itself (exit 144) and the rest of the command never runs (a commit and push were lost
-  in #359). Stop a background task by its pid or with TaskStop.
-- **A variant of code under development is a template parameter or an API, not a patch**:
-  `index_load_nocheck.patch` went stale three times in one afternoon (#299) and became
-  `trust::unchecked`. Patches are for variants of code that is not changing.
-- **A timed function that creates a map hands it out of the clock to be destroyed, and RSS is
-  measured before the timed rounds**: #299's string loads read 14 ns/entry of frees as load time,
-  and an RSS after the rounds read 0.2 B/entry for a 27 B/entry map.
-- **Verify the mechanism is engaged before A/B-ing it.** A setting that did not take effect measures
-  as a clean null. Huge pages: `AnonHugePages` in `/proc/<pid>/smaps_rollup` mid-run, or `perf stat
-  -e ls_l1_d_tlb_miss.tlb_reload_2m_l2_hit`. Prefetch/inlining: the symbol table (`nm -C | grep -c`)
-  and `perf record` of the hot function.
-- **CI watcher**: `.claude/skills/issues/watch_ci.sh N` with `run_in_background`. It waits for the
-  runs on the PR's *current head*; a loop over `gh pr checks` exits at once after a push (no checks
-  yet, or the old head's; on 2026-10-02 one exited before any check existed)
-  — then `gh pr merge N --rebase --delete-branch=false` only if the user said "merge when green".
-- **perf events that exist on this machine** (Zen 4, perf 6.x): `cycles`, `instructions`,
-  `branch-misses`, `dTLB-load-misses`, `ls_l1_d_tlb_miss.{all,all_l2_miss,tlb_reload_4k_l2_hit,tlb_reload_2m_l2_hit,tlb_reload_coalesced_page_hit}`.
-  Four or more events multiplex; three per run for clean counts. `cpuid` is not installed.
-- **A new public header**: `Version X.Y.Z` line in its banner, add it to `CHECKS` in
-  `scripts/lint/lint-version.py`, `#include "unordered_dense.h"` for the version namespace, a unit
-  test registered in `test/meson.build` (then the unity leg), CMake installs the directory so nothing
-  else changes.
-- **Templates.** Issue: `## The number` (measured, with the notes entry name) / `## What to build` /
-  `## How to measure it` / `## Done means`. Notes entry: `### What was tried and what happened`, then
-  `*YYYY-MM-DD · #N · kept|rejected|retracted|superseded|open|method|info · Ryzen 9 7950X, clang 22
-  and gcc 16, the scripts used*`, then tables, then "what this says and does not say"; update the
-  section's **Where it stands** if the answer changed. Commit: one sentence, body with
-  numbers, `Closes #N`. Comment on an issue only when asked ("comment that").
-- **The owner's requests, as phrased:** "Do the issues" / "work the issues" = the `/issues` skill
-  (`.claude/skills/issues/SKILL.md`): every open owner issue to merged, then a reflection PR. "Ok now 260" = implement issue 260 and open its PR. "Run
-  simplify" = `/simplify` on the open PR, fix findings directly (never file them as issues unless
-  told). "Merge when green" = watch CI, merge on 34/34, otherwise report. "File 1 2 and 3" = one issue
-  per numbered point in the last reply. "Comment that" = post the last reasoning as an issue comment.
-  "Is it still running?" = check the background job and show partial output. Questions ("would it
-  make sense to…") want the measured answer and a recommendation, not a plan.
+- Do not edit a shell script while it runs (bash re-reads at the old offset).
+- Every measured result, negative ones included, goes into `notes/index-design.md` as an entry at
+  the end of its topic section (format under Templates). Retract in place, never delete. An entry
+  that changes an older one's conclusion adds `**Later (date):**` there. Then run
+  `scripts/lint/lint-notes.py --fix` (regenerates the contents list; CI fails on a stale list or a
+  broken reference).
 
 ## Build, test, lint
 
@@ -116,111 +73,6 @@ CI legs to reproduce locally before pushing header or test changes, each caught 
 - ASan+UBSan (`builddir/san_address`) for anything touching memory or the index.
 - Any leg: `meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++<matrix cpp_std, default 17> <matrix setup_args> && meson test -C builddir --print-errorlogs <matrix test_args>`.
 - Offline: put sources in `subprojects/doctest-2.5.3/` and `subprojects/fmt-12.0.0/` with a minimal `meson.build` calling `meson.override_dependency()`.
-
-## The index, in one paragraph
-
-Groups of sixteen since 2026-09-05: one 88 byte block per group (`bucket_type::group`, 5.5 B/slot) =
-16 one-byte fingerprints compared in one SSE2/NEON instruction + 8 overflow counters + 16 `uint32_t`
-value indices; `group_big` = 152 bytes with 64-bit indices. Quadratic probing over groups. An insert
-increments the counter of its fingerprint class in every full group it passes, an erase decrements
-it: **no tombstones, no rehash ever needed**. Nothing moves once placed, except a hit found inside a
-*writing* operation moves home if there is room (`move_home`), which takes back a churned table's
-drift. Every key/value search is bounded (`delta == m_group_mask`); the two placement walks are
-unbounded by design (free-slot invariant). Erase swaps the last value into the hole and re-finds
-its slot by hashing it (`repoint_value`) — the "string erase second hash", #266. Against the robin
-hood index it replaced (4.11.0): 1.10x score, 1.45x churn, 1.5x misses, 1.33x hits, 5.5 B/slot vs 8.
-
-## Benchmark
-
-The metric: `bench_quick_overall_udm`, fifteen workloads (iterate-while-modifying, insert/erase,
-build, churn at a fixed size, find at 50% hits) × (`map<uint64_t,size_t>`, `map<string,size_t>`,
-`map<uint64_t,big_value>`), geometric mean, **lower is better**. Every workload's table is ≤ 200000
-entries; churn is 50000. Anything past L2/L3 is invisible to it and needs the size-axis harnesses.
-
-```sh
-./builddir/clang_release/test/udm-test -ns -tc=bench_quick_overall_udm   # the score (-ns: benchmarks are skip()ed)
-./builddir/clang_release/test/udm-test -ns -ts=bench                     # every benchmark
-```
-
-### Which measurement answers which question
-
-| question | tool | reads |
-|---|---|---|
-| does a header change move the score, ≥ ~10%, inlining untouched | `scripts/ab/run.sh [-c g++] [-r REV] all 12` (paired, one process, octave geomean) | believe the ratio when the CI excludes 100% |
-| anything touching `always_inline`, a function's size, a template boundary, or < 10% | `AB_BUILD=/home/martinus/gra/x scripts/ab/solo.sh [-c g++] [-r main] 5` (one header per binary, alternated) **then** `scripts/ab/perwl.sh /home/martinus/gra/x` | solo.sh prints **baseline/candidate** (>1 = candidate faster; run.sh reads the same way). perwl.sh prints candidate/baseline **ins/op per workload**: deterministic to 4 decimals, the decisive number |
-| the mechanism (cycles, misses, TLB) | `perf stat` / `perf record` on the score binary or `scripts/ab/maps_one.sh` (one map per binary) | `perf record` first: an out-of-line symbol in `nm` is not evidence the hot path calls it (#268) |
-| an environment setting: page size, allocator tunable, governor | `scripts/ab/same_binary.sh 5 GLIBC_TUNABLES=glibc.malloc.hugetlb=1` | same binary, no layout band; the paired harness cannot see this (both sides share a process) |
-| the size axis, other maps, allocators | `scripts/ab/huge_pages.sh`, `scripts/ab/maps.sh`, `scripts/ab/prefetch_lines.sh`, ... (all self-contained, variant = template instantiation, interleaved rounds, medians) | never one size: sweep, and sweep across the cache boundary |
-| a ratio against a map that is not this header (boost, another slots-per-group) | `scripts/ab/run.sh -b -p 50` (2.4x the default's wall clock) | five points are worth up to 26% there and 0.3-1.1% (2.4% on `rhitstr`) against another revision of this header: the two sawtooths are only in phase in the second case (#274) |
-| how this map stands against every map a caller might pick, in their *own* default configurations | `AB_CORE=2 AB_BUILD=/home/martinus/gra/x scripts/ab/bench_readme.sh [-u v5.2.0]` (2h45m, 25 maps x 2 key types x 5 workloads; `-u` builds this map's rows from a release; `-w memory` re-takes one panel) | writes `doc/bench_readme.csv` and the README's four SVGs (this map and 4.11.0 against the other libraries, and the opt-in shapes on their own). Every map gets its own hash here, which `maps.sh` deliberately does not do (#277) |
-| which parts of the insert to inline and which to call | `scripts/ab/shape_search/run.sh` (gen, score x2, udb3, ch x2, corpus x2, rank; ~3 h, one stage per call) | the rank line: smallest worst ratio per compiler, fixed rule; the Pareto set shows what the alternatives trade |
-| any change to what an insert or lookup inlines into its caller, or to the shape of the insert | `AB_CORE=2 AB_BUILD=/home/martinus/gra/x scripts/ab/caller_corpus.sh main HEAD` (9 caller loops x 2 sizes x 2 compilers, one binary each) | the `worst ratio` line per compiler, not the geomean: 5.2.0 won the score and read 3.3x (clang) and 3.6x (gcc) behind the best shape in one loop here. The loops that pick keys with `%` and store into the result can fall into the spill trap ("stored and reloaded") depending on how much is inlined; a change must not add a cliff |
-| is the paired harness biased today | `scripts/ab/run.sh -r HEAD` (same header both sides) | one build is one sample of the layout band: `rmissstr` 1.036 then 0.993-1.008, `rhit64` 0.976-1.000, `hashstr` 0.872-1.05. Re-take it per build and retire anything under ~5% |
-
-Calibration constants, all measured: run-to-run drift 1–2%; **code layout luck ±3%** (two runs of the
-same two binaries are one layout sample; `-falign-functions=32` re-rolls it: #262 read 0.9975 and
-1.0052 on two layouts); `hashstr` control swings 0.87–1.13 in the paired harness (its floor); a
-THP-`always` runner scores 2.6–3.6% above a `madvise` one for no reason in the code — record
-`/sys/kernel/mm/transparent_hugepage/enabled` before comparing machines; nanobench `err%` > 3 = rerun.
-
-### Rules (each one cost a wrong answer first; grep the phrase)
-
-- Release builds only. Baseline first, then 2–3 comparisons. **Never compare runs from different times** -- including a fresh sweep against a stored CSV, which is a systematic few percent and invented a 2-3% big-value regression that `maps.sh -r REV` (both headers, one process, interleaved) showed was 2.3% the other way. `solo.sh -r` cannot reach a header older than the test suite: `fab7984` will not build against today's `huge_page_allocator.h`. grep "Comparing today's runs"
-- **A lookup harness here measures throughput, not latency** (`lookups()` draws its key from an rng, so several are in flight). A dependent chain is 1.4x slower for this map at a million entries and **3.0x** for boost, and the two rank the maps oppositely: boost wins the independent hit 1.69x and loses the chain 22.0 to 16.6. Label which one a number is. `scripts/ab/latency.cpp` runs both; its independent loop must not pick keys by reading an array, or it measures that array's misses. grep "measure throughput"
-- **A million entries is not past the cache on this machine**: 64 MB of L3 in two 32 MB slices, `AB_CORE` pins to one, and `map<uint64_t, uint64_t>` at 1M is 26 MB here and 32 MB in boost. Two million is the first size clearly out. grep "not past the cache"
-- **Never quote a ratio from one table size.** Load factor sawtooths ½→max between doublings and two
-  indexes double at different sizes: 11 slots read 1.384 at one size, 1.039 over the octave; churn64
-  reversed sign. Every boost ratio not labelled "octave geomean" is a point measurement. grep "octave".
-  **Five points across that octave never land on its peak** (load 0.763 of a maximum of 0.800) and
-  read about two thirds of the amplitude `-p 50` reads (`rmiss64` 1.29x against 1.46x). Five is right for a
-  header-against-header A/B and wrong for anything out of phase with this map. grep "Fifty points".
-- **Sweep across the cache boundary for any prefetch/pipeline.** Lookahead costs 13–17 instr/element
-  whether needed or not; `replace()` shipped a fifth slower below 65k after being measured only above
-  its crossover. Two sizes on one side of a cache are one size. grep "crossover".
-- **The control for a pipeline is the same entry point with the ring removed, as a second binary**
-  (`solo.sh`), not the caller's loop of single calls (that carries the 15-instruction call boundary).
-- **Instruction counts are immune to layout, not to inlining.** A count that moved because the
-  inliner moved is real for the shipped binary and transfers to nothing: #254's 133→119.5 vanished
-  under `noinline` and never existed under gcc. Before generalising a count: pin with `noinline`,
-  check the second compiler, and read `perwl.sh` for workloads that *cannot* run the changed code —
-  if they moved, it was the inliner (#268: one `churn` instantiation grew 7065→10384 bytes). grep
-  "inlining artifact".
-- **A scratch one-map TU can hide a redundancy (#254) or invent one (#268: a `m_group_mask` reload
-  real in the scratch TU, hoisted in the score binary).** Read the disassembly of the score binary's
-  hot function, found via `perf record`, not a scratch TU's.
-- **Profile before disassembling.** #268's only real find had a 0.2% ceiling readable from one
-  `perf record`; the audit spent a day reaching it. grep "sweep run over find and churn".
-- **The paired harness gets the sign wrong on anything that changes inlining** (both headers in one
-  TU exhaust the budget): removing an `always_inline` read 0.979 paired and 1.017 solo. grep "solo".
-- **A benchmark that picks its variant inside the timed loop measures the dispatch** (14.11 vs 13.43
-  ns for identical addresses). Variant = template parameter; a gated loop = two instantiations, never
-  a branch (a predicted branch with a ring, a lambda and an array hanging off it cost 10%).
-- **A benchmark that rebuilds its subject every round measures the allocator, bimodally** (4.40 /
-  2.85 / 4.76 ns for one binary). Warm the subject, report the median round.
-- **A benchmark with a small per-epoch batch must advance its own randomness**; a replayed key
-  sequence is learned by the predictor (2.7x flattery; made twice, two tools). grep "replay".
-- **A benchmark's input model can make a wrong heuristic look right** (a fresh-key rate that is
-  stationary in the harness and 64x wrong on real data). Unit tests judge correctness, benchmarks
-  judge speed. grep "birthday".
-- **A pipeline's payoff depends on the caller's data, not only the size**: `replace()`'s ring is 1.5x
-  with no duplicates and −16% with a quarter, same size. Pick gates on the geomean over key types and
-  rates and state what they give up. grep "duplicate rate".
-- **Walk value containers with iterators in any loop that also places** — a `uint8_t` fingerprint
-  store may alias the container's data pointer, so an indexed read reloads it per element (10.43→2.74
-  ns). Hold one cursor fewer than feels natural (`size()`, not `last`): a fourth live value cost 3.5%
-  cycles with fewer instructions. grep "cursor".
-- **The page size is worth more than anything left in the code**: L1 dTLB = 72 entries = 288 KB;
-  every scored workload but `iterate` exceeds it; 1.6 G L2-TLB lookups per score pass, 107x fewer on
-  2 MB pages. It is not the map's to set (process policy, source break on the allocator type,
-  machine-dependent results): opt-in allocator #231 or the environment. grep "4 KB pages".
-
-### Rules the workloads must obey (`test/bench/workloads.h`; break one and the score measures the input)
-
-String keys 8–135 bytes skewed short (fixed length = predictable hash dispatch); integer keys through
-a bijection (small sequential ints never collide); something must grow, something must churn at a
-fixed size, something must carry a >8-byte value; `tame_allocator()` in every workload (else 38% of a
-build is the page-fault handler); churn draws fresh keys (recycling halves the drift). Scores before
-and after any workload change are not comparable, and the change is the fix, not a workaround.
 
 ## Mutation testing
 
@@ -254,29 +106,48 @@ A new target needs two or more corpus files before the suite passes: fuzz, then 
 `meson setup builddir/fuzz_assert -Dfuzz_sanitizers=true -Dcpp_args=-D_GLIBCXX_ASSERTIONS`, which is
 what found #299's two-slots-on-one-value read past the end.
 
-## Already measured — do not propose again without new evidence (grep the phrase in the notes)
+## The index, in one paragraph
 
-- Counters: 1/group 0.959; 16 nibbles 0.986; 32 two-bit 0.988; exact in-home counter built (#366, 2026-10-03): 0.03-0.07 groups fewer per churned miss and the miss 2-5% *slower* at every size (the estimated 6-7% came from scaling `move_home`, whose saved group is a mispredict). Eight bytes is the top; axis closed. "counter", "exact in-home counter built"
-- Churn drift (2026-10-03, `scripts/ab/drift_variants.sh`, `probe_length.sh` checkpoints): two fifths back half a turnover after a rebuild, nine tenths after four. Same-size index rebuild (#363) costs the churn round 4-17%, misses 1.11x at 52k and lose past L3; step-1 mask pull-back on erase (#364) churned misses 1.12-1.18x but the round 0.88-0.96 and a 96 B block, owner declined; an empty 96 B block (no stride gain) costs the round 2-7%. `move_home` stays the only repair. "Rebuilding a drifted index", "step-1 mask"
-- Group size: 11 slots below 1.00; 24 slots 0.85–1.00 everywhere (dilutes the 8 classes); 12-slot 64 B block 0.9888. Sixteen is a 3-axis optimum. "twenty-four slots"
-- Probe: triangular stays (#355, closed 2026-10-02). A step from the key takes 7-18% off a churned miss, all of it in the first step, but it is a third value live across a walk that starts on the integer hit path: +1.8-10% of the score's integer find instructions for each sequence scored (`dh`, `dhcls`, `tric1`), and packing the step into `delta`, `asm` barriers and class-only steps do not remove it. Peeling home off the walks saves instructions and loses 14-18% of a clang churned lookup. `scripts/ab/probe_sequence.sh` regenerates any of them ("Seven probe sequences"); sliding window 1–5% of a hit and forecloses counters + merged block; fused probe+placement more instructions. "double hashing", "probe sequences", "window"
-- Prefetch: `prefetch_index` 2 lines from +64 clamped, `prefetch_block` 2 lines from +0 — naming a third line loses (#250, #252); dropping either of the two is within 3% on both compilers from 50k to 16M and dropping both is a 12% gcc loss at 4M (re-measured 2026-10-02, `scripts/ab/prefetch_index.sh`); the two value walks want none (#263). "prefetch_lines"
-- Layout: merged 88 B block kept (7% of lookup instr, 28% of dTLB at 4M); the 10 instr/hit against `flat_wmap` are clang's (gcc 1.4 *fewer*), its 10 cycles the value index's third dependent load, and a 96 B block (`lea`+shift for the `imul`) buys nothing (#367, "10 instructions per hit"); split fp/counters tie; line-aligned indices 0.993; second fingerprint 0.975; 16-bit indices 0.986. "merged block"
-- Values: narrower index / tiny pointers ~9% memory, no speed (#229); slot back-pointer re-tested across the cache boundary and closed (#266): string erase *by key* 0.89-0.92 at every size from 50k to 4M, and a wash on churn because the insert tax is the same size -- score 0.987 clang / 0.973 gcc, +18.6% live bytes for an 8 byte value and +5% for a 64 byte one, where churn loses at every size, `scripts/ab/back_pointer.patch`; stored hash per value (#365, 2026-10-03, `scripts/ab/stored_hash.patch`): string erase by key 0.91 clang / 0.96 gcc, growth 2-3% of a build at best, churn a wash, +8% memory, integers 1.2-1.7x slower -- rejected as default and as opt-in; distance nibbles 0.959; growth < 2 is a knob; not zeroing the index 1.7% and UB. "tiny pointers", "back-pointer"
-- Hash: 12 alternatives, none faster on latency; AES-NI 28% faster hashing, 9–37% slower in the map; short/long split loses; latency tunings worthless (the microbench had the length on the chain). "hash"
-- Compilers: `always_inline` on `probe` and on the placement kept (17–20% of a build in a one-map TU, first on `do_place_element`; re-measured 2026-10-02 on `place_element_at`: clang integer builds 1.19-1.22x, gcc unchanged, `scripts/ab/place_inline.sh`; costs the score, which is a 90-TU binary); clang's insert split = 15 instr/insert call boundary, PGO removes it, six source changes did not. `probe_past_home`'s return shape swept and closed (#267): dropping `value_idx` costs 4.1% of the string find's instructions under clang, `found` as a sentinel 1.1%, the integer find unmoved in every cell -- clang already packs the twelve bytes into the two return registers, so there is nothing to save. `try_emplace`'s hit path (#305): the out-of-line hit uses 15 GPRs, so its six-register prologue cannot be shrink-wrapped; placement out of line, `always_inline` outward, fewer values across the probe and `flatten` on the caller all null or worse (clang 72.0 instr/hit, 77.0 flattened; gcc 45.1). Solved by #321 from the other side: `do_try_emplace` forced inline with the home-group hit and the counter-zero placement in it, the walk past home `noinline` for clang and inlined for gcc, `emplace_back` under `flatten`, `increase_size`/`fill_buckets_from_values` `noinline` -- 17 variants, every score workload at or under main's instructions on both compilers (clang hit 72.0 -> 51.3, miss 96.0 -> 81.2; score clang 1.022 / gcc 1.077), each attribute measured by removing it. #310 then called everything after a home-group miss, for every compiler, picked by `scripts/ab/shape_search/` (16 shapes, graded by the worst ratio to the best shape over the caller corpus, udb3 and ClickHouse, rule fixed before the results): worst 1.11 clang / 1.58 gcc against 5.2.0's 3.32 / 3.54. Inlined, the placement pushed a caller's loop variables to the stack, and on Zen 4 a variable stored and reloaded across a store with a cache-missing address, with a division on the way to the next key, stops the loop overlapping its misses -- 5x without any map (`scripts/ab/spill_trap.cpp`). The price under gcc: score 0.940, udb3 insert+delete 1.39x, ClickHouse WatchID 1.24x of the best shape. A harness that picks keys with `%` and stores into what it found measures this. Don't re-argue a shape by hand: rerun the search. "probe_result's shape", "call boundary", "attacked from the hit side", "split at the home group", "stored and reloaded"
-- Small-table hit path (#347, 2026-10-03, `scripts/ab/preferred_lane.patch`): a preferred lane checked before the group compare takes dense ids to 0.85-0.91 (quiet loop) and scrambled integer hits to 1.3-1.8x; rejected. The hit's cost over 4.x is the value index load (#367), which no lane trick removes. "A preferred lane"
-- Maximum load factor (#306): 0.75/0.85/0.875/0.9 against 0.8 at `-p 50`, both compilers agree to 0.1%: 1.008 / 0.985 / 0.974 / 0.960 of the geomean, index 1.067 / 0.941 / 0.914 / 0.889 of 0.8's. Kept at 0.8; in cache only, past-cache not swept. "maximum load factor swept"
-- Teardown order (2026-09-26): `segmented_vector` destroys and frees last first; forward order made glibc trim 106-131 MB per 1M-entry teardown that the next build faulted back in (warm build 1.8-2.3x strings, 2.6-3.2x owning values). Price: freed memory stays resident until reused or `malloc_trim`, as with `std::unordered_map`. glibc only. "Tearing a segmented_map down in reverse"
-- Segment size (#350, 2026-10-02): `default_segment_size_bytes` stays 4096 (owner: a non-empty map holds a whole segment). String iteration 3.33x `map` at 4M with 4 KB segments, 1.24x at 256 KB, 1.06x at 16 MB, the same on huge pages (not the page: 2560 B segments between the strings' buffers, +8 cycles/element, not TLB, not instructions); `uint64_t` and 64 B values flat at 1.10-1.32x for every size (iterator arithmetic). Exact-page segments (`4096/sizeof(T)`, aligned, division): worst or tied everywhere, `uint64_t` iteration 3.1x, RSS up to 1.34x. `scripts/ab/segment_size.sh`. "segment size"
-- Loading from values and index (#299, 2026-10-02): the owning load's slot check (range, count, one bit per value) costs it 4.3-6.1x at 1M and 1.4-1.7x at 16M-64M against the bare copy; four loop rewrites made it worse; so the owning constructor takes `trust` like the view. The bitmap is not optional for an owning table: two slots on one value pass range+count and an erase then leaves one pointing past the end (fuzz_index_view, `_GLIBCXX_ASSERTIONS`; ASan misses it, the read is inside capacity). A view's check is branchless, 0.85 ns/entry at every size. `scripts/ab/index_load.sh`. "Loading a map from its values and its index"
-- Range insert sizing from `distance()`: 2x and declined (#248) — every version guesses at data the map cannot see. No heuristics about caller data, ever. "birthday"
-- Pipelines: 5 rings (rehash, range insert, replace dedup, merge; visit uses chunks), not shared (1.9 instr/element); gates on index bytes, 256 KB and 1 MB, re-fit whenever the gated loop changes (#247, #242, #257). `visit` 1.18–1.29x above the cache, 1.15–1.24x at half hits, 0.89x below 10k all-hit; batching keys at all is 1.5x. "gate", "visit"
-- Erase path round trips: #260 (−5 instr/erase, transfers), #262 (gcc −5%), #268 (`move_home` re-derivation: real, worth 0.0%). "slot number"
-- Huge pages: score 2.6–3.6% via glibc tunable; allocator (#231) integer builds 1.5–1.7x from 200k (strings 1.1–1.3x), churn 1.33x at 800k, nothing at 50k (no 2 MB block), threshold 2 MB not 4; segmented 16 MB segments fastest build for strings and 64 byte values (for integers the vector on the allocator is 6-11% faster); boost gains equally. Not a default. Aliases #271 and the segment size #272 shipped; `bench_readme.sh` reads the build+destroy at 1.67x at a million (1.59x on inserts alone; 1.72x for 5.2.0 in #349) independently of #231, which is two harnesses sharing no code agreeing on one mechanism. "4 KB pages", "size axis"
-- Other maps, own hashes, a million entries (#277, re-run for 5.2.0 in #349, the README's graphs): integer iterate 5.4-13x over every flat map and 112x over `std::unordered_map`; string build-and-destroy 2.1-2.6x over every flat map; integer find 1.37x and churn 1.69x *behind* boost, and `absl` builds integers at 0.82. Huge pages 0.58 on the integer build-and-destroy, `segmented_map` 0.58 on peak memory. "Seventeen maps in their own default configurations"
-- **An allocation counter must not be linked into the binary that measures time.** Interposing `malloc` costs a node map 4.4% of an integer build and a dense map 0.0%; an earlier version that kept its own 16 byte header cost 29%, and that version drew a whole published chart (`absl node` build read 4.68, it is 1.46). Gate the interposers (`-DUDM_COUNT_ALLOC`) and give `memory` its own binary. When counting: charge `malloc_usable_size` plus glibc's 8 byte header, not the request, and interpose `mmap`/`munmap` too. "Seventeen maps in their own default configurations"
-- **A build panel must say whether it destroys the map**, and the README's does: teardown is 58-62% of a node map's integer lifetime and 6% of this map's, and for strings it is 64-68 ns/entry for every flat map against 14 here (frees in hash order against frees in insertion order). `maps.h`'s `build()` destroys inside the clock; `bench_readme` measures both columns. "Seventeen maps in their own default configurations"
-- **Memory has two answers and both are measured**: `scripts/ab/max_rss.h` (resident pages) and `scripts/ab/count_alloc.h` (bytes asked for), used by `bench_readme` and `maps.cpp`. Resident over asked sorts by family: node 0.85-1.04x, dense 1.05-1.55x, flat 1.50-1.97x at `maps.cpp`'s sizes (at a million in `bench_readme`: node 1.00-1.01, dense 1.14-1.18, flat 1.25-1.34), so the verdict inverts between them (absl asks 26.4 B/entry and occupies 48.8; this map asks 31.8 and occupies 42.0). Quote both or say which. **Fork per measurement** in both -- the second fill reuses the grown arena and reads too low, and a counted pass run in-process makes every *later* RSS cell read near zero. **Subtract the instrument's floor**: forking + `clear_refs` + reading `/proc/self/status` costs ~128 KB, constant, which is 0.5% at 500k entries and the whole answer at 1000; deterministic within a process, ~20 KB residual after subtraction, **no thousand-entry column from it**. Interpose `malloc`/`calloc`/`realloc`/`mmap` **and `aligned_alloc`/`posix_memalign`** (ihtab read 8.3 B/entry against 35.3 without them), charging `malloc_usable_size` + 8. Never link the counter into a binary that measures time. Huge pages are counted correctly and were checked. **A benchmark that allocates needs a volatile sink** -- clang elides `vector`+`memset`+one read outright, and a touched 16 MB measured as an empty closure. "`max_rss::of` was charging every map 128 KB"
-- Rehash pipeline, the size axis below 200000 (2026-09-15): `rehash(0)` on its own wants it at nearly every size for a string key (up to 1.53x) and, for an integer key, up to 61 KB of index and from 344 KB on but **not between** -- 0.953-0.971 from 86 to 243 KB on both compilers. End to end it costs a clang build nothing at any size (worst cell 0.979) and costs a gcc integer build 1.7-4.2% from 43 KB to 486 KB. The ring is 11 instr/element flat: -8% cycles at 21 KB, +8% at 122 KB, -6% at 2.7 MB. Kept, no gate: the losing band is bounded on both sides, so one index-bytes threshold cannot express it, and separating it needs to know whether the key's hash is expensive. **The harness had to be pinned first** -- two timed functions in one TU moved the pipelined side 11% and turned a 4% dip into 13%, with a byte-identical-binary check proving it was the inliner and not layout; one mode per TU, and the same sweep twice agrees to 1.5%. `scripts/ab/rehash_size.sh`, `scripts/ab/rehash_plain.patch`. "The rehash pipeline below 200000 entries"
-- Still open: a probe-length statistics facility -- but `scripts/ab/probe_length.cpp` already answers it out of tree and says the counter "does not belong in the header, where it would be in everybody's lookup".
+Groups of sixteen since 2026-09-05: one 88 byte block per group (`bucket_type::group`, 5.5 B/slot) =
+16 one-byte fingerprints compared in one SSE2/NEON instruction + 8 overflow counters + 16 `uint32_t`
+value indices; `group_big` = 152 bytes with 64-bit indices. Quadratic probing over groups. An insert
+increments the counter of its fingerprint class in every full group it passes, an erase decrements
+it: **no tombstones, no rehash ever needed**. Nothing moves once placed, except a hit found inside a
+*writing* operation moves home if there is room (`move_home`), which takes back a churned table's
+drift. Every key/value search is bounded (`delta == m_group_mask`); the two placement walks are
+unbounded by design (free-slot invariant). Erase swaps the last value into the hole and re-finds
+its slot by hashing it (`repoint_value`) — the "string erase second hash", #266. Against the robin
+hood index it replaced (4.11.0): 1.10x score, 1.45x churn, 1.5x misses, 1.33x hits, 5.5 B/slot vs 8.
+
+## Pitfalls
+
+- **Never `pkill -f <pattern>` inside a Bash call**: the pattern is in that shell's own command line,
+  it kills itself (exit 144) and the rest of the command never runs (a commit and push were lost
+  in #359). Stop a background task by its pid or with TaskStop.
+- **A new public header**: `Version X.Y.Z` line in its banner, add it to `CHECKS` in
+  `scripts/lint/lint-version.py`, `#include "unordered_dense.h"` for the version namespace, a unit
+  test registered in `test/meson.build` (then the unity leg), CMake installs the directory so nothing
+  else changes.
+
+## Templates
+
+- Issue: `## The number` (measured, with the notes entry name) / `## What to build` /
+  `## How to measure it` / `## Done means`.
+- Notes entry: `### What was tried and what happened`, then `*YYYY-MM-DD · #N ·
+  kept|rejected|retracted|superseded|open|method|info · Ryzen 9 7950X, clang 22 and gcc 16, the
+  scripts used*`, then tables, then "what this says and does not say". Update the section's
+  **Where it stands** if the answer changed.
+- Commit: one sentence in the repo's voice, a body with the numbers, `Closes #N`.
+
+## The owner's requests, as phrased
+
+| request | meaning |
+|---|---|
+| "Do the issues", "work the issues" | the `issues` skill: every open owner issue to merged, then a reflection PR |
+| "Ok now 260" | implement issue 260 and open its PR |
+| "Run simplify" | `/simplify` on the open PR; fix findings directly, never file them as issues unless told |
+| "Merge when green" | Workflow above: watch CI, merge when every leg passes, otherwise report |
+| "File 1 2 and 3" | one issue per numbered point in the last reply |
+| "Comment that" | post the last reasoning as an issue comment; never comment on an issue unasked |
+| "Is it still running?" | check the background job and show its partial output |
+| "Would it make sense to ...?" | the measured answer (`benchmarking` skill) and a recommendation, not a plan |
