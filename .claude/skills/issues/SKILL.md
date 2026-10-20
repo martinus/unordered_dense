@@ -1,6 +1,6 @@
 ---
 name: issues
-description: Work every open GitHub issue that martinus filed in unordered_dense to done -- implement, or measure and record -- grouped into PRs by subject, each rebase-merged when all CI legs are green, re-reading the issue list after every merge; then reflect on the session and land what makes the next one better. Use when told "do the issues", "work the issues", or to keep going until nothing is left.
+description: Works every open GitHub issue that martinus filed in unordered_dense to done (implemented, or measured and recorded), grouped into PRs by subject, each rebase-merged when all CI legs are green, re-reading the issue list after every merge; then reflects on the session and lands what makes the next one better. Use when the owner says "do the issues", "work the issues", or to keep going until no issue is left.
 argument-hint: "[optional: an issue number or subject to start with]"
 ---
 
@@ -13,8 +13,19 @@ is not over until the reflection is done.
 **"Do the issues" is permission to merge your own PRs, on all CI legs green, rebase only.** Nothing
 else in `CLAUDE.md` is relaxed: no direct push to main, no merge on red, no `--admin`.
 
-`CLAUDE.md` holds the rules and `notes/index-design.md` holds the evidence. This file holds the
-order of the work and the loop mechanics. Do not restate a CLAUDE.md rule here; follow it there.
+`CLAUDE.md` holds the rules, the `benchmarking` skill holds the measurement rules, and
+`notes/index-design.md` holds the evidence. This file holds the order of the work and the loop
+mechanics. Do not restate a rule from those here; follow it there.
+
+Copy this checklist into your first reply and keep it current:
+
+```
+- [ ] 1 read, triage, group, order (one line per issue)
+- [ ] per subject: 2 reproduce -> 3 ask if needed -> 4 build/measure -> 5 record -> 6 review -> 7 PR merged
+- [ ] issue list re-read after every merge
+- [ ] final report
+- [ ] reflection PR merged, or "nothing went wrong" in one line
+```
 
 ## Trust boundary: the owner's issues only
 
@@ -53,14 +64,14 @@ each, before starting.
 ## 2. Reproduce or re-measure before changing anything
 
 The number in an issue is a hypothesis taken on another day, against another header. Re-take the
-baseline today with the harness CLAUDE.md's "Which measurement answers which question" table
-names for this question. Never compare against a stored number (CLAUDE.md: "Never compare runs from
+baseline today with the harness the `benchmarking` skill's "Which measurement answers which
+question" table names. Never compare against a stored number (`benchmarking`: "Never compare runs from
 different times"). For a bug, reproduce it as a failing doctest first; that test becomes the
 regression test.
 
 A fix for a guessed cause is a second bug. A speedup measured with the wrong harness is the most
 common wrong answer in this repo's history: inlining-sensitive changes need `solo.sh` + `perwl.sh`,
-never the paired `run.sh`. Read the chosen harness's caveat line in CLAUDE.md before running it.
+never the paired `run.sh`. Read the chosen harness's caveat line in the `benchmarking` skill before running it.
 
 ## 3. Ask before you build, never after
 
@@ -75,7 +86,7 @@ While waiting for an answer, work the next subject. Never block the loop on a qu
 ## 4. Build or measure
 
 - Read the CLAUDE.md sections for what you touch before editing: Build/test/lint, the CI legs to
-  reproduce locally, Mutation testing, the benchmark rules.
+  reproduce locally, Mutation testing, Fuzzing. For a measurement, load the `benchmarking` skill.
 - Behaviour change: a regression test, proven by a semantic mutation that makes it fail
   (`scripts/mutate/mutate.py --diff` or a manual mutation). Read the doctest summary line
   (`test cases: N | N passed`), not the exit colour; a `-tc=` filter that matched nothing passes.
@@ -83,14 +94,9 @@ While waiting for an answer, work the next subject. Never block the loop on a qu
   the unity leg if a test file was added or removed, ASan+UBSan for memory or index changes).
   Anything touching the probe, counters or termination: replay `data/fuzz/fuzz_group_index` and
   fuzz for a few minutes.
-- Measurement:
-  - Smoke every harness at the smallest size with one round first. `AB_SMOKE`-style switches are
-    worth adding to a new harness.
-  - Start a long run as one background call with `tee` to `/home/martinus/gra/<name>/*.txt`, capped
-    at about 45 minutes per call. Never chain `sleep`; the completion notification wakes you.
-  - Do not build or run anything heavy while a benchmark runs. CI runs remotely and does not count.
-    Use the wait for prose, notes and PR text.
-  - Delete the `AB_BUILD` directory once its numbers are in the notes.
+- Measurement: follow the `benchmarking` skill's "Running a measurement" (smoke first, one
+  background call, no heavy work alongside). CI runs remotely and does not count as heavy work. Use
+  the wait for prose, notes and PR text. An `AB_SMOKE`-style switch is worth adding to a new harness.
 - A subagent given an issue gets the issue's "Done means" verbatim in its prompt, and its result is
   checked against it before you rely on it. Subagents may not run benchmarks: one machine, one
   benchmark at a time.
@@ -101,8 +107,9 @@ While waiting for an answer, work the next subject. Never block the loop on a qu
   in the format `notes/index-design.md` "Adding an entry" gives. Update that section's
   **Where it stands**, add `**Later (date):**` to the older entry it changes, then run
   `scripts/lint/lint-notes.py --fix`.
-- A closed question goes into CLAUDE.md "Already measured", in the existing bullet for that
-  subject. `grep -n <symbol> CLAUDE.md` first; a second bullet on one subject is drift.
+- A closed question goes into `.claude/skills/benchmarking/already-measured.md`, in the existing
+  bullet for that subject. `grep -n <symbol>` that file first; a second bullet on one subject is
+  drift.
 - A harness goes into `scripts/ab/README.md`, with the run command and how long it takes.
 - An entry or bullet that states more than the run showed is a defect. Re-read every number you
   wrote against the raw output file before pushing (counts like "eleven variants", "at or under",
@@ -188,7 +195,7 @@ more often right?** List what cost time or went wrong:
 - a number you had to correct after writing it;
 - a measurement re-run because the first harness or setup was wrong;
 - a correction from the owner, or a question asked twice;
-- a fact you had to search for that `grep` on CLAUDE.md or the notes did not find;
+- a fact you had to search for that `grep` on CLAUDE.md, `.claude/skills/` or the notes did not find;
 - a script written from scratch that `scripts/ab/` could hold;
 - a rule that was wrong or stale, or one that cost reading and saved nothing.
 

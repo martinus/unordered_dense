@@ -1,6 +1,6 @@
 # The measurements behind unordered_dense
 
-Every experiment run on `unordered_dense`'s index, hash, insert path and benchmarks, with the numbers that decided it. `CLAUDE.md` holds the rules that came out of them. This file is the evidence behind those rules, so that a rule can be checked and a rejected idea is not proposed a second time.
+Every experiment run on `unordered_dense`'s index, hash, insert path and benchmarks, with the numbers that decided it. `CLAUDE.md` and `.claude/skills/benchmarking/` hold the rules that came out of them. This file is the evidence behind those rules, so that a rule can be checked and a rejected idea is not proposed a second time.
 
 ## How to use this file
 
