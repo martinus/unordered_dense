@@ -155,7 +155,15 @@
 #        include <intrin.h> // for _BitScanForward
 #    endif
 
-#    if __has_cpp_attribute(likely) && __has_cpp_attribute(unlikely) && ANKERL_UNORDERED_DENSE_CPP_VERSION >= 202002L
+// __has_cpp_attribute is not provided by every C++17 compiler (e.g. MSVC 19.16); probe it with
+// defined() first so the nested use is not evaluated where the builtin is missing (MSVC C4067).
+#    if defined(__has_cpp_attribute) && ANKERL_UNORDERED_DENSE_CPP_VERSION >= 202002L
+#        if __has_cpp_attribute(likely) && __has_cpp_attribute(unlikely)
+#            define ANKERL_UNORDERED_DENSE_HAS_LIKELY_ATTR 1 // NOLINT(cppcoreguidelines-macro-usage)
+#        endif
+#    endif
+
+#    if defined(ANKERL_UNORDERED_DENSE_HAS_LIKELY_ATTR)
 #        define ANKERL_UNORDERED_DENSE_LIKELY_ATTR [[likely]]     // NOLINT(cppcoreguidelines-macro-usage)
 #        define ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR [[unlikely]] // NOLINT(cppcoreguidelines-macro-usage)
 #        define ANKERL_UNORDERED_DENSE_LIKELY(x) (x)              // NOLINT(cppcoreguidelines-macro-usage)
