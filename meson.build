@@ -18,7 +18,7 @@
 #
 
 project('unordered_dense', 'cpp',
-    version: '5.3.2',
+    version: '5.3.3',
     license: 'MIT',
     default_options : [
         'cpp_std=c++17', 
