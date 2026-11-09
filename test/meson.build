@@ -26,6 +26,7 @@ test_sources = [
     'unit/bucket.cpp',
     'unit/bulk_visit.cpp',
     'unit/carried_state.cpp',
+    'unit/clear_per_entry.cpp',
     'unit/contains.cpp',
     'unit/copy_and_assign_maps.cpp',
     'unit/copyassignment.cpp',

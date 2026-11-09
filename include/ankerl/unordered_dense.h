@@ -3039,6 +3039,81 @@ private:
         m_buckets.clear_metadata();
     }
 
+    // Below one entry per this many groups, clear() takes each entry out of the index the way an
+    // erase does instead of resetting every group, so that it costs what the table holds and not the
+    // largest size it ever had: at a 4M peak holding 16 entries a reset writes 46 MB (#381). A reset
+    // costs 1.2-6 ns a group; taking one entry out costs its hash and its probe, which is what its
+    // insert paid. Measured break-even, in groups per entry: 4 for integers, 8 for 16 byte strings,
+    // 16 for 135 byte ones, 32-48 for 1 KB ones. 16 is within 5% of the best geomean over those
+    // four key kinds, in and out of cache, both compilers; what it gives up is a 1 KB key just past
+    // it, whose clear is up to 2.2x slower than a reset (notes/index-design.md, "clear() costs
+    // what the table holds"). The threshold depends only on size() and the group count, like
+    // growth (#248), so bucket_count() never changes.
+    static constexpr std::size_t clear_per_entry_groups = 16;
+
+    // Empties the slot of every value and takes the value out of each counter its insert put it in:
+    // slot_of_value's walk, which compares value indices and never keys, with uncount's decrement
+    // folded in so that each group on the way is visited once. Nothing is moved or repointed, since
+    // m_values.clear() follows. False when it cannot finish exactly -- a counter saturated at 255,
+    // which no erase decrements and only a reset zeroes; a counter already at zero on the way, which
+    // is a key mutated in place; or a hash that threw -- and the caller then resets every group,
+    // which is right from whatever state this stopped in.
+    [[nodiscard]] auto clear_slots_of_values() -> bool {
+        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() &&
+                      !noexcept(std::declval<Hash const&>()(std::declval<key_type const&>()))) {
+            try {
+                return clear_slots_of_values_unguarded();
+            } catch (...) {
+                return false;
+            }
+        } else {
+            return clear_slots_of_values_unguarded();
+        }
+    }
+
+    [[nodiscard]] auto clear_slots_of_values_unguarded() -> bool {
+        static_assert(!is_view_v, "map_view and set_view are read only");
+        // Read before the first fingerprint store, which may alias anything (fill_buckets_from_values
+        // says why), and the values are walked with an iterator for the same reason.
+        auto* groups = m_buckets.data();
+        auto const mask = m_group_mask;
+        auto const shifts = m_shifts;
+        value_idx_type value_idx = 0;
+        for (auto const& value : m_values) {
+            auto const mh = mixed_hash(get_key(value));
+            auto const word = fingerprint_word(mh);
+            auto const counter = word & 7U;
+            auto group_idx = static_cast<value_idx_type>(mh >> shifts);
+            value_idx_type delta = 0;
+            while (true) {
+                auto& group = groups[group_idx];
+                auto lanes = match_fingerprint(group, word);
+                while (lanes != 0) {
+                    auto const lane = first_lane(lanes);
+                    if (group.m_index[lane] == value_idx) {
+                        group.m_fingerprints[lane] = 0;
+                        break;
+                    }
+                    lanes &= lanes - 1;
+                }
+                if (lanes != 0) {
+                    break;
+                }
+                // A value's own insert counted it here, so zero means its key is not the one it was
+                // placed with, and the walk would otherwise wrap that counter to 255. Each step
+                // takes a counter down, so this ends even on such a key.
+                auto& passed = group.m_overflows[counter];
+                if (passed == 0 || passed == 255) {
+                    return false;
+                }
+                --passed;
+                group_idx = static_cast<value_idx_type>((group_idx + (++delta)) & mask);
+            }
+            ++value_idx;
+        }
+        return true;
+    }
+
     // Into an index just allocated, so already empty.
     ANKERL_UNORDERED_DENSE_NOINLINE void fill_buckets_from_values() {
         static_assert(!is_view_v, "map_view and set_view are read only");
@@ -4162,10 +4237,14 @@ public:
 
     // modifiers //////////////////////////////////////////////////////////////
 
+    // Costs size() while the table holds fewer than one entry per clear_per_entry_groups groups,
+    // and the size of the bucket array otherwise. Neither frees the array (#381).
     void clear() {
         if (!empty()) {
+            if (m_values.size() >= m_buckets.size() / clear_per_entry_groups || !clear_slots_of_values()) {
+                clear_buckets();
+            }
             m_values.clear();
-            clear_buckets();
         }
     }
 
