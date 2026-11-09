@@ -5,13 +5,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
-// clear() on a table holding fewer than one entry per 16 groups takes each entry out of the index
-// the way an erase does, instead of resetting every group (#381). The two must leave the same index:
+// clear(clear_mode::sparse) on a table holding fewer than one entry per 16 groups takes each entry
+// out of the index the way an erase does, instead of resetting every group (#381); clear() always
+// resets and never hashes, so it still works on keys that were moved out. The two must leave the same index:
 // every fingerprint and every counter zero, the bucket count unchanged, and a table that then
 // behaves, insert for insert, like one that was never filled. Nothing outside the map can tell the
 // two paths apart except the bytes of index() and how often the hash is called, so that is what
@@ -21,6 +24,8 @@ namespace {
 
 // table::clear_per_entry_groups
 constexpr std::size_t clear_k = 16;
+
+constexpr auto sparse = ankerl::unordered_dense::clear_mode::sparse;
 
 std::size_t g_clear_hashes = 0;
 
@@ -36,7 +41,7 @@ struct clear_counting_hash {
 // Throws on the call that takes this to zero; negative never throws.
 int g_clear_hash_throw_in = -1;
 
-// Not noexcept, so clear() has to survive it.
+// Not noexcept, so clear(clear_mode::sparse) has to put the table right before passing it on.
 struct clear_throwing_hash {
     using is_avalanching = void;
 
@@ -168,7 +173,7 @@ void grow_shrink_clear_refill(std::size_t bulk, bool keep_bulk) {
     // one hash per entry, displaced ones included, when emptied entry by entry; none for a reset
     auto const held = map.size();
     g_clear_hashes = 0;
-    map.clear();
+    map.clear(sparse);
     REQUIRE(g_clear_hashes == (keep_bulk ? 0U : held));
     REQUIRE(map.empty());
     REQUIRE(map.size() == 0U);
@@ -216,7 +221,7 @@ TEST_CASE_MAP("clear_per_entry_leaves_the_index_as_fresh", std::uint64_t, std::u
 }
 
 // Which path ran is visible as hash calls: one per entry for the per-entry clear, none for the reset.
-// The boundary is one entry fewer than groups / 16.
+// The boundary is one entry fewer than groups / 16. clear() and clear(clear_mode::reset) never hash.
 TEST_CASE_MAP("clear_per_entry_boundary", std::uint64_t, std::uint64_t, clear_counting_hash) {
     auto map = map_t();
     map.reserve(100000);
@@ -229,8 +234,23 @@ TEST_CASE_MAP("clear_per_entry_boundary", std::uint64_t, std::uint64_t, clear_co
         }
         REQUIRE(map.size() == n);
         g_clear_hashes = 0;
-        map.clear();
+        map.clear(sparse);
         REQUIRE(g_clear_hashes == (n < limit ? n : 0U));
+        REQUIRE(map.empty());
+        REQUIRE(index_is_empty(map));
+        REQUIRE(clear_groups(map) == groups);
+    }
+    for (auto const mode : {0, 1}) {
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            map.try_emplace(i * UINT64_C(0x9E3779B97F4A7C15), i);
+        }
+        g_clear_hashes = 0;
+        if (mode == 0) {
+            map.clear();
+        } else {
+            map.clear(ankerl::unordered_dense::clear_mode::reset);
+        }
+        REQUIRE(g_clear_hashes == 0U);
         REQUIRE(map.empty());
         REQUIRE(index_is_empty(map));
         REQUIRE(clear_groups(map) == groups);
@@ -241,13 +261,13 @@ TEST_CASE_MAP("clear_per_entry_boundary", std::uint64_t, std::uint64_t, clear_co
     small.try_emplace(1, 1);
     REQUIRE(clear_groups(small) < clear_k);
     g_clear_hashes = 0;
-    small.clear();
+    small.clear(sparse);
     REQUIRE(g_clear_hashes == 0U);
     REQUIRE(index_is_empty(small));
 }
 
 // A counter that reached 255 is never decremented again, so emptying the entries one by one cannot
-// bring it back to zero; meeting one makes clear() reset everything instead.
+// bring it back to zero; meeting one makes clear(clear_mode::sparse) reset everything instead.
 TEST_CASE_MAP("clear_per_entry_resets_a_saturated_counter", std::uint64_t, std::uint64_t, test::identity_hash) {
     auto map = map_t();
     map.reserve(150000);
@@ -257,7 +277,7 @@ TEST_CASE_MAP("clear_per_entry_resets_a_saturated_counter", std::uint64_t, std::
     }
     REQUIRE(map.index().data()[0].m_overflows[clear_fp & 7U] == 255);
     REQUIRE(map.size() < clear_groups(map) / clear_k);
-    map.clear();
+    map.clear(sparse);
     REQUIRE(index_is_empty(map));
     REQUIRE(map.try_emplace(key(0, 1, clear_fp), 1).second);
     REQUIRE(map.index().data()[0].m_overflows[clear_fp & 7U] == 0);
@@ -278,7 +298,7 @@ TEST_CASE_MAP("clear_per_entry_at_254_and_255", std::uint64_t, std::uint64_t, cl
         REQUIRE(map.index().data()[0].m_overflows[clear_fp & 7U] == overflowers);
         REQUIRE(map.size() < clear_groups(map) / clear_k);
         g_clear_hashes = 0;
-        map.clear();
+        map.clear(sparse);
         // the 16 at home pass nothing; with 255 the next one meets the saturated counter
         REQUIRE(g_clear_hashes == (overflowers == 254 ? std::size_t{270} : std::size_t{17}));
         REQUIRE(index_is_empty(map));
@@ -294,7 +314,7 @@ TEST_CASE_MAP("clear_per_entry_at_254_and_255", std::uint64_t, std::uint64_t, cl
         REQUIRE(map.erase(key(0, i, clear_fp)) == 1U);
     }
     REQUIRE(map.index().data()[0].m_overflows[clear_fp & 7U] == 255);
-    map.clear();
+    map.clear(sparse);
     REQUIRE(index_is_empty(map));
 }
 
@@ -308,14 +328,16 @@ TEST_CASE_MAP("clear_per_entry_with_a_mutated_key", std::uint64_t, std::uint64_t
     map.try_emplace(key(5, 1, clear_fp), 1);
     map.begin()->first = key(4, 1, clear_fp); // home 4, whose next group is 5
     REQUIRE(map.size() < clear_groups(map) / clear_k);
-    map.clear();
+    map.clear(sparse);
     REQUIRE(map.empty());
     REQUIRE(index_is_empty(map));
 }
 
-TEST_CASE_MAP("clear_per_entry_survives_a_throwing_hash", std::uint64_t, std::uint64_t, clear_throwing_hash) {
-    // The throw comes after the full home group and two of the overflowers are already out of the
-    // index, so the reset has to start from a half emptied one.
+// The throw comes after the full home group and two of the overflowers are already out of the
+// index, so the reset has to start from a half emptied one; the exception reaches the caller, as
+// every other throw out of the map does, and the map is empty and usable. clear() never calls the
+// hash, so the same hash armed to throw at once does not reach it.
+TEST_CASE_MAP("clear_per_entry_passes_on_a_throwing_hash", std::uint64_t, std::uint64_t, clear_throwing_hash) {
     auto map = map_t();
     map.reserve(10000);
     auto const survivors = clear_survivors(clear_keys(map));
@@ -324,13 +346,109 @@ TEST_CASE_MAP("clear_per_entry_survives_a_throwing_hash", std::uint64_t, std::ui
     }
     REQUIRE(map.size() < clear_groups(map) / clear_k);
     g_clear_hash_throw_in = 18;
-    REQUIRE_NOTHROW(map.clear());
+    REQUIRE_THROWS_AS(map.clear(sparse), std::runtime_error);
     REQUIRE(g_clear_hash_throw_in == -1);
+    REQUIRE(map.empty());
+    REQUIRE(map.begin() == map.end());
+    REQUIRE(index_is_empty(map));
+    for (std::size_t i = 0; i < survivors.size(); ++i) {
+        REQUIRE(map.try_emplace(survivors[i], i).second);
+    }
+    for (std::size_t i = 0; i < survivors.size(); ++i) {
+        REQUIRE(map.find(survivors[i])->second == i);
+    }
+
+    g_clear_hash_throw_in = 0;
+    REQUIRE_NOTHROW(map.clear());
+    REQUIRE(g_clear_hash_throw_in == 0);
     g_clear_hash_throw_in = -1;
     REQUIRE(map.empty());
     REQUIRE(index_is_empty(map));
     REQUIRE(map.try_emplace(7, 7).second);
     REQUIRE(map.contains(7));
+}
+
+// Survivors far from home: 16 * m entries homed in one group fill the m groups of its probe sequence
+// and visit 8 * m * (m + 1) groups between them, against fewer than groups / 16 entries. Past one visit
+// per group the walk gives up and the reset runs: the entry whose walk crosses it is the last one hashed.
+TEST_CASE_MAP("clear_per_entry_gives_up_after_one_visit_per_group", std::uint64_t, std::uint64_t, clear_counting_hash) {
+    auto map = map_t();
+    map.reserve(700000);
+    auto const groups = clear_groups(map);
+    auto const key = clear_keys(map);
+    constexpr std::size_t n = 2000; // 125 groups deep; every class passes the home group 248 times
+    REQUIRE(n < groups / clear_k);
+    REQUIRE(8 * (n / 16) * ((n / 16) + 1) > groups);
+    for (std::uint64_t i = 0; i < n; ++i) {
+        REQUIRE(map.try_emplace(key(0, i, 0x40 + (i % 8)), i).second);
+    }
+    for (std::size_t c = 0; c < 8; ++c) {
+        REQUIRE(map.index().data()[0].m_overflows[c] == 248);
+    }
+    // entry i sits in the (i / 16)-th group of the sequence and visits i / 16 + 1 groups
+    auto hashed = std::size_t{0};
+    for (std::size_t i = 0, visits = 0; i < n && visits <= groups; ++i) {
+        ++hashed;
+        visits += (i / 16) + 1;
+    }
+    REQUIRE(hashed < n);
+    g_clear_hashes = 0;
+    map.clear(sparse);
+    REQUIRE(g_clear_hashes == hashed);
+    REQUIRE(map.empty());
+    REQUIRE(index_is_empty(map));
+    REQUIRE(clear_groups(map) == groups);
+
+    // the same table a quarter as deep fits the budget and is walked to the end
+    for (std::uint64_t i = 0; i < n / 4; ++i) {
+        REQUIRE(map.try_emplace(key(0, i, 0x40 + (i % 8)), i).second);
+    }
+    REQUIRE(8 * (n / 64) * ((n / 64) + 1) < groups);
+    g_clear_hashes = 0;
+    map.clear(sparse);
+    REQUIRE(g_clear_hashes == n / 4);
+    REQUIRE(index_is_empty(map));
+    REQUIRE(map.try_emplace(key(0, 1, 0x41), 1).second);
+    REQUIRE(map.contains(key(0, 1, 0x41)));
+}
+
+namespace {
+
+// Keys are not const: moving them out of the map and then calling clear() is allowed, so clear()
+// must not hash them. The hash would dereference a moved-from pointer; it counts first.
+std::size_t g_ptr_hashes = 0;
+
+struct clear_deref_hash {
+    [[nodiscard]] auto operator()(std::unique_ptr<int> const& p) const noexcept -> std::uint64_t {
+        ++g_ptr_hashes;
+        return p ? static_cast<std::uint64_t>(*p) : 0U;
+    }
+};
+
+} // namespace
+
+TEST_CASE_MAP("clear_after_moving_the_keys_out_never_hashes", std::unique_ptr<int>, int, clear_deref_hash) {
+    auto map = map_t();
+    map.reserve(10000);
+    auto const buckets = map.bucket_count();
+    for (int i = 0; i < 10; ++i) {
+        REQUIRE(map.try_emplace(std::make_unique<int>(i), i).second);
+    }
+    REQUIRE(map.size() < clear_groups(map) / clear_k); // sparse: clear(clear_mode::sparse) would hash
+    auto taken = std::vector<std::unique_ptr<int>>();
+    for (auto& kv : map) {
+        taken.push_back(std::move(kv.first));
+    }
+    g_ptr_hashes = 0;
+    map.clear();
+    REQUIRE(g_ptr_hashes == 0U);
+    REQUIRE(map.empty());
+    REQUIRE(map.bucket_count() == buckets);
+    REQUIRE(index_is_empty(map));
+    REQUIRE(map.try_emplace(std::make_unique<int>(3), 3).second);
+    REQUIRE(map.size() == 1U);
+    REQUIRE(*map.begin()->first == 3);
+    REQUIRE(taken.size() == 10U);
 }
 
 // With the library's own string hash, through a set.
@@ -343,7 +461,7 @@ TEST_CASE_SET("clear_per_entry_strings", std::string) {
         REQUIRE(set.erase("key " + std::to_string(i)) == 1U);
     }
     auto const buckets = set.bucket_count();
-    set.clear();
+    set.clear(sparse);
     REQUIRE(set.empty());
     REQUIRE(set.bucket_count() == buckets);
     auto const idx = set.index();

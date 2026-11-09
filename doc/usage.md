@@ -327,6 +327,31 @@ sit in the same block without being part of the type. The product reads 24 bytes
 bucket types, and it still compiles, so nothing tells you. See
 [upgrading from 4.x](upgrading-to-5.md).
 
+### `void clear(clear_mode mode)`
+
+`clear()` resets every group of the index, so it costs the size of the bucket array, which is the
+largest size the table ever had, even when it holds a few entries. It never calls the hash, so it
+also works after the keys were moved out.
+
+`clear(clear_mode::sparse)` hashes every stored key. When the table holds fewer than one entry per
+16 groups (`bucket_count() / 256`), it takes each entry out of the index the way an erase does and
+costs what the table holds; otherwise it resets like `clear()`, and it also falls back to the reset
+when the walk meets a saturated overflow counter or has visited as many groups as the index has
+(entries far from home), so it never visits more groups than a reset writes. Every key must still
+hash as it did when it was inserted, so do not call it after moving keys out. If the hash throws, the map is left
+empty and the exception passes on. `clear(clear_mode::reset)` is `clear()`. Neither frees the index.
+
+```cpp
+auto map = ankerl::unordered_dense::map<std::uint64_t, int>();
+map.reserve(4000000);
+for (int round = 0; round < 1000; ++round) {
+    for (std::uint64_t k = 0; k < 16; ++k) {
+        map.try_emplace(k, round);
+    }
+    map.clear(ankerl::unordered_dense::clear_mode::sparse); // 16 entries out, not 4M slots reset
+}
+```
+
 ### `auto replace(value_container_type&& container)`
 
 Discards the internally held container and replaces it with the one passed. Non-unique elements are

@@ -1,8 +1,10 @@
 #!/bin/bash
-# What clear() costs on a table that holds few entries against its groups, and where taking each
+# What clearing costs on a table that holds few entries against its groups, and where taking each
 # entry out beats resetting every group (#381; scripts/ab/clear_sparse.cpp). Three sides: REV's
 # header (default origin/main: every clear resets), the working tree's, and the working tree's with
-# clear_per_entry_groups set to 1 (every clear of fewer entries than groups goes per entry). Four key
+# clear_per_entry_groups set to 1 (every clear of fewer entries than groups goes per entry). A side
+# whose header declares clear_mode is cleared with clear(clear_mode::sparse), any other with
+# clear(). Four key
 # kinds, one binary per side and kind, one process per cell, PASSES passes rotating the order of the
 # sides, pinned to AB_CORE (default 2). Each cell is a peak (what the table was reserve()d to) and a
 # ratio of groups to entries; the defaults step the ratio across the threshold at a peak inside
@@ -40,9 +42,11 @@ grep -q 'clear_per_entry_groups = 1;' "$build/perentry/ankerl/unordered_dense.h"
     { echo "clear_per_entry_groups not found in the working tree's header" >&2; exit 1; }
 pids=()
 for side in "${sides[@]}"; do
+    sparse=0
+    grep -q 'enum class clear_mode' "$build/$side/ankerl/unordered_dense.h" && sparse=1
     for kind in "${kinds[@]}"; do
         rm -f "$build/$cxx-$side-$kind"
-        "$cxx" -O3 -DNDEBUG -std=c++17 -I"$build/$side" -D$kind \
+        "$cxx" -O3 -DNDEBUG -std=c++17 -I"$build/$side" -D$kind -DAB_CLEAR_SPARSE=$sparse \
             "$root/scripts/ab/clear_sparse.cpp" -o "$build/$cxx-$side-$kind" &
         pids+=($!)
     done
