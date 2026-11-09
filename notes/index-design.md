@@ -138,6 +138,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [`erase_if` and range erase one element at a time: counting the matches first and rebuilding the index once is 1.5-10x faster from a quarter erased](#erase_if-and-range-erase-one-element-at-a-time-counting-the-matches-first-and-rebuilding-the-index-once-is-15-10x-faster-from-a-quarter-erased) · 2026-11-10 · open
   - [A hint for `back()`'s slot, so the erase after an insert does not hash the moved key: string churn 2-8% faster at no bytes per entry, integer keys gain nothing](#a-hint-for-backs-slot-so-the-erase-after-an-insert-does-not-hash-the-moved-key-string-churn-2-8-faster-at-no-bytes-per-entry-integer-keys-gain-nothing) · 2026-11-10 · open
   - [Growing the index 4x while it is small: the load factor trade again, rejected](#growing-the-index-4x-while-it-is-small-the-load-factor-trade-again-rejected) · 2026-11-10 · rejected
+  - [clear() costs what the table holds, not the largest size it had (#381): below one entry per 16 groups each entry is emptied by its own walk, 5-10000x faster for a few entries in a large table, up to 2.2x slower for 1 KB keys just past the threshold](#clear-costs-what-the-table-holds-not-the-largest-size-it-had-381-below-one-entry-per-16-groups-each-entry-is-emptied-by-its-own-walk-5-10000x-faster-for-a-few-entries-in-a-large-table-up-to-22x-slower-for-1-kb-keys-just-past-the-threshold) · 2026-11-09 · kept
 - [The rehash and its pipeline](#the-rehash-and-its-pipeline)
   - [Indexing the value container in the rehash cost clang a memory latency per element](#indexing-the-value-container-in-the-rehash-cost-clang-a-memory-latency-per-element) · 2026-09-05 · kept
   - [The rehash loop pipelined, and the partitioned rehash it was measured against](#the-rehash-loop-pipelined-and-the-partitioned-rehash-it-was-measured-against) · 2026-09-06 · kept
@@ -2437,8 +2438,9 @@ What this does not say: the scored suite, a ~90-TU binary whose inlining budget 
 
 What an erase costs in `unordered_dense` and what was tried to make it cheaper: the backfill that re-finds the moved value's slot by a second hash, the drift a churned table builds up, and the round trips and prefetches on the erase path. The slot back-pointer that removes the second hash lost twice, because the insert pays what the erase saves. `move_home` is the one drift repair kept.
 
-**Where it stands** (as of 2026-10-03)
+**Where it stands** (as of 2026-11-09)
 
+- `clear()` empties each entry by its own walk below one entry per 16 groups, and resets every group otherwise: kept. A few entries in a large table clear 5-10000x faster; 1 KB keys just past the threshold up to 2.2x slower; score 0.99 both compilers, inside the band (#381, [clear() costs what the table holds](#clear-costs-what-the-table-holds-not-the-largest-size-it-had-381-below-one-entry-per-16-groups-each-entry-is-emptied-by-its-own-walk-5-10000x-faster-for-a-few-entries-in-a-large-table-up-to-22x-slower-for-1-kb-keys-just-past-the-threshold)).
 - Slot back-pointer: rejected, default and knob. String erase by key 0.893-0.915 from 50000 to 4000000, churn a wash, score 0.9870 clang / 0.9729 gcc, +18.6% live bytes on an integer map (#266, [A slot back-pointer, re-tested across the cache boundary](#a-slot-back-pointer-re-tested-across-the-cache-boundary-the-win-is-real-and-it-is-cancelled-by-the-inserts-that-put-the-elements-there)). With distance nibbles: geomean 0.959 ([Three on the value vector](#three-on-the-value-vector-the-one-part-nothing-had-touched-all-keeping-it-dense)).
 - The second hash is about 7 ns for an integer key and about 50 ns for a string key at a million entries ([Why a dense erase is not slow, and where it is](#why-a-dense-erase-is-not-slow-and-where-it-is)).
 - `move_home`: kept, 1.26-1.30x on a miss of a churned table in and out of cache, 1.01-1.10x on a hit, 1.08x on the churn round itself, score 1.000 (re-measured 2026-10-02 with random churn keys; the first measurement read a tenth because its harness churned in sequential keys) ([What `move_home` is actually worth, re-measured](#what-move_home-is-actually-worth-re-measured)). Pulling a sibling home on erase: rejected, churn round 39.9 to 60.3 ns.
@@ -3002,6 +3004,90 @@ Fewer rehashes on the way up, at the price of an index that is twice as large fo
 | 6000 | 2x | 1.102 | 0.847 | 0.903 | 0.985 | 1.256 |
 
 Where the two growth sequences end on the same index the build is 4-14% faster. Where they do not, the integer build is 10-29% slower and the map 26% larger, and the faster churn and find there are a table at half the load. The first three sizes were picked before the phase was considered and all landed on the favourable side, which is the "never one size" rule again. This is the maximum load factor sweep (#306) with a different knob.
+
+### clear() costs what the table holds, not the largest size it had (#381): below one entry per 16 groups each entry is emptied by its own walk, 5-10000x faster for a few entries in a large table, up to 2.2x slower for 1 KB keys just past the threshold
+
+*2026-11-09 · #381 · kept · AMD Threadripper PRO 3995WX (shared host, cgroup of ~32 cores with ~20 busy in another job), clang 21.1.8 and gcc 14.2, THP madvise; `scripts/ab/clear_sparse.sh` (new: one header per binary, pinned to core 2, three passes rotating the sides), `scripts/ab/solo.sh` and `perwl.sh`*
+
+`clear()` reset every group's 24 byte header, and the header shares a cache line with nearly every line of the 88 byte block, so a clear wrote the whole index: as much as the largest size the table ever had. Now, when `size() < groups / 16`, `clear_slots_of_values()` walks each value's probe sequence from its home group, comparing value indices (never keys), clears the fingerprint of the slot that points at it and decrements the counter of every full group it passed: `slot_of_value`'s walk with `uncount`'s decrement folded in. Nothing is moved or repointed, since `m_values.clear()` follows. It gives up and the full reset runs instead when it meets a counter at 255 (saturated, never decremented again), a counter at 0 on the way (only a key mutated in place can do that; also what makes the walk terminate without a group bound, since every other step takes a counter down), or a hash that throws. `bucket_count()` does not change either way.
+
+The harness reserves the table to a peak (10000: 1024 groups, inside every cache; 4000000: 524288 groups, 46 MB of index, past the 16 MB L3 of one CCX), fills N = groups / ratio fresh keys from a shuffled pool (a new window per sample, so no sequence repeats) and clears. *hot*: the clear alone, right after the fill (median of 201). *cold*: the clear alone after streaming 256 MB through the cache (median of 21). *loop*: fill and clear back to back, per round (median of 7 batches of ≥ 20 ms). The sides: main (`7c58a8b`), every clear per entry (the constant set to 1), and the chosen gate. The table is the median of three passes; the ratio is main over per entry, above 1 the per-entry clear is faster.
+
+**The clear alone, in cache** (peak 10000, hot), main / per entry, clang / gcc:
+
+| groups per entry | `uint64_t` | 16 B | 135 B | 1 KB |
+|---|---|---|---|---|
+| 2 | 0.39 / 0.52 | 0.78 / 0.72 | 0.62 / 0.64 | 0.68 / 0.64 |
+| 4 | 1.30 / 1.09 | 0.90 / 0.88 | 0.68 / 0.70 | 0.67 / 0.64 |
+| 8 | 3.91 / 2.27 | 1.09 / 1.13 | 0.81 / 0.82 | 0.38 / 0.35 |
+| 16 | 5.31 / 4.53 | 1.79 / 1.77 | 1.09 / 1.08 | 0.50 / 0.46 |
+| 24 | 7.64 / 6.58 | 3.34 / 2.37 | 1.40 / 1.37 | 0.62 / 0.57 |
+| 32 | 9.55 / 8.09 | 2.89 / 2.91 | 1.68 / 1.64 | 0.73 / 0.68 |
+| 48 | 12.62 / 11.67 | 4.14 / 4.13 | 2.39 / 2.28 | 0.99 / 0.92 |
+| 64 | 15.78 / 13.40 | 5.28 / 5.08 | 2.96 / 2.93 | 1.22 / 1.14 |
+| 128 | 21.37 / 17.87 | 9.29 / 9.02 | 6.07 / 5.89 | 2.32 / 2.17 |
+| 1024 | 32.08 / 27.05 | 27.46 / 28.46 | 22.70 / 23.72 | 13.53 / 12.75 |
+
+**Out of cache** (peak 10000, cold):
+
+| groups per entry | `uint64_t` | 16 B | 135 B | 1 KB |
+|---|---|---|---|---|
+| 2 | 0.59 / 0.53 | 0.58 / 0.56 | 0.45 / 0.43 | 0.67 / 0.62 |
+| 4 | 1.05 / 0.96 | 0.80 / 0.76 | 0.53 / 0.51 | 0.62 / 0.65 |
+| 8 | 1.85 / 1.64 | 1.19 / 1.14 | 0.72 / 0.72 | 0.44 / 0.43 |
+| 16 | 3.24 / 2.96 | 1.61 / 1.73 | 1.11 / 1.05 | 0.64 / 0.62 |
+| 24 | 4.06 / 3.74 | 2.03 / 2.27 | 1.33 / 1.32 | 0.88 / 0.82 |
+| 32 | 4.71 / 4.72 | 2.06 / 2.62 | 1.44 / 1.49 | 1.01 / 0.98 |
+| 48 | 6.03 / 6.35 | 3.06 / 3.10 | 1.95 / 1.81 | 1.25 / 1.29 |
+| 64 | 7.33 / 6.63 | 2.82 / 3.41 | 2.26 / 2.23 | 1.43 / 1.34 |
+| 128 | 8.37 / 9.47 | 3.03 / 4.65 | 3.33 / 2.78 | 1.94 / 1.93 |
+| 1024 | 12.42 / 13.53 | 4.30 / 6.23 | 7.43 / 6.88 | 5.22 / 4.62 |
+
+**A table past the cache** (peak 4000000, cold):
+| groups per entry | `uint64_t` | 16 B | 135 B | 1 KB |
+|---|---|---|---|---|
+| 2 | 0.47 / 0.45 | 0.45 / 0.45 | 0.44 / 0.41 | 0.48 / 0.45 |
+| 4 | 0.92 / 0.86 | 0.68 / 0.68 | 0.52 / 0.52 | 0.52 / 0.49 |
+| 8 | 1.82 / 1.70 | 1.14 / 1.12 | 0.71 / 0.71 | 0.57 / 0.55 |
+| 16 | 3.65 / 3.35 | 2.03 / 2.04 | 1.09 / 1.05 | 0.71 / 0.68 |
+| 24 | 4.83 / 4.75 | 2.85 / 2.89 | 1.44 / 1.42 | 0.84 / 0.83 |
+| 32 | 6.73 / 6.37 | 3.70 / 3.76 | 1.72 / 1.72 | 0.97 / 0.95 |
+| 48 | 10.08 / 9.28 | 5.21 / 5.17 | 2.49 / 2.40 | 1.21 / 1.18 |
+| 64 | 12.47 / 11.44 | 6.82 / 6.77 | 3.06 / 3.07 | 1.45 / 1.41 |
+| 128 | 21.76 / 20.42 | 12.36 / 12.49 | 5.44 / 5.28 | 2.34 / 2.29 |
+| 1024 | 118.36 / 111.39 | 76.39 / 77.13 | 39.37 / 37.43 | 12.55 / 12.68 |
+
+The 4M peak hot reads like the cold one from 8 groups per entry on (u64 2.97 / 2.65 at 8, 12.1 / 10.3 at 16); the fill-and-clear loop shrinks every ratio towards 1, since the inserts cost the same on both sides (1 KB keys 0.72-1.01 between 8 and 32 groups per entry, integers 1.2-8.0x faster over the same range). Break-even, in groups per entry, both compilers alike: integers 4 (hot and cold), 16 B strings 8, 135 B strings 16, 1 KB strings 32-48.
+
+**The gate.** Every cell under "per entry when groups / entries > K", against main, from the same runs (hot, cold and loop, both peaks plus the 100k loop cells, four keys, 244 cells). The last column is the per-entry clear at exactly K groups per entry, which is what a table just past the threshold pays:
+
+| K | geomean main / K, clang / gcc | per key geomean u64 / 16 B / 135 B / 1 KB (clang) | worst cell, clang / gcc | at the threshold, worst, clang / gcc |
+|---|---|---|---|---|
+| 8 | 2.86 / 2.80 | 6.25 / 3.47 / 2.25 / 1.38 | 0.50 / 0.46 | 0.38 / 0.35 |
+| **16** | **2.74 / 2.69** | 5.41 / 3.26 / 2.23 / 1.43 | 0.62 / 0.57 | 0.50 / 0.46 |
+| 32 | 2.32 / 2.29 | 3.70 / 2.60 / 2.06 / 1.47 | 0.99 / 0.92 | 0.73 / 0.68 |
+| 64 | 1.79 / 1.78 | 2.27 / 1.89 / 1.71 / 1.41 | 1.00 / 1.00 | 1.12 / 1.08 |
+
+Every worst cell is a 1 KB key, in cache, at 1024 groups. K = 16 is within 5% of the best geomean, and K = 32, the issue's starting point, gives up a sixth of it, nearly all from integer and short string keys between 16 and 32 groups per entry, where the per-entry clear is 2-29x faster. What 16 gives up: a 1 KB key table holding between 1/16 and about 1/40 of its groups clears up to 2.2x slower than a reset in cache (gcc: 2.6 against 5.7 us at 64 entries in 1024 groups), 1.6x out of it; in the fill-and-clear loop that is 0.76-0.94. That loss is bounded by the inserts: emptying an entry costs its hash and its probe, which its insert paid already.
+
+**The chosen header, against main** (the same `clear_sparse.cpp` binaries, main and this header only, at 8 to 32 groups per entry and the 16-entry cells, three passes): at 8 and 16 groups per entry 0.92-1.07 in every cell, both compilers (main's code path, measured as noise); at 24 and 32 groups per entry what the per-entry column above predicts (gcc hot, 4M peak: u64 17.3x and 23.6x, 1 KB 0.84 and 1.00). #381's first table, `map<uint64_t, uint64_t>`, 16 entries, clear and refill, gcc (clang within 10%):
+
+| peak | main | this | |
+|---|---|---|---|
+| 10,000 | 1288 ns | 293 ns | 4.4x (at 64 groups per entry) |
+| 100,000 | 11.4 us | 327 ns | 35x |
+| 1,000,000 | 327 us | 344 ns | 950x |
+| 4,000,000 | 3300 us | 344 ns | 9600x |
+
+and with 1 KB keys at a 4M peak, 3367 us against 3.3 us, 1030x.
+
+**The score**, which never calls `clear()`: `solo.sh` builds, then five alternated rounds pinned to core 2, baseline/candidate 0.9916 under clang (rounds 0.969-1.002) and 0.9902 under gcc (0.964-1.009), inside the layout band. `perwl.sh -m ns`: every workload 0.98-1.04 (clang) and 0.97-1.03 (gcc); there is no ins/op column in this container, so the decisive per-workload instruction count was not taken.
+
+**Tests** (`test/unit/clear_per_entry.cpp`, every map and set shape): a table grown to 20000 entries over 8192 groups and erased down to a full home group, three keys that overflowed past it and five others, then cleared (per entry) and, kept full, cleared (reset): both leave every fingerprint and counter zero, the same bucket count, and refill to the same index bytes as a fresh table with the same hits and misses; the boundary at groups / 16 read as hash calls; counters at 254 (walked) and 255 (reset), and a 255 left by erased entries; a mutated key; a hash that throws halfway through. `scripts/mutate/mutate.py --diff --no-quick-reject`: 66 mutants, 36 caught by a test, 21 by the compiler, 5 hung, 4 survived. Two survivors were the 255 checks, killed by the 254/255 case added after the sweep; two are equivalent, the `&&` of the exception guard (a `try` around a hash that cannot throw) and `return true` turned `false` after a finished walk (a reset after the walk, slower and right). The tools syntax pre-filter refuses every mutant here, compiler and all, because in a unity build it borrows the first compile command, which is fmts own chunk when fmt is a subproject; without `--no-quick-reject` the sweep reads 66 "compiler".
+
+**Noise.** A shared host: the cgroup has ~32 cores and another job kept ~20 of them busy. The gcc run's three passes agreed to a median 3.7% (p90 9%) per cell, the clang run's to 29% (p90 75%), and main over per entry within one pass to 13% (p90 45%) under clang and 2.9% under gcc. The clang run's medians agree with gcc's and with its own first pass, and every conclusion above is drawn from both. The 1 KB cells at a 4M peak (each clear frees 16k-262k strings) are the noisiest.
+
+**What this says and does not say.** The threshold is on `size()` and the group count only, so the result is the same on every run (#248) and `bucket_count()` never moves: "reserve once, then clear and refill" keeps its array. The per-entry clear leaves the index exactly as the reset does whenever the counters are what the table's own inserts and erases made them; it can leave a counter above zero where the reset would not in three cases: a counter that saturated at 255 and that the remaining entries do not pass (it stays 255, as it already did across erases), an index loaded through `trust::unchecked` or a checked load whose counters are higher than its entries need (the check verifies slots, not counters), and a key mutated in place whose new sequence happens to reach its slot. Each costs probe length, never a wrong answer, and `rehash()` or the next reset clears it. Its cost is the sum of the entries' probe lengths, which is what inserting them cost: a table whose few survivors sit far from home (a review constructed 64 survivors 3072 groups deep) walks that far again. Two compilers, one x86 machine; no ARM, no MSVC, and no instruction counts (`perf_event_paranoid` 4 in the container).
 
 ## The rehash and its pipeline
 
