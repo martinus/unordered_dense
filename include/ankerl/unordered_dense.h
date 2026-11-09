@@ -825,6 +825,13 @@ enum class trust : std::uint8_t { checked, unchecked };
 // How much of a table verify() checks: `spot` 16 values spread over the table, `full` every value.
 enum class verify_level : std::uint8_t { spot, full };
 
+// How clear(clear_mode) takes the entries out of the index (#381). `reset` is what clear() does: zero
+// every group, which costs the size of the bucket array and never calls the hash, so it works on keys
+// that were moved from. `sparse` hashes every stored key: below one entry per 16 groups it takes each
+// entry out the way an erase does, so it costs what the table holds instead of the largest size it
+// had, and at or above that it resets.
+enum class clear_mode : std::uint8_t { reset, sparse };
+
 namespace bucket_type {
 
 // The index is groups of sixteen slots. A group holds one byte of fingerprint per slot, compared
@@ -3039,16 +3046,17 @@ private:
         m_buckets.clear_metadata();
     }
 
-    // Below one entry per this many groups, clear() takes each entry out of the index the way an
-    // erase does instead of resetting every group, so that it costs what the table holds and not the
-    // largest size it ever had: at a 4M peak holding 16 entries a reset writes 46 MB (#381). A reset
-    // costs 1.2-6 ns a group; taking one entry out costs its hash and its probe, which is what its
-    // insert paid. Measured break-even, in groups per entry: 4 for integers, 8 for 16 byte strings,
-    // 16 for 135 byte ones, 32-48 for 1 KB ones. 16 is within 5% of the best geomean over those
-    // four key kinds, in and out of cache, both compilers; what it gives up is a 1 KB key just past
-    // it, whose clear is up to 2.2x slower than a reset (notes/index-design.md, "clear() costs
-    // what the table holds"). The threshold depends only on size() and the group count, like
-    // growth (#248), so bucket_count() never changes.
+    // Below one entry per this many groups, clear(clear_mode::sparse) takes each entry out of the
+    // index the way an erase does instead of resetting every group, so that it costs what the table
+    // holds and not the largest size it ever had: at a 4M peak holding 16 entries a reset writes
+    // 46 MB (#381). A reset costs 1.2-6 ns a group; taking one entry out costs its hash and its
+    // probe, which is what its insert paid. Measured break-even, in groups per entry: 4 for
+    // integers, 8 for 16 byte strings, 16 for 135 byte ones, 32-48 for 1 KB ones. 16 is within 5% of
+    // the best geomean over those four key kinds, in and out of cache, both compilers; what it gives
+    // up is a 1 KB key just past it, whose clear is up to 2.2x slower than a reset
+    // (notes/index-design.md, "clear(clear_mode::sparse) costs what the table holds"). The threshold
+    // depends only on size() and the group count, like growth (#248), so bucket_count() never
+    // changes.
     static constexpr std::size_t clear_per_entry_groups = 16;
 
     // Empties the slot of every value and takes the value out of each counter its insert put it in:
@@ -3056,15 +3064,18 @@ private:
     // folded in so that each group on the way is visited once. Nothing is moved or repointed, since
     // m_values.clear() follows. False when it cannot finish exactly -- a counter saturated at 255,
     // which no erase decrements and only a reset zeroes; a counter already at zero on the way, which
-    // is a key mutated in place; or a hash that threw -- and the caller then resets every group,
-    // which is right from whatever state this stopped in.
+    // is a key mutated in place; or as many group visits as the index has groups -- and the caller
+    // then resets every group, which is right from whatever state this stopped in. A hash that
+    // throws leaves the index half emptied: reset it, drop the values, and pass the exception on.
     [[nodiscard]] auto clear_slots_of_values() -> bool {
         if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS() &&
                       !noexcept(std::declval<Hash const&>()(std::declval<key_type const&>()))) {
             try {
                 return clear_slots_of_values_unguarded();
             } catch (...) {
-                return false;
+                clear_buckets();
+                m_values.clear();
+                throw;
             }
         } else {
             return clear_slots_of_values_unguarded();
@@ -3078,6 +3089,10 @@ private:
         auto* groups = m_buckets.data();
         auto const mask = m_group_mask;
         auto const shifts = m_shifts;
+        // One visit per group in all: survivors far from home cannot make the walk visit more groups
+        // than the reset that follows it writes. The visits are scattered and each hashes, so this
+        // bounds the walk's visits, not its time.
+        auto budget = m_buckets.size();
         value_idx_type value_idx = 0;
         for (auto const& value : m_values) {
             auto const mh = mixed_hash(get_key(value));
@@ -3086,6 +3101,10 @@ private:
             auto group_idx = static_cast<value_idx_type>(mh >> shifts);
             value_idx_type delta = 0;
             while (true) {
+                if (budget == 0) {
+                    return false;
+                }
+                --budget;
                 auto& group = groups[group_idx];
                 auto lanes = match_fingerprint(group, word);
                 while (lanes != 0) {
@@ -3100,8 +3119,7 @@ private:
                     break;
                 }
                 // A value's own insert counted it here, so zero means its key is not the one it was
-                // placed with, and the walk would otherwise wrap that counter to 255. Each step
-                // takes a counter down, so this ends even on such a key.
+                // placed with, and the walk would otherwise wrap that counter to 255.
                 auto& passed = group.m_overflows[counter];
                 if (passed == 0 || passed == 255) {
                     return false;
@@ -4237,14 +4255,28 @@ public:
 
     // modifiers //////////////////////////////////////////////////////////////
 
-    // Costs size() while the table holds fewer than one entry per clear_per_entry_groups groups,
-    // and the size of the bucket array otherwise. Neither frees the array (#381).
     void clear() {
         if (!empty()) {
-            if (m_values.size() >= m_buckets.size() / clear_per_entry_groups || !clear_slots_of_values()) {
+            m_values.clear();
+            clear_buckets();
+        }
+    }
+
+    // clear_mode::sparse hashes every stored key whenever it walks, so each must still hash as it did
+    // when it was inserted: not after keys were moved out, for which there is clear(). Below one entry per
+    // clear_per_entry_groups groups it takes each entry out of the index by its own walk and costs what
+    // the table holds; otherwise it resets as clear() does, and so does a walk that meets a saturated
+    // counter or has visited as many groups as the index has, so the walk never visits more groups
+    // than the reset writes. If the hash throws, the table is left empty and the exception passes on.
+    // Neither frees the array (#381).
+    void clear(clear_mode mode) {
+        if (mode == clear_mode::sparse && !empty() && m_values.size() < m_buckets.size() / clear_per_entry_groups) {
+            if (!clear_slots_of_values()) {
                 clear_buckets();
             }
             m_values.clear();
+        } else {
+            clear();
         }
     }
 

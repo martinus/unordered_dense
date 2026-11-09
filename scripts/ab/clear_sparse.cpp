@@ -1,6 +1,8 @@
-// What clear() costs on a table that holds few entries against the groups it has (#381). One key
+// What clearing costs on a table that holds few entries against the groups it has (#381). One key
 // kind per binary, one header per binary (scripts/ab/clear_sparse.sh builds REV's header, the
-// working tree's, and the working tree's with every clear taken per entry):
+// working tree's, and the working tree's with every clear taken per entry). A header that declares
+// clear_mode is cleared with clear(clear_mode::sparse) (the script sets AB_CLEAR_SPARSE=1 for it),
+// any other with clear():
 //
 //   KIND_U64    map<uint64_t, uint64_t>, random keys
 //   KIND_S16    map<std::string, uint64_t>, 16 byte keys
@@ -10,11 +12,11 @@
 // The table is reserve()d to PEAK, which leaves its array exactly as a table that grew to PEAK and
 // was cleared, then each sample fills N keys and clears. N = groups / RATIO. Three measurements:
 //
-//   hot    the clear() alone, right after the fill, so its groups and keys are in cache
-//   cold   the clear() alone, after streaming a 256 MB buffer through the cache
-//   loop   N inserts and a clear(), back to back, timed over enough rounds for >= 20 ms
+//   hot    the clear alone, right after the fill, so its groups and keys are in cache
+//   cold   the clear alone, after streaming a 256 MB buffer through the cache
+//   loop   N inserts and a clear, back to back, timed over enough rounds for >= 20 ms
 //
-// hot and cold time each clear() on its own (steady_clock; its floor is printed as `floor`) and
+// hot and cold time each clear on its own (steady_clock; its floor is printed as `floor`) and
 // print the median and the quartiles of SAMPLES samples; loop prints the median of 7 batches, per
 // round. Every sample draws a fresh window of a shuffled pool of 2N + 1024 keys, so the sequence of
 // keys is never replayed. Times in ns.
@@ -33,6 +35,15 @@
 #include <vector>
 
 namespace {
+
+template <typename Map>
+void clear_map(Map& map) {
+#if AB_CLEAR_SPARSE
+    map.clear(ankerl::unordered_dense::clear_mode::sparse);
+#else
+    map.clear();
+#endif
+}
 
 #if defined(KIND_U64)
 using key_type = std::uint64_t;
@@ -119,7 +130,7 @@ int main(int argc, char** argv) {
     };
     // warm the value vector's capacity and the allocator
     fill();
-    map.clear();
+    clear_map(map);
 
     auto floor = std::vector<double>();
     for (int i = 0; i < 101; ++i) {
@@ -141,7 +152,7 @@ int main(int argc, char** argv) {
                 evict(buf);
             }
             auto const t0 = clk::now();
-            map.clear();
+            clear_map(map);
             auto const t1 = clk::now();
             v.push_back(ns(t1 - t0));
         }
@@ -152,7 +163,7 @@ int main(int argc, char** argv) {
             auto const t0 = clk::now();
             for (std::size_t r = 0; r < rounds; ++r) {
                 fill();
-                map.clear();
+                clear_map(map);
             }
             if (ns(clk::now() - t0) > 20e6) {
                 break;
@@ -163,7 +174,7 @@ int main(int argc, char** argv) {
             auto const t0 = clk::now();
             for (std::size_t r = 0; r < rounds; ++r) {
                 fill();
-                map.clear();
+                clear_map(map);
             }
             v.push_back(ns(clk::now() - t0) / static_cast<double>(rounds));
         }
