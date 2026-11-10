@@ -1109,3 +1109,35 @@ hits, with the file in the page cache and evicted from it with `POSIX_FADV_DONTN
 Eight modes at the four default sizes take about 25 minutes per compiler, most of it the evicted
 64M lazy mapping (8.6 s per run). Smoke with `-n 100000 -r 1`. The numbers are in
 `notes/index-design.md`, "A map_view over a mapped file".
+
+## `erase_if` and `erase(first, last)` against one index rebuild (#388)
+
+    AB_CORE=2 AB_BUILD=/home/martinus/gra/x scripts/ab/erase_bulk.sh [-c g++] [-r 5] [check|if|range ...]
+
+`erase_bulk.patch` applied to a copy of the header, so the working tree's header stays unpatched.
+The patch adds `erase_if_proto<Mode>` and `erase_range_proto<Mode>`: mode 0 erases one by one (for
+`erase_if` with the lookahead over the known targets), mode 1 compacts the values and rebuilds the
+index once, -1 picks by the gate `erased * ANKERL_UD_ERASE_FACTOR >= survivors` (8 by default;
+`AB_DEFS="-DANKERL_UD_ERASE_FACTOR=4"` moves it, `ANKERL_UD_ERASE_AHEAD` the lookahead). `if` and
+`range` are one binary each (`erase_if.cpp`, `erase_range.cpp`) with the variants as template
+parameters and their rounds alternating: 5 sizes from 1000 to 4M, 12 erased shares from 0.1% to
+95%, `uint64_t` and `std::string` keys, the range at the back and at the front. Every cell times
+about two million elements over copies of one master map, made and destroyed outside the clock.
+Prints ns per element of the map before the erase and current/prototype, above 1.00 is the
+prototype faster. `check` (`erase_bulk_check.cpp`, ASan+UBSan, `_GLIBCXX_ASSERTIONS`) compares the
+prototypes with the shipped functions on random maps. `-r 1` smokes every cell in ~2 minutes per
+benchmark; `-r 5` is ~15 minutes per benchmark and compiler. `erase_if <0|1|2> <n> <share>` on the
+binary runs one variant alone for `perf` (0 current, 1 one by one, 2 rebuild). The numbers are in
+`notes/index-design.md`, "`erase_if` and range erase one element at a time".
+
+## A hint for `back()`'s slot, and any other header patch per operation across sizes
+
+    AB_CORE=2 AB_BUILD=/home/martinus/gra/x AB_PATCH=back_slot_hint.patch AB_SWITCH=UNUSED AB_KEYS="str u64" scripts/ab/back_pointer.sh [-c g++] [-r 5] [sizes...]
+
+`back_pointer.sh` takes any patch in `scripts/ab/` through `AB_PATCH`; `AB_SWITCH` is the suffix of
+the macro that turns the patch on and can be any word for a patch without one.
+`back_slot_hint.patch` (the hint, on only for `detail::key_compare_is_call<Key>`) and
+`rehash_key_prefetch.patch` (a prefetch of a string key's bytes ahead of the rehash ring) are
+measured this way. Prints patched/base, below 1.00 is the patch faster. Two key types at the five
+default sizes take ~25 minutes per compiler. The numbers are in `notes/index-design.md`, "A hint
+for `back()`'s slot" and "Where `hash_bytes` spends its time in the score".

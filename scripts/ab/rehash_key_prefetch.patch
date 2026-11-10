@@ -1,0 +1,41 @@
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index e5df4eb..7bf5738 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -896,6 +896,11 @@ inline constexpr std::array<std::uint32_t, 256> fingerprint_words = make_fingerp
+ // A user type that is trivially copy-constructible and still compares through a call (a large byte
+ // array) is treated as cheap and does not get the split. Measured, that costs it about 2%, and the
+ // heuristic never misfires in the expensive direction.
++template <typename Key>
++struct is_basic_string_key : std::false_type {};
++template <typename CharT, typename Traits, typename Alloc>
++struct is_basic_string_key<std::basic_string<CharT, Traits, Alloc>> : std::true_type {};
++
+ template <typename Key>
+ struct key_compare_is_call : std::bool_constant<!std::is_trivially_copy_constructible_v<Key>> {};
+ 
+@@ -3089,7 +3094,24 @@ private:
+         auto ring = std::array<std::uint64_t, ahead>{};
+         auto it = m_values.begin();
+         auto const end = m_values.end();
++#ifndef ANKERL_UD_KEY_AHEAD
++#    define ANKERL_UD_KEY_AHEAD 16
++#endif
++        // A string key's bytes are behind a pointer, and the hash cannot start before they arrive. Ask for them
++        // ANKERL_UD_KEY_AHEAD elements before the hash reads them.
++        auto pre = it;
++        if constexpr (detail::is_basic_string_key<Key>::value) {
++            for (auto i = std::size_t{}; i < ANKERL_UD_KEY_AHEAD && pre != end; ++i) {
++                ++pre;
++            }
++        }
+         auto const fetch = [&](std::size_t i) -> void {
++            if constexpr (detail::is_basic_string_key<Key>::value) {
++                if (pre != end) {
++                    ANKERL_UNORDERED_DENSE_PREFETCH(get_key(*pre).data());
++                    ++pre;
++                }
++            }
+             auto const mh = mixed_hash(get_key(*it));
+             ++it;
+             ring[i] = mh;

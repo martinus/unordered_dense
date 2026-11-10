@@ -1,0 +1,154 @@
+diff --git a/include/ankerl/unordered_dense.h b/include/ankerl/unordered_dense.h
+index e5df4eb..5c51918 100644
+--- a/include/ankerl/unordered_dense.h
++++ b/include/ankerl/unordered_dense.h
+@@ -4554,6 +4554,149 @@ public:
+         return extract(begin() + (it - cbegin()));
+     }
+ 
++    // PROTOTYPE. mode: 0 = one erase per element, 1 = compact the values and rebuild the index
++    // once, -1 = pick by the gate.
++    template <int Mode = -1>
++    auto erase_range_proto(const_iterator first, const_iterator last) -> iterator {
++        auto const idx_first = static_cast<std::size_t>(first - cbegin());
++        auto const count = static_cast<std::size_t>(last - first);
++        auto const n = m_values.size();
++        auto const rebuild = Mode < 0 ? count * erase_rebuild_factor >= n - count : Mode == 1;
++        if (!rebuild || count == 0) {
++            return erase(first, last);
++        }
++        // the same moves the loop of single erases makes: the hole is filled from the back
++        auto const tail = n - (idx_first + count);
++        auto const moves = (std::min)(count, tail);
++        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()) {
++            try {
++                for (auto i = std::size_t{}; i < moves; ++i) {
++                    m_values[idx_first + i] = std::move(m_values[n - 1 - i]);
++                }
++            } catch (...) {
++                m_values.clear();
++                clear_buckets();
++                throw;
++            }
++        } else {
++            for (auto i = std::size_t{}; i < moves; ++i) {
++                m_values[idx_first + i] = std::move(m_values[n - 1 - i]);
++            }
++        }
++        drop_tail_and_reindex(n - count);
++        return begin() + static_cast<difference_type>(idx_first);
++    }
++
++#ifndef ANKERL_UD_ERASE_AHEAD
++#    define ANKERL_UD_ERASE_AHEAD 8
++#endif
++#ifndef ANKERL_UD_ERASE_FACTOR
++#    define ANKERL_UD_ERASE_FACTOR 8
++#endif
++    static constexpr std::size_t erase_rebuild_factor = ANKERL_UD_ERASE_FACTOR;
++
++    // PROTOTYPE. The predicate runs once per element, front to back, before anything is erased,
++    // so the number of matches is known when the way to erase them is picked.
++    template <int Mode = -1, typename Pred = void>
++    auto erase_if_proto(Pred pred) -> std::size_t {
++        auto const n = m_values.size();
++        auto first_match = std::size_t{};
++        {
++            auto it = m_values.begin();
++            auto const end = m_values.end();
++            while (it != end && !pred(*it)) {
++                ++it;
++                ++first_match;
++            }
++        }
++        if (first_match == n) {
++            return 0;
++        }
++        using word_alloc = typename std::allocator_traits<allocator_type>::template rebind_alloc<std::uint64_t>;
++        auto const span = n - first_match;
++        auto bits = std::vector<std::uint64_t, word_alloc>((span + 63U) / 64U, std::uint64_t{}, word_alloc(m_values.get_allocator()));
++        auto erased = std::size_t{};
++        {
++            auto it = m_values.begin() + static_cast<difference_type>(first_match + 1);
++            auto const end = m_values.end();
++            // one word of results at a time, held in a register until it is full
++            auto i = std::size_t{1};
++            for (auto w = std::size_t{}; w == 0 || it != end; ++w) {
++                auto word = std::uint64_t{w == 0 ? 1U : 0U};
++                for (; i < 64U && it != end; ++it, ++i) {
++                    word |= static_cast<std::uint64_t>(static_cast<bool>(pred(*it))) << i;
++                }
++                i = 0;
++                bits[w] = word;
++                erased += static_cast<std::size_t>(__builtin_popcountll(word));
++            }
++        }
++        auto const rebuild = Mode < 0 ? erased * erase_rebuild_factor >= n - erased : Mode == 1;
++        auto const walk = [&](auto&& erase_one) {
++            // back to front: what is moved into a hole was looked at already and stays
++            for (auto w = bits.size(); w-- != 0;) {
++                auto word = bits[w];
++                while (word != 0) {
++                    auto const bit = 63U - static_cast<unsigned>(__builtin_clzll(word));
++                    word &= ~(std::uint64_t{1} << bit);
++                    erase_one(first_match + w * 64U + bit);
++                }
++            }
++        };
++        if (!rebuild) {
++            // The targets are known, so each one's hash is taken and its group asked for `ahead`
++            // erases early. An erase only touches values at and behind its own index, and the
++            // walk goes down, so a pending target's key and hash stay what they were.
++            constexpr auto ahead = std::size_t{ANKERL_UD_ERASE_AHEAD};
++            std::size_t idxs[ahead];
++            std::uint64_t mhs[ahead];
++            auto seen = std::size_t{};
++            auto const erase_slot = [&](std::size_t slot) {
++                auto const value_idx = static_cast<value_idx_type>(idxs[slot]);
++                auto const mh = mhs[slot];
++                do_erase(slot_of_value(mh, value_idx), value_idx, mh, [](value_type const& /*unused*/) noexcept -> void {
++                });
++            };
++            walk([&](std::size_t idx) {
++                auto const mh = mixed_hash(get_key(m_values[idx]));
++                prefetch_block(m_buckets.data(), static_cast<std::size_t>(group_idx_from_hash(mh)));
++                auto const slot = seen % ahead;
++                if (seen >= ahead) {
++                    erase_slot(slot);
++                }
++                idxs[slot] = idx;
++                mhs[slot] = mh;
++                ++seen;
++            });
++            for (auto k = seen >= ahead ? seen - ahead : std::size_t{}; k < seen; ++k) {
++                erase_slot(k % ahead);
++            }
++            return erased;
++        }
++        auto const compact = [&] {
++            walk([this](std::size_t idx) {
++                if (idx != m_values.size() - 1) {
++                    m_values[idx] = std::move(m_values.back());
++                }
++                m_values.pop_back();
++            });
++        };
++        if constexpr (ANKERL_UNORDERED_DENSE_HAS_EXCEPTIONS()) {
++            try {
++                compact();
++            } catch (...) {
++                m_values.clear();
++                clear_buckets();
++                throw;
++            }
++        } else {
++            compact();
++        }
++        clear_buckets();
++        fill_buckets_from_values();
++        return erased;
++    }
++
+     auto erase(const_iterator first, const_iterator last) -> iterator {
+         auto const idx_first = first - cbegin();
+         auto const idx_last = last - cbegin();

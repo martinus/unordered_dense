@@ -135,6 +135,9 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [Rebuilding a drifted index at the same size (#363): the drift comes back within one or two turnovers, and the rebuild costs the churn round 4-17% for misses that are faster only in cache](#rebuilding-a-drifted-index-at-the-same-size-363-the-drift-comes-back-within-one-or-two-turnovers-and-the-rebuild-costs-the-churn-round-4-17-for-misses-that-are-faster-only-in-cache) · 2026-10-02 · rejected
   - [A step-1 mask per group so an erase pulls a displaced sibling home without hashing (#364): churned misses 1.12-1.18x faster, the churn round 4-12% slower](#a-step-1-mask-per-group-so-an-erase-pulls-a-displaced-sibling-home-without-hashing-364-churned-misses-112-118x-faster-the-churn-round-4-12-slower) · 2026-10-03 · rejected
   - [Storing the hash per value, for expensive keys (#365): a string erase 4-9% faster, growth no faster, churn a wash, 8% more memory](#storing-the-hash-per-value-for-expensive-keys-365-a-string-erase-4-9-faster-growth-no-faster-churn-a-wash-8-more-memory) · 2026-10-03 · rejected
+  - [`erase_if` and range erase one element at a time: counting the matches first and rebuilding the index once is 1.5-10x faster from a quarter erased](#erase_if-and-range-erase-one-element-at-a-time-counting-the-matches-first-and-rebuilding-the-index-once-is-15-10x-faster-from-a-quarter-erased) · 2026-11-10 · open
+  - [A hint for `back()`'s slot, so the erase after an insert does not hash the moved key: string churn 2-8% faster at no bytes per entry, integer keys gain nothing](#a-hint-for-backs-slot-so-the-erase-after-an-insert-does-not-hash-the-moved-key-string-churn-2-8-faster-at-no-bytes-per-entry-integer-keys-gain-nothing) · 2026-11-10 · open
+  - [Growing the index 4x while it is small: the load factor trade again, rejected](#growing-the-index-4x-while-it-is-small-the-load-factor-trade-again-rejected) · 2026-11-10 · rejected
 - [The rehash and its pipeline](#the-rehash-and-its-pipeline)
   - [Indexing the value container in the rehash cost clang a memory latency per element](#indexing-the-value-container-in-the-rehash-cost-clang-a-memory-latency-per-element) · 2026-09-05 · kept
   - [The rehash loop pipelined, and the partitioned rehash it was measured against](#the-rehash-loop-pipelined-and-the-partitioned-rehash-it-was-measured-against) · 2026-09-06 · kept
@@ -161,6 +164,7 @@ Every experiment run on `unordered_dense`'s index, hash, insert path and benchma
   - [Why `absl::Hash` is faster below 32 bytes, and what taking it would cost](#why-abslhash-is-faster-below-32-bytes-and-what-taking-it-would-cost) · 2026-09-09 · rejected
   - [The hash measured against the ones the other libraries ship](#the-hash-measured-against-the-ones-the-other-libraries-ship) · 2026-09-09 · info
   - [`hash_bytes` reads a key of compile-time length 8, 12 or 16 as 4 byte words under gcc and clang: a lookup right after writing a 12 byte key field by field goes 146 -> 40 cycles on both compilers, the hash value unchanged, strings untouched, a key already in memory 1.4 cycles more](#hash_bytes-reads-a-key-of-compile-time-length-8-12-or-16-as-4-byte-words-under-gcc-and-clang-a-lookup-right-after-writing-a-12-byte-key-field-by-field-goes-146---40-cycles-on-both-compilers-the-hash-value-unchanged-strings-untouched-a-key-already-in-memory-14-cycles-more) · 2026-09-27 · kept
+  - [Where `hash_bytes` spends its time in the score, and a prefetch of the key's bytes ahead of the rehash ring: nothing](#where-hash_bytes-spends-its-time-in-the-score-and-a-prefetch-of-the-keys-bytes-ahead-of-the-rehash-ring-nothing) · 2026-11-10 · rejected
 - [Memory: huge pages, segmented_map, teardown order](#memory-huge-pages-segmented_map-teardown-order)
   - [What `segmented_map` gives up in 5.0.0, found in review.](#what-segmented_map-gives-up-in-500-found-in-review) · kept
   - [Those memory figures are a point on the sawtooth, and the octave says something else](#those-memory-figures-are-a-point-on-the-sawtooth-and-the-octave-says-something-else) · 2026-09-07 · method
@@ -2442,6 +2446,8 @@ What an erase costs in `unordered_dense` and what was tried to make it cheaper: 
 - Storing the hash per value (#365): string erase by key 0.91 clang / 0.96 gcc, build 0.97-1.04, churn a wash, +8% memory; rejected ([Storing the hash per value](#storing-the-hash-per-value-for-expensive-keys-365-a-string-erase-4-9-faster-growth-no-faster-churn-a-wash-8-more-memory)).
 - Rebuilding a churned index at the same size (#363): rejected. The drift is two fifths back after half a turnover and nine tenths after four; a rebuild costs the churn round 4-17% and the misses gain 1.11-1.12x at 52363 entries, 1.02-1.06x at 838860 and lose at 3355443 ([Rebuilding a drifted index at the same size](#rebuilding-a-drifted-index-at-the-same-size-363-the-drift-comes-back-within-one-or-two-turnovers-and-the-rebuild-costs-the-churn-round-4-17-for-misses-that-are-faster-only-in-cache)).
 - Slot-number round trips removed in #260 and #262; the #268 sweep found nothing more ([The #260/#262 sweep run over find and churn](#the-260262-sweep-run-over-find-and-churn-and-it-comes-back-empty)).
+- A hint for `back()`'s slot, written by the last placement and checked by `finish_erase`: string churn 0.92-0.98 at every size on both compilers at no bytes per entry, integer keys lose, so the patch gates on `key_compare_is_call`; open (A hint for `back()`'s slot, 2026-11-10). Growing the index 4x while small: rejected, the load factor trade.
+- `erase_if` and `erase(first, last)` erase one element at a time. A prototype that counts the matches first and rebuilds the index once reads 1.5-10x from a quarter erased and 0.76-0.88 at 0.1% erased with integer keys; open, not in the header (`erase_if` and range erase one element at a time, 2026-11-10).
 - The value walks are bounded for correctness; their 10% clang speedup is an inlining artifact (#254). They carry no `prefetch_index` (#263). Hoisting the moved element's hash: neutral, rejected.
 
 ### Three on the value vector, the one part nothing had touched, all keeping it dense
@@ -2889,6 +2895,113 @@ For integer keys, as expected, it is pure cost (clang build 1.36-1.70x, churn 1.
 **What this says.** The erase half is the slot back-pointer's result again ([A slot back-pointer, re-tested across the cache boundary](#a-slot-back-pointer-re-tested-across-the-cache-boundary-the-win-is-real-and-it-is-cancelled-by-the-inserts-that-put-the-elements-there)): 0.91-0.92 on a string erase by key under clang, less under gcc. The insert pays for it, so churn is a wash. The growth half, the part #266 could not give, is worth at most 2-3% of a build. The pipelined rehash already hides most of a string hash behind its prefetch ring, and a build is mostly inserts that hash their key once anyway. Rejected: neither a default nor an opt-in has a workload where it is worth 8% more memory.
 
 **What it does not say.** Hashes stored as 64 bits. The 32 bit variant the issue sketches would cost 4 bytes per entry and win the same.
+
+### `erase_if` and range erase one element at a time: counting the matches first and rebuilding the index once is 1.5-10x faster from a quarter erased
+
+*2026-11-10 · #388 · open · Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/erase_bulk.sh` (`erase_bulk.patch`, `erase_if.cpp`, `erase_range.cpp`, `erase_bulk_check.cpp`)*
+
+`std::erase_if` and `erase(first, last)` call `erase(iterator)` once per element. Each call hashes the erased key, finds its slot, moves `back()` into the hole, hashes that key and repoints its slot. The score runs neither function, so nothing had looked at them.
+
+The prototype (`erase_bulk.patch`, not applied to the header):
+
+- `erase_if` runs the predicate once per element, front to back, into a bitmap from the map's allocator (one bit per element behind the first match; no match allocates nothing). The number of matches is then exact. From `erased * 8 >= survivors` it moves `back()` into each hole without touching the index, then `clear_buckets()` and `fill_buckets_from_values()`. Below that it erases one by one, but the targets are known, so each target's group is prefetched eight erases early and its hash is reused.
+- `erase(first, last)` knows its count up front. From the same gate it does the same moves and one rebuild.
+- Both leave the values in the order the current loop leaves them. A move assignment that throws in the rebuild path clears the map.
+
+ns per element of the map before the erase, median of 5, the timed region covers about two million elements (copies of one master, made and destroyed outside the clock), `uint64_t` values, random predicate. The cells are current/prototype, so above 1 the prototype is faster.
+
+`erase_if`, clang:
+
+| key | entries | 0.1% | 1% | 5% | 10% | 15% | 20% | 30% | 50% | 70% | 95% |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `uint64_t` | 1000 | 1.14 | 1.32 | 1.50 | 1.32 | 0.82 | 0.90 | 1.01 | 1.45 | 2.04 | 3.21 |
+| `uint64_t` | 10000 | 0.88 | 1.24 | 1.31 | 1.17 | 1.33 | 1.47 | 1.61 | 2.02 | 2.57 | 3.52 |
+| `uint64_t` | 100000 | 0.77 | 1.32 | 1.30 | 1.14 | 1.73 | 1.95 | 2.56 | 3.65 | 4.34 | 4.56 |
+| `uint64_t` | 1000000 | 0.76 | 1.38 | 1.41 | 1.18 | 1.93 | 2.24 | 2.43 | 3.09 | 3.86 | 6.26 |
+| `uint64_t` | 4000000 | 0.79 | 1.40 | 1.45 | 1.24 | 1.05 | 1.32 | 1.87 | 3.33 | 5.29 | 10.56 |
+| `std::string` | 1000 | 1.14 | 1.17 | 1.33 | 1.30 | 1.15 | 1.19 | 1.17 | 1.39 | 1.67 | 1.73 |
+| `std::string` | 10000 | 1.04 | 1.27 | 1.32 | 1.21 | 1.18 | 1.21 | 1.24 | 1.57 | 2.15 | 2.53 |
+| `std::string` | 100000 | 1.13 | 1.30 | 1.27 | 1.11 | 1.04 | 1.07 | 1.10 | 1.58 | 2.20 | 2.81 |
+| `std::string` | 1000000 | 1.04 | 1.17 | 1.15 | 1.04 | 1.11 | 1.21 | 1.43 | 2.39 | 3.57 | 3.92 |
+| `std::string` | 4000000 | 1.06 | 1.18 | 1.10 | 1.04 | 1.13 | 1.33 | 1.78 | 3.33 | 5.47 | 7.65 |
+
+gcc agrees: minimum 0.77, maximum 8.95, the same seven cells of 120 below 0.95 (the `uint64_t` 0.1% column from 10000 entries, and 1000 entries at 15-25%).
+
+`erase(first, last)`, clang, the range at the back and at the front of the values:
+
+| key | entries | where | 1% | 10% | 15% | 20% | 30% | 50% | 70% | 95% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `uint64_t` | 10000 | back | 1.02 | 1.00 | 2.10 | 2.64 | 3.63 | 6.26 | 11.60 | 39.88 |
+| `uint64_t` | 1000000 | back | 1.04 | 0.97 | 3.35 | 3.22 | 6.42 | 11.25 | 19.34 | 48.36 |
+| `uint64_t` | 1000000 | front | 1.01 | 0.94 | 2.98 | 3.65 | 4.85 | 7.38 | 13.06 | 38.62 |
+| `uint64_t` | 4000000 | back | 0.97 | 0.91 | 1.83 | 2.30 | 3.67 | 7.85 | 17.56 | 81.38 |
+| `std::string` | 10000 | back | 0.94 | 0.94 | 0.97 | 1.10 | 1.28 | 1.56 | 1.77 | 2.14 |
+| `std::string` | 100000 | back | 0.94 | 0.94 | 0.72 | 0.86 | 1.09 | 1.50 | 1.85 | 2.31 |
+| `std::string` | 1000000 | back | 1.19 | 1.01 | 0.93 | 1.19 | 1.57 | 2.15 | 2.60 | 3.05 |
+| `std::string` | 4000000 | front | 0.96 | 0.95 | 1.28 | 1.59 | 2.15 | 3.04 | 3.84 | 5.29 |
+
+**What this says.** A rebuild costs 2-4 ns per surviving `uint64_t` entry and 8-20 ns per surviving string entry, a single erase costs 12-55 ns and 50-100 ns, so the rebuild is ahead from 5-15% erased and the gap grows with the share erased. Erasing 95% of four million integer entries takes 25 ns per entry today and 2.2 ns in the prototype. The one by one path with the lookahead is 1.04-1.50x faster than the current loop from 1% to 10% erased.
+
+**Where the prototype loses.** `uint64_t` keys at 0.1% erased read 0.76-0.88: nearly all of the time is the scan, and the scan now stores a bit per element (0.43 to 0.55 ns per element). A single-variant binary read 0.52 against 0.54 for the same cell, so part of this is how the four variants inline into one TU, and it is not settled. At 1000 entries the gate picks the rebuild too early (0.82 at 15%). In `erase(first, last)` a factor of 8 is too early for string keys erased from the back (0.72-0.93 at 15-20%); the columns below the gate run the current code, so 0.94 there is the floor of this harness.
+
+**What it does not say.** One predicate, one value size, no churned index, and the throughput of one erase call per map, not a loop that mixes erases with lookups. The first version of the one by one path, without the lookahead, was 1.3-2x slower than the current loop for integer keys: `perf` put 69% of its cycles on one group compare, the erases no longer overlapped their misses. The gate factor was picked from one sweep and needs a second one per function. Not decided: whether a bitmap allocation inside `erase_if` is acceptable, and that a throwing move assignment clears the map.
+
+### A hint for `back()`'s slot, so the erase after an insert does not hash the moved key: string churn 2-8% faster at no bytes per entry, integer keys gain nothing
+
+*2026-11-10 · no issue · open · Ryzen 9 7950X, clang 22 and gcc 16, `scripts/ab/back_slot_hint.patch`, `scripts/ab/back_pointer.sh` with `AB_PATCH`, `scripts/ab/solo.sh`, `scripts/ab/perwl.sh`*
+
+The slot back-pointer lost because every insert pays 4 bytes and a store for a pointer that only an erase reads. The hint keeps one pointer for the whole table: `place_group` writes the group and the lane it just stored into two members (5 bytes, the map stays at 64). After an insert that is the slot of `m_values.back()`, the element the next erase moves into the hole. `finish_erase` reads the hint, checks that the slot is occupied and holds `back()`'s index, and repoints it without hashing the key. A hint that fails the check falls back to `repoint_value`, so nothing has to keep the hint up to date, and every erase resets it. It hits when an erase follows an insert, which is what a churn does, and misses on the second of two erases in a row.
+
+Instructions per workload of the score, candidate/baseline, clang, the hint on for every key type (`perwl.sh`):
+
+| | `uint64_t` | `std::string` | 64 byte value |
+|---|---|---|---|
+| churn | 0.953 | 0.949 | 0.972 |
+| insert erase | 0.988 | 0.963 | 0.989 |
+| build | 1.013 | 1.003 | 1.012 |
+| iterate, find | 1.000 | 1.000 | 1.000 |
+
+The score itself read 1.0069 over five rounds of `solo.sh`, inside the layout band.
+
+Time across the size axis, patched/base, median of 5, one variant per binary (`back_pointer.sh`), the hint on for every key type:
+
+| | workload | 50000 | 200000 | 800000 | 2000000 | 4000000 |
+|---|---|---|---|---|---|---|
+| string, clang | churn | 0.927 | 1.005 | 0.845 | 0.977 | 0.970 |
+| string, gcc | churn | 0.923 | 0.967 | 0.967 | 0.974 | 0.977 |
+| string, clang | build | 1.000 | 0.995 | 1.014 | 1.010 | 1.008 |
+| string, gcc | build | 0.999 | 0.988 | 0.951 | 0.956 | 1.004 |
+| string, clang | erase by key | 0.994 | 1.002 | 1.004 | 1.003 | 1.006 |
+| string, gcc | erase by iterator | 1.054 | 1.002 | 1.023 | 1.021 | 1.024 |
+| `uint64_t`, clang | churn | 0.988 | 0.976 | 0.997 | 0.883 | 0.854 |
+| `uint64_t`, clang | erase by key | 1.120 | 1.158 | 1.091 | 1.016 | 1.004 |
+| `uint64_t`, clang | erase by iterator | 1.432 | 1.617 | 1.316 | 1.167 | 1.262 |
+| `uint64_t`, gcc | churn | 1.042 | 1.018 | 1.003 | 0.997 | 0.987 |
+| `uint64_t`, gcc | erase by key | 1.064 | 1.060 | 1.042 | 1.030 | 1.021 |
+| `uint64_t`, gcc | find | 1.086 | 1.100 | 1.046 | 1.078 | 1.067 |
+
+The clang string churn cell at 800000 has a base that ran from 136 to 177 ns, so 0.845 is not to be believed; gcc reads 0.967 there. Memory per entry is identical in every cell.
+
+**What this says.** For a string key the hint takes 2-8% off a churn at every size under both compilers, for two stores per insert that do not show in the build. For an integer key it loses: the second hash is one multiply, and with the hint clang's `erase(iterator)` is 1.17-1.62x slower. gcc's integer `find` reads 1.05-1.10x slower, and `find` cannot run the changed code, so that is the inliner in this harness's TU and not the hint. The patch as saved therefore turns the hint on only for `detail::key_compare_is_call<Key>`, the trait the split probe already uses. With that gate, 200000 entries, clang, 3 rounds: integer build 1.014, churn 0.990, erase by key 1.009, erase by iterator 0.999, find 0.997; string churn 0.962, build 0.983, erase by key 1.024.
+
+**What it does not say.** The gated patch was only spot-checked at one size; the full sweep above is the ungated one. The gain on the score is two string workloads, about 0.6% of the geomean in instructions. gcc's string erase by iterator reads 1.02-1.05x slower and was not explained. `mutated_key_found_by_the_backfill_terminates` fails with the hint: a key changed behind the map's back in `back()` is no longer hashed by the next erase, so that erase succeeds where the test expects `std::logic_error`. A ring of the last K slots indexed by `value_idx % K` would also cover erases in a row after inserts in a row; not built, it does not fit the 64 byte map.
+
+### Growing the index 4x while it is small: the load factor trade again, rejected
+
+*2026-11-10 · no issue · rejected · Ryzen 9 7950X, clang 22, `scripts/ab/back_pointer.sh` with a two-line patch (`m_shifts - 2` in `increase_size` below 1024 groups), 3 rounds*
+
+Fewer rehashes on the way up, at the price of an index that is twice as large for half of all sizes. patched/base:
+
+| entries | index against base | `uint64_t` build | `uint64_t` churn | `uint64_t` find | string build | memory, `uint64_t` |
+|---|---|---|---|---|---|---|
+| 700 | same | 0.861 | | 1.012 | 0.930 | 1.000 |
+| 3000 | same | 0.896 | | 0.973 | 0.936 | 1.000 |
+| 12000 | same | 0.966 | | 1.006 | 0.923 | 1.000 |
+| 100 | 2x | 1.289 | | 1.000 | 1.012 | 1.256 |
+| 1500 | 2x | 1.176 | 0.812 | 0.854 | 1.004 | 1.256 |
+| 6000 | 2x | 1.102 | 0.847 | 0.903 | 0.985 | 1.256 |
+
+Where the two growth sequences end on the same index the build is 4-14% faster. Where they do not, the integer build is 10-29% slower and the map 26% larger, and the faster churn and find there are a table at half the load. The first three sizes were picked before the phase was considered and all landed on the favourable side, which is the "never one size" rule again. This is the maximum load factor sweep (#306) with a different knob.
 
 ## The rehash and its pipeline
 
@@ -3732,6 +3845,22 @@ A `segmented_map<coord, uint64_t>` of three `int32_t`, the key written field by 
 Hashing 12 byte keys already in memory, cycles per hash: clang 4.60 -> 6.01, gcc 4.09 -> 5.53 (3 loads, 2 shifts and 2 ors against 2 loads). Strings of 8-16 bytes of run-time length: identical instructions (clang 25.00, gcc 22.00), identical cycles. Reading each word once instead of the middle word twice changed nothing: the asm is not volatile, so the compiler already merges the two reads. The caller corpus, main against this: `struct_key` (#311's loop) 150.3 -> 46.5 and 840.7 -> 242.6 under clang, 150.3 -> 41.6 and 836.3 -> 242.6 under gcc; every other cell within 1.02 (clang) and 1.06 (gcc, the build at 4M, identical instructions). gcc's string loops lost instructions (`string_hit` 119.5 -> 110.5, the MySQL pattern 136.8 -> 131.8) although strings never take the new path: gcc's inliner decides differently about the larger `hash_bytes`, a gain here and not a property of the change.
 
 What this says and does not say: keys of other sizes, keys with fields narrower than 4 bytes (a 2 byte field stored on its own is still spanned) and MSVC keep the 8 byte reads; for those the usage note in `doc/usage.md` recommends hashing the fields as values. One CPU: store forwarding rules differ between microarchitectures, and that a 4 byte load inside an 8 byte store is forwarded was measured on Zen 4 only.
+
+### Where `hash_bytes` spends its time in the score, and a prefetch of the key's bytes ahead of the rehash ring: nothing
+
+*2026-11-10 · no issue · rejected · Ryzen 9 7950X, clang 22, `perf record` on `bench_quick_overall_udm`, `scripts/ab/rehash_key_prefetch.patch`, `scripts/ab/back_pointer.sh` with `AB_PATCH`, 3 rounds*
+
+Asked as "can we optimize the hash?". `hash_bytes` is 10.3% of the score's cycles, the largest single symbol. Within it, 17.5% of the samples sit on the instruction after the two 8 byte reads of the short path and 10.6% after the tail reads of the 17 to 144 byte path, and 13% and 7.5% on the two `ret`, which is the multiply chain retiring. So more than a quarter of the function is waiting for the key's bytes and not computing. That is not something a different hash changes.
+
+The one place where the map knows early which stored keys it will hash is the rehash: `fill_buckets_from_values` walks the values in order. The patch prefetches `key.data()` sixteen elements ahead of the ring's hash, for `std::basic_string` keys only. String build, patched/base:
+
+| entries | 50000 | 200000 | 800000 | 2000000 | 4000000 |
+|---|---|---|---|---|---|
+| build | 0.995 | 0.995 | 0.982 | 1.004 | 0.991 |
+
+**What this says.** Nothing to gain. In a build the keys were allocated in insertion order, the rehash reads them in insertion order, and the hardware prefetcher already follows that stream.
+
+**What it does not say.** A table whose keys were allocated in another order than they are stored in (after a churn, or strings that came from elsewhere) was not measured. The integer hash was not touched: it is one 128 bit multiply and a xor, and a single `imul` would save the xor and leave keys that differ only in their high bits (doubles, aligned pointers shifted up) with one fingerprint.
 
 ## Memory: huge pages, segmented_map, teardown order
 
