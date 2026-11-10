@@ -15,6 +15,9 @@ The metric: `bench_quick_overall_udm`, fifteen workloads (iterate-while-modifyin
 build, churn at a fixed size, find at 50% hits) × (`map<uint64_t,size_t>`, `map<string,size_t>`,
 `map<uint64_t,big_value>`), geometric mean, **lower is better**. Every workload's table is ≤ 200000
 entries; churn is 50000. Anything past L2/L3 is invisible to it and needs the size-axis harnesses.
+It runs `operator[]`, `emplace`, `erase(key)`, `find` and iteration, nothing else: `erase_if`,
+`erase(first, last)`, `merge`, `replace`, copy and `clear` cannot move it and need a harness of
+their own (#388: a range erase prototype read up to 81x, on code the score never executes).
 
 ```sh
 ./builddir/clang_release/test/udm-test -ns -tc=bench_quick_overall_udm   # the score (-ns: benchmarks are skip()ed)
@@ -35,6 +38,11 @@ entries; churn is 50000. Anything past L2/L3 is invisible to it and needs the si
 - **A timed region under a few milliseconds is noise**: `drift_variants.sh`'s first `miss`/`hit`
   cells timed 5236 lookups (40 us) and read 0.96-1.08 for a layout-only change; 3M lookups made
   them consistent across sizes. Size the reps from time, not from the table.
+- **`solo.sh` appends to `$AB_BUILD/rounds.txt` and its geomean line is over the whole file**: a
+  second candidate in a reused `AB_BUILD` printed 1.0051 for a single round of 0.9963 (2026-11-10).
+  Delete `rounds.txt` or use a fresh directory per candidate. `perwl.sh` reads the binaries, not
+  that file.
+- **Per-workload time is `perwl.sh -m ns <AB_BUILD>`**, do not parse nanobench tables by hand.
 - **Smoke every harness at the smallest size, one round, before the real run.** Three scripts in
   October 2026 failed only at run time: `env VAR=x fn` cannot call a shell function; `ls_l1_d_tlb_miss.all_l2_dtlb_miss`
   is not an event; `$!` after `cmd | tee &` is `tee`'s pid.
@@ -52,12 +60,24 @@ entries; churn is 50000. Anything past L2/L3 is invisible to it and needs the si
   `branch-misses`, `dTLB-load-misses`, `ls_l1_d_tlb_miss.{all,all_l2_miss,tlb_reload_4k_l2_hit,tlb_reload_2m_l2_hit,tlb_reload_coalesced_page_hit}`.
   Four or more events multiplex; three per run for clean counts. `cpuid` is not installed.
 
+## Which way each harness prints its ratio
+
+Three conventions are in use. Check the line before quoting a number, and say the direction in
+every table you write.
+
+| harness | prints | faster is |
+|---|---|---|
+| `solo.sh`, `run.sh` | baseline/candidate, time | above 1.00 |
+| `perwl.sh` | candidate/baseline, `ins/op` by default; `-m ns\|cyc\|bra\|miss` for another column | below 1.00 |
+| `back_pointer.sh`, also with `AB_PATCH` | patched/base, ns per operation, with min-max of the rounds | below 1.00 |
+
 ## Which measurement answers which question
 
 | question | tool | reads |
 |---|---|---|
 | does a header change move the score, ≥ ~10%, inlining untouched | `scripts/ab/run.sh [-c g++] [-r REV] all 12` (paired, one process, octave geomean) | believe the ratio when the CI excludes 100% |
 | anything touching `always_inline`, a function's size, a template boundary, or < 10% | `AB_BUILD=/home/martinus/gra/x scripts/ab/solo.sh [-c g++] [-r main] 5` (one header per binary, alternated) **then** `scripts/ab/perwl.sh /home/martinus/gra/x` | solo.sh prints **baseline/candidate** (>1 = candidate faster; run.sh reads the same way). perwl.sh prints candidate/baseline **ins/op per workload**: deterministic to 4 decimals, the decisive number |
+| a header patch, per operation (build, churn, erase by key, erase by iterator, find, memory) across table sizes | `AB_CORE=2 AB_BUILD=/home/martinus/gra/x AB_PATCH=<file in scripts/ab>.patch AB_SWITCH=<macro suffix, any word if the patch has no switch> AB_KEYS="str u64" scripts/ab/back_pointer.sh [-c g++] [-r 5] [sizes...]` (one variant per binary, rounds alternate; ~25 min per compiler for two key types at the five default sizes) | patched/base, below 1.00 is faster. The patch is taken against the working tree's header, so the working tree must be unpatched. A cell whose min-max spans more than ~5% is not a result. A workload that cannot run the changed code and still moves is the inliner in that TU |
 | the mechanism (cycles, misses, TLB) | `perf stat` / `perf record` on the score binary or `scripts/ab/maps_one.sh` (one map per binary) | `perf record` first: an out-of-line symbol in `nm` is not evidence the hot path calls it (#268) |
 | an environment setting: page size, allocator tunable, governor | `scripts/ab/same_binary.sh 5 GLIBC_TUNABLES=glibc.malloc.hugetlb=1` | same binary, no layout band; the paired harness cannot see this (both sides share a process) |
 | the size axis, other maps, allocators | `scripts/ab/huge_pages.sh`, `scripts/ab/maps.sh`, `scripts/ab/prefetch_lines.sh`, ... (all self-contained, variant = template instantiation, interleaved rounds, medians) | never one size: sweep, and sweep across the cache boundary |

@@ -3,13 +3,26 @@
 Every line is a rule, a command or a pointer. The evidence for each is in `notes/index-design.md`
 under the grep phrase given.
 
-## Performance work: load the `benchmarking` skill first
+## Load the skill before the work
 
-Before any benchmark, A/B, perf profile, size sweep, speed or memory claim, edit to `scripts/ab/` or
-`test/bench/`, or optimization proposal, load the `benchmarking` skill
-(`.claude/skills/benchmarking/`). It holds the harness for each question, the measurement rules,
-the calibration constants, and `already-measured.md`, the list of closed ideas. Answering from
-memory has produced wrong numbers here more than once.
+| before | load | it holds |
+|---|---|---|
+| any benchmark, A/B, perf profile, size sweep, speed or memory claim, edit to `scripts/ab/` or `test/bench/`, or optimization proposal | `benchmarking` (`.claude/skills/benchmarking/`) | the harness for each question, which way each harness prints its ratio, the measurement rules, the calibration constants, and `already-measured.md`, the list of closed ideas. Answering from memory has produced wrong numbers here more than once |
+| running `scripts/mutate/mutate.py`, editing `scripts/mutate/`, running or adding a fuzz target, touching `data/fuzz/` | `mutation-fuzzing` (`.claude/skills/mutation-fuzzing/`) | the commands, the verdicts, and the traps each tool has (a stale `bugs/` block disables the whole file; coverage minimization drops the hang input) |
+| "do the issues", "work the issues" | `issues` (`.claude/skills/issues/`) | the loop, the trust boundary, the PR mechanics |
+
+## The owner's requests, as phrased
+
+| request | meaning |
+|---|---|
+| "Do the issues", "work the issues" | the `issues` skill: every open owner issue to merged, then a reflection PR |
+| "Ok now 260" | implement issue 260 and open its PR |
+| "Run simplify" | `/simplify` on the open PR; fix findings directly, never file them as issues unless told |
+| "Merge when green" | Workflow below: watch CI, merge when every leg passes, otherwise report |
+| "File 1 2 and 3" | one issue per numbered point in the last reply |
+| "Comment that" | post the last reasoning as an issue comment; never comment on an issue unasked |
+| "Is it still running?" | check the background job and show its partial output |
+| "Would it make sense to ...?" | the measured answer (`benchmarking` skill) and a recommendation, not a plan |
 
 ## Files
 
@@ -19,13 +32,12 @@ memory has produced wrong numbers here more than once.
 | opt-in huge page allocator | `include/ankerl/huge_page_allocator.h` (separate: needs `<sys/mman.h>`; never referenced by the map) |
 | opt-in file mapping for `map_view` | `include/ankerl/mapped_view.h` (separate: needs `<sys/mman.h>`; never referenced by the map) |
 | tests + benchmarks, one doctest binary `udm-test` | `test/unit/*.cpp`, `test/bench/*.cpp`, `test/bench/workloads.h` (the scored workloads), `test/app/` (doctest.h with `TEST_CASE_MAP`, allocator fixtures) |
-| evidence, ~140 entries in 16 topic sections | `notes/index-design.md` — grep it before proposing anything; each section opens with **Where it stands** |
+| evidence, ~150 entries in 16 topic sections | `notes/index-design.md` — grep it before proposing anything; each section opens with **Where it stands** |
 | measurement harnesses | `scripts/ab/` — `README.md` there documents `run.sh` (paired), `maps.sh`/`maps_one.sh` (other maps, perf), the rest below |
-| mutation testing | `scripts/mutate/mutate.py`, bug files in `scripts/mutate/bugs/` |
-| fuzz corpora | `data/fuzz/<target>/`, replayed by the `fuzz` suite on every run |
+| mutation testing | `scripts/mutate/mutate.py`, bug files in `scripts/mutate/bugs/`; rules in the `mutation-fuzzing` skill |
+| fuzz corpora | `data/fuzz/<target>/`, replayed by the `fuzz` suite on every run; rules in the `mutation-fuzzing` skill |
 | linters | `scripts/lint/all.py` |
 | CI | `.github/workflows/main.yml` (34 legs), `bench.yml` (nine runners, push to `bench`) |
-| benchmarking rules, harness choice, closed ideas | `.claude/skills/benchmarking/SKILL.md`, `already-measured.md` next to it |
 
 ## Workflow
 
@@ -55,7 +67,7 @@ memory has produced wrong numbers here more than once.
 ```sh
 CXX="ccache clang++" meson setup --buildtype release builddir/clang_release   # once; all benchmarking uses this
 CXX="ccache g++"     meson setup --buildtype release builddir/gcc_release     # the compiler that does not fold
-ninja -C builddir/clang_release && ./builddir/clang_release/test/udm-test   # every header change; ~830 cases
+ninja -C builddir/clang_release && ./builddir/clang_release/test/udm-test   # every header change; ~920 cases, read the `test cases: N | N passed` line
 ./builddir/clang_release/test/udm-test -tc='huge_page*'                     # filter by test case glob
 python3 scripts/lint/all.py            # its clang-tidy is 22 here and flags existing code: expected; the other five must pass
 UNORDERED_DENSE_CLANG_TIDY=clang-tidy-18 scripts/lint/lint-clang-tidy.py 2>&1 | grep 'unordered_dense.h.*error:'   # CI's version: must print nothing (it fails parsing gcc 16's libstdc++ but still checks the header)
@@ -73,38 +85,6 @@ CI legs to reproduce locally before pushing header or test changes, each caught 
 - ASan+UBSan (`builddir/san_address`) for anything touching memory or the index.
 - Any leg: `meson setup builddir --force-fallback-for=fmt -Dcpp_std=c++<matrix cpp_std, default 17> <matrix setup_args> && meson test -C builddir --print-errorlogs <matrix test_args>`.
 - Offline: put sources in `subprojects/doctest-2.5.3/` and `subprojects/fmt-12.0.0/` with a minimal `meson.build` calling `meson.override_dependency()`.
-
-## Mutation testing
-
-```sh
-scripts/mutate/mutate.py --diff                    # uncommitted changes — the everyday mode
-scripts/mutate/mutate.py --diff HEAD~1
-scripts/mutate/mutate.py --bugs scripts/mutate/bugs/erase-path.txt
-scripts/mutate/mutate.py --lines 1278-1290 --dry-run   # size a run; one mutant ≈ 100 CPU-s
-```
-- Verdicts: `caught` is the number to move; `compiler` means the question was never asked.
-- **A stale block in a `bugs/` file makes the tool refuse the whole file** — re-run after every
-  rename; a rename silently disabled 46 blocks once. `<<< additive` when a replacement contains its
-  original. Re-run surprises with `--meson-arg=-Db_sanitize=address,undefined` (a one-past read
-  survives without it).
-- `mutate_core.py` is vendored byte-identically into nanobench and oans: change here, run
-  `scripts/test_mutate.py`, copy to both, update all three `.sha256`.
-
-## Fuzzing
-
-```sh
-CXX=clang++ meson setup builddir/fuzz && ninja -C builddir/fuzz test/fuzz_group_index
-./builddir/fuzz/test/fuzz_group_index -max_total_time=60 scratch-dir data/fuzz/fuzz_group_index   # corpus dir SECOND
-scripts/fuzz_afl.py run|sweep|minimize [target]
-```
-`fuzz_group_index` hashes with the identity and is the only target that reaches the index's own
-structure (it re-finds the unbounded miss, which a review found). `data/fuzz/fuzz_group_index/cb8d5c38…` is the hang input;
-coverage minimization drops it — put it back. `afl-fuzz` needs `core_pattern` not piped.
-A new target needs two or more corpus files before the suite passes: fuzz, then `-merge=1 data/fuzz/<t> scratch`.
-`-fork=N` crashed libFuzzer's *parent* (SEGV at a low address, `crash: 0`) on `fuzz_index_view`; use
-`-jobs=16 -workers=16`. ASan misses a read inside a vector's capacity: also fuzz from
-`meson setup builddir/fuzz_assert -Dfuzz_sanitizers=true -Dcpp_args=-D_GLIBCXX_ASSERTIONS`, which is
-what found #299's two-slots-on-one-value read past the end.
 
 ## The index, in one paragraph
 
@@ -138,16 +118,3 @@ hood index it replaced (4.11.0): 1.10x score, 1.45x churn, 1.5x misses, 1.33x hi
   scripts used*`, then tables, then "what this says and does not say". Update the section's
   **Where it stands** if the answer changed.
 - Commit: one sentence in the repo's voice, a body with the numbers, `Closes #N`.
-
-## The owner's requests, as phrased
-
-| request | meaning |
-|---|---|
-| "Do the issues", "work the issues" | the `issues` skill: every open owner issue to merged, then a reflection PR |
-| "Ok now 260" | implement issue 260 and open its PR |
-| "Run simplify" | `/simplify` on the open PR; fix findings directly, never file them as issues unless told |
-| "Merge when green" | Workflow above: watch CI, merge when every leg passes, otherwise report |
-| "File 1 2 and 3" | one issue per numbered point in the last reply |
-| "Comment that" | post the last reasoning as an issue comment; never comment on an issue unasked |
-| "Is it still running?" | check the background job and show its partial output |
-| "Would it make sense to ...?" | the measured answer (`benchmarking` skill) and a recommendation, not a plan |

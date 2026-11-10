@@ -13,8 +13,9 @@ is not over until the reflection is done.
 **"Do the issues" is permission to merge your own PRs, on all CI legs green, rebase only.** Nothing
 else in `CLAUDE.md` is relaxed: no direct push to main, no merge on red, no `--admin`.
 
-`CLAUDE.md` holds the rules, the `benchmarking` skill holds the measurement rules, and
-`notes/index-design.md` holds the evidence. This file holds the order of the work and the loop
+`CLAUDE.md` holds the rules, the `benchmarking` skill holds the measurement rules, the
+`mutation-fuzzing` skill holds the mutation and fuzzing rules, and `notes/index-design.md` holds
+the evidence. This file holds the order of the work and the loop
 mechanics. Do not restate a rule from those here; follow it there.
 
 Copy this checklist into your first reply and keep it current:
@@ -86,7 +87,8 @@ While waiting for an answer, work the next subject. Never block the loop on a qu
 ## 4. Build or measure
 
 - Read the CLAUDE.md sections for what you touch before editing: Build/test/lint, the CI legs to
-  reproduce locally, Mutation testing, Fuzzing. For a measurement, load the `benchmarking` skill.
+  reproduce locally. Before mutating or fuzzing, load the `mutation-fuzzing` skill. For a
+  measurement, load the `benchmarking` skill.
 - Behaviour change: a regression test, proven by a semantic mutation that makes it fail
   (`scripts/mutate/mutate.py --diff` or a manual mutation). Read the doctest summary line
   (`test cases: N | N passed`), not the exit colour; a `-tc=` filter that matched nothing passes.
