@@ -3051,9 +3051,9 @@ private:
     // holds and not the largest size it ever had: at a 4M peak holding 16 entries a reset writes
     // 46 MB (#381). A reset costs 1.2-6 ns a group; taking one entry out costs its hash and its
     // probe, which is what its insert paid. Measured break-even, in groups per entry: 4 for
-    // integers, 8 for 16 byte strings, 16 for 135 byte ones, 32-48 for 1 KB ones. 16 is within 5% of
+    // integers, 8 for 16 byte strings, 16 for 135 byte ones, 48-64 for 1 KB ones. 16 is within 5% of
     // the best geomean over those four key kinds, in and out of cache, both compilers; what it gives
-    // up is a 1 KB key just past it, whose clear is up to 2.2x slower than a reset
+    // up is a 1 KB key just past it, whose clear is up to 2x slower than a reset
     // (notes/index-design.md, "clear(clear_mode::sparse) costs what the table holds"). The threshold
     // depends only on size() and the group count, like growth (#248), so bucket_count() never
     // changes.
